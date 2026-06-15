@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Create virtual environment
+        run: python -m venv .venv
+
+      - name: Install package and dev dependencies
+        run: .venv/bin/python -m pip install ".[dev]"
+
+      - name: Ruff
+        run: .venv/bin/ruff check src/protrepair tests --extend-select=I,UP
+
+      - name: Basedpyright
+        run: .venv/bin/basedpyright src/protrepair tests
+
+      - name: Unit tests
+        run: .venv/bin/pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q

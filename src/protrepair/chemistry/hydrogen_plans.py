@@ -1,0 +1,148 @@
+"""Built-in hydrogen-placement plans for standard residues."""
+
+from protrepair.chemistry.component.semantics import HydrogenOperation
+
+STANDARD_HYDROGEN_PLANS: dict[str, tuple[HydrogenOperation, ...]] = {
+    "ALA": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1",), "calcCoordinate", ("C", "CA", "CB", 1.09, 55.8, 109.5)),
+        (("HB2",), "calcCoordinate", ("C", "CA", "CB", 1.09, 175.8, 109.5)),
+        (("HB3",), "calcCoordinate", ("C", "CA", "CB", 1.09, -64.2, 109.5)),
+    ),
+    "ARG": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HE",), "class5", ("CD", "NE", "CZ", 1.01)),
+        (("1HH1",), "class4", ("NE", "CZ", "NH1")),
+        (("2HH1",), "class4", ("NH2", "CZ", "NH1")),
+        (("1HH2",), "class4", ("NE", "CZ", "NH2")),
+        (("2HH2",), "class4", ("NH1", "CZ", "NH2")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("HG1", "HG2"), "class2", ("CD", "CB", "CG")),
+        (("HD1", "HD2"), "class2", ("NE", "CG", "CD")),
+    ),
+    "ASN": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("1HD2",), "class4", ("CB", "CG", "ND2")),
+        (("2HD2",), "class4", ("OD1", "CG", "ND2")),
+    ),
+    "ASP": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+    ),
+    "GLN": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("HG1", "HG2"), "class2", ("CB", "CD", "CG")),
+        (("1HE2",), "class4", ("CG", "CD", "NE2")),
+        (("2HE2",), "class4", ("OE1", "CD", "NE2")),
+    ),
+    "GLU": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("HG1", "HG2"), "class2", ("CB", "CD", "CG")),
+    ),
+    "GLY": ((("HA1", "HA2"), "class2", ("C", "N", "CA")),),
+    "HIS": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("HD2",), "class5", ("NE2", "CD2", "CG", 1.08)),
+        (("HE1",), "class5", ("NE2", "CE1", "ND1", 1.08)),
+        (("HE2",), "class5", ("CD2", "NE2", "CE1", 1.01)),
+    ),
+    "ILE": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB",), "class3", ("CA", "CG1", "CB")),
+        (("1HG1", "2HG1"), "class2", ("CB", "CD1", "CG1")),
+        (("1HG2",), "calcCoordinate", ("CA", "CB", "CG2", 1.09, 180.0, 109.5)),
+        (("2HG2",), "calcCoordinate", ("CA", "CB", "CG2", 1.09, -60.0, 109.5)),
+        (("3HG2",), "calcCoordinate", ("CA", "CB", "CG2", 1.09, 60.0, 109.5)),
+        (("HD1",), "calcCoordinate", ("CB", "CG1", "CD1", 1.09, -180.0, 109.5)),
+        (("HD2",), "calcCoordinate", ("CB", "CG1", "CD1", 1.09, -60.0, 109.5)),
+        (("HD3",), "calcCoordinate", ("CB", "CG1", "CD1", 1.09, 60.0, 109.5)),
+    ),
+    "LEU": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("HG",), "class3", ("CD1", "CB", "CG")),
+        (("1HD1",), "calcCoordinate", ("CB", "CG", "CD1", 1.09, 180.0, 109.5)),
+        (("2HD1",), "calcCoordinate", ("CB", "CG", "CD1", 1.09, -60.0, 109.5)),
+        (("3HD1",), "calcCoordinate", ("CB", "CG", "CD1", 1.09, 60.0, 109.5)),
+        (("1HD2",), "calcCoordinate", ("CB", "CG", "CD2", 1.09, -180.0, 109.5)),
+        (("2HD2",), "calcCoordinate", ("CB", "CG", "CD2", 1.09, -60.0, 109.5)),
+        (("3HD2",), "calcCoordinate", ("CB", "CG", "CD2", 1.09, 60.0, 109.5)),
+    ),
+    "LYS": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("HG1", "HG2"), "class2", ("CB", "CD", "CG")),
+        (("HD1", "HD2"), "class2", ("CE", "CG", "CD")),
+        (("HE1", "HE2"), "class2", ("NZ", "CD", "CE")),
+        (("HZ1",), "calcCoordinate", ("CD", "CE", "NZ", 1.01, 180.0, 109.3)),
+        (("HZ2",), "calcCoordinate", ("CD", "CE", "NZ", 1.01, -60.0, 109.5)),
+        (("HZ3",), "calcCoordinate", ("CD", "CE", "NZ", 1.01, 60.0, 109.5)),
+    ),
+    "MET": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("HG1", "HG2"), "class2", ("CB", "SD", "CG")),
+        (("HE1",), "calcCoordinate", ("CG", "SD", "CE", 1.09, 180.0, 109.4)),
+        (("HE2",), "calcCoordinate", ("CG", "SD", "CE", 1.09, -60.0, 109.5)),
+        (("HE3",), "calcCoordinate", ("CG", "SD", "CE", 1.09, 60.0, 109.5)),
+    ),
+    "PHE": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("HD1",), "class5", ("CE1", "CD1", "CG", 1.08)),
+        (("HD2",), "class5", ("CE2", "CD2", "CG", 1.08)),
+        (("HE1",), "class5", ("CZ", "CE1", "CD1", 1.08)),
+        (("HE2",), "class5", ("CD2", "CE2", "CZ", 1.08)),
+        (("HZ",), "class5", ("CE2", "CZ", "CE1", 1.08)),
+    ),
+    "PRO": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("HG1", "HG2"), "class2", ("CB", "CD", "CG")),
+        (("HD1", "HD2"), "class2", ("CG", "N", "CD")),
+    ),
+    "TRP": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+        (("HD1",), "class5", ("NE1", "CD1", "CG", 1.08)),
+        (("HE1",), "class5", ("CE2", "NE1", "CD1", 1.01)),
+        (("HE3",), "class5", ("CZ3", "CE3", "CD2", 1.08)),
+        (("HZ2",), "class5", ("CE2", "CZ2", "CH2", 1.08)),
+        (("HZ3",), "class5", ("CH2", "CZ3", "CE3", 1.08)),
+        (("HH2",), "class5", ("CZ2", "CH2", "CZ3", 1.08)),
+    ),
+    "VAL": (
+        (("HA",), "class3", ("CB", "N", "CA")),
+        (("HB",), "class3", ("CA", "CG2", "CB")),
+        (("1HG1",), "calcCoordinate", ("CA", "CB", "CG1", 1.09, 180.0, 109.5)),
+        (("2HG1",), "calcCoordinate", ("CA", "CB", "CG1", 1.09, -60.0, 109.5)),
+        (("3HG1",), "calcCoordinate", ("CA", "CB", "CG1", 1.09, 60.0, 109.5)),
+        (("1HG2",), "calcCoordinate", ("CG1", "CB", "CG2", 1.09, -58.1, 109.5)),
+        (("2HG2",), "calcCoordinate", ("CG1", "CB", "CG2", 1.09, 61.9, 109.5)),
+        (
+            ("3HG2",),
+            "calcCoordinate",
+            ("CG1", "CB", "CG2", 1.09, -178.1, 109.5),
+        ),
+    ),
+}
+
+DISULFIDE_CYSTEINE_PLAN: tuple[HydrogenOperation, ...] = (
+    (("HA",), "class3", ("CB", "N", "CA")),
+    (("HB1", "HB2"), "class2", ("CA", "SG", "CB")),
+)
+
+TRP_WITHOUT_BACKBONE_HYDROGEN_PLAN: tuple[HydrogenOperation, ...] = (
+    (("HA",), "class3", ("CB", "N", "CA")),
+    (("HB1", "HB2"), "class2", ("CA", "CG", "CB")),
+    (("HD1",), "class5", ("NE1", "CD1", "CG", 1.01)),
+    (("HE1",), "class5", ("CE2", "NE1", "CD1", 1.08)),
+    (("HE3",), "class5", ("CZ3", "CE3", "CD2", 1.08)),
+    (("HZ2",), "class5", ("CE2", "CZ2", "CH2", 1.08)),
+    (("HZ3",), "class5", ("CH2", "CZ3", "CE3", 1.08)),
+    (("HH2",), "class5", ("CZ2", "CH2", "CZ3", 1.08)),
+)

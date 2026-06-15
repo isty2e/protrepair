@@ -1,0 +1,26 @@
+
+# Local scratch and temporary files
+*.db
+.tmp/
+
+# Local project management notes
+.tickets/
+docs/release-checklist.md
+.python-version
+scripts/
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv
+.venv/
+venv/
+.serena/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
