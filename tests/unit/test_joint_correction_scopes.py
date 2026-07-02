@@ -11,6 +11,7 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
+import protrepair.transformer.continuous.rdkit as continuous_rdkit
 from protrepair.chemistry import build_default_component_library
 from protrepair.diagnostics import ClashPolicy, detect_clashes_involving_residues
 from protrepair.diagnostics.near_covalent import detect_near_covalent_contacts
@@ -21,7 +22,6 @@ from protrepair.state import StructureChemistryReadinessFacts
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.completion.hydrogen import add_hydrogens
-from protrepair.transformer.continuous import rdkit as continuous_rdkit
 from protrepair.transformer.continuous.binding_policy import (
     ManualContinuousRelaxationBinding,
 )

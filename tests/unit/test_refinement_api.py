@@ -80,11 +80,15 @@ from protrepair.transformer.refinement.acceptance import (
 from protrepair.transformer.refinement.candidate_selection import (
     materialize_assessed_refinement_candidate,
 )
-from protrepair.transformer.refinement.local_pipeline import (
-    CandidateConstructionStageKind,
-    PreparedRefinementCandidateBase,
-    RefinementCandidateLineage,
+from protrepair.transformer.refinement.local_pipeline.backend import (
     resolve_continuous_relaxation_backend,
+)
+from protrepair.transformer.refinement.local_pipeline.construction import (
+    PreparedRefinementCandidateBase,
+)
+from protrepair.transformer.refinement.local_pipeline.lineage import (
+    CandidateConstructionStageKind,
+    RefinementCandidateLineage,
 )
 from protrepair.workflow.contracts.result import ProcessResult
 

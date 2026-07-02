@@ -15,6 +15,7 @@ from tests.support.refinement_contract import (
     build_continuous_relaxation_problem,
 )
 
+import protrepair.transformer.continuous.rdkit as continuous_rdkit
 from protrepair.chemistry import (
     BondDefinition,
     ChemicalComponentDefinition,
@@ -47,7 +48,6 @@ from protrepair.transformer.artifacts import (
     MovedAtomDelta,
     StructureDelta,
 )
-from protrepair.transformer.continuous import rdkit as continuous_rdkit
 from protrepair.transformer.continuous.settings import (
     ContinuousRelaxationConfig,
     ContinuousRelaxationForceField,

@@ -41,7 +41,7 @@ from protrepair.transformer.refinement.acceptance import (
     RefinementAcceptanceMetrics,
     measure_refinement_acceptance_metrics,
 )
-from protrepair.transformer.refinement.local_pipeline import (
+from protrepair.transformer.refinement.local_pipeline.backend import (
     resolve_continuous_relaxation_backend,
 )
 from protrepair.workflow.contracts import LigandPolicy

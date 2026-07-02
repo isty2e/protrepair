@@ -15,7 +15,7 @@ from protrepair.transformer.atom_input import (
 )
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.settings import ContinuousRelaxationSettings
-from protrepair.transformer.refinement.local_pipeline import (
+from protrepair.transformer.refinement.local_pipeline.runtime import (
     execute_local_transformation,
 )
 from protrepair.transformer.refinement.spec import BackboneWindowRefinementSpec

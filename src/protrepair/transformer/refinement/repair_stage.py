@@ -15,7 +15,7 @@ from protrepair.transformer.continuous.readiness import (
 )
 from protrepair.transformer.continuous.settings import ContinuousRelaxationForceField
 from protrepair.transformer.refinement.directive import RepairLocalRefinementDirective
-from protrepair.transformer.refinement.local_pipeline import (
+from protrepair.transformer.refinement.local_pipeline.runtime import (
     execute_local_transformation,
 )
 from protrepair.transformer.refinement.outcome import (

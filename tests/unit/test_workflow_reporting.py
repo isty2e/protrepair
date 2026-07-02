@@ -289,7 +289,7 @@ def test_process_structure_defers_intrinsic_phase_report_for_hydrogen_complete_r
         _fail,
     )
     monkeypatch.setattr(
-        "protrepair.workflow.planning.default_action_registry.refinement_proposals.propose_joint_correction_scopes",
+        "protrepair.workflow.planning.local_refinement_policy.propose_joint_correction_scopes",
         lambda *_args, **_kwargs: (),
     )
     monkeypatch.setattr(
@@ -387,7 +387,7 @@ def test_terminal_branch_phase_report_surfaces_parser_incompatibility_as_intrins
         staticmethod(_parser_incompatible),
     )
     monkeypatch.setattr(
-        "protrepair.workflow.planning.default_action_registry.refinement_proposals.propose_joint_correction_scopes",
+        "protrepair.workflow.planning.local_refinement_policy.propose_joint_correction_scopes",
         lambda *_args, **_kwargs: (),
     )
     _patch_workflow_planning_parser_compatibility_facts(
@@ -492,7 +492,7 @@ def test_terminal_branch_phase_report_blocks_parser_incompatibility_on_topology(
         lambda *_args, **_kwargs: (blocker_scope,),
     )
     monkeypatch.setattr(
-        "protrepair.workflow.planning.default_action_registry.refinement_proposals.propose_joint_correction_scopes",
+        "protrepair.workflow.planning.local_refinement_policy.propose_joint_correction_scopes",
         lambda *_args, **_kwargs: (),
     )
     _patch_workflow_planning_parser_compatibility_facts(
