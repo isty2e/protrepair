@@ -332,3 +332,4 @@ def test_fetch_uniprot_sequence_family_preserves_isoform_timeout_failure(
     assert len(family.failures()) == 1
     assert family.failures()[0].kind is UniProtSequenceFetchFailureKind.REMOTE_ERROR
     assert "timed out" in family.failures()[0].message
+    assert "1.25" in family.failures()[0].message

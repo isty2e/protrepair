@@ -242,6 +242,15 @@ def _fetch_json_payload(
             status_code=error.code,
         )
     except URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            return None, _FetchFailure(
+                kind=AlphaFoldFetchFailureKind.REMOTE_ERROR,
+                message=(
+                    "AlphaFold request timed out after "
+                    f"{timeout_seconds:g} seconds: {error.reason}"
+                ),
+            )
+
         return None, _FetchFailure(
             kind=AlphaFoldFetchFailureKind.REMOTE_ERROR,
             message=f"AlphaFold request failed: {error.reason}",
@@ -283,6 +292,15 @@ def _fetch_text_payload(
             status_code=error.code,
         )
     except URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            return None, _FetchFailure(
+                kind=AlphaFoldFetchFailureKind.REMOTE_ERROR,
+                message=(
+                    "AlphaFold artifact request timed out after "
+                    f"{timeout_seconds:g} seconds: {error.reason}"
+                ),
+            )
+
         return None, _FetchFailure(
             kind=AlphaFoldFetchFailureKind.REMOTE_ERROR,
             message=f"AlphaFold artifact request failed: {error.reason}",

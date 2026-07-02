@@ -291,10 +291,34 @@ def test_fetch_alphafold_model_set_converts_timeout_failure(
     assert "0.5" in outcome.failure.message
 
 
+def test_fetch_alphafold_model_set_converts_urlerror_timeout_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A urllib-wrapped metadata timeout should retain the configured limit."""
+
+    def fake_urlopen(request: Request, *, timeout: float) -> FakeResponse:
+        raise URLError(TimeoutError("timed out"))
+
+    import protrepair.sources.alphafold_retrieval as alphafold_io
+
+    monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
+
+    outcome = fetch_alphafold_model_set(
+        UniProtSequenceReference(accession="P04406"),
+        timeout_seconds=0.75,
+    )
+
+    assert outcome.is_success() is False
+    assert outcome.failure is not None
+    assert outcome.failure.kind is AlphaFoldFetchFailureKind.REMOTE_ERROR
+    assert "timed out" in outcome.failure.message
+    assert "0.75" in outcome.failure.message
+
+
 def test_fetch_alphafold_structure_artifact_converts_urlerror_timeout_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A urllib-wrapped timeout should become a typed artifact failure."""
+    """A urllib-wrapped artifact timeout should retain the configured limit."""
 
     metadata_payload = (
         {
@@ -321,12 +345,13 @@ def test_fetch_alphafold_structure_artifact_converts_urlerror_timeout_failure(
     model = fetch_alphafold_model_set(
         UniProtSequenceReference(accession="P04406")
     ).require_model_set().models[0]
-    outcome = fetch_alphafold_structure_artifact(model)
+    outcome = fetch_alphafold_structure_artifact(model, timeout_seconds=2.5)
 
     assert outcome.is_success() is False
     assert outcome.failure is not None
     assert outcome.failure.kind is AlphaFoldFetchFailureKind.REMOTE_ERROR
     assert "timed out" in outcome.failure.message
+    assert "2.5" in outcome.failure.message
 
 
 @pytest.mark.parametrize("timeout_seconds", [0.0, -1.0, math.inf, math.nan])

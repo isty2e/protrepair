@@ -171,6 +171,17 @@ def _fetch_uniprot_payload(
             source_url=request_url,
         )
     except URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            return None, UniProtSequenceFetchFailure(
+                requested_reference=reference,
+                kind=UniProtSequenceFetchFailureKind.REMOTE_ERROR,
+                message=(
+                    "UniProt request timed out after "
+                    f"{timeout_seconds:g} seconds: {error.reason}"
+                ),
+                source_url=request_url,
+            )
+
         return None, UniProtSequenceFetchFailure(
             requested_reference=reference,
             kind=UniProtSequenceFetchFailureKind.REMOTE_ERROR,
