@@ -1,5 +1,7 @@
 """Assessment, selection, and materialization for local refinement."""
 
+from time import perf_counter
+
 from protrepair.transformer.artifacts import RegionTransformationResult
 from protrepair.transformer.dependent_hydrogen import (
     revalidate_dependent_hydrogens_after_refinement,
@@ -49,7 +51,77 @@ def execute_and_assess_refinement_candidate_batch(
 ) -> tuple[AssessedRefinementBatch, float, float]:
     """Execute and assess candidates, short-circuiting parser preconditioning."""
 
-    return batch.execute_and_assess(request=request)
+    backend_execution_runtime_ms = 0.0
+    assessment_runtime_ms = 0.0
+    discrete_candidate = batch.discrete_parser_preconditioning_candidate()
+    if discrete_candidate is None:
+        start = perf_counter()
+        executed_batch = execute_refinement_candidate_batch(
+            batch,
+            request=request,
+        )
+        backend_execution_runtime_ms = (perf_counter() - start) * 1000.0
+
+        start = perf_counter()
+        assessed_batch = assess_refinement_candidate_batch(
+            executed_batch,
+            request=request,
+        )
+        assessment_runtime_ms = (perf_counter() - start) * 1000.0
+        return assessed_batch, backend_execution_runtime_ms, assessment_runtime_ms
+
+    start = perf_counter()
+    discrete_execution = discrete_candidate.execute_discrete_only()
+    backend_execution_runtime_ms += (perf_counter() - start) * 1000.0
+
+    start = perf_counter()
+    before_metrics_cache: BeforeMetricsCache = {}
+    before_metrics = cached_before_acceptance_metrics(
+        discrete_execution,
+        request=request,
+        cache=before_metrics_cache,
+    )
+    discrete_assessment = assess_refinement_candidate(
+        discrete_execution,
+        request=request,
+        before_metrics=before_metrics,
+    )
+    assessment_runtime_ms += (perf_counter() - start) * 1000.0
+    if discrete_parser_preconditioning_short_circuits(discrete_assessment):
+        return (
+            SpeculativeEvaluationBatch(
+                evaluated_proposals=(discrete_assessment,),
+            ),
+            backend_execution_runtime_ms,
+            assessment_runtime_ms,
+        )
+
+    remaining_batch = batch.without_candidate(discrete_candidate)
+    start = perf_counter()
+    remaining_executed_batch = execute_refinement_candidate_batch(
+        remaining_batch,
+        request=request,
+    )
+    backend_execution_runtime_ms += (perf_counter() - start) * 1000.0
+
+    start = perf_counter()
+    remaining_assessed_batch = assess_refinement_candidate_batch(
+        remaining_executed_batch,
+        request=request,
+        before_metrics_cache=before_metrics_cache,
+    )
+    assessment_runtime_ms += (perf_counter() - start) * 1000.0
+    return (
+        SpeculativeEvaluationBatch(
+            evaluated_proposals=(
+                discrete_assessment,
+                *remaining_assessed_batch.evaluated_proposals,
+            ),
+            execution_errors=remaining_assessed_batch.execution_errors,
+        ),
+        backend_execution_runtime_ms,
+        assessment_runtime_ms,
+    )
 
 
 def discrete_parser_preconditioning_short_circuits(

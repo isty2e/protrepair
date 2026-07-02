@@ -25,12 +25,14 @@ from protrepair.transformer.refinement.local_pipeline.candidates import (
     SelectedRefinementCandidate,
 )
 from protrepair.transformer.refinement.local_pipeline.construction import (
-    CandidateConstructionStageKind,
-    CandidateConstructionStep,
     PreparedRefinementCandidateBase,
-    RefinementCandidateLineage,
     build_refinement_execution_batch,
     prepare_refinement_candidate_base,
+)
+from protrepair.transformer.refinement.local_pipeline.lineage import (
+    CandidateConstructionStageKind,
+    CandidateConstructionStep,
+    RefinementCandidateLineage,
 )
 from protrepair.transformer.refinement.local_pipeline.request import (
     LocalRefinementRequest,
