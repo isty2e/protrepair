@@ -65,6 +65,15 @@ def _open_same_directory_temp_file(output_path: Path) -> tuple[Path, int]:
     """Create one exclusive temporary file next to the output path."""
 
     parent = output_path.parent
+    if not parent.exists():
+        raise FileNotFoundError(
+            f"output directory does not exist for {output_path}: {parent}"
+        )
+    if not parent.is_dir():
+        raise NotADirectoryError(
+            f"output parent is not a directory for {output_path}: {parent}"
+        )
+
     for _ in range(100):
         temp_path = parent / f".{output_path.name}.{secrets.token_hex(8)}.tmp"
         try:

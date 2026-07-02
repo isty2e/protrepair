@@ -1252,6 +1252,20 @@ def test_write_structure_preserves_existing_output_permissions(
     )
 
 
+def test_write_structure_reports_missing_output_directory(tmp_path: Path) -> None:
+    """Path writer should report the requested target when parent is absent."""
+
+    structure = build_canonical_structure()
+    output_path = tmp_path / "missing" / "fixture.pdb"
+
+    with pytest.raises(FileNotFoundError) as error:
+        write_structure(structure, output_path)
+
+    error_message = str(error.value)
+    assert str(output_path) in error_message
+    assert "output directory does not exist" in error_message
+
+
 def test_write_structure_does_not_touch_output_when_serialization_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
