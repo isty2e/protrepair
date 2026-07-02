@@ -128,12 +128,12 @@ from protrepair.workflow.contracts import (
     requested_process_goal,
 )
 from protrepair.workflow.engine import normalize_source_structure
+from protrepair.workflow.planning import (
+    local_refinement_policy as workflow_local_refinement_policy,
+)
 from protrepair.workflow.planning.capability import WorkflowCapabilityDeficitFamily
 from protrepair.workflow.planning.context_projection import (
     planning_context_is_holo_for_structure,
-)
-from protrepair.workflow.planning.default_action_registry import (
-    refinement_proposals as workflow_refinement_proposals,
 )
 from protrepair.workflow.planning.planner import (
     BlockedRequestedGoal,
@@ -282,11 +282,11 @@ def test_plan_workflow_actions_keeps_parser_witness_ahead_of_global_geometry(
         raise AssertionError("global geometry should not run before parser witness")
 
     monkeypatch.setattr(
-        "protrepair.workflow.planning.default_action_registry.refinement_proposals.parser_witness_repair_candidates",
+        "protrepair.workflow.planning.local_refinement_policy.parser_witness_repair_candidates",
         fake_parser_witness_repair_candidates,
     )
     monkeypatch.setattr(
-        "protrepair.workflow.planning.default_action_registry.refinement_proposals.detect_heavy_geometry",
+        "protrepair.workflow.planning.local_refinement_policy.detect_heavy_geometry",
         fail_detect_heavy_geometry,
     )
     _patch_parser_compatibility_facts(
@@ -357,12 +357,12 @@ def test_plan_workflow_actions_skips_parser_witness_when_parser_compatible(
         ParserCompatibilityState.COMPATIBLE,
     )
     monkeypatch.setattr(
-        workflow_refinement_proposals,
+        workflow_local_refinement_policy,
         "parser_witness_repair_candidates",
         fail_parser_witness_repair_candidates,
     )
     monkeypatch.setattr(
-        workflow_refinement_proposals,
+        workflow_local_refinement_policy,
         "rdkit_no_conect_parser_failing_residue_ids",
         fail_parser_failing_residue_ids,
     )
@@ -1504,7 +1504,7 @@ def test_plan_workflow_actions_auto_emits_joint_refinement(
     """Hydrogen-complete parser-visible severe clusters can trigger joint repair."""
 
     monkeypatch.setattr(
-        workflow_refinement_proposals,
+        workflow_local_refinement_policy,
         "parser_witness_repair_candidates",
         lambda structure, *, component_library: (),
     )
@@ -1536,12 +1536,12 @@ def test_plan_workflow_actions_does_not_auto_sweep_joint_refinement_without_pars
     """Automatic joint repair should not sweep generic geometry alone."""
 
     monkeypatch.setattr(
-        workflow_refinement_proposals,
+        workflow_local_refinement_policy,
         "parser_witness_repair_candidates",
         lambda structure, *, component_library: (),
     )
     monkeypatch.setattr(
-        workflow_refinement_proposals,
+        workflow_local_refinement_policy,
         "rdkit_no_conect_parser_failing_residue_ids",
         lambda structure, *, component_library: (),
     )
@@ -1550,7 +1550,7 @@ def test_plan_workflow_actions_does_not_auto_sweep_joint_refinement_without_pars
         raise AssertionError("joint correction should require parser-visible focus")
 
     monkeypatch.setattr(
-        workflow_refinement_proposals,
+        workflow_local_refinement_policy,
         "propose_joint_correction_scopes",
         fail_joint_scope_proposals,
     )
