@@ -15,7 +15,7 @@ from protrepair.io import FileFormat
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
-from protrepair.transformer.continuous import (
+from protrepair.transformer.continuous.support import (
     LocalBondPlanningSupportMode,
     LocalBondPlanningSupportResolution,
     resolve_local_bond_planning_support,

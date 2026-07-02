@@ -218,6 +218,22 @@ def test_external_span_domain_requires_selected_gap_and_donor_context() -> None:
     assert _is_admissible(ExternalSpanReconstructionTransformer, admissible_domain)
 
 
+def test_workflow_action_domain_exposes_cohesive_read_views() -> None:
+    """Action-domain query families should be owned by focused read views."""
+
+    domain = _workflow_action_domain(_heavy_complete_structure())
+
+    assert domain.completion.requires_atom_completion() is False
+    assert domain.explicit_repair.prerequisite_residue_ids() == ()
+    assert domain.memory.has_prior_augmentation_adoption() is False
+    assert domain.burden.has_intrinsic_geometry_burden() is False
+    assert domain.span_reconstruction.allows_reconstruction() is False
+
+    assert not hasattr(domain, "requires_atom_completion")
+    assert not hasattr(domain, "explicit_repair_refinement_prerequisite_residue_ids")
+    assert not hasattr(domain, "has_adopted_action_family")
+
+
 def test_local_refinement_domain_can_use_prior_augmentation_memory() -> None:
     """Local refinement admissibility may come from prior augmentation memory."""
 
@@ -279,7 +295,7 @@ def test_explicit_repair_refinement_requires_local_atom_completion() -> None:
         ),
     )
 
-    assert domain.explicit_repair_refinement_atom_completion_residue_ids() == (
+    assert domain.explicit_repair.atom_completion_residue_ids() == (
         residue_id,
     )
     assert _is_admissible(HeavyAtomCompletionTransformer, domain)
@@ -302,7 +318,7 @@ def test_explicit_repair_refinement_requires_local_hydrogen_completion() -> None
         ),
     )
 
-    assert domain.explicit_repair_refinement_hydrogen_missing_residue_ids() == (
+    assert domain.explicit_repair.hydrogen_missing_residue_ids() == (
         residue_id,
     )
     assert _is_admissible(HydrogenCompletionTransformer, domain)

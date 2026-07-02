@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from protrepair.relation.endpoint import StructureRealizationSelector
 from protrepair.scope import (
     AbsentResidueSpanScope,
     AnchorAtomPairScope,
@@ -12,6 +11,7 @@ from protrepair.scope import (
     ResidueSetScope,
     Scope,
 )
+from protrepair.structure.endpoint import StructureRealizationSelector
 from protrepair.structure.labels import AtomRef, ResidueId
 
 

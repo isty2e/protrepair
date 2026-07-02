@@ -10,6 +10,7 @@ def test_package_imports() -> None:
         "__version__",
         "AnalysisKind",
         "ProcessResult",
+        "ProtrepairError",
         "RepairRefinementSpec",
         "RetainedNonPolymerChemistryOverride",
         "StructureIngressOptions",
@@ -21,6 +22,7 @@ def test_package_imports() -> None:
     assert package.__version__
     assert package.AnalysisKind is not None
     assert package.ProcessResult is not None
+    assert package.ProtrepairError is not None
     assert package.StructureIngressOptions is not None
     assert package.WorkflowTransformRequests is not None
     assert package.RepairRefinementSpec is not None

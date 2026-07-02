@@ -8,8 +8,6 @@ from pathlib import Path
 from time import perf_counter
 from typing import ParamSpec, TypeVar
 
-from rdkit import RDLogger
-
 from protrepair.chemistry import (
     ComponentLibrary,
     RestraintLibrary,
@@ -42,17 +40,23 @@ from protrepair.transformer.local import (
     atom_input_from_local_scope_spec,
 )
 from protrepair.transformer.refinement.acceptance import RefinementAcceptanceMetrics
-from protrepair.transformer.refinement.local_pipeline import (
-    AssessedRefinementBatch,
-    LocalRefinementRequest,
-    RefinementExecutionBatch,
+from protrepair.transformer.refinement.local_pipeline.assessment import (
     assess_refinement_candidate_batch,
-    build_refinement_execution_batch,
     execute_and_assess_refinement_candidate_batch,
     execute_refinement_candidate_batch,
     materialize_selected_refinement_candidate,
-    normalize_local_refinement_request,
     select_refinement_candidate,
+)
+from protrepair.transformer.refinement.local_pipeline.candidates import (
+    AssessedRefinementBatch,
+    RefinementExecutionBatch,
+)
+from protrepair.transformer.refinement.local_pipeline.construction import (
+    build_refinement_execution_batch,
+)
+from protrepair.transformer.refinement.local_pipeline.request import (
+    LocalRefinementRequest,
+    normalize_local_refinement_request,
 )
 from protrepair.transformer.source_microstate_adjudication import (
     adjudicate_source_microstate_contradictions,
@@ -753,6 +757,11 @@ def _profiled_callable(
 
 def _disable_rdkit_logs() -> None:
     """Suppress noisy RDKit parser warnings during opt-in probe runs."""
+
+    try:
+        from rdkit import RDLogger
+    except ImportError:
+        return
 
     disable_log = getattr(RDLogger, "DisableLog", None)
     if callable(disable_log):

@@ -3,13 +3,13 @@
 from dataclasses import dataclass
 from enum import IntEnum
 
-from protrepair.relation.endpoint import StructureEndpoint
 from protrepair.relation.uniprot_reference import UniProtSequenceReference
 from protrepair.scope import (
     AbsentResidueSpanScope,
     CompositeScope,
     ResidueSetScope,
 )
+from protrepair.structure.endpoint import StructureEndpoint
 from protrepair.structure.labels import ResidueId
 
 
@@ -213,4 +213,3 @@ def _referenced_residue_ids(
         "structure-UniProt correspondence only supports residue-set, "
         "absent-residue-span, or flat composite endpoints"
     )
-

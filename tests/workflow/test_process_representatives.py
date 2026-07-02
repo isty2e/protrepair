@@ -9,7 +9,12 @@ from tests.support.request_builders import (
     transform_requests,
     whole_structure_requested_goals,
 )
-from tests.support.structure_summary import summarize_structure
+from tests.support.structure_summary import (
+    semantic_digest_for_structure,
+    structure_summaries_match_except_digest,
+    structure_summary_mismatch_report,
+    summarize_structure,
+)
 from tests.support.whole_structure_sources import WHOLE_STRUCTURE_CORPUS_SOURCES
 
 from protrepair.api import process_structure
@@ -46,6 +51,19 @@ WORKFLOW_REPRESENTATIVE_CASE_IDS: tuple[str, ...] = (
     "1cjc-hydrogen-keep-ligand",
     "1afc-hydrogen-his-protonated",
 )
+WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, str]] = {
+    # RDKit force-field coordinates can drift across patch releases even when
+    # topology, atom ordering, and workflow issues are unchanged. Keep this as
+    # a backend-version-bound regression check, not a portable semantic digest.
+    "1afc-hydrogen-his-protonated": {
+        "2026.03.1": (
+            "519c3e1c408148db2af3ff629d2e5a33cf912f22bf6ba668af0428a7a87d2a33"
+        ),
+        "2026.03.2": (
+            "8aac67d8b5ab6c036adad32e05d203d628cd88af75aaf3a9eeb1252fac829640"
+        ),
+    },
+}
 pytestmark = pytest.mark.workflow
 
 
@@ -60,8 +78,67 @@ def test_process_structure_preserves_representative_semantics(
     result = run_workflow_representative_case(expected.input_path, case_id)
     summary = summarize_structure(result.structure)
 
-    assert summary == expected.summary
+    if case_id in WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP:
+        assert structure_summaries_match_except_digest(
+            summary,
+            expected.summary,
+        ), structure_summary_mismatch_report(summary, expected.summary)
+    else:
+        assert summary == expected.summary, structure_summary_mismatch_report(
+            summary,
+            expected.summary,
+        )
     assert not result.has_errors()
+
+
+@pytest.mark.representative_regression
+@pytest.mark.parametrize(
+    "case_id",
+    tuple(WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP),
+)
+def test_process_structure_preserves_rdkit_coordinate_digest(case_id: str) -> None:
+    """RDKit-backed coordinate digest should match registered backend versions."""
+
+    expected = REPRESENTATIVE_CASES[case_id]
+    result = run_workflow_representative_case(expected.input_path, case_id)
+    summary = summarize_structure(result.structure)
+
+    assert not result.has_errors()
+    assert structure_summaries_match_except_digest(
+        summary,
+        expected.summary,
+    ), structure_summary_mismatch_report(summary, expected.summary)
+    _assert_rdkit_coordinate_digest_matches(
+        case_id,
+        semantic_digest_for_structure(
+            result.structure,
+            coordinate_decimal_places=2,
+        ),
+    )
+
+
+def _assert_rdkit_coordinate_digest_matches(
+    case_id: str,
+    actual_digest: str,
+) -> None:
+    expected_by_version = WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP[case_id]
+    rdkit_version = _rdkit_version()
+    if rdkit_version not in expected_by_version:
+        pytest.skip(
+            f"{case_id} coordinate digest is RDKit-version-bound; "
+            f"no 2dp digest is registered for RDKit {rdkit_version!r}"
+        )
+
+    assert actual_digest == expected_by_version[rdkit_version]
+
+
+def _rdkit_version() -> str | None:
+    try:
+        from rdkit import rdBase
+    except ImportError:
+        return None
+
+    return str(rdBase.rdkitVersion)
 
 
 @pytest.mark.representative_regression

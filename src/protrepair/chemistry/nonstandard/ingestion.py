@@ -23,7 +23,7 @@ from protrepair.chemistry.restraint.template import (
     PlaneRestraintTarget,
     ResidueRestraintTemplate,
 )
-from protrepair.io.gemmi_normalization import gemmi, require_gemmi
+from protrepair.io.gemmi_normalization import gemmi
 
 BOND_ORDER_LABEL_TO_INT: dict[str, int] = {
     "AROM": 1,
@@ -101,9 +101,6 @@ def ingest_restraint_template(block) -> ResidueRestraintTemplate | None:
 
 def _read_cif_document_blocks(path: Path):
     """Return gemmi CIF blocks from one external component asset."""
-
-    require_gemmi()
-    assert gemmi is not None
 
     return tuple(gemmi.cif.read_file(str(path)))
 

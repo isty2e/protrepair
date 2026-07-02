@@ -142,11 +142,14 @@ class WorkflowPlanningPolicy:
             return WorkflowPolicyFamily.CHEMISTRY_READINESS
         if capability.can_reduce_deficit_family(
             WorkflowCapabilityDeficitFamily.INTERACTION
-        ) and domain.is_holo_context() and domain.has_interaction_burden():
+        ) and (
+            domain.burden.is_holo_context()
+            and domain.burden.has_interaction_burden()
+        ):
             return WorkflowPolicyFamily.INTERACTION
         if capability.can_reduce_deficit_family(
             WorkflowCapabilityDeficitFamily.PARSER_COMPATIBILITY
-        ) and domain.has_parser_compatibility_burden():
+        ) and domain.burden.has_parser_compatibility_burden():
             return WorkflowPolicyFamily.PARSER_COMPATIBILITY
         if capability.can_reduce_deficit_family(
             WorkflowCapabilityDeficitFamily.INTRINSIC_GEOMETRY
@@ -184,7 +187,7 @@ class WorkflowPlanningPolicy:
             WorkflowPolicyFamily.INTRINSIC_GEOMETRY: 6,
             WorkflowPolicyFamily.INTERACTION: 7,
         }
-        if domain.is_holo_context() and domain.has_interaction_burden():
+        if domain.burden.is_holo_context() and domain.burden.has_interaction_burden():
             family_order = {
                 **family_order,
                 WorkflowPolicyFamily.INTERACTION: 4,

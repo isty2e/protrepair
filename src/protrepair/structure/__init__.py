@@ -12,6 +12,12 @@ from protrepair.structure.constitution import (
     ResidueSite,
     StructureConstitution,
 )
+from protrepair.structure.endpoint import (
+    StructureCarrierHandle,
+    StructureCarrierKind,
+    StructureEndpoint,
+    StructureRealizationSelector,
+)
 from protrepair.structure.geometry import (
     AtomGeometry,
     ResidueGeometry,
@@ -56,11 +62,15 @@ __all__ = [
     "SourceBondMetadata",
     "SourceBondRecordType",
     "StructureAddressSpaceKey",
+    "StructureCarrierHandle",
+    "StructureCarrierKind",
     "StructureConstitution",
+    "StructureEndpoint",
     "StructureGeometry",
     "StructureIngress",
     "StructureProvenance",
     "StructureProvenanceOrigin",
+    "StructureRealizationSelector",
     "StructureTopology",
     "TopologyBond",
     "address_space_key_without_atoms",

@@ -9,7 +9,6 @@ from protrepair.relation import (
     SupportingStructureCorrespondence,
 )
 from protrepair.relation import evidence as relation_evidence
-from protrepair.relation.endpoint import StructureEndpoint
 from protrepair.relation.supporting_role import SupportingStructureRole
 from protrepair.scope import (
     AbsentResidueSpanScope,
@@ -20,6 +19,7 @@ from protrepair.scope import (
     Scope,
     scope_refines,
 )
+from protrepair.structure.endpoint import StructureEndpoint
 from protrepair.structure.provenance import StructureProvenanceOrigin
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.atom_input import AtomInput

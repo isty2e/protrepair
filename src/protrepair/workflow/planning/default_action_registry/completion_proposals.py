@@ -33,7 +33,7 @@ __all__ = [
 def heavy_atom_completion_is_admissible(domain: WorkflowActionDomain) -> bool:
     """Return whether heavy completion is admissible in the active domain."""
 
-    return domain.requires_atom_completion()
+    return domain.completion.requires_atom_completion()
 
 
 def heavy_atom_completion_proposals(
@@ -45,9 +45,7 @@ def heavy_atom_completion_proposals(
         domain.structure,
         requested_goals=domain.requested_goals,
         component_library=domain.component_library,
-        required_residue_ids=(
-            domain.explicit_repair_refinement_prerequisite_residue_ids()
-        ),
+        required_residue_ids=domain.explicit_repair.prerequisite_residue_ids(),
         coverage_facts=domain.coverage_facts,
         chemistry_readiness_facts=domain.chemistry_readiness_facts,
     )
@@ -64,7 +62,7 @@ def heavy_atom_completion_proposals(
 def hydrogen_completion_is_admissible(domain: WorkflowActionDomain) -> bool:
     """Return whether hydrogen completion is admissible in the active domain."""
 
-    return domain.requires_hydrogen_completion()
+    return domain.completion.requires_hydrogen_completion()
 
 
 def hydrogen_completion_proposals(
@@ -76,9 +74,7 @@ def hydrogen_completion_proposals(
         domain.structure,
         requested_goals=domain.requested_goals,
         component_library=domain.component_library,
-        required_residue_ids=(
-            domain.explicit_repair_refinement_prerequisite_residue_ids()
-        ),
+        required_residue_ids=domain.explicit_repair.prerequisite_residue_ids(),
         coverage_facts=domain.coverage_facts,
         chemistry_readiness_facts=domain.chemistry_readiness_facts,
     )
@@ -97,13 +93,7 @@ def retained_non_polymer_hydrogen_completion_is_admissible(
 ) -> bool:
     """Return whether retained non-polymer hydrogen completion is admissible."""
 
-    if not domain.requested_goals.requests_whole_structure_hydrogen_population():
-        return False
-
-    return any(
-        retained_fact.requires_hydrogen_completion()
-        for retained_fact in domain.chemistry_readiness_facts.retained_non_polymer_facts
-    )
+    return domain.completion.requires_retained_non_polymer_hydrogen_completion()
 
 
 def retained_non_polymer_hydrogen_completion_proposals(

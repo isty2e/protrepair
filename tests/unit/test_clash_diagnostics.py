@@ -1,5 +1,9 @@
 """Steric-clash diagnostics over canonical repaired structures."""
 
+from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     CanonicalResiduePayload,
@@ -22,11 +26,122 @@ from protrepair.diagnostics import (
     prepare_clash_detection_basis,
     prepare_clash_detection_context,
 )
+from protrepair.diagnostics.clash_pair_generation import (
+    ContactDomain,
+    pair_can_be_rejected_before_distance,
+)
 from protrepair.geometry import Vec3
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.transformer.completion.heavy import repair_heavy_atoms
+
+
+@dataclass(frozen=True, slots=True)
+class _PairPolicy:
+    include_ligands: bool = False
+    include_hydrogen_hydrogen: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _PairSite:
+    residue_id: ResidueId
+    domain: ContactDomain
+    is_hydrogen_atom: bool = False
+    grid_cell: tuple[int, int, int] = (0, 0, 0)
+
+
+def test_contact_domain_normalizes_boundary_aliases_only_at_ingress() -> None:
+    """Raw provider terms should normalize before pair-generation hot logic."""
+
+    assert ContactDomain.normalize("polymer") is ContactDomain.POLYMER
+    assert ContactDomain.normalize("ligand") is ContactDomain.RETAINED_NON_POLYMER
+    assert (
+        ContactDomain.normalize("retained-non-polymer")
+        is ContactDomain.RETAINED_NON_POLYMER
+    )
+    assert ContactDomain.normalize("unknown") is ContactDomain.UNKNOWN
+    assert ContactDomain.normalize("not-applicable") is ContactDomain.NOT_APPLICABLE
+
+    with pytest.raises(TypeError, match="ContactDomain or string"):
+        ContactDomain.normalize(7)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="unsupported contact domain"):
+        ContactDomain.normalize("cofactor-ish")
+
+
+def test_clash_pair_generation_filters_typed_contact_domains() -> None:
+    """Ligand-disabled pair filtering should use typed contact domains."""
+
+    policy = _PairPolicy(include_ligands=False)
+    polymer_a = _PairSite(ResidueId("A", 1), ContactDomain.POLYMER)
+    polymer_b = _PairSite(ResidueId("A", 2), ContactDomain.POLYMER)
+    retained = _PairSite(ResidueId("L", 1), ContactDomain.RETAINED_NON_POLYMER)
+    retained_b = _PairSite(ResidueId("L", 2), ContactDomain.RETAINED_NON_POLYMER)
+    unknown = _PairSite(ResidueId("U", 1), ContactDomain.UNKNOWN)
+    not_applicable = _PairSite(ResidueId("N", 1), ContactDomain.NOT_APPLICABLE)
+
+    assert not pair_can_be_rejected_before_distance(
+        polymer_a,
+        polymer_b,
+        policy=policy,
+    )
+    assert pair_can_be_rejected_before_distance(polymer_a, retained, policy=policy)
+    assert pair_can_be_rejected_before_distance(retained, retained_b, policy=policy)
+    assert not pair_can_be_rejected_before_distance(polymer_a, unknown, policy=policy)
+    assert not pair_can_be_rejected_before_distance(
+        unknown,
+        not_applicable,
+        policy=policy,
+    )
+
+
+def test_clash_pair_generation_keeps_ligand_pairs_when_policy_includes_them() -> None:
+    """The contact-domain contract should not reject retained pairs when enabled."""
+
+    policy = _PairPolicy(include_ligands=True)
+    polymer = _PairSite(ResidueId("A", 1), ContactDomain.POLYMER)
+    retained = _PairSite(ResidueId("L", 1), ContactDomain.RETAINED_NON_POLYMER)
+
+    assert not pair_can_be_rejected_before_distance(polymer, retained, policy=policy)
+
+
+def test_clash_pair_generation_still_applies_non_domain_fast_rejections() -> None:
+    """Typed domain filtering must not remove existing same-residue/H-H pruning."""
+
+    policy = _PairPolicy(include_ligands=True, include_hydrogen_hydrogen=False)
+    same_residue_left = _PairSite(ResidueId("A", 1), ContactDomain.POLYMER)
+    same_residue_right = _PairSite(ResidueId("A", 1), ContactDomain.POLYMER)
+    hydrogen_left = _PairSite(
+        ResidueId("A", 2),
+        ContactDomain.UNKNOWN,
+        is_hydrogen_atom=True,
+    )
+    hydrogen_right = _PairSite(
+        ResidueId("B", 2),
+        ContactDomain.NOT_APPLICABLE,
+        is_hydrogen_atom=True,
+    )
+
+    assert pair_can_be_rejected_before_distance(
+        same_residue_left,
+        same_residue_right,
+        policy=policy,
+    )
+    assert pair_can_be_rejected_before_distance(
+        hydrogen_left,
+        hydrogen_right,
+        policy=policy,
+    )
+
+
+def test_clash_pair_generation_has_no_stringly_domain_coercion() -> None:
+    """Hot pair filtering should not use getattr/string fallback domain coercion."""
+
+    source = Path("src/protrepair/diagnostics/clash_pair_generation.py").read_text()
+
+    assert "_domain_value" not in source
+    assert "getattr(" not in source
+    assert '== "ligand"' not in source
 
 
 def test_standard_component_templates_expose_heavy_bond_hops() -> None:

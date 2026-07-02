@@ -20,7 +20,7 @@ def external_span_reconstruction_is_admissible(
 ) -> bool:
     """Return whether donor span reconstruction is admissible."""
 
-    return domain.allows_span_reconstruction()
+    return domain.span_reconstruction.allows_reconstruction()
 
 
 def external_span_reconstruction_proposals(

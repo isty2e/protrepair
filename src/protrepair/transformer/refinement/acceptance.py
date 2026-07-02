@@ -1,6 +1,6 @@
 """Acceptance policy helpers for local refinement execution results."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from protrepair.chemistry.component.library import ComponentLibrary
@@ -71,102 +71,17 @@ class WholeStructureParserCompatibilityMetrics:
     extra_heavy_proximity_bond_count: int = 0
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True)
 class RefinementAcceptanceMetrics:
     """Aggregate local-refinement acceptance metrics over orthogonal axes."""
 
     focus_quality: FocusRefinementQualityMetrics
-    whole_structure_proximity: WholeStructureProximityBurdenMetrics
-    parser_compatibility: WholeStructureParserCompatibilityMetrics
-
-    def __init__(
-        self,
-        *,
-        focus_quality: FocusRefinementQualityMetrics | None = None,
-        whole_structure_proximity: WholeStructureProximityBurdenMetrics | None = None,
-        parser_compatibility: WholeStructureParserCompatibilityMetrics | None = None,
-        focus_clash_count: int | None = None,
-        focus_geometry_outlier_count: int | None = None,
-        focus_restraint_backed_geometry_outlier_count: int = 0,
-        focus_fallback_geometry_outlier_count: int = 0,
-        focus_severe_restraint_backed_bond_length_outlier_count: int = 0,
-        focus_clash_overlap_sum_angstrom: float = 0.0,
-        focus_near_covalent_contact_count: int = 0,
-        focus_worst_near_covalent_overlap_angstrom: float = 0.0,
-        focus_total_near_covalent_overlap_angstrom: float = 0.0,
-        focus_stereochemistry_violation_count: int = 0,
-        whole_structure_near_covalent_contact_count: int = 0,
-        whole_structure_worst_near_covalent_overlap_angstrom: float = 0.0,
-        whole_structure_total_near_covalent_overlap_angstrom: float = 0.0,
-        whole_structure_rdkit_sanitize_readable: bool | None = None,
-        whole_structure_parser_extra_proximity_bond_count: int = 0,
-        whole_structure_parser_extra_heavy_proximity_bond_count: int = 0,
-    ) -> None:
-        """Initialize from orthogonal records or legacy flat metric fields."""
-
-        if focus_quality is None:
-            if focus_clash_count is None or focus_geometry_outlier_count is None:
-                raise ValueError(
-                    "refinement acceptance metrics require focus quality metrics"
-                )
-            focus_quality = FocusRefinementQualityMetrics(
-                clash_count=focus_clash_count,
-                geometry_outlier_count=focus_geometry_outlier_count,
-                restraint_backed_geometry_outlier_count=(
-                    focus_restraint_backed_geometry_outlier_count
-                ),
-                fallback_geometry_outlier_count=(
-                    focus_fallback_geometry_outlier_count
-                ),
-                severe_restraint_backed_bond_length_outlier_count=(
-                    focus_severe_restraint_backed_bond_length_outlier_count
-                ),
-                clash_overlap_sum_angstrom=focus_clash_overlap_sum_angstrom,
-                near_covalent_contact_count=focus_near_covalent_contact_count,
-                worst_near_covalent_overlap_angstrom=(
-                    focus_worst_near_covalent_overlap_angstrom
-                ),
-                total_near_covalent_overlap_angstrom=(
-                    focus_total_near_covalent_overlap_angstrom
-                ),
-                stereochemistry_violation_count=(
-                    focus_stereochemistry_violation_count
-                ),
-            )
-        if whole_structure_proximity is None:
-            whole_structure_proximity = WholeStructureProximityBurdenMetrics(
-                near_covalent_contact_count=(
-                    whole_structure_near_covalent_contact_count
-                ),
-                worst_near_covalent_overlap_angstrom=(
-                    whole_structure_worst_near_covalent_overlap_angstrom
-                ),
-                total_near_covalent_overlap_angstrom=(
-                    whole_structure_total_near_covalent_overlap_angstrom
-                ),
-            )
-        if parser_compatibility is None:
-            parser_compatibility = WholeStructureParserCompatibilityMetrics(
-                rdkit_sanitize_readable=whole_structure_rdkit_sanitize_readable,
-                extra_proximity_bond_count=(
-                    whole_structure_parser_extra_proximity_bond_count
-                ),
-                extra_heavy_proximity_bond_count=(
-                    whole_structure_parser_extra_heavy_proximity_bond_count
-                ),
-            )
-
-        object.__setattr__(self, "focus_quality", focus_quality)
-        object.__setattr__(
-            self,
-            "whole_structure_proximity",
-            whole_structure_proximity,
-        )
-        object.__setattr__(
-            self,
-            "parser_compatibility",
-            parser_compatibility,
-        )
+    whole_structure_proximity: WholeStructureProximityBurdenMetrics = field(
+        default_factory=WholeStructureProximityBurdenMetrics
+    )
+    parser_compatibility: WholeStructureParserCompatibilityMetrics = field(
+        default_factory=WholeStructureParserCompatibilityMetrics
+    )
 
     @property
     def focus_clash_count(self) -> int:
@@ -546,7 +461,7 @@ def refinement_metrics_order_key(
     """Return one stable ordering key for accepted refinement quality."""
 
     return (
-        0 if metrics.whole_structure_rdkit_sanitize_readable is not False else 1,
+        0 if metrics.parser_compatibility.rdkit_sanitize_readable is not False else 1,
         *_focus_metrics_order_key(metrics),
     )
 
@@ -558,8 +473,8 @@ def refinement_has_new_parser_visibility_failure(
     """Return whether refinement introduced one new parser-visible failure."""
 
     return (
-        before_metrics.whole_structure_rdkit_sanitize_readable is not False
-        and after_metrics.whole_structure_rdkit_sanitize_readable is False
+        before_metrics.parser_compatibility.rdkit_sanitize_readable is not False
+        and after_metrics.parser_compatibility.rdkit_sanitize_readable is False
     )
 
 
@@ -570,8 +485,8 @@ def refinement_has_new_stereochemistry_failure(
     """Return whether refinement introduced new focus stereochemistry burden."""
 
     return (
-        after_metrics.focus_stereochemistry_violation_count
-        > before_metrics.focus_stereochemistry_violation_count
+        after_metrics.focus_quality.stereochemistry_violation_count
+        > before_metrics.focus_quality.stereochemistry_violation_count
     )
 
 
@@ -582,8 +497,8 @@ def refinement_has_new_severe_restraint_backed_bond_length_failure(
     """Return whether refinement introduced a high-confidence bonded failure."""
 
     return (
-        after_metrics.focus_severe_restraint_backed_bond_length_outlier_count
-        > before_metrics.focus_severe_restraint_backed_bond_length_outlier_count
+        after_metrics.focus_quality.severe_restraint_backed_bond_length_outlier_count
+        > before_metrics.focus_quality.severe_restraint_backed_bond_length_outlier_count
     )
 
 
@@ -594,8 +509,8 @@ def _has_unresolved_parser_visibility_failure(
     """Return whether parser-visible unreadability remained unresolved."""
 
     return (
-        before_metrics.whole_structure_rdkit_sanitize_readable is False
-        and after_metrics.whole_structure_rdkit_sanitize_readable is False
+        before_metrics.parser_compatibility.rdkit_sanitize_readable is False
+        and after_metrics.parser_compatibility.rdkit_sanitize_readable is False
     )
 
 
@@ -623,14 +538,15 @@ def _focus_metrics_order_key(
     near-covalent and steric clash burden are unchanged.
     """
 
+    focus_quality = metrics.focus_quality
     return (
-        metrics.focus_near_covalent_contact_count,
-        metrics.focus_worst_near_covalent_overlap_angstrom,
-        metrics.focus_total_near_covalent_overlap_angstrom,
-        metrics.focus_clash_count,
-        metrics.focus_clash_overlap_sum_angstrom,
-        metrics.focus_stereochemistry_violation_count,
-        metrics.focus_geometry_outlier_count,
+        focus_quality.near_covalent_contact_count,
+        focus_quality.worst_near_covalent_overlap_angstrom,
+        focus_quality.total_near_covalent_overlap_angstrom,
+        focus_quality.clash_count,
+        focus_quality.clash_overlap_sum_angstrom,
+        focus_quality.stereochemistry_violation_count,
+        focus_quality.geometry_outlier_count,
     )
 
 
@@ -653,12 +569,14 @@ def _whole_structure_unreadable_order_key(
 ) -> tuple[int, int, int, float, float]:
     """Return one global parser-visible burden key for unreadable structures."""
 
+    parser_compatibility = metrics.parser_compatibility
+    whole_structure_proximity = metrics.whole_structure_proximity
     return (
-        metrics.whole_structure_parser_extra_heavy_proximity_bond_count,
-        metrics.whole_structure_parser_extra_proximity_bond_count,
-        metrics.whole_structure_near_covalent_contact_count,
-        metrics.whole_structure_worst_near_covalent_overlap_angstrom,
-        metrics.whole_structure_total_near_covalent_overlap_angstrom,
+        parser_compatibility.extra_heavy_proximity_bond_count,
+        parser_compatibility.extra_proximity_bond_count,
+        whole_structure_proximity.near_covalent_contact_count,
+        whole_structure_proximity.worst_near_covalent_overlap_angstrom,
+        whole_structure_proximity.total_near_covalent_overlap_angstrom,
     )
 
 
@@ -672,61 +590,67 @@ def refinement_rejected_issue(
 
     referenced_residue_ids = _focus_residue_ids(selected_scope)
     residue_id = referenced_residue_ids[0] if len(referenced_residue_ids) == 1 else None
+    before_focus = before_metrics.focus_quality
+    after_focus = after_metrics.focus_quality
+    before_parser = before_metrics.parser_compatibility
+    after_parser = after_metrics.parser_compatibility
+    before_proximity = before_metrics.whole_structure_proximity
+    after_proximity = after_metrics.whole_structure_proximity
     message = (
         "Local refinement result was rejected because selected-region quality "
         "regressed: clashes "
-        f"{before_metrics.focus_clash_count}->{after_metrics.focus_clash_count}, "
+        f"{before_focus.clash_count}->{after_focus.clash_count}, "
         "near-covalent "
-        f"{before_metrics.focus_near_covalent_contact_count}"
-        f"->{after_metrics.focus_near_covalent_contact_count}, "
+        f"{before_focus.near_covalent_contact_count}"
+        f"->{after_focus.near_covalent_contact_count}, "
         "near-covalent overlap "
-        f"{before_metrics.focus_total_near_covalent_overlap_angstrom:.2f}"
-        f"->{after_metrics.focus_total_near_covalent_overlap_angstrom:.2f}, "
+        f"{before_focus.total_near_covalent_overlap_angstrom:.2f}"
+        f"->{after_focus.total_near_covalent_overlap_angstrom:.2f}, "
         "stereo "
-        f"{before_metrics.focus_stereochemistry_violation_count}"
-        f"->{after_metrics.focus_stereochemistry_violation_count}, "
+        f"{before_focus.stereochemistry_violation_count}"
+        f"->{after_focus.stereochemistry_violation_count}, "
         "geometry "
-        f"{before_metrics.focus_geometry_outlier_count}"
-        f"->{after_metrics.focus_geometry_outlier_count}, "
+        f"{before_focus.geometry_outlier_count}"
+        f"->{after_focus.geometry_outlier_count}, "
         "severe bond geometry "
-        f"{before_metrics.focus_severe_restraint_backed_bond_length_outlier_count}"
-        f"->{after_metrics.focus_severe_restraint_backed_bond_length_outlier_count}, "
+        f"{before_focus.severe_restraint_backed_bond_length_outlier_count}"
+        f"->{after_focus.severe_restraint_backed_bond_length_outlier_count}, "
         "overlap "
-        f"{before_metrics.focus_clash_overlap_sum_angstrom:.2f}"
-        f"->{after_metrics.focus_clash_overlap_sum_angstrom:.2f}"
+        f"{before_focus.clash_overlap_sum_angstrom:.2f}"
+        f"->{after_focus.clash_overlap_sum_angstrom:.2f}"
     )
     if (
-        before_metrics.whole_structure_rdkit_sanitize_readable is not None
-        or after_metrics.whole_structure_rdkit_sanitize_readable is not None
+        before_parser.rdkit_sanitize_readable is not None
+        or after_parser.rdkit_sanitize_readable is not None
     ):
         message += (
             ", rdkit no-CONECT sanitize "
-            f"{before_metrics.whole_structure_rdkit_sanitize_readable}"
-            f"->{after_metrics.whole_structure_rdkit_sanitize_readable}"
+            f"{before_parser.rdkit_sanitize_readable}"
+            f"->{after_parser.rdkit_sanitize_readable}"
         )
     if (
-        before_metrics.whole_structure_parser_extra_proximity_bond_count
-        or after_metrics.whole_structure_parser_extra_proximity_bond_count
+        before_parser.extra_proximity_bond_count
+        or after_parser.extra_proximity_bond_count
     ):
         message += (
             ", parser extra proximity bonds "
-            f"{before_metrics.whole_structure_parser_extra_proximity_bond_count}"
-            f"->{after_metrics.whole_structure_parser_extra_proximity_bond_count}"
+            f"{before_parser.extra_proximity_bond_count}"
+            f"->{after_parser.extra_proximity_bond_count}"
             " heavy "
-            f"{before_metrics.whole_structure_parser_extra_heavy_proximity_bond_count}"
-            f"->{after_metrics.whole_structure_parser_extra_heavy_proximity_bond_count}"
+            f"{before_parser.extra_heavy_proximity_bond_count}"
+            f"->{after_parser.extra_heavy_proximity_bond_count}"
         )
     if (
-        before_metrics.whole_structure_near_covalent_contact_count
-        or after_metrics.whole_structure_near_covalent_contact_count
+        before_proximity.near_covalent_contact_count
+        or after_proximity.near_covalent_contact_count
     ):
         message += (
             ", global near-covalent "
-            f"{before_metrics.whole_structure_near_covalent_contact_count}"
-            f"->{after_metrics.whole_structure_near_covalent_contact_count}"
+            f"{before_proximity.near_covalent_contact_count}"
+            f"->{after_proximity.near_covalent_contact_count}"
             " overlap "
-            f"{before_metrics.whole_structure_total_near_covalent_overlap_angstrom:.2f}"
-            f"->{after_metrics.whole_structure_total_near_covalent_overlap_angstrom:.2f}"
+            f"{before_proximity.total_near_covalent_overlap_angstrom:.2f}"
+            f"->{after_proximity.total_near_covalent_overlap_angstrom:.2f}"
         )
     if residue_id is None:
         return ValidationIssue(

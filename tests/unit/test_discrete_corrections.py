@@ -52,6 +52,7 @@ from protrepair.transformer.local import (
 )
 from protrepair.transformer.refinement.acceptance import (
     AssessedRefinementResult,
+    FocusRefinementQualityMetrics,
     RefinementAcceptanceMetrics,
     RefinementAcceptanceVerdict,
 )
@@ -651,9 +652,11 @@ def test_refine_local_region_keeps_seed_candidates_when_baseline_candidate_fails
             clash_basis,
         )
         zero_metrics = RefinementAcceptanceMetrics(
-            focus_clash_count=0,
-            focus_geometry_outlier_count=0,
-            focus_clash_overlap_sum_angstrom=0.0,
+            focus_quality=FocusRefinementQualityMetrics(
+                clash_count=0,
+                geometry_outlier_count=0,
+                clash_overlap_sum_angstrom=0.0,
+            ),
         )
         return AssessedRefinementResult(
             executed_result=result,

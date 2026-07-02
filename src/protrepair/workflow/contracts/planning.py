@@ -7,6 +7,8 @@ from protrepair.workflow.contracts.span_policy import (
     ExternalSpanGapSelectionPolicy,
 )
 
+_DEFAULT_MAX_SPECULATIVE_WORKFLOW_NODES = 128
+
 
 class WorkflowTargetIntent(str, Enum):
     """High-level workflow target that shapes planning policy."""
@@ -103,6 +105,7 @@ class WorkflowPlanningContext:
     branch_preference_policy: WorkflowBranchPreferencePolicy = field(
         default_factory=WorkflowBranchPreferencePolicy
     )
+    max_speculative_nodes: int = _DEFAULT_MAX_SPECULATIVE_WORKFLOW_NODES
 
     def __post_init__(self) -> None:
         if not isinstance(self.ligand_context_mode, WorkflowLigandContextMode):
@@ -138,6 +141,16 @@ class WorkflowPlanningContext:
                 "workflow planning contexts require a "
                 "WorkflowBranchPreferencePolicy value"
             )
+        if isinstance(self.max_speculative_nodes, bool) or not isinstance(
+            self.max_speculative_nodes,
+            int,
+        ):
+            raise TypeError(
+                "workflow planning contexts require an integer "
+                "max_speculative_nodes value"
+            )
+        if self.max_speculative_nodes <= 0:
+            raise ValueError("workflow max_speculative_nodes must be positive")
 
     def considers_ligand_context(self) -> bool:
         """Return whether planning may use present ligands as interaction context."""

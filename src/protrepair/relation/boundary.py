@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 
-from protrepair.relation.endpoint import StructureEndpoint
 from protrepair.relation.reference import StructureReference, reference_from_scope
 from protrepair.relation.structure import (
     StructureEndpointMapping,
@@ -14,6 +13,7 @@ from protrepair.scope.base import (
     Scope,
 )
 from protrepair.scope.relations import scope_refines
+from protrepair.structure.endpoint import StructureEndpoint
 
 
 def _require_scope(scope: Scope, *, field_name: str) -> Scope:

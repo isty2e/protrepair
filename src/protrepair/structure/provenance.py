@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from protrepair.relation.endpoint import StructureEndpoint
+from protrepair.structure.endpoint import StructureEndpoint
 
 
 class FileFormat(str, Enum):

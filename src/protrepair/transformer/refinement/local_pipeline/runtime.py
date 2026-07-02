@@ -15,6 +15,9 @@ from protrepair.transformer.refinement.local_pipeline.assessment import (
 from protrepair.transformer.refinement.local_pipeline.candidates import (
     RefinementExecutionMode,
 )
+from protrepair.transformer.refinement.local_pipeline.construction import (
+    build_refinement_execution_batch,
+)
 from protrepair.transformer.refinement.local_pipeline.request import (
     LocalRefinementRequest,
     normalize_local_refinement_request,
@@ -108,7 +111,7 @@ def execute_local_refinement_pipeline_profiled(
     """Execute the local-refinement pipeline and return stage timings."""
 
     start = perf_counter()
-    execution_batch = request.build_execution_batch()
+    execution_batch = build_refinement_execution_batch(request)
     candidate_construction_runtime_ms = (perf_counter() - start) * 1000.0
 
     (

@@ -20,9 +20,6 @@ from protrepair.transformer.continuous.readiness import (
     require_atom_scope_continuous_relaxation_execution,
 )
 from protrepair.transformer.continuous.settings import ContinuousRelaxationSettings
-from protrepair.transformer.refinement.local_pipeline.candidates import (
-    RefinementExecutionBatch,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,16 +77,6 @@ class LocalRefinementRequest:
                 component_library=active_component_library,
             ),
         )
-
-    def build_execution_batch(self) -> RefinementExecutionBatch:
-        """Construct baseline and seeded execution candidates for this request."""
-
-        from protrepair.transformer.refinement.local_pipeline.construction import (
-            build_refinement_execution_batch,
-        )
-
-        return build_refinement_execution_batch(self)
-
 
 def normalize_local_refinement_request(
     context: ProteinTransformationContext,

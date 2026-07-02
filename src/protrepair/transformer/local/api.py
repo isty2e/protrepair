@@ -18,7 +18,7 @@ from protrepair.transformer.continuous.readiness import (
     require_atom_scope_continuous_relaxation_execution,
 )
 from protrepair.transformer.local.models import DirectRegionTransformationSpec
-from protrepair.transformer.refinement.local_pipeline import (
+from protrepair.transformer.refinement.local_pipeline.runtime import (
     LocalRefinementRuntimeProfile,
     execute_local_transformation,
     execute_local_transformation_profiled,

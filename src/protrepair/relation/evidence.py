@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import TypeAlias
 
-from protrepair.relation.endpoint import StructureEndpoint
 from protrepair.scope import AtomSetScope
+from protrepair.structure.endpoint import StructureEndpoint
 from protrepair.structure.provenance import StructureProvenanceOrigin
 
 

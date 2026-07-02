@@ -4,10 +4,10 @@ from dataclasses import dataclass
 
 from protrepair.diagnostics.events import RepairEvent, ResidueAtomImpact
 from protrepair.diagnostics.kinds import RepairEventKind
-from protrepair.relation.endpoint import StructureEndpoint
 from protrepair.scope import AbsentResidueSpanScope, ResidueSetScope
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.endpoint import StructureEndpoint
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.provenance import StructureProvenanceOrigin
 from protrepair.transformer.base import (

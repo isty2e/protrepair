@@ -4,8 +4,10 @@ from protrepair.transformer.refinement.directive import (
     BoundRepairLocalRefinementExecution,
     RepairLocalRefinementDirective,
 )
-from protrepair.transformer.refinement.local_pipeline import (
+from protrepair.transformer.refinement.local_pipeline.request import (
     LocalRefinementRequest,
+)
+from protrepair.transformer.refinement.local_pipeline.runtime import (
     LocalRefinementRuntimeProfile,
     execute_local_transformation,
     execute_local_transformation_profiled,

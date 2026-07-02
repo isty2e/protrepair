@@ -31,7 +31,7 @@ from protrepair.transformer.local import (
 )
 from protrepair.transformer.local.lowering import atom_input_from_local_scope_spec
 from protrepair.transformer.local.models import LocalScopeSpec
-from protrepair.transformer.refinement.local_pipeline import (
+from protrepair.transformer.refinement.local_pipeline.backend import (
     resolve_continuous_relaxation_backend,
 )
 from tests.support.refinement_benchmarks import (

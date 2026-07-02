@@ -4,6 +4,10 @@ import json
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from protrepair.sources._network import (
+    DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
+    normalize_source_retrieval_timeout,
+)
 from protrepair.sources.alphafold import (
     AlphaFoldFetchFailureKind,
     AlphaFoldModelFetchFailure,
@@ -37,11 +41,17 @@ class _FetchFailure:
 
 def fetch_alphafold_model_set(
     reference: UniProtSequenceReference,
+    *,
+    timeout_seconds: float = DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
 ) -> AlphaFoldModelFetchOutcome:
     """Fetch AlphaFold model metadata for one UniProt accession family."""
 
+    timeout = normalize_source_retrieval_timeout(timeout_seconds)
     request_url = _alphafold_prediction_url(reference)
-    payload, failure = _fetch_json_payload(request_url)
+    payload, failure = _fetch_json_payload(
+        request_url,
+        timeout_seconds=timeout,
+    )
     if failure is not None:
         return AlphaFoldModelFetchOutcome.failure_result(
             AlphaFoldModelFetchFailure(
@@ -91,9 +101,11 @@ def fetch_alphafold_structure_artifact(
     model: AlphaFoldModelRecord,
     *,
     file_format: FileFormat = FileFormat.PDB,
+    timeout_seconds: float = DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
 ) -> AlphaFoldStructureFetchOutcome:
     """Fetch one AlphaFold structure artifact without canonicalizing it."""
 
+    timeout = normalize_source_retrieval_timeout(timeout_seconds)
     artifact_url = model.structure_url(file_format)
     if artifact_url is None:
         return AlphaFoldStructureFetchOutcome.failure_result(
@@ -107,7 +119,10 @@ def fetch_alphafold_structure_artifact(
             )
         )
 
-    artifact_text, failure = _fetch_text_payload(artifact_url)
+    artifact_text, failure = _fetch_text_payload(
+        artifact_url,
+        timeout_seconds=timeout,
+    )
     if failure is not None:
         return AlphaFoldStructureFetchOutcome.failure_result(
             AlphaFoldStructureFetchFailure(
@@ -207,12 +222,14 @@ def _uniprot_reference_from_accession(
 
 def _fetch_json_payload(
     request_url: str,
+    *,
+    timeout_seconds: float,
 ) -> tuple[object | None, _FetchFailure | None]:
     """Fetch and decode one JSON payload or return a typed failure."""
 
     request = Request(request_url, headers={"Accept": "application/json"})
     try:
-        with urlopen(request) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8")), None
     except HTTPError as error:
         return None, _FetchFailure(
@@ -225,9 +242,26 @@ def _fetch_json_payload(
             status_code=error.code,
         )
     except URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            return None, _FetchFailure(
+                kind=AlphaFoldFetchFailureKind.REMOTE_ERROR,
+                message=(
+                    "AlphaFold request timed out after "
+                    f"{timeout_seconds:g} seconds: {error.reason}"
+                ),
+            )
+
         return None, _FetchFailure(
             kind=AlphaFoldFetchFailureKind.REMOTE_ERROR,
             message=f"AlphaFold request failed: {error.reason}",
+        )
+    except TimeoutError as error:
+        return None, _FetchFailure(
+            kind=AlphaFoldFetchFailureKind.REMOTE_ERROR,
+            message=(
+                "AlphaFold request timed out after "
+                f"{timeout_seconds:g} seconds: {error}"
+            ),
         )
     except json.JSONDecodeError as error:
         return None, _FetchFailure(
@@ -238,12 +272,14 @@ def _fetch_json_payload(
 
 def _fetch_text_payload(
     request_url: str,
+    *,
+    timeout_seconds: float,
 ) -> tuple[str | None, _FetchFailure | None]:
     """Fetch one text artifact or return a typed failure skeleton."""
 
     request = Request(request_url)
     try:
-        with urlopen(request) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             return response.read().decode("utf-8"), None
     except HTTPError as error:
         return None, _FetchFailure(
@@ -256,9 +292,26 @@ def _fetch_text_payload(
             status_code=error.code,
         )
     except URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            return None, _FetchFailure(
+                kind=AlphaFoldFetchFailureKind.REMOTE_ERROR,
+                message=(
+                    "AlphaFold artifact request timed out after "
+                    f"{timeout_seconds:g} seconds: {error.reason}"
+                ),
+            )
+
         return None, _FetchFailure(
             kind=AlphaFoldFetchFailureKind.REMOTE_ERROR,
             message=f"AlphaFold artifact request failed: {error.reason}",
+        )
+    except TimeoutError as error:
+        return None, _FetchFailure(
+            kind=AlphaFoldFetchFailureKind.REMOTE_ERROR,
+            message=(
+                "AlphaFold artifact request timed out after "
+                f"{timeout_seconds:g} seconds: {error}"
+            ),
         )
 
 

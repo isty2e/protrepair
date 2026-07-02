@@ -13,7 +13,6 @@ from protrepair.io.gemmi_normalization import (
     normalize_chain_id,
     normalize_formal_charge,
     normalize_insertion_code,
-    require_gemmi,
 )
 from protrepair.io.ingress_policy import (
     MutationPolicy,
@@ -682,9 +681,6 @@ def _should_replace_residue(
 def _is_ligand_residue(raw_residue) -> bool:
     """Return whether one raw residue should be classified as a ligand."""
 
-    require_gemmi()
-    assert gemmi is not None
-
     return bool(
         not _is_water_residue(raw_residue)
         and (
@@ -696,9 +692,6 @@ def _is_ligand_residue(raw_residue) -> bool:
 
 def _is_water_residue(raw_residue) -> bool:
     """Return whether one raw residue represents water."""
-
-    require_gemmi()
-    assert gemmi is not None
 
     return bool(
         raw_residue.is_water() or raw_residue.entity_type is gemmi.EntityType.Water

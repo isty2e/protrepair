@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Iterator
+from enum import Enum
 
 from typing_extensions import Protocol
 
@@ -10,6 +11,41 @@ from protrepair.structure.labels import ResidueId
 NEIGHBOR_CELL_OFFSETS: tuple[tuple[int, int, int], ...] = tuple(
     (dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
 )
+
+
+class ContactDomain(str, Enum):
+    """Closed contact-domain classifications used by clash pair policies."""
+
+    POLYMER = "polymer"
+    RETAINED_NON_POLYMER = "retained_non_polymer"
+    UNKNOWN = "unknown"
+    NOT_APPLICABLE = "not_applicable"
+
+    @classmethod
+    def normalize(cls, value: "ContactDomain | str") -> "ContactDomain":
+        """Return one canonical contact domain from a diagnostic ingress value."""
+
+        if isinstance(value, ContactDomain):
+            return value
+        if not isinstance(value, str):
+            raise TypeError("contact domains require a ContactDomain or string value")
+
+        normalized_value = value.strip().lower().replace("-", "_")
+        if normalized_value in {"ligand", "retained_non_polymer", "non_polymer"}:
+            return cls.RETAINED_NON_POLYMER
+        if normalized_value == "polymer":
+            return cls.POLYMER
+        if normalized_value == "unknown":
+            return cls.UNKNOWN
+        if normalized_value in {"not_applicable", "not_applicable_chemistry", "none"}:
+            return cls.NOT_APPLICABLE
+
+        raise ValueError(f"unsupported contact domain: {value!r}")
+
+    def excluded_when_ligands_are_disabled(self) -> bool:
+        """Return whether ligand-disabled policies should skip this domain."""
+
+        return self is ContactDomain.RETAINED_NON_POLYMER
 
 
 class ClashPairAtomSite(Protocol):
@@ -22,7 +58,7 @@ class ClashPairAtomSite(Protocol):
         ...
 
     @property
-    def domain(self) -> object:
+    def domain(self) -> ContactDomain:
         """Return contact domain."""
 
         ...
@@ -173,8 +209,8 @@ def pair_can_be_rejected_before_distance(
         policy is not None
         and not policy.include_ligands
         and (
-            _domain_value(left_site) == "ligand"
-            or _domain_value(right_site) == "ligand"
+            left_site.domain.excluded_when_ligands_are_disabled()
+            or right_site.domain.excluded_when_ligands_are_disabled()
         )
     ):
         return True
@@ -193,9 +229,3 @@ def pair_can_be_rejected_before_distance(
         and not left_site.is_hydrogen_atom
         and not right_site.is_hydrogen_atom
     )
-
-
-def _domain_value(site: ClashPairAtomSite) -> str:
-    domain = site.domain
-    value = getattr(domain, "value", domain)
-    return str(value)

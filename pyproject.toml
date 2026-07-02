@@ -35,9 +35,6 @@ Repository = "https://github.com/isty2e/protrepair"
 Issues = "https://github.com/isty2e/protrepair/issues"
 
 [project.optional-dependencies]
-analysis = [
-  "matplotlib>=3.8",
-]
 refinement = [
   "rdkit",
 ]

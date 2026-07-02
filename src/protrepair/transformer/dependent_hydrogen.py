@@ -43,7 +43,7 @@ def revalidate_dependent_hydrogens_after_refinement(
             restraint_library=restraint_library,
             clash_basis=clash_basis,
         )
-    if active_current_metrics.whole_structure_rdkit_sanitize_readable is not False:
+    if active_current_metrics.parser_compatibility.rdkit_sanitize_readable is not False:
         return result
 
     hydrogen_only_failure = _has_hydrogen_only_parser_visibility_failure(
@@ -108,10 +108,11 @@ def _has_hydrogen_only_parser_visibility_failure(
 ) -> bool:
     """Return whether parser visibility currently fails only through H contacts."""
 
+    parser_compatibility = metrics.parser_compatibility
     return (
-        metrics.whole_structure_rdkit_sanitize_readable is False
-        and metrics.whole_structure_parser_extra_proximity_bond_count > 0
-        and metrics.whole_structure_parser_extra_heavy_proximity_bond_count == 0
+        parser_compatibility.rdkit_sanitize_readable is False
+        and parser_compatibility.extra_proximity_bond_count > 0
+        and parser_compatibility.extra_heavy_proximity_bond_count == 0
     )
 
 

@@ -1,5 +1,9 @@
 """Unit tests for public local-refinement API resolution and boundaries."""
 
+import ast
+import importlib
+from pathlib import Path
+
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
@@ -76,11 +80,15 @@ from protrepair.transformer.refinement.acceptance import (
 from protrepair.transformer.refinement.candidate_selection import (
     materialize_assessed_refinement_candidate,
 )
-from protrepair.transformer.refinement.local_pipeline import (
-    CandidateConstructionStageKind,
-    PreparedRefinementCandidateBase,
-    RefinementCandidateLineage,
+from protrepair.transformer.refinement.local_pipeline.backend import (
     resolve_continuous_relaxation_backend,
+)
+from protrepair.transformer.refinement.local_pipeline.construction import (
+    PreparedRefinementCandidateBase,
+)
+from protrepair.transformer.refinement.local_pipeline.lineage import (
+    CandidateConstructionStageKind,
+    RefinementCandidateLineage,
 )
 from protrepair.workflow.contracts.result import ProcessResult
 
@@ -975,15 +983,132 @@ def test_refinement_acceptance_metrics_keep_quality_axes_orthogonal() -> None:
     assert metrics.whole_structure_parser_extra_heavy_proximity_bond_count == 3
 
 
+def test_refinement_acceptance_metrics_reject_flat_constructor_kwargs() -> None:
+    """Canonical acceptance metrics should be built from orthogonal records."""
+
+    metrics_constructor = importlib.import_module(
+        "protrepair.transformer.refinement.acceptance"
+    ).__dict__["RefinementAcceptanceMetrics"]
+    with pytest.raises(TypeError, match="focus_clash_count"):
+        metrics_constructor(
+            focus_clash_count=0,
+            focus_geometry_outlier_count=0,
+        )
+
+
+def test_refinement_acceptance_policy_avoids_flat_projection_properties() -> None:
+    """Production acceptance policy should read the orthogonal metric records."""
+
+    policy_paths = (
+        Path("src/protrepair/transformer/refinement/acceptance.py"),
+        Path("src/protrepair/transformer/dependent_hydrogen.py"),
+        Path("src/protrepair/transformer/refinement/local_pipeline/assessment.py"),
+    )
+    flat_projection_attributes = {
+        "focus_clash_count",
+        "focus_geometry_outlier_count",
+        "focus_restraint_backed_geometry_outlier_count",
+        "focus_fallback_geometry_outlier_count",
+        "focus_severe_restraint_backed_bond_length_outlier_count",
+        "focus_clash_overlap_sum_angstrom",
+        "focus_near_covalent_contact_count",
+        "focus_worst_near_covalent_overlap_angstrom",
+        "focus_total_near_covalent_overlap_angstrom",
+        "focus_stereochemistry_violation_count",
+        "whole_structure_near_covalent_contact_count",
+        "whole_structure_worst_near_covalent_overlap_angstrom",
+        "whole_structure_total_near_covalent_overlap_angstrom",
+        "whole_structure_rdkit_sanitize_readable",
+        "whole_structure_parser_extra_proximity_bond_count",
+        "whole_structure_parser_extra_heavy_proximity_bond_count",
+    }
+    violations: list[str] = []
+    for policy_path in policy_paths:
+        tree = ast.parse(policy_path.read_text())
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr in flat_projection_attributes
+            ):
+                violations.append(f"{policy_path}:{node.lineno}:{node.attr}")
+
+    assert not violations
+
+
+def _acceptance_metrics(
+    *,
+    focus_clash_count: int,
+    focus_geometry_outlier_count: int,
+    focus_restraint_backed_geometry_outlier_count: int = 0,
+    focus_fallback_geometry_outlier_count: int = 0,
+    focus_severe_restraint_backed_bond_length_outlier_count: int = 0,
+    focus_clash_overlap_sum_angstrom: float = 0.0,
+    focus_near_covalent_contact_count: int = 0,
+    focus_worst_near_covalent_overlap_angstrom: float = 0.0,
+    focus_total_near_covalent_overlap_angstrom: float = 0.0,
+    focus_stereochemistry_violation_count: int = 0,
+    whole_structure_near_covalent_contact_count: int = 0,
+    whole_structure_worst_near_covalent_overlap_angstrom: float = 0.0,
+    whole_structure_total_near_covalent_overlap_angstrom: float = 0.0,
+    whole_structure_rdkit_sanitize_readable: bool | None = None,
+    whole_structure_parser_extra_proximity_bond_count: int = 0,
+    whole_structure_parser_extra_heavy_proximity_bond_count: int = 0,
+) -> RefinementAcceptanceMetrics:
+    """Return canonical metrics from compact test fixture values."""
+
+    return RefinementAcceptanceMetrics(
+        focus_quality=FocusRefinementQualityMetrics(
+            clash_count=focus_clash_count,
+            geometry_outlier_count=focus_geometry_outlier_count,
+            restraint_backed_geometry_outlier_count=(
+                focus_restraint_backed_geometry_outlier_count
+            ),
+            fallback_geometry_outlier_count=(
+                focus_fallback_geometry_outlier_count
+            ),
+            severe_restraint_backed_bond_length_outlier_count=(
+                focus_severe_restraint_backed_bond_length_outlier_count
+            ),
+            clash_overlap_sum_angstrom=focus_clash_overlap_sum_angstrom,
+            near_covalent_contact_count=focus_near_covalent_contact_count,
+            worst_near_covalent_overlap_angstrom=(
+                focus_worst_near_covalent_overlap_angstrom
+            ),
+            total_near_covalent_overlap_angstrom=(
+                focus_total_near_covalent_overlap_angstrom
+            ),
+            stereochemistry_violation_count=focus_stereochemistry_violation_count,
+        ),
+        whole_structure_proximity=WholeStructureProximityBurdenMetrics(
+            near_covalent_contact_count=whole_structure_near_covalent_contact_count,
+            worst_near_covalent_overlap_angstrom=(
+                whole_structure_worst_near_covalent_overlap_angstrom
+            ),
+            total_near_covalent_overlap_angstrom=(
+                whole_structure_total_near_covalent_overlap_angstrom
+            ),
+        ),
+        parser_compatibility=WholeStructureParserCompatibilityMetrics(
+            rdkit_sanitize_readable=whole_structure_rdkit_sanitize_readable,
+            extra_proximity_bond_count=(
+                whole_structure_parser_extra_proximity_bond_count
+            ),
+            extra_heavy_proximity_bond_count=(
+                whole_structure_parser_extra_heavy_proximity_bond_count
+            ),
+        ),
+    )
+
+
 def test_refinement_metrics_regressed_accepts_weighted_clash_improvement() -> None:
     """Acceptance gating should prioritize clash relief over geometry drift."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=3,
         focus_geometry_outlier_count=3,
         focus_clash_overlap_sum_angstrom=2.84,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=5,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -996,13 +1121,13 @@ def test_refinement_metrics_regressed_rejects_stereochemistry_regression(
 ) -> None:
     """Acceptance gating should reject new stereochemistry violations."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
         focus_stereochemistry_violation_count=0,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1016,13 +1141,13 @@ def test_refinement_metrics_regressed_keeps_clash_relief_ahead_of_stereochemistr
 ) -> None:
     """Clash relief can still improve ordering before hard-reject checks."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=1,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.8,
         focus_stereochemistry_violation_count=0,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1036,13 +1161,13 @@ def test_refinement_metrics_rejected_rejects_new_stereochemistry_even_with_clash
 ) -> None:
     """New stereochemistry burden should hard-reject otherwise improved output."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=1,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.8,
         focus_stereochemistry_violation_count=0,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1056,12 +1181,12 @@ def test_refinement_metrics_rejected_rejects_new_stereochemistry_even_with_clash
 def test_refinement_metrics_regressed_rejects_same_clash_geometry_regression() -> None:
     """Acceptance gating should reject geometry regression at equal clash burden."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=1,
         focus_geometry_outlier_count=2,
         focus_clash_overlap_sum_angstrom=0.50,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=1,
         focus_geometry_outlier_count=8,
         focus_clash_overlap_sum_angstrom=0.50,
@@ -1074,12 +1199,12 @@ def test_refinement_metrics_regressed_accepts_same_count_lower_overlap_geometry_
 ) -> None:
     """Lower steric overlap should outrank geometry cost at equal clash count."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=1,
         focus_geometry_outlier_count=2,
         focus_clash_overlap_sum_angstrom=0.50,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=1,
         focus_geometry_outlier_count=8,
         focus_clash_overlap_sum_angstrom=0.45,
@@ -1093,12 +1218,12 @@ def test_refinement_metrics_regressed_rejects_near_covalent_contact_regression()
 ):
     """Acceptance gating should reject parser-visible near-covalent regressions."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1113,7 +1238,7 @@ def test_refinement_metrics_regressed_rejects_near_covalent_contact_regression()
 def test_refinement_metrics_regressed_accepts_near_covalent_relief() -> None:
     """Acceptance gating should prefer removing near-covalent burden first."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1121,7 +1246,7 @@ def test_refinement_metrics_regressed_accepts_near_covalent_relief() -> None:
         focus_worst_near_covalent_overlap_angstrom=1.25,
         focus_total_near_covalent_overlap_angstrom=1.25,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=3,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1133,13 +1258,13 @@ def test_refinement_metrics_regressed_accepts_near_covalent_relief() -> None:
 def test_refinement_metrics_regressed_rejects_full_structure_sanitize_loss() -> None:
     """Acceptance ordering should treat parser-visible sanitize loss as regression."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
         whole_structure_rdkit_sanitize_readable=True,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1155,7 +1280,7 @@ def test_refinement_rejects_unresolved_sanitize_without_global_relief(
 ):
     """Unreadable candidates should still fail when global burden does not improve."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1164,7 +1289,7 @@ def test_refinement_rejects_unresolved_sanitize_without_global_relief(
         whole_structure_total_near_covalent_overlap_angstrom=6.20,
         whole_structure_rdkit_sanitize_readable=False,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1183,7 +1308,7 @@ def test_refinement_accepts_unresolved_sanitize_with_global_relief(
 ):
     """Unreadable candidates may pass when global near-covalent burden drops."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=8,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=10.35,
@@ -1195,7 +1320,7 @@ def test_refinement_accepts_unresolved_sanitize_with_global_relief(
         whole_structure_total_near_covalent_overlap_angstrom=107.81,
         whole_structure_rdkit_sanitize_readable=False,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=6,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1214,7 +1339,7 @@ def test_refinement_accepts_unresolved_sanitize_with_global_relief(
 def test_refinement_accepts_angle_geometry_burden_when_ff_signal_improves() -> None:
     """Angle diagnostics alone should not veto major FF-quality relief."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=73,
         focus_geometry_outlier_count=0,
         focus_restraint_backed_geometry_outlier_count=0,
@@ -1227,7 +1352,7 @@ def test_refinement_accepts_angle_geometry_burden_when_ff_signal_improves() -> N
         whole_structure_total_near_covalent_overlap_angstrom=209.35,
         whole_structure_rdkit_sanitize_readable=False,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=59,
         focus_geometry_outlier_count=47,
         focus_restraint_backed_geometry_outlier_count=47,
@@ -1248,7 +1373,7 @@ def test_refinement_accepts_angle_geometry_burden_when_ff_signal_improves() -> N
 def test_refinement_rejects_new_severe_restraint_backed_bond_length_failure() -> None:
     """Severe backed bond-length failures are credible enough to veto FF relief."""
 
-    before_metrics = RefinementAcceptanceMetrics(
+    before_metrics = _acceptance_metrics(
         focus_clash_count=4,
         focus_geometry_outlier_count=0,
         focus_restraint_backed_geometry_outlier_count=0,
@@ -1258,7 +1383,7 @@ def test_refinement_rejects_new_severe_restraint_backed_bond_length_failure() ->
         focus_worst_near_covalent_overlap_angstrom=1.2,
         focus_total_near_covalent_overlap_angstrom=2.1,
     )
-    after_metrics = RefinementAcceptanceMetrics(
+    after_metrics = _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=1,
         focus_restraint_backed_geometry_outlier_count=1,
@@ -1284,7 +1409,7 @@ def _refinement_metrics(
 ) -> RefinementAcceptanceMetrics:
     """Return compact refinement metrics for acceptance-boundary tests."""
 
-    return RefinementAcceptanceMetrics(
+    return _acceptance_metrics(
         focus_clash_count=0,
         focus_geometry_outlier_count=0,
         focus_clash_overlap_sum_angstrom=0.0,
@@ -1584,12 +1709,12 @@ def test_rejected_candidate_discards_pre_backend_moves() -> None:
     )
     rejected_assessment = AssessedRefinementResult(
         executed_result=executed_result,
-        before_metrics=RefinementAcceptanceMetrics(
+        before_metrics=_acceptance_metrics(
             focus_clash_count=0,
             focus_geometry_outlier_count=0,
             focus_clash_overlap_sum_angstrom=0.0,
         ),
-        after_metrics=RefinementAcceptanceMetrics(
+        after_metrics=_acceptance_metrics(
             focus_clash_count=0,
             focus_geometry_outlier_count=0,
             focus_clash_overlap_sum_angstrom=0.0,

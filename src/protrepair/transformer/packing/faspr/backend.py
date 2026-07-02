@@ -2,6 +2,7 @@
 
 import subprocess
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -11,7 +12,7 @@ from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.errors import (
     PackingError,
-    PrasError,
+    ProtrepairError,
     ResidueNotFoundError,
     StructureNormalizationError,
 )
@@ -46,6 +47,7 @@ FASPR_CAPABILITIES = PackingCapabilities(
     supports_noncanonical_components=False,
     deterministic_given_same_inputs=True,
 )
+DEFAULT_FASPR_EXECUTION_TIMEOUT_SECONDS = 1800.0
 FASPR_ALPHABET = PackingAlphabet(
     {
         "ALA": "A",
@@ -72,7 +74,7 @@ FASPR_ALPHABET = PackingAlphabet(
 )
 
 
-class PackingBackendError(PrasError):
+class PackingBackendError(ProtrepairError):
     """Raised when a side-chain packing backend cannot satisfy one request."""
 
 
@@ -85,6 +87,16 @@ class FasprPackingBackend:
     """Subprocess-backed adapter for the packaged FASPR executable."""
 
     executable_path: Path | None = None
+    timeout_seconds: float = DEFAULT_FASPR_EXECUTION_TIMEOUT_SECONDS
+
+    def __post_init__(self) -> None:
+        """Normalize backend-local subprocess execution settings."""
+
+        object.__setattr__(
+            self,
+            "timeout_seconds",
+            normalize_faspr_timeout_seconds(self.timeout_seconds),
+        )
 
     def capabilities(self) -> PackingCapabilities:
         """Return the declared capability surface of the FASPR backend."""
@@ -102,6 +114,7 @@ class FasprPackingBackend:
         packed_structure = run_faspr(
             execution_input,
             executable_path=executable_path,
+            timeout_seconds=self.timeout_seconds,
         )
         changed_residue_ids = plan.changed_residue_ids_after(packed_structure)
         issues = infer_packing_issues(plan, packed_structure)
@@ -148,6 +161,22 @@ def resolve_faspr_executable_path(executable_path: Path | None) -> Path:
         )
 
     return resolved_path
+
+
+def normalize_faspr_timeout_seconds(timeout_seconds: float) -> float:
+    """Return a finite positive FASPR subprocess timeout."""
+
+    if isinstance(timeout_seconds, bool) or not isinstance(
+        timeout_seconds,
+        int | float,
+    ):
+        raise TypeError("timeout_seconds must be a real number")
+
+    timeout = float(timeout_seconds)
+    if not isfinite(timeout) or timeout <= 0.0:
+        raise ValueError("timeout_seconds must be finite and positive")
+
+    return timeout
 
 
 def validate_rotamer_library_near(executable_path: Path) -> Path:
@@ -305,6 +334,7 @@ def run_faspr(
     execution_input: FasprExecutionInput,
     *,
     executable_path: Path,
+    timeout_seconds: float,
 ) -> ProteinStructure:
     """Run FASPR on one prepared structure and return the packed result."""
 
@@ -329,13 +359,20 @@ def run_faspr(
             )
             command.extend(["-s", str(sequence_path)])
 
-        completed = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            cwd=executable_path.parent,
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                cwd=executable_path.parent,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise PackingBackendExecutionError(
+                "FASPR execution timed out after "
+                f"{timeout_seconds:g} seconds: {executable_path}"
+            ) from error
         if completed.returncode != 0:
             error_message = completed.stderr.strip() or completed.stdout.strip()
             raise PackingBackendExecutionError(

@@ -141,6 +141,17 @@ def execute_iterative_workflow(
                 adopted_children=(),
             )
             continue
+        remaining_child_budget = (
+            planning_context.max_speculative_nodes - len(trace.nodes)
+        )
+        if remaining_child_budget <= 0:
+            trace = trace.stop(
+                reason=SpeculativeStopReason.ITERATION_LIMIT_REACHED
+            )
+            break
+        proposal_batch = planning_outcome.current_proposal_batch()[
+            :remaining_child_budget
+        ]
 
         adopted_children: list[
             SpeculativeAdoptedChild[
@@ -160,7 +171,7 @@ def execute_iterative_workflow(
                 retained_non_polymer_chemistry_evidence
             ),
         )
-        for transformer in planning_outcome.current_proposal_batch():
+        for transformer in proposal_batch:
             execution_outcome = execute_workflow_transformer(
                 runtime_state.result,
                 transformer=transformer,
@@ -217,9 +228,21 @@ def execute_iterative_workflow(
         adopted_children = list(
             _workflow_children_with_regression_retention(
                 current_branch_state=runtime_state,
-                attempted_transformers=planning_outcome.current_proposal_batch(),
+                attempted_transformers=proposal_batch,
                 transform_requests=transform_requests,
                 retained_children=tuple(adopted_children),
+                requested_goals=requested_goals,
+                component_library=component_library,
+                planning_context=planning_context,
+                already_satisfied_requested_goals=(
+                    initial_already_satisfied_requested_goals
+                ),
+            )
+        )
+        adopted_children = list(
+            _workflow_children_within_node_budget(
+                children=tuple(adopted_children),
+                child_budget=remaining_child_budget,
                 requested_goals=requested_goals,
                 component_library=component_library,
                 planning_context=planning_context,
@@ -234,6 +257,12 @@ def execute_iterative_workflow(
         )
 
     if not terminal_branches:
+        if trace.stop_reason is SpeculativeStopReason.ITERATION_LIMIT_REACHED:
+            raise ValueError(
+                "iterative workflow execution reached "
+                f"max_speculative_nodes={planning_context.max_speculative_nodes} "
+                "before any terminal branch"
+            )
         raise ValueError(
             "iterative workflow execution requires at least one terminal branch"
         )
@@ -395,6 +424,53 @@ def _workflow_children_with_regression_retention(
             ),
         ),
     )
+
+
+def _workflow_children_within_node_budget(
+    *,
+    children: tuple[
+        SpeculativeAdoptedChild[
+            WorkflowRuntimeState,
+            WorkflowStateAction,
+            TransformationResult,
+            TransformationResult,
+        ],
+        ...,
+    ],
+    child_budget: int,
+    requested_goals: RequestedGoalSet,
+    component_library: ComponentLibrary,
+    planning_context: WorkflowPlanningContext,
+    already_satisfied_requested_goals: tuple[WorkflowGoal, ...],
+) -> tuple[
+    SpeculativeAdoptedChild[
+        WorkflowRuntimeState,
+        WorkflowStateAction,
+        TransformationResult,
+        TransformationResult,
+    ],
+    ...,
+]:
+    """Return the best child branches that fit the remaining trace budget."""
+
+    if child_budget <= 0 or not children:
+        return ()
+
+    if len(children) <= child_budget:
+        return children
+
+    child_keys = tuple(
+        _workflow_child_quality_key(
+            child,
+            requested_goals=requested_goals,
+            component_library=component_library,
+            planning_context=planning_context,
+            already_satisfied_requested_goals=already_satisfied_requested_goals,
+        )
+        for child in children
+    )
+    ranked_child_keys = sorted(child_keys, key=lambda child_key: child_key[1])
+    return tuple(child for child, _ in ranked_child_keys[:child_budget])
 
 
 def _proposal_batch_allows_regression_retention(
