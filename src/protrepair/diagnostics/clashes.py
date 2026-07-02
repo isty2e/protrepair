@@ -3,7 +3,6 @@
 from collections import defaultdict
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from enum import Enum
 from math import floor, sqrt
 from types import MappingProxyType
 from typing import cast
@@ -19,6 +18,7 @@ from protrepair.diagnostics import clash_topology_rules
 from protrepair.diagnostics.clash_pair_generation import (
     ClashPairAtomSite,
     ClashPairPolicy,
+    ContactDomain,
     iter_candidate_atom_site_pairs,
     pair_can_be_rejected_before_distance,
 )
@@ -41,13 +41,6 @@ ACCEPTOR_ELEMENTS = frozenset({"N", "O", "S"})
 NEIGHBOR_CELL_OFFSETS: tuple[tuple[int, int, int], ...] = tuple(
     (dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
 )
-
-
-class ContactDomain(str, Enum):
-    """Structural contact domains considered by the clash detector."""
-
-    POLYMER = "polymer"
-    LIGAND = "ligand"
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +94,7 @@ class ResidueContext:
     )
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "domain", ContactDomain.normalize(self.domain))
         if self._hydrogen_anchor_by_name is None:
             return
 
@@ -164,6 +158,9 @@ class _ResidueContextBasis:
     chain_index: int | None
     residue_index: int | None
     residue_slot_index: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "domain", ContactDomain.normalize(self.domain))
 
     @property
     def residue_id(self) -> ResidueId:
@@ -965,7 +962,7 @@ def build_residue_context_bases(
                 _ResidueContextBasis(
                     residue_site=ligand_site,
                     template=component_library.get(ligand_site.component_id),
-                    domain=ContactDomain.LIGAND,
+                    domain=ContactDomain.RETAINED_NON_POLYMER,
                     chain_index=None,
                     residue_index=None,
                     residue_slot_index=residue_slot_index.value,
@@ -1076,7 +1073,7 @@ def build_projected_residue_contexts(
                     residue_site=ligand_site,
                     residue_geometry=ligand_geometry,
                     template=component_library.get(ligand_site.component_id),
-                    domain=ContactDomain.LIGAND,
+                    domain=ContactDomain.RETAINED_NON_POLYMER,
                     chain_index=None,
                     residue_index=None,
                 )
@@ -1158,8 +1155,8 @@ def should_consider_pair(
     """Return whether one atom pair should enter clash evaluation."""
 
     if not policy.include_ligands and (
-        left_site.domain is ContactDomain.LIGAND
-        or right_site.domain is ContactDomain.LIGAND
+        left_site.domain.excluded_when_ligands_are_disabled()
+        or right_site.domain.excluded_when_ligands_are_disabled()
     ):
         return False
 

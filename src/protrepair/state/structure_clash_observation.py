@@ -3,7 +3,8 @@
 from collections.abc import Iterable
 
 from protrepair.chemistry import ComponentLibrary
-from protrepair.diagnostics.clashes import ContactDomain, StericClash
+from protrepair.diagnostics.clash_pair_generation import ContactDomain
+from protrepair.diagnostics.clashes import StericClash
 from protrepair.state.structure_axes import ClashPresenceState
 from protrepair.state.structure_readiness import StructureChemistryReadinessFacts
 from protrepair.structure.aggregate import ProteinStructure
@@ -129,5 +130,5 @@ def polymer_ligand_clashes(
         clash
         for clash in clashes
         if {clash.left_domain, clash.right_domain}
-        == {ContactDomain.POLYMER, ContactDomain.LIGAND}
+        == {ContactDomain.POLYMER, ContactDomain.RETAINED_NON_POLYMER}
     )
