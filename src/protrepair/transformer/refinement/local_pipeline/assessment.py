@@ -134,9 +134,11 @@ def discrete_parser_preconditioning_short_circuits(
 
     before_metrics = assessment.evaluation.before_metrics
     after_metrics = assessment.evaluation.after_metrics
-    return before_metrics.whole_structure_rdkit_sanitize_readable is False and (
-        after_metrics.whole_structure_rdkit_sanitize_readable is not False
-        or after_metrics.whole_structure_parser_extra_heavy_proximity_bond_count == 0
+    before_parser_compatibility = before_metrics.parser_compatibility
+    after_parser_compatibility = after_metrics.parser_compatibility
+    return before_parser_compatibility.rdkit_sanitize_readable is False and (
+        after_parser_compatibility.rdkit_sanitize_readable is not False
+        or after_parser_compatibility.extra_heavy_proximity_bond_count == 0
     )
 
 
