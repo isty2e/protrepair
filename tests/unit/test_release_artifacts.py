@@ -51,3 +51,21 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
     assert "tests/unit/test_retained_non_polymer_hydrogen.py" in workflow
     assert "tests/workflow/test_process_representatives.py" in workflow
     assert '-m "not benchmark"' in workflow
+
+
+def test_release_docs_state_faspr_installed_asset_contract() -> None:
+    """Release docs should not imply arbitrary source-tree FASPR availability."""
+
+    readme = Path("README.md").read_text()
+    release_checklist = Path("docs/release-checklist.md").read_text()
+    normalized_readme = " ".join(readme.split())
+
+    assert "Built packages and wheels include the vendored FASPR executable" in (
+        normalized_readme
+    )
+    assert "Direct source-tree imports are not guaranteed" in normalized_readme
+    assert "explicit FASPR `executable_path`" in normalized_readme
+    assert "Bundled FASPR assets are an installed-package/wheel contract" in (
+        release_checklist
+    )
+    assert "speculative build-directory probing" in release_checklist

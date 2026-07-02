@@ -5,6 +5,12 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
+FASPR_ASSET_INSTALL_GUIDANCE = (
+    "Install the built protrepair package or wheel so "
+    "protrepair/packing/faspr/bin is present, or pass an explicit "
+    "executable_path for a custom/source-tree FASPR executable."
+)
+
 
 def faspr_binary_directory() -> Path:
     """Return the installed directory that contains the packaged FASPR assets."""
@@ -14,7 +20,8 @@ def faspr_binary_directory() -> Path:
             return path
 
     raise FileNotFoundError(
-        "FASPR assets are missing from the installed protrepair package"
+        "FASPR bundled assets were not found in the current protrepair import "
+        f"environment. {FASPR_ASSET_INSTALL_GUIDANCE}"
     )
 
 
@@ -25,7 +32,8 @@ def faspr_executable_path() -> Path:
     path = faspr_binary_directory() / executable_name
     if not path.exists():
         raise FileNotFoundError(
-            "FASPR executable is missing from the installed protrepair package"
+            f"FASPR executable {executable_name!r} is missing from bundled "
+            f"asset directory {path.parent}. {FASPR_ASSET_INSTALL_GUIDANCE}"
         )
 
     return path
@@ -37,7 +45,8 @@ def faspr_rotamer_library_path() -> Path:
     path = faspr_binary_directory() / "dun2010bbdep.bin"
     if not path.exists():
         raise FileNotFoundError(
-            "dun2010bbdep.bin is missing from the installed protrepair package"
+            "dun2010bbdep.bin is missing from the bundled FASPR asset "
+            f"directory {path.parent}. {FASPR_ASSET_INSTALL_GUIDANCE}"
         )
 
     return path

@@ -14,6 +14,7 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
+import protrepair.transformer.packing.faspr.paths as faspr_paths
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, write_structure_string
 from protrepair.structure import ProteinStructure
@@ -77,6 +78,52 @@ def test_faspr_backend_rejects_non_numeric_timeout(
 
     with pytest.raises(TypeError, match="timeout_seconds"):
         FasprPackingBackend(timeout_seconds=timeout_seconds)
+
+
+def test_faspr_missing_asset_directory_error_points_to_install_or_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing bundled assets should explain installed-package availability."""
+
+    missing_asset_dir = tmp_path / "missing-faspr-assets"
+    monkeypatch.setattr(
+        faspr_paths,
+        "candidate_binary_directories",
+        lambda: (missing_asset_dir,),
+    )
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        faspr_paths.faspr_binary_directory()
+
+    message = str(exc_info.value)
+    assert "current protrepair import environment" in message
+    assert "built protrepair package or wheel" in message
+    assert "explicit executable_path" in message
+
+
+def test_faspr_missing_executable_error_points_to_install_or_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An asset dir without FASPR should still point to the executable override."""
+
+    asset_dir = tmp_path / "faspr-assets"
+    asset_dir.mkdir()
+    (asset_dir / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    monkeypatch.setattr(
+        faspr_paths,
+        "candidate_binary_directories",
+        lambda: (asset_dir,),
+    )
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        faspr_paths.faspr_executable_path()
+
+    message = str(exc_info.value)
+    assert str(asset_dir) in message
+    assert "built protrepair package or wheel" in message
+    assert "explicit executable_path" in message
 
 
 def test_faspr_backend_builds_local_sequence_override_with_fake_executable(

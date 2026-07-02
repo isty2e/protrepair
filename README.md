@@ -37,8 +37,11 @@ Or install directly from GitHub:
 pip install "git+https://github.com/isty2e/protrepair.git"
 ```
 
-This build also packages the vendored FASPR executable and rotamer library used
-by the optional side-chain packing backend.
+Built packages and wheels include the vendored FASPR executable and rotamer
+library used by the optional side-chain packing backend. Direct source-tree
+imports are not guaranteed to have compiled FASPR assets available; install the
+package/wheel first, or pass an explicit FASPR `executable_path` for local
+development.
 
 Install optional RDKit-backed refinement support with:
 
