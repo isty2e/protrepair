@@ -5,7 +5,6 @@ from pathlib import Path
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
-    require_gemmi,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite, ResidueSite
@@ -84,9 +83,6 @@ def build_gemmi_structure(
 ):
     """Project the canonical structure model into a gemmi structure."""
 
-    require_gemmi()
-    assert gemmi is not None
-
     raw_structure = gemmi.Structure()
     raw_structure.name = structure.provenance.ingress.source_name or "protrepair"
     model = gemmi.Model(1)
@@ -124,8 +120,6 @@ def add_topology_connections_to_gemmi_structure(
     include_pdb_conect_origin: bool,
 ) -> None:
     """Add source-explicit topology bonds as gemmi connection records."""
-
-    assert gemmi is not None
 
     for bond in source_explicit_topology_bonds_for_egress(structure):
         if (
@@ -207,8 +201,6 @@ def populate_gemmi_connection_partner(
 ) -> None:
     """Populate one gemmi connection partner from a canonical atom slot."""
 
-    assert gemmi is not None
-
     atom_ref = structure.constitution.atom_ref_at(atom_index)
     residue_site = structure.constitution.residue_site_at(
         structure.constitution.residue_index(atom_ref.residue_id)
@@ -225,8 +217,6 @@ def populate_gemmi_connection_partner(
 
 def gemmi_connection_type(relationship_type: BondRelationshipType):
     """Return the gemmi connection type for one canonical relationship."""
-
-    assert gemmi is not None
 
     if relationship_type is BondRelationshipType.COVALENT:
         return gemmi.ConnectionType.Covale
@@ -401,8 +391,6 @@ def build_gemmi_residue(
 ):
     """Project a canonical residue into a gemmi residue."""
 
-    assert gemmi is not None
-
     raw_residue = gemmi.Residue()
     raw_residue.name = residue_site.component_id
     raw_residue.seqid = gemmi.SeqId(
@@ -436,8 +424,6 @@ def build_gemmi_atom(
     formal_charge: int | None,
 ):
     """Project a canonical atom into a gemmi atom."""
-
-    assert gemmi is not None
 
     raw_atom = gemmi.Atom()
     raw_atom.name = atom_site.name

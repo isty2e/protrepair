@@ -9,7 +9,7 @@ from protrepair.chemistry.nonstandard.ingestion import (
     ingest_component_template,
     ingest_restraint_template,
 )
-from protrepair.io.gemmi_normalization import gemmi, require_gemmi
+from protrepair.io.gemmi_normalization import gemmi
 
 
 def test_ingest_component_library_reads_custom_monomer_cif(tmp_path: Path) -> None:
@@ -77,8 +77,6 @@ def test_ingest_component_library_reads_custom_monomer_cif(tmp_path: Path) -> No
     )
     assert template.definition.bonded_atom_names("SE") == frozenset({"CG", "CE"})
 
-    require_gemmi()
-    assert gemmi is not None
     block = gemmi.cif.read_file(str(cif_path)).sole_block()
     ingested_template = ingest_component_template(block)
     restraint_template = ingest_restraint_template(block)
@@ -196,8 +194,6 @@ def test_ingest_component_record_derives_planarity_targets_from_ideal_geometry(
         encoding="utf-8",
     )
 
-    require_gemmi()
-    assert gemmi is not None
     block = gemmi.cif.read_file(str(cif_path)).sole_block()
     restraint_template = ingest_restraint_template(block)
 

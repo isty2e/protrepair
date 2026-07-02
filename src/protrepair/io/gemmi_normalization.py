@@ -2,30 +2,14 @@
 
 from pathlib import Path
 
-try:
-    import gemmi
-except ModuleNotFoundError as error:
-    gemmi = None
-    GEMMI_IMPORT_ERROR = error
-else:
-    GEMMI_IMPORT_ERROR = None
+import gemmi
 
-from protrepair.errors import GemmiUnavailableError, UnsupportedFileFormatError
+from protrepair.errors import UnsupportedFileFormatError
 from protrepair.structure.provenance import FileFormat
 
 DEFAULT_CHAIN_ID = "_"
 PDB_SUFFIXES = {".ent", ".pdb"}
 MMCIF_SUFFIXES = {".cif", ".mmcif"}
-
-
-def require_gemmi() -> None:
-    """Ensure gemmi is importable before using gemmi-backed I/O."""
-
-    if gemmi is None:
-        raise GemmiUnavailableError(
-            "gemmi-backed I/O requires the optional gemmi dependency"
-        ) from GEMMI_IMPORT_ERROR
-
 
 def infer_file_format(path: Path) -> FileFormat:
     """Infer the canonical structure format from a filesystem path."""
@@ -44,9 +28,6 @@ def infer_file_format(path: Path) -> FileFormat:
 
 def to_gemmi_coor_format(file_format: FileFormat):
     """Map a canonical file format to the gemmi coordinate format enum."""
-
-    require_gemmi()
-    assert gemmi is not None
 
     if file_format is FileFormat.PDB:
         return gemmi.CoorFormat.Pdb

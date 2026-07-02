@@ -2,10 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
-pytest.importorskip("gemmi")
-
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     CanonicalResiduePayload,

@@ -7,7 +7,6 @@ from protrepair.io.gemmi_normalization import (
     infer_file_format,
     normalize_chain_id,
     normalize_insertion_code,
-    require_gemmi,
     to_gemmi_coor_format,
 )
 from protrepair.io.ingress_policy import StructureNormalizationPolicy
@@ -23,9 +22,6 @@ def read_structure(
     policy: StructureNormalizationPolicy | None = None,
 ) -> ProteinStructure:
     """Read a coordinate file into the canonical structure model."""
-
-    require_gemmi()
-    assert gemmi is not None
 
     file_format = infer_file_format(path)
     raw_structure = read_raw_structure(path, file_format)
@@ -53,9 +49,6 @@ def read_structure_string(
 ) -> ProteinStructure:
     """Read an in-memory coordinate payload into the canonical model."""
 
-    require_gemmi()
-    assert gemmi is not None
-
     raw_structure = read_raw_structure_string(contents, file_format)
     active_policy = StructureNormalizationPolicy() if policy is None else policy
     pdb_conect_atom_ref_pairs = (
@@ -79,9 +72,6 @@ def read_structure_string_with_policy(
 ) -> ProteinStructure:
     """Read one in-memory payload using one canonical normalization policy."""
 
-    require_gemmi()
-    assert gemmi is not None
-
     raw_structure = read_raw_structure_string(contents, file_format)
     pdb_conect_atom_ref_pairs = (
         _pdb_conect_atom_ref_pairs(contents) if file_format is FileFormat.PDB else ()
@@ -98,8 +88,6 @@ def read_structure_string_with_policy(
 def read_raw_structure(path: Path, file_format: FileFormat):
     """Read one coordinate file with a format-specific gemmi ingress path."""
 
-    assert gemmi is not None
-
     if file_format is FileFormat.PDB:
         return gemmi.read_pdb(str(path))
 
@@ -111,8 +99,6 @@ def read_raw_structure(path: Path, file_format: FileFormat):
 
 def read_raw_structure_string(contents: str, file_format: FileFormat):
     """Read one coordinate payload with a format-specific gemmi ingress path."""
-
-    assert gemmi is not None
 
     if file_format is FileFormat.PDB:
         return gemmi.read_pdb_string(contents)
