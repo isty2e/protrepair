@@ -15,6 +15,7 @@ from tests.support.canonical_builders import (
 from tests.support.request_builders import ingress_options
 from tests.support.structure_summary import summarize_structure
 
+import protrepair.io.gemmi_ingress as gemmi_ingress
 import protrepair.io.gemmi_writer as gemmi_writer
 from protrepair.diagnostics.topology import detect_disulfide_topology
 from protrepair.geometry import Vec3
@@ -1385,6 +1386,158 @@ def test_read_structure_infers_format_from_path_suffix(tmp_path: Path) -> None:
 
     assert summarize_structure(pdb_structure) == summarize_structure(structure)
     assert summarize_structure(cif_structure) == summarize_structure(structure)
+
+
+def test_read_structure_pdb_path_matches_string_ingress_with_conect(
+    tmp_path: Path,
+) -> None:
+    """PDB path ingress should match string ingress while preserving CONECT bonds."""
+
+    pdb_contents = build_pdb_text(
+        [
+            build_pdb_atom_line(
+                serial=1,
+                atom_name=" CA ",
+                altloc="A",
+                residue_name="ALA",
+                chain_id="A",
+                residue_seq=1,
+                x=1.0,
+                y=2.0,
+                z=3.0,
+                occupancy=0.20,
+                element="C",
+            ),
+            build_pdb_atom_line(
+                serial=2,
+                atom_name=" CA ",
+                altloc="B",
+                residue_name="ALA",
+                chain_id="A",
+                residue_seq=1,
+                x=4.0,
+                y=5.0,
+                z=6.0,
+                occupancy=0.80,
+                element="C",
+            ),
+            build_pdb_atom_line(
+                serial=3,
+                record_name="HETATM",
+                atom_name=" C1 ",
+                residue_name="LIG",
+                chain_id="L",
+                residue_seq=1,
+                x=7.0,
+                y=8.0,
+                z=9.0,
+                element="C",
+            ),
+            build_pdb_atom_line(
+                serial=4,
+                record_name="HETATM",
+                atom_name=" O1 ",
+                residue_name="LIG",
+                chain_id="L",
+                residue_seq=1,
+                x=8.0,
+                y=8.0,
+                z=9.0,
+                element="O",
+            ),
+            "CONECT    3    4",
+            "END",
+        ]
+    )
+    pdb_path = tmp_path / "single_read_fixture.pdb"
+    pdb_path.write_text(pdb_contents, encoding="utf-8")
+
+    from_path = read_structure(pdb_path)
+    from_string = read_structure_string(
+        pdb_contents,
+        FileFormat.PDB,
+        source_name=pdb_path.name,
+    )
+
+    assert summarize_structure(from_path) == summarize_structure(from_string)
+    assert from_path.provenance.ingress.source_name == pdb_path.name
+    assert len(from_path.topology.bonds) == 1
+    assert from_path.topology.bonds == from_string.topology.bonds
+
+
+def test_read_structure_pdb_path_reads_text_once_and_skips_file_parser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PDB path ingress should share one text read across gemmi and CONECT."""
+
+    pdb_path = tmp_path / "single_read_counter.pdb"
+    pdb_path.write_text(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    original_read_text = Path.read_text
+    read_text_calls: list[Path] = []
+
+    def _counting_read_text(
+        self: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> str:
+        if self == pdb_path:
+            read_text_calls.append(self)
+
+        return original_read_text(self, encoding=encoding, errors=errors)
+
+    def _fail_file_parser(_path: Path, _file_format: FileFormat) -> object:
+        raise AssertionError("PDB path ingress should not call read_raw_structure")
+
+    monkeypatch.setattr(Path, "read_text", _counting_read_text)
+    monkeypatch.setattr(gemmi_ingress, "read_raw_structure", _fail_file_parser)
+
+    structure = read_structure(pdb_path)
+
+    assert structure.geometry.atom_count() == 1
+    assert read_text_calls == [pdb_path]
+
+
+def test_read_structure_mmcif_path_still_uses_file_parser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mmCIF path ingress should keep its existing gemmi file-parser path."""
+
+    structure = build_canonical_structure()
+    cif_path = tmp_path / "fixture.cif"
+    cif_path.write_text(
+        write_structure_string(structure, FileFormat.MMCIF),
+        encoding="utf-8",
+    )
+    original_read_raw_structure = gemmi_ingress.read_raw_structure
+    read_raw_calls: list[FileFormat] = []
+
+    def _spy_read_raw_structure(path: Path, file_format: FileFormat) -> object:
+        read_raw_calls.append(file_format)
+        return original_read_raw_structure(path, file_format)
+
+    monkeypatch.setattr(gemmi_ingress, "read_raw_structure", _spy_read_raw_structure)
+
+    roundtripped = read_structure(cif_path)
+
+    assert summarize_structure(roundtripped) == summarize_structure(structure)
+    assert read_raw_calls == [FileFormat.MMCIF]
 
 
 def build_canonical_structure() -> ProteinStructure:

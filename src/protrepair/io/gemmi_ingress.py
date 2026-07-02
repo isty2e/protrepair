@@ -24,13 +24,15 @@ def read_structure(
     """Read a coordinate file into the canonical structure model."""
 
     file_format = infer_file_format(path)
-    raw_structure = read_raw_structure(path, file_format)
     active_policy = StructureNormalizationPolicy() if policy is None else policy
-    pdb_conect_atom_ref_pairs = (
-        _pdb_conect_atom_ref_pairs(path.read_text(encoding="utf-8"))
-        if file_format is FileFormat.PDB
-        else ()
-    )
+    if file_format is FileFormat.PDB:
+        contents = path.read_text(encoding="utf-8")
+        raw_structure = read_raw_structure_string(contents, file_format)
+        pdb_conect_atom_ref_pairs = _pdb_conect_atom_ref_pairs(contents)
+    else:
+        raw_structure = read_raw_structure(path, file_format)
+        pdb_conect_atom_ref_pairs = ()
+
     return normalize_raw_structure(
         raw_structure,
         file_format=file_format,
