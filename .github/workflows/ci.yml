@@ -25,17 +25,20 @@ jobs:
       - name: Create virtual environment
         run: python -m venv .venv
 
-      - name: Install package and dev dependencies
-        run: .venv/bin/python -m pip install ".[dev]"
+      - name: Install package, dev, and refinement dependencies
+        run: .venv/bin/python -m pip install ".[dev,refinement]"
 
       - name: Ruff
         run: .venv/bin/ruff check src/protrepair tests --extend-select=I,UP
 
+      - name: Basedpyright
+        run: .venv/bin/basedpyright src/protrepair tests
+
       - name: Unit tests
         run: .venv/bin/pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q
 
-  refinement:
-    name: Optional RDKit refinement (Python 3.12)
+  lean:
+    name: Lean optional dependency boundary (Python 3.12)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -49,22 +52,19 @@ jobs:
       - name: Create virtual environment
         run: python -m venv .venv
 
-      - name: Install package, dev, and refinement dependencies
-        run: .venv/bin/python -m pip install ".[dev,refinement]"
+      - name: Install package and dev dependencies
+        run: .venv/bin/python -m pip install ".[dev]"
 
-      - name: Verify RDKit import
-        run: .venv/bin/python -c "from rdkit import Chem; assert Chem.MolFromSmiles('CCO') is not None"
+      - name: Verify RDKit is outside the lean environment
+        run: .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rdkit') is None"
 
-      - name: Basedpyright
-        run: .venv/bin/basedpyright src/protrepair tests
-
-      - name: RDKit refinement tests
-        run: >
-          .venv/bin/pytest
-          tests/unit/test_rdkit_refinement.py
-          tests/unit/test_retained_non_polymer_hydrogen.py
-          tests/workflow/test_process_representatives.py::test_process_structure_preserves_rdkit_coordinate_digest
-          tests/workflow/test_process_representatives.py::test_process_structure_repairs_1afc_to_no_conect_rdkit_readable_output
-          tests/workflow/test_process_representatives.py::test_process_structure_2dn2_heme_cofactor_output_stays_no_conect_rdkit_readable
-          -m "not benchmark"
-          -q
+      - name: Lean optional dependency tests
+        run: |
+          rdkit_blocker="$(mktemp -d)"
+          printf 'raise ModuleNotFoundError("No module named rdkit")\n' > "$rdkit_blocker/rdkit.py"
+          PYTHONPATH="$rdkit_blocker:${PYTHONPATH:-}" .venv/bin/pytest \
+            tests/unit/test_release_artifacts.py \
+            tests/unit/test_parser_repair_performance_support.py \
+            tests/workflow/test_process_representatives.py::test_process_structure_preserves_representative_semantics \
+            tests/workflow/test_process_representatives.py::test_process_structure_preserves_rdkit_coordinate_digest \
+            -q

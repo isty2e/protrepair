@@ -41,17 +41,15 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text()
 
     assert "  checks:" in workflow
-    assert "  refinement:" in workflow
+    assert "  lean:" in workflow
     assert 'run: .venv/bin/python -m pip install ".[dev]"' in workflow
     assert '".[dev,refinement]"' in workflow
-    lean_checks_job, refinement_job = workflow.split("  refinement:", maxsplit=1)
-    assert "Basedpyright" not in lean_checks_job
-    assert "Basedpyright" in refinement_job
-    assert "Optional RDKit refinement" in workflow
-    assert "Verify RDKit import" in workflow
-    assert "MolFromSmiles" in workflow
-    assert "tests/unit/test_rdkit_refinement.py" in workflow
-    assert "tests/unit/test_retained_non_polymer_hydrogen.py" in workflow
+    full_checks_job, lean_job = workflow.split("  lean:", maxsplit=1)
+    assert "Basedpyright" in full_checks_job
+    assert "Lean optional dependency boundary" in workflow
+    assert "Verify RDKit is outside the lean environment" in lean_job
+    assert "rdkit_blocker" in lean_job
+    assert "tests/unit/test_parser_repair_performance_support.py" in lean_job
     assert "test_process_structure_preserves_rdkit_coordinate_digest" in workflow
     assert "tests/workflow/test_process_representatives.py" in workflow
     assert '-m "not benchmark"' in workflow
