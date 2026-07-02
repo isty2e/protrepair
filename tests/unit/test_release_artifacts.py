@@ -27,6 +27,8 @@ def test_release_metadata_declares_dependency_boundary() -> None:
     assert '"gemmi>=0.7.5",' in project_dependencies
     assert '"rdkit",' not in project_dependencies
     assert "[project.optional-dependencies]" in pyproject
+    assert "analysis = [" not in optional_dependencies
+    assert "matplotlib" not in optional_dependencies
     assert "gemmi" not in optional_dependencies
     assert "refinement = [" in pyproject
     assert '"rdkit",' in optional_dependencies
