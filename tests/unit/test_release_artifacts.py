@@ -33,3 +33,21 @@ def test_release_metadata_declares_dependency_boundary() -> None:
     assert "refinement = [" in pyproject
     assert '"rdkit",' in optional_dependencies
     assert "dev = [" in pyproject
+
+
+def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
+    """CI should cover both lean installs and the optional RDKit backend."""
+
+    workflow = Path(".github/workflows/ci.yml").read_text()
+
+    assert "  checks:" in workflow
+    assert "  refinement:" in workflow
+    assert 'run: .venv/bin/python -m pip install ".[dev]"' in workflow
+    assert '".[dev,refinement]"' in workflow
+    assert "Optional RDKit refinement" in workflow
+    assert "Verify RDKit import" in workflow
+    assert "MolFromSmiles" in workflow
+    assert "tests/unit/test_rdkit_refinement.py" in workflow
+    assert "tests/unit/test_retained_non_polymer_hydrogen.py" in workflow
+    assert "tests/workflow/test_process_representatives.py" in workflow
+    assert '-m "not benchmark"' in workflow

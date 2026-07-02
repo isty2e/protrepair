@@ -36,3 +36,34 @@ jobs:
 
       - name: Unit tests
         run: .venv/bin/pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q
+
+  refinement:
+    name: Optional RDKit refinement (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create virtual environment
+        run: python -m venv .venv
+
+      - name: Install package, dev, and refinement dependencies
+        run: .venv/bin/python -m pip install ".[dev,refinement]"
+
+      - name: Verify RDKit import
+        run: .venv/bin/python -c "from rdkit import Chem; assert Chem.MolFromSmiles('CCO') is not None"
+
+      - name: RDKit refinement tests
+        run: >
+          .venv/bin/pytest
+          tests/unit/test_rdkit_refinement.py
+          tests/unit/test_retained_non_polymer_hydrogen.py
+          tests/workflow/test_process_representatives.py::test_process_structure_repairs_1afc_to_no_conect_rdkit_readable_output
+          tests/workflow/test_process_representatives.py::test_process_structure_2dn2_heme_cofactor_output_stays_no_conect_rdkit_readable
+          -m "not benchmark"
+          -q
