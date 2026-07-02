@@ -671,6 +671,18 @@ def test_workflow_planning_context_projects_holo_from_kept_ligands() -> None:
     )
 
 
+def test_workflow_planning_context_validates_speculative_node_limit() -> None:
+    """Planning context should reject invalid speculative execution limits."""
+
+    assert WorkflowPlanningContext(max_speculative_nodes=1).max_speculative_nodes == 1
+
+    with pytest.raises(TypeError, match="max_speculative_nodes"):
+        WorkflowPlanningContext(max_speculative_nodes=True)
+
+    with pytest.raises(ValueError, match="positive"):
+        WorkflowPlanningContext(max_speculative_nodes=0)
+
+
 def test_plan_workflow_actions_rejects_external_spans_without_donor_context() -> None:
     """Explicit external spans should require donor availability in context."""
 

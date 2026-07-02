@@ -129,6 +129,7 @@ from protrepair.workflow.engine.reporting import evaluate_requested_goal_report
 from protrepair.workflow.engine.runtime import (
     WorkflowRuntimeState,
     _workflow_children_with_regression_retention,
+    execute_iterative_workflow,
 )
 from protrepair.workflow.planning.action.registry import WorkflowStateAction
 from protrepair.workflow.planning.planner import (
@@ -1694,6 +1695,89 @@ def test_process_structure_executes_parser_witness_repair_inside_workflow_pass(
     ]
     assert result.structure.provenance.ingress.source_name == "after-parser-witness"
     assert parser_candidate_clusters == [_fake_parser_witness_clusters(residue_id, 1)]
+
+
+def test_execute_iterative_workflow_caps_runaway_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workflow runtime should stop planner loops with no terminal branch."""
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    structure = build_workflow_structure(
+        chains=(
+            build_chain(
+                "A",
+                (build_residue("ALA", "A", 1, ("N", "CA", "C", "O", "CB")),),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="runaway-frontier-root",
+    )
+    transformer = TerminalAugmentationTransformer(
+        scope=ResidueSetScope(residue_ids=(residue_id,))
+    )
+    planner_call_count = 0
+
+    def fake_plan_workflow_actions(
+        current_structure: ProteinStructure,
+        *,
+        requested_goals: RequestedGoalSet,
+        transform_requests: WorkflowTransformRequests,
+        component_library=None,
+        planner_memory: WorkflowPlannerMemory | None = None,
+        planning_context=None,
+        retained_non_polymer_chemistry_evidence=(),
+    ) -> WorkflowPlanningOutcome:
+        del (
+            requested_goals,
+            transform_requests,
+            component_library,
+            planner_memory,
+            planning_context,
+            retained_non_polymer_chemistry_evidence,
+        )
+        nonlocal planner_call_count
+        planner_call_count += 1
+        return WorkflowPlanningOutcome(
+            structure_planning_signature=StructurePlanningSignature.from_facts(
+                StructureProjectionStateFacts.from_structure(current_structure)
+            ),
+            transformers=(transformer,),
+        )
+
+    def fake_execute_workflow_transformer(
+        result: ProcessResult,
+        *,
+        transformer: WorkflowStateAction,
+        execution_context,
+    ) -> ProcessResult:
+        del transformer
+        del execution_context
+        return result
+
+    monkeypatch.setattr(
+        "protrepair.workflow.engine.runtime.plan_workflow_actions",
+        fake_plan_workflow_actions,
+    )
+    monkeypatch.setattr(
+        "protrepair.workflow.engine.runtime.execute_workflow_transformer",
+        fake_execute_workflow_transformer,
+    )
+
+    with pytest.raises(ValueError, match="max_speculative_nodes=2"):
+        execute_iterative_workflow(
+            structure,
+            requested_goals=RequestedGoalSet(),
+            transform_requests=WorkflowTransformRequests(),
+            component_library=build_default_component_library(),
+            planning_context=WorkflowPlanningContext(max_speculative_nodes=2),
+            reference_structure=None,
+            orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
+            protonate_histidines=False,
+        )
+
+    assert planner_call_count == 2
 
 
 def test_process_structure_requeries_parser_witness_repair_between_passes(

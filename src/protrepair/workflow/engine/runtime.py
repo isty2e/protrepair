@@ -141,6 +141,11 @@ def execute_iterative_workflow(
                 adopted_children=(),
             )
             continue
+        if len(trace.nodes) >= planning_context.max_speculative_nodes:
+            trace = trace.stop(
+                reason=SpeculativeStopReason.ITERATION_LIMIT_REACHED
+            )
+            break
 
         adopted_children: list[
             SpeculativeAdoptedChild[
@@ -234,6 +239,12 @@ def execute_iterative_workflow(
         )
 
     if not terminal_branches:
+        if trace.stop_reason is SpeculativeStopReason.ITERATION_LIMIT_REACHED:
+            raise ValueError(
+                "iterative workflow execution reached "
+                f"max_speculative_nodes={planning_context.max_speculative_nodes} "
+                "before any terminal branch"
+            )
         raise ValueError(
             "iterative workflow execution requires at least one terminal branch"
         )
