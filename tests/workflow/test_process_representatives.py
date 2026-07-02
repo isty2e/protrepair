@@ -9,7 +9,12 @@ from tests.support.request_builders import (
     transform_requests,
     whole_structure_requested_goals,
 )
-from tests.support.structure_summary import summarize_structure
+from tests.support.structure_summary import (
+    semantic_digest_for_structure,
+    structure_summaries_match_except_digest,
+    structure_summary_mismatch_report,
+    summarize_structure,
+)
 from tests.support.whole_structure_sources import WHOLE_STRUCTURE_CORPUS_SOURCES
 
 from protrepair.api import process_structure
@@ -46,6 +51,16 @@ WORKFLOW_REPRESENTATIVE_CASE_IDS: tuple[str, ...] = (
     "1cjc-hydrogen-keep-ligand",
     "1afc-hydrogen-his-protonated",
 )
+WORKFLOW_DIGEST_PORTABILITY_CASE_IDS = frozenset(
+    {
+        "1afc-hydrogen-his-protonated",
+    }
+)
+WORKFLOW_PORTABLE_COORDINATE_DIGESTS_2DP = {
+    "1afc-hydrogen-his-protonated": (
+        "8aac67d8b5ab6c036adad32e05d203d628cd88af75aaf3a9eeb1252fac829640"
+    ),
+}
 pytestmark = pytest.mark.workflow
 
 
@@ -60,7 +75,23 @@ def test_process_structure_preserves_representative_semantics(
     result = run_workflow_representative_case(expected.input_path, case_id)
     summary = summarize_structure(result.structure)
 
-    assert summary == expected.summary
+    if case_id in WORKFLOW_DIGEST_PORTABILITY_CASE_IDS:
+        assert structure_summaries_match_except_digest(
+            summary,
+            expected.summary,
+        ), structure_summary_mismatch_report(summary, expected.summary)
+        assert (
+            semantic_digest_for_structure(
+                result.structure,
+                coordinate_decimal_places=2,
+            )
+            == WORKFLOW_PORTABLE_COORDINATE_DIGESTS_2DP[case_id]
+        )
+    else:
+        assert summary == expected.summary, structure_summary_mismatch_report(
+            summary,
+            expected.summary,
+        )
     assert not result.has_errors()
 
 

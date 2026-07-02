@@ -1,5 +1,7 @@
 """Tests for deterministic structure summary semantics."""
 
+from dataclasses import replace
+
 from tests.support.canonical_builders import (
     atom_payload,
     chain_payload,
@@ -8,7 +10,13 @@ from tests.support.canonical_builders import (
 from tests.support.canonical_builders import (
     build_structure as build_canonical_structure,
 )
-from tests.support.structure_summary import summarize_structure
+from tests.support.representative_cases import REPRESENTATIVE_CASES
+from tests.support.structure_summary import (
+    semantic_digest_for_structure,
+    structure_summaries_match_except_digest,
+    structure_summary_mismatch_report,
+    summarize_structure,
+)
 
 from protrepair.geometry import Vec3
 from protrepair.structure.labels import ResidueId
@@ -102,3 +110,53 @@ def test_structure_summary_reports_ligand_only_structures_without_polymer_range(
     assert summary.atom_count == 3
     assert summary.first_residue is None
     assert summary.last_residue is None
+
+
+def test_structure_summary_mismatch_report_identifies_digest_only_drift() -> None:
+    """Digest-only representative drift should be diagnosable as coordinate-only."""
+
+    expected = REPRESENTATIVE_CASES["1afc-hydrogen-his-protonated"].summary
+    actual = replace(
+        expected,
+        semantic_digest="d5d0abbc29444683d4752a1342b49921896f585cca5602bb58b34254169ae0ff",
+    )
+
+    assert structure_summaries_match_except_digest(actual, expected)
+
+    report = structure_summary_mismatch_report(actual, expected)
+
+    assert "only semantic_digest differs" in report
+    assert "coordinate-only drift" in report
+    assert expected.semantic_digest in report
+    assert actual.semantic_digest in report
+
+
+def test_structure_summary_digest_helper_matches_default_summary_precision() -> None:
+    """The standalone digest helper should preserve summary digest semantics."""
+
+    structure = build_canonical_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="GLY",
+                        residue_id=ResidueId(chain_id="A", seq_num=1),
+                        atoms=(
+                            atom_payload("N", "N", Vec3(0.004, 0.0, 0.0)),
+                            atom_payload("CA", "C", Vec3(1.006, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="summary-digest-helper",
+    )
+    summary = summarize_structure(structure)
+
+    assert semantic_digest_for_structure(structure) == summary.semantic_digest
+    assert semantic_digest_for_structure(
+        structure,
+        coordinate_decimal_places=2,
+    ) != summary.semantic_digest
