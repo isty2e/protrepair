@@ -4,6 +4,10 @@ import json
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from protrepair.sources._network import (
+    DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
+    normalize_source_retrieval_timeout,
+)
 from protrepair.sources.uniprot import (
     UniProtSequenceFamily,
     UniProtSequenceFamilyFetchOutcome,
@@ -20,13 +24,17 @@ JsonMapping = dict[str, object]
 
 def fetch_uniprot_sequence(
     reference: UniProtSequenceReference,
+    *,
+    timeout_seconds: float = DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
 ) -> UniProtSequenceFetchOutcome:
     """Fetch one canonical or isoform UniProt sequence record."""
 
+    timeout = normalize_source_retrieval_timeout(timeout_seconds)
     request_url = _uniprot_record_url(reference)
     payload, failure = _fetch_uniprot_payload(
         reference=reference,
         request_url=request_url,
+        timeout_seconds=timeout,
     )
     if failure is not None:
         return UniProtSequenceFetchOutcome.failure_result(failure)
@@ -55,9 +63,12 @@ def fetch_uniprot_sequence(
 
 def fetch_uniprot_sequence_family(
     reference: UniProtSequenceReference,
+    *,
+    timeout_seconds: float = DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
 ) -> UniProtSequenceFamilyFetchOutcome:
     """Fetch one canonical UniProt sequence plus all declared isoform sequences."""
 
+    timeout = normalize_source_retrieval_timeout(timeout_seconds)
     canonical_reference = UniProtSequenceReference(
         accession=reference.accession,
         residue_start=reference.residue_start,
@@ -67,6 +78,7 @@ def fetch_uniprot_sequence_family(
     canonical_payload, canonical_failure = _fetch_uniprot_payload(
         reference=canonical_reference,
         request_url=canonical_request_url,
+        timeout_seconds=timeout,
     )
     if canonical_failure is not None:
         return UniProtSequenceFamilyFetchOutcome.failure_result(canonical_failure)
@@ -105,7 +117,8 @@ def fetch_uniprot_sequence_family(
                 isoform_accession=isoform_accession,
                 residue_start=reference.residue_start,
                 residue_end=reference.residue_end,
-            )
+            ),
+            timeout_seconds=timeout,
         )
         for isoform_accession in isoform_accessions
     )
@@ -134,6 +147,7 @@ def _fetch_uniprot_payload(
     *,
     reference: UniProtSequenceReference,
     request_url: str,
+    timeout_seconds: float,
 ) -> tuple[JsonMapping | None, UniProtSequenceFetchFailure | None]:
     """Fetch and decode one UniProt JSON payload or return a typed failure."""
 
@@ -142,7 +156,7 @@ def _fetch_uniprot_payload(
         headers={"Accept": "application/json"},
     )
     try:
-        with urlopen(request) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
         return None, UniProtSequenceFetchFailure(
@@ -161,6 +175,16 @@ def _fetch_uniprot_payload(
             requested_reference=reference,
             kind=UniProtSequenceFetchFailureKind.REMOTE_ERROR,
             message=f"UniProt request failed: {error.reason}",
+            source_url=request_url,
+        )
+    except TimeoutError as error:
+        return None, UniProtSequenceFetchFailure(
+            requested_reference=reference,
+            kind=UniProtSequenceFetchFailureKind.REMOTE_ERROR,
+            message=(
+                "UniProt request timed out after "
+                f"{timeout_seconds:g} seconds: {error}"
+            ),
             source_url=request_url,
         )
     except json.JSONDecodeError as error:
