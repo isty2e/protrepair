@@ -1,6 +1,8 @@
 """Unit and smoke tests for the FASPR side-chain packing backend."""
 
+import math
 from pathlib import Path
+from typing import cast
 
 import pytest
 from tests.support.canonical_builders import (
@@ -54,6 +56,27 @@ def test_faspr_backend_declares_expected_capabilities() -> None:
     assert not capabilities.supports_refinement
     assert not capabilities.supports_noncanonical_components
     assert capabilities.deterministic_given_same_inputs
+
+
+@pytest.mark.parametrize("timeout_seconds", [0.0, -1.0, math.inf, math.nan])
+def test_faspr_backend_rejects_invalid_timeout(timeout_seconds: float) -> None:
+    """FASPR backend timeouts must be positive finite values."""
+
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        FasprPackingBackend(timeout_seconds=timeout_seconds)
+
+
+@pytest.mark.parametrize(
+    "timeout_seconds",
+    [cast(float, True), cast(float, "5")],
+)
+def test_faspr_backend_rejects_non_numeric_timeout(
+    timeout_seconds: float,
+) -> None:
+    """Runtime timeout validation should reject bools and numeric strings."""
+
+    with pytest.raises(TypeError, match="timeout_seconds"):
+        FasprPackingBackend(timeout_seconds=timeout_seconds)
 
 
 def test_faspr_backend_builds_local_sequence_override_with_fake_executable(
@@ -111,6 +134,40 @@ def test_faspr_backend_builds_local_sequence_override_with_fake_executable(
     assert result.backend_name == "faspr"
     assert result.changed_residue_ids == ()
     assert result.packed_structure.chain_ids() == ("A",)
+
+
+def test_faspr_backend_converts_subprocess_timeout(
+    tmp_path: Path,
+) -> None:
+    """A hanging FASPR subprocess should become a typed backend failure."""
+
+    executable_path = tmp_path / "FASPR"
+    executable_path.write_text(
+        "\n".join(
+            (
+                "#!/bin/sh",
+                "sleep 5",
+            )
+        ),
+        encoding="utf-8",
+    )
+    executable_path.chmod(0o755)
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    with pytest.raises(PackingBackendExecutionError) as exc_info:
+        FasprPackingBackend(
+            executable_path=executable_path,
+            timeout_seconds=0.05,
+        ).pack(plan)
+
+    error_message = str(exc_info.value)
+    assert "timed out" in error_message
+    assert "0.05" in error_message
+    assert str(executable_path) in error_message
 
 
 def test_faspr_backend_preserves_surviving_topology_bonds_with_fake_executable(
