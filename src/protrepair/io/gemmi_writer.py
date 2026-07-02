@@ -1,5 +1,7 @@
 """gemmi-backed writers that project canonical structures to coordinate text."""
 
+import os
+import secrets
 from pathlib import Path
 
 from protrepair.io.gemmi_normalization import (
@@ -32,11 +34,74 @@ def write_structure(
     resolved_format = (
         infer_file_format(output_path) if file_format is None else file_format
     )
+    serialized_structure = write_structure_string(structure, resolved_format)
+    _atomic_write_text(output_path, serialized_structure)
 
-    output_path.write_text(
-        write_structure_string(structure, resolved_format),
-        encoding="utf-8",
+
+def _atomic_write_text(output_path: Path, text: str) -> None:
+    """Write text through a same-directory temporary file and atomic replace."""
+
+    temp_path: Path | None = None
+    file_descriptor: int | None = None
+    try:
+        temp_path, file_descriptor = _open_same_directory_temp_file(output_path)
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as file:
+            file_descriptor = None
+            file.write(text)
+            file.flush()
+            os.fsync(file.fileno())
+
+        _preserve_existing_output_mode(temp_path, output_path)
+        temp_path.replace(output_path)
+    except BaseException:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        if temp_path is not None:
+            _remove_temporary_output(temp_path)
+        raise
+
+
+def _open_same_directory_temp_file(output_path: Path) -> tuple[Path, int]:
+    """Create one exclusive temporary file next to the output path."""
+
+    parent = output_path.parent
+    for _ in range(100):
+        temp_path = parent / f".{output_path.name}.{secrets.token_hex(8)}.tmp"
+        try:
+            file_descriptor = os.open(
+                temp_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o666,
+            )
+        except FileExistsError:
+            continue
+
+        return temp_path, file_descriptor
+
+    raise FileExistsError(
+        "could not allocate an unused temporary output path for "
+        f"{output_path}"
     )
+
+
+def _remove_temporary_output(temp_path: Path) -> None:
+    """Best-effort cleanup for temporary output files."""
+
+    try:
+        temp_path.unlink()
+    except OSError:
+        pass
+
+
+def _preserve_existing_output_mode(temp_path: Path, output_path: Path) -> None:
+    """Keep existing target permissions across atomic replacement."""
+
+    try:
+        output_mode = output_path.stat().st_mode & 0o777
+    except FileNotFoundError:
+        return
+
+    temp_path.chmod(output_mode)
 
 
 def write_structure_string(structure: ProteinStructure, file_format: FileFormat) -> str:

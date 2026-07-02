@@ -1,7 +1,9 @@
 """Focused tests for the gemmi-backed I/O boundary."""
 
+import stat
 from pathlib import Path
 
+import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     CanonicalResiduePayload,
@@ -13,9 +15,15 @@ from tests.support.canonical_builders import (
 from tests.support.request_builders import ingress_options
 from tests.support.structure_summary import summarize_structure
 
+import protrepair.io.gemmi_writer as gemmi_writer
 from protrepair.diagnostics.topology import detect_disulfide_topology
 from protrepair.geometry import Vec3
-from protrepair.io import read_structure, read_structure_string, write_structure_string
+from protrepair.io import (
+    read_structure,
+    read_structure_string,
+    write_structure,
+    write_structure_string,
+)
 from protrepair.io.ingress_policy import (
     LigandHandling,
     StructureNormalizationPolicy,
@@ -1203,6 +1211,94 @@ def test_write_structure_string_roundtrips_pdb_and_mmcif() -> None:
 
     assert summarize_structure(pdb_roundtrip) == summarize_structure(structure)
     assert summarize_structure(mmcif_roundtrip) == summarize_structure(structure)
+
+
+def test_write_structure_writes_content_via_atomic_path_boundary(
+    tmp_path: Path,
+) -> None:
+    """Path writer should preserve serialized content and remove temp files."""
+
+    structure = build_canonical_structure()
+    output_path = tmp_path / "fixture.pdb"
+
+    write_structure(structure, output_path)
+
+    assert output_path.read_text(encoding="utf-8") == write_structure_string(
+        structure,
+        FileFormat.PDB,
+    )
+    assert summarize_structure(read_structure(output_path)) == summarize_structure(
+        structure
+    )
+    assert tuple(tmp_path.glob(".fixture.pdb.*.tmp")) == ()
+
+
+def test_write_structure_preserves_existing_output_permissions(
+    tmp_path: Path,
+) -> None:
+    """Atomic replacement should not relax or tighten existing file mode bits."""
+
+    structure = build_canonical_structure()
+    output_path = tmp_path / "fixture.pdb"
+    output_path.write_text("original", encoding="utf-8")
+    output_path.chmod(0o600)
+
+    write_structure(structure, output_path)
+
+    assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
+    assert summarize_structure(read_structure(output_path)) == summarize_structure(
+        structure
+    )
+
+
+def test_write_structure_does_not_touch_output_when_serialization_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Serialization failure should not create or replace boundary files."""
+
+    output_path = tmp_path / "fixture.pdb"
+    output_path.write_text("original", encoding="utf-8")
+
+    def _fail_serialization(
+        _structure: ProteinStructure,
+        _file_format: FileFormat,
+    ) -> str:
+        raise ValueError("serialization blocked")
+
+    monkeypatch.setattr(gemmi_writer, "write_structure_string", _fail_serialization)
+
+    with pytest.raises(ValueError, match="serialization blocked"):
+        write_structure(build_canonical_structure(), output_path)
+
+    assert output_path.read_text(encoding="utf-8") == "original"
+    assert tuple(tmp_path.glob(".fixture.pdb.*.tmp")) == ()
+
+
+def test_write_structure_removes_temp_file_when_atomic_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replace failure should preserve the old target and clean temp output."""
+
+    structure = build_canonical_structure()
+    output_path = tmp_path / "fixture.pdb"
+    output_path.write_text("original", encoding="utf-8")
+    original_replace = Path.replace
+
+    def _fail_replace(self: Path, target: Path) -> Path:
+        if target == output_path:
+            raise OSError("replace blocked")
+
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", _fail_replace)
+
+    with pytest.raises(OSError, match="replace blocked"):
+        write_structure(structure, output_path)
+
+    assert output_path.read_text(encoding="utf-8") == "original"
+    assert tuple(tmp_path.glob(".fixture.pdb.*.tmp")) == ()
 
 
 def test_write_structure_string_preserves_formal_charge_fields() -> None:
