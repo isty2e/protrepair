@@ -3,11 +3,11 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from protrepair.relation.endpoint import (
+from protrepair.scope import Scope
+from protrepair.structure.endpoint import (
     StructureCarrierKind,
     StructureEndpoint,
 )
-from protrepair.scope import Scope
 
 
 def _require_structure_endpoint(

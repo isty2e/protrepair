@@ -1,4 +1,4 @@
-"""Canonical cross-carrier scoped structure endpoints."""
+"""Canonical scoped endpoints into structure carriers."""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -18,7 +18,7 @@ from protrepair.scope import (
 
 
 class StructureCarrierKind(str, Enum):
-    """Closed structure-carrier kinds used in cross-carrier endpoints."""
+    """Closed structure-carrier kinds used in scoped endpoints."""
 
     SOURCE = "source"
     SUPPORTING = "supporting"
@@ -60,7 +60,7 @@ class StructureRealizationSelector:
 
 @dataclass(frozen=True, slots=True)
 class StructureCarrierHandle:
-    """Opaque handle identifying one structure carrier in a relation or lineage."""
+    """Opaque handle identifying one structure carrier in endpoints or lineage."""
 
     kind: StructureCarrierKind
     token: str | None = None

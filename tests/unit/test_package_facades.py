@@ -8,6 +8,7 @@ EXPLICIT_FACADE_PACKAGES = (
     "protrepair.io",
     "protrepair.diagnostics",
     "protrepair.sources",
+    "protrepair.relation",
 )
 
 
@@ -29,7 +30,7 @@ def test_cleaned_package_facades_are_explicit_exports() -> None:
 def test_package_facade_exports_resolve() -> None:
     """Every package facade export should resolve at package import time."""
 
-    for package_name in (*EXPLICIT_FACADE_PACKAGES, "protrepair.relation"):
+    for package_name in EXPLICIT_FACADE_PACKAGES:
         package = importlib.import_module(package_name)
         missing_exports = [
             export_name
@@ -40,15 +41,3 @@ def test_package_facade_exports_resolve() -> None:
         assert not missing_exports, (
             f"{package_name} has unresolved exports: {missing_exports}"
         )
-
-
-def test_relation_lazy_facade_documents_concrete_cycle() -> None:
-    """The remaining lazy relation facade should document its concrete cycle."""
-
-    package_path = Path("src/protrepair/relation/__init__.py")
-    contents = package_path.read_text()
-
-    assert "def __getattr__" in contents
-    assert "structure.provenance" in contents
-    assert "relation.evidence" in contents
-
