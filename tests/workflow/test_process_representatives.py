@@ -83,19 +83,38 @@ def test_process_structure_preserves_representative_semantics(
             summary,
             expected.summary,
         ), structure_summary_mismatch_report(summary, expected.summary)
-        _assert_rdkit_coordinate_digest_matches(
-            case_id,
-            semantic_digest_for_structure(
-                result.structure,
-                coordinate_decimal_places=2,
-            ),
-        )
     else:
         assert summary == expected.summary, structure_summary_mismatch_report(
             summary,
             expected.summary,
         )
     assert not result.has_errors()
+
+
+@pytest.mark.representative_regression
+@pytest.mark.parametrize(
+    "case_id",
+    tuple(WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP),
+)
+def test_process_structure_preserves_rdkit_coordinate_digest(case_id: str) -> None:
+    """RDKit-backed coordinate digest should match registered backend versions."""
+
+    expected = REPRESENTATIVE_CASES[case_id]
+    result = run_workflow_representative_case(expected.input_path, case_id)
+    summary = summarize_structure(result.structure)
+
+    assert not result.has_errors()
+    assert structure_summaries_match_except_digest(
+        summary,
+        expected.summary,
+    ), structure_summary_mismatch_report(summary, expected.summary)
+    _assert_rdkit_coordinate_digest_matches(
+        case_id,
+        semantic_digest_for_structure(
+            result.structure,
+            coordinate_decimal_places=2,
+        ),
+    )
 
 
 def _assert_rdkit_coordinate_digest_matches(

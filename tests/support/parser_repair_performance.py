@@ -8,8 +8,6 @@ from pathlib import Path
 from time import perf_counter
 from typing import ParamSpec, TypeVar
 
-from rdkit import RDLogger
-
 from protrepair.chemistry import (
     ComponentLibrary,
     RestraintLibrary,
@@ -759,6 +757,11 @@ def _profiled_callable(
 
 def _disable_rdkit_logs() -> None:
     """Suppress noisy RDKit parser warnings during opt-in probe runs."""
+
+    try:
+        from rdkit import RDLogger
+    except ImportError:
+        return
 
     disable_log = getattr(RDLogger, "DisableLog", None)
     if callable(disable_log):

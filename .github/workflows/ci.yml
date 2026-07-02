@@ -63,6 +63,7 @@ jobs:
           .venv/bin/pytest
           tests/unit/test_rdkit_refinement.py
           tests/unit/test_retained_non_polymer_hydrogen.py
+          tests/workflow/test_process_representatives.py::test_process_structure_preserves_rdkit_coordinate_digest
           tests/workflow/test_process_representatives.py::test_process_structure_repairs_1afc_to_no_conect_rdkit_readable_output
           tests/workflow/test_process_representatives.py::test_process_structure_2dn2_heme_cofactor_output_stays_no_conect_rdkit_readable
           -m "not benchmark"
