@@ -11,7 +11,7 @@ from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.errors import (
     PackingError,
-    PrasError,
+    ProtrepairError,
     ResidueNotFoundError,
     StructureNormalizationError,
 )
@@ -72,7 +72,7 @@ FASPR_ALPHABET = PackingAlphabet(
 )
 
 
-class PackingBackendError(PrasError):
+class PackingBackendError(ProtrepairError):
     """Raised when a side-chain packing backend cannot satisfy one request."""
 
 

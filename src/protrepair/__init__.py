@@ -4,6 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from protrepair.analysis.kinds import AnalysisKind
 from protrepair.api import process_structure
+from protrepair.errors import ProtrepairError
 from protrepair.transformer.refinement.spec import RepairRefinementSpec
 from protrepair.workflow.contracts import (
     ProcessResult,
@@ -22,6 +23,7 @@ __all__ = [
     "__version__",
     "AnalysisKind",
     "ProcessResult",
+    "ProtrepairError",
     "RepairRefinementSpec",
     "RetainedNonPolymerChemistryOverride",
     "StructureIngressOptions",

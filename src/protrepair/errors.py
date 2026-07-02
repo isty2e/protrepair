@@ -1,49 +1,49 @@
 """Project-specific exceptions for the ``protrepair`` package."""
 
 
-class PrasError(Exception):
+class ProtrepairError(Exception):
     """Base exception for the ``protrepair`` package."""
 
 
-class PackingError(PrasError):
+class PackingError(ProtrepairError):
     """Raised when a side-chain packing request or result is invalid."""
 
 
-class RefinementError(PrasError):
+class RefinementError(ProtrepairError):
     """Raised when a local refinement request or backend execution is invalid."""
 
 
-class ModelInvariantError(PrasError):
+class ModelInvariantError(ProtrepairError):
     """Raised when a canonical model invariant is violated."""
 
 
-class AtomNotFoundError(PrasError):
+class AtomNotFoundError(ProtrepairError):
     """Raised when a residue does not contain a requested atom."""
 
 
-class ResidueNotFoundError(PrasError):
+class ResidueNotFoundError(ProtrepairError):
     """Raised when a chain does not contain a requested residue."""
 
 
-class ChainNotFoundError(PrasError):
+class ChainNotFoundError(ProtrepairError):
     """Raised when a structure does not contain a requested chain."""
 
 
-class UnknownComponentError(PrasError):
+class UnknownComponentError(ProtrepairError):
     """Raised when a component library cannot resolve a component identifier."""
 
 
-class GemmiUnavailableError(PrasError):
+class GemmiUnavailableError(ProtrepairError):
     """Raised when gemmi-backed I/O is requested without gemmi installed."""
 
 
-class RdkitUnavailableError(PrasError):
+class RdkitUnavailableError(ProtrepairError):
     """Raised when RDKit-backed refinement is requested without RDKit."""
 
 
-class UnsupportedFileFormatError(PrasError):
+class UnsupportedFileFormatError(ProtrepairError):
     """Raised when a structure file format cannot be inferred or serialized."""
 
 
-class StructureNormalizationError(PrasError):
+class StructureNormalizationError(ProtrepairError):
     """Raised when ingress normalization cannot produce a canonical structure."""
