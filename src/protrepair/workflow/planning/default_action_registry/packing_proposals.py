@@ -75,7 +75,7 @@ def _automatic_committed_packing_specs(
 ) -> tuple[PackingSpec, ...]:
     """Return automatic side-chain packing proposals after local FF stalls."""
 
-    if domain.requests_explicit_repair_refinement():
+    if domain.explicit_repair.is_requested():
         return ()
 
     parser_compatibility_facts = domain.parser_compatibility_facts
@@ -89,9 +89,9 @@ def _automatic_committed_packing_specs(
         is not HydrogenCoverageState.COMPLETE
     ):
         return ()
-    if not domain.has_adopted_action_family(LocalRefinementTransformer):
+    if not domain.memory.has_action_family(LocalRefinementTransformer):
         return ()
-    if domain.has_adopted_action_family(CommittedPackingTransformer):
+    if domain.memory.has_action_family(CommittedPackingTransformer):
         return ()
 
     residue_ids = _automatic_packing_parser_burden_residue_ids(domain)

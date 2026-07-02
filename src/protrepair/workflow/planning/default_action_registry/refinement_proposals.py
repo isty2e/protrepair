@@ -35,12 +35,12 @@ def local_refinement_is_admissible(domain: WorkflowActionDomain) -> bool:
     ):
         return False
 
-    if domain.requests_explicit_repair_refinement():
+    if domain.explicit_repair.is_requested():
         return (
-            domain.has_intrinsic_geometry_burden()
-            or domain.has_parser_compatibility_burden()
-            or domain.has_interaction_burden()
-            or domain.has_prior_augmentation_adoption()
+            domain.burden.has_intrinsic_geometry_burden()
+            or domain.burden.has_parser_compatibility_burden()
+            or domain.burden.has_interaction_burden()
+            or domain.memory.has_prior_augmentation_adoption()
         )
 
     return DEFAULT_LOCAL_REFINEMENT_PROPOSAL_POLICY.automatic_is_admissible(domain)
@@ -51,7 +51,7 @@ def backbone_window_refinement_is_admissible(
 ) -> bool:
     """Return whether requested backbone-window operator work is admissible."""
 
-    return domain.requires_backbone_window_refinement()
+    return bool(domain.state_deficit.backbone_window_operator)
 
 
 def backbone_window_refinement_proposals(

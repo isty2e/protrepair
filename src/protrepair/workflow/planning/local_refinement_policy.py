@@ -70,9 +70,9 @@ class LocalRefinementProposalPolicy:
 
         requested_residue_ids = repair_refinement.scope_spec.referenced_residue_ids()
         joint_focus_residue_ids = requested_residue_ids
-        if domain.has_prior_augmentation_adoption():
+        if domain.memory.has_prior_augmentation_adoption():
             prerequisite_residue_ids = (
-                domain.explicit_repair_refinement_prerequisite_residue_ids()
+                domain.explicit_repair.prerequisite_residue_ids()
             )
             if prerequisite_residue_ids:
                 joint_focus_residue_ids = prerequisite_residue_ids
@@ -82,9 +82,9 @@ class LocalRefinementProposalPolicy:
             focus_residue_ids=joint_focus_residue_ids,
             component_library=domain.component_library,
             chemistry_readiness_facts=domain.chemistry_readiness_facts,
-            include_ligands=domain.is_holo_context(),
+            include_ligands=domain.burden.is_holo_context(),
         )
-        if domain.has_prior_augmentation_adoption():
+        if domain.memory.has_prior_augmentation_adoption():
             ordered_joint_scope_proposals = joint_scope_proposals
         else:
             ordered_joint_scope_proposals = batch_joint_correction_scope_proposals(
@@ -127,13 +127,13 @@ class LocalRefinementProposalPolicy:
     ) -> bool:
         """Return whether automatic local refinement may be proposed."""
 
-        if not domain.has_adopted_action_family(LocalRefinementTransformer):
+        if not domain.memory.has_action_family(LocalRefinementTransformer):
             return True
 
-        return domain.has_adopted_action_family(CommittedPackingTransformer) and (
-            domain.has_intrinsic_geometry_burden()
-            or domain.has_parser_compatibility_burden()
-            or domain.has_interaction_burden()
+        return domain.memory.has_action_family(CommittedPackingTransformer) and (
+            domain.burden.has_intrinsic_geometry_burden()
+            or domain.burden.has_parser_compatibility_burden()
+            or domain.burden.has_interaction_burden()
         )
 
     def automatic_specs(
