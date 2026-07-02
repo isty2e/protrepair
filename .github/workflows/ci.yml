@@ -31,9 +31,6 @@ jobs:
       - name: Ruff
         run: .venv/bin/ruff check src/protrepair tests --extend-select=I,UP
 
-      - name: Basedpyright
-        run: .venv/bin/basedpyright src/protrepair tests
-
       - name: Unit tests
         run: .venv/bin/pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q
 
@@ -57,6 +54,9 @@ jobs:
 
       - name: Verify RDKit import
         run: .venv/bin/python -c "from rdkit import Chem; assert Chem.MolFromSmiles('CCO') is not None"
+
+      - name: Basedpyright
+        run: .venv/bin/basedpyright src/protrepair tests
 
       - name: RDKit refinement tests
         run: >

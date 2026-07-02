@@ -44,6 +44,9 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
     assert "  refinement:" in workflow
     assert 'run: .venv/bin/python -m pip install ".[dev]"' in workflow
     assert '".[dev,refinement]"' in workflow
+    lean_checks_job, refinement_job = workflow.split("  refinement:", maxsplit=1)
+    assert "Basedpyright" not in lean_checks_job
+    assert "Basedpyright" in refinement_job
     assert "Optional RDKit refinement" in workflow
     assert "Verify RDKit import" in workflow
     assert "MolFromSmiles" in workflow
