@@ -33,10 +33,6 @@ class UnknownComponentError(ProtrepairError):
     """Raised when a component library cannot resolve a component identifier."""
 
 
-class GemmiUnavailableError(ProtrepairError):
-    """Raised when gemmi-backed I/O is requested without gemmi installed."""
-
-
 class RdkitUnavailableError(ProtrepairError):
     """Raised when RDKit-backed refinement is requested without RDKit."""
 
