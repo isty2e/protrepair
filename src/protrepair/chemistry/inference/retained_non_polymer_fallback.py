@@ -94,6 +94,32 @@ def retained_non_polymer_rdkit_fallback_heavy_bond_definitions(
     )
 
 
+def retained_non_polymer_rdkit_fallback_hydrogen_bond_definitions(
+    hydrogenated_molecule: "Mol",
+) -> tuple[BondDefinition, ...]:
+    """Return generated H-heavy bond definitions from an RDKit fallback molecule."""
+
+    atom_names_by_index = _rdkit_fallback_atom_names_by_index(
+        hydrogenated_molecule
+    )
+    return tuple(
+        BondDefinition(
+            atom_name_1=atom_names_by_index[begin_atom.GetIdx()],
+            atom_name_2=atom_names_by_index[end_atom.GetIdx()],
+            order=max(1, round(bond.GetBondTypeAsDouble())),
+            aromatic=bond.GetIsAromatic(),
+        )
+        for bond in hydrogenated_molecule.GetBonds()
+        for begin_atom, end_atom in (
+            (
+                hydrogenated_molecule.GetAtomWithIdx(bond.GetBeginAtomIdx()),
+                hydrogenated_molecule.GetAtomWithIdx(bond.GetEndAtomIdx()),
+            ),
+        )
+        if (begin_atom.GetAtomicNum() == 1) != (end_atom.GetAtomicNum() == 1)
+    )
+
+
 def retained_non_polymer_rdkit_fallback_supports_passive_context(
     residue_site: ResidueSite,
     residue_geometry: ResidueGeometry,
@@ -246,3 +272,22 @@ def _rdkit_atom_name(atom: "Atom") -> str:
         raise ValueError("RDKit fallback atom is missing PDB residue metadata")
 
     return residue_info.GetName().strip()
+
+
+def _rdkit_fallback_atom_names_by_index(
+    hydrogenated_molecule: "Mol",
+) -> dict[int, str]:
+    """Return fallback atom names matching RDKit-generated H append order."""
+
+    atom_names_by_index: dict[int, str] = {}
+    hydrogen_index = 1
+    for atom in hydrogenated_molecule.GetAtoms():
+        atom_index = atom.GetIdx()
+        if atom.GetAtomicNum() == 1:
+            atom_names_by_index[atom_index] = f"H{hydrogen_index:03d}"
+            hydrogen_index += 1
+            continue
+
+        atom_names_by_index[atom_index] = _rdkit_atom_name(atom)
+
+    return atom_names_by_index

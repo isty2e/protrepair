@@ -35,8 +35,16 @@ from protrepair.state import (
     derive_structure_coverage_and_chemistry_readiness_facts,
 )
 from protrepair.structure import ProteinStructure
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    SourceBondMetadata,
+    SourceBondRecordType,
+    StructureTopology,
+    TopologyBond,
+)
 from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
     add_retained_non_polymer_hydrogens,
 )
@@ -206,6 +214,13 @@ def test_add_retained_non_polymer_hydrogens_hydrogenates_supported_ligands() -> 
 
     hydrogenated_ligand = result.structure.constitution.ligands[0]
     assert hydrogenated_ligand.has_atom_site("H1")
+    assert _has_topology_bond(
+        result.structure,
+        ResidueId("L", 1),
+        "C1",
+        "H1",
+        provenance=BondProvenance.TEMPLATE_RESOLVED,
+    )
     assert result.structure.constitution.chain("A").residues[0].atom_site_names() == (
         "N",
         "CA",
@@ -460,11 +475,78 @@ def test_add_retained_non_polymer_hydrogens_uses_override_for_unsupported_compon
         if atom_site.element == "H"
     )
     assert added_hydrogen_names == ("H001", "H002", "H003", "H004")
+    assert _has_topology_bond(
+        result.structure,
+        ResidueId("L", 1),
+        "C1",
+        "H001",
+        provenance=BondProvenance.EVIDENCE_RESOLVED,
+    )
+    assert _has_topology_bond(
+        result.structure,
+        ResidueId("L", 1),
+        "O1",
+        "H004",
+        provenance=BondProvenance.EVIDENCE_RESOLVED,
+    )
     assert any(
         repair.kind is RepairEventKind.HYDROGENS_ADDED
         and repair.residue_id == ResidueId("L", 1)
         and repair.atom_names == added_hydrogen_names
         for repair in result.repairs
+    )
+
+
+@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
+def test_retained_non_polymer_override_topology_takes_precedence_over_template(
+) -> None:
+    """Explicit evidence should own topology even when a component template exists."""
+
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="LIG",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom_payload("C1", "C", Vec3(4.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(5.4, 0.0, 0.0)),
+                    atom_payload("N1", "N", Vec3(4.0, 1.2, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="retained-non-polymer-template-overridden-by-evidence",
+    )
+
+    result = add_retained_non_polymer_hydrogens(
+        structure,
+        component_library=build_retained_non_polymer_component_library(),
+        chemistry_evidence=(
+            RetainedNonPolymerChemistryOverride(
+                residue_id=ResidueId("L", 1),
+                smiles="CON",
+                heavy_atom_names=("C1", "O1", "N1"),
+            ).to_evidence(),
+        ),
+    )
+
+    ligand = result.structure.constitution.ligands[0]
+    assert "H1" not in ligand.atom_site_names()
+    assert _has_topology_bond(
+        result.structure,
+        ResidueId("L", 1),
+        "C1",
+        "H001",
+        provenance=BondProvenance.EVIDENCE_RESOLVED,
+    )
+    assert not _has_topology_bond(
+        result.structure,
+        ResidueId("L", 1),
+        "C1",
+        "H1",
+        provenance=BondProvenance.TEMPLATE_RESOLVED,
     )
 
 
@@ -503,11 +585,93 @@ def test_add_retained_non_polymer_hydrogens_uses_rdkit_fallback_without_support(
         if atom_site.element == "H"
     )
     assert added_hydrogen_names == ("H001", "H002", "H003", "H004")
+    assert _has_topology_bond(
+        result.structure,
+        ResidueId("L", 1),
+        "C1",
+        "H001",
+        provenance=BondProvenance.REPAIR_INFERRED,
+    )
+    assert _has_topology_bond(
+        result.structure,
+        ResidueId("L", 1),
+        "O1",
+        "H004",
+        provenance=BondProvenance.REPAIR_INFERRED,
+    )
     assert any(
         repair.kind is RepairEventKind.HYDROGENS_ADDED
         and repair.residue_id == ResidueId("L", 1)
         and repair.atom_names == added_hydrogen_names
         for repair in result.repairs
+    )
+
+
+@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
+def test_retained_non_polymer_hydrogen_topology_preserves_source_h_bond() -> None:
+    """Regenerated ligand H topology should not overwrite source H bonds."""
+
+    residue_id = ResidueId("L", 1)
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=residue_id,
+                atoms=(
+                    atom_payload("C1", "C", Vec3(4.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(5.4, 0.0, 0.0)),
+                    atom_payload("H001", "H", Vec3(3.6, 0.9, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="retained-non-polymer-source-h-topology",
+    )
+    structure = _with_topology_bonds(
+        structure,
+        (
+            TopologyBond(
+                atom_index_1=structure.constitution.atom_index(
+                    AtomRef(residue_id, "C1")
+                ),
+                atom_index_2=structure.constitution.atom_index(
+                    AtomRef(residue_id, "H001")
+                ),
+                relationship_type=BondRelationshipType.COVALENT,
+                provenance=BondProvenance.SOURCE_EXPLICIT,
+                source_metadata=SourceBondMetadata(
+                    record_type=SourceBondRecordType.PDB_CONECT,
+                    source_id="CONECT",
+                ),
+            ),
+        ),
+    )
+
+    result = add_retained_non_polymer_hydrogens(
+        structure,
+        component_library=build_retained_non_polymer_component_library(),
+    )
+
+    source_bond = _topology_bond_between(
+        result.structure,
+        residue_id,
+        "C1",
+        "H001",
+    )
+    assert source_bond is not None
+    assert source_bond.provenance is BondProvenance.SOURCE_EXPLICIT
+    assert source_bond.source_metadata == SourceBondMetadata(
+        record_type=SourceBondRecordType.PDB_CONECT,
+        source_id="CONECT",
+    )
+    assert _has_topology_bond(
+        result.structure,
+        residue_id,
+        "O1",
+        "H004",
+        provenance=BondProvenance.REPAIR_INFERRED,
     )
 
 
@@ -528,3 +692,69 @@ def _retained_non_polymer_facts_by_residue_id(
         for fact in chemistry_facts.retained_non_polymer_facts
         if component_ids is None or fact.component_id in component_ids
     }
+
+
+def _with_topology_bonds(
+    structure: ProteinStructure,
+    bonds: tuple[TopologyBond, ...],
+) -> ProteinStructure:
+    """Return one test structure with replacement topology bonds."""
+
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=bonds,
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
+
+
+def _topology_bond_between(
+    structure: ProteinStructure,
+    residue_id: ResidueId,
+    atom_name_1: str,
+    atom_name_2: str,
+) -> TopologyBond | None:
+    """Return one residue-local topology bond when present."""
+
+    atom_index_1 = structure.constitution.resolve_atom_index(
+        AtomRef(residue_id, atom_name_1)
+    )
+    atom_index_2 = structure.constitution.resolve_atom_index(
+        AtomRef(residue_id, atom_name_2)
+    )
+    if atom_index_1 is None or atom_index_2 is None:
+        return None
+
+    for bond in structure.topology.bonds:
+        if {bond.atom_index_1, bond.atom_index_2} == {atom_index_1, atom_index_2}:
+            return bond
+
+    return None
+
+
+def _has_topology_bond(
+    structure: ProteinStructure,
+    residue_id: ResidueId,
+    atom_name_1: str,
+    atom_name_2: str,
+    *,
+    provenance: BondProvenance,
+) -> bool:
+    """Return whether one residue-local covalent topology bond exists."""
+
+    bond = _topology_bond_between(
+        structure,
+        residue_id,
+        atom_name_1,
+        atom_name_2,
+    )
+    return (
+        bond is not None
+        and bond.relationship_type is BondRelationshipType.COVALENT
+        and bond.provenance is provenance
+    )

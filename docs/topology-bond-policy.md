@@ -62,3 +62,14 @@ new H anchor:
 
 Existing source-explicit H bonds remain authoritative when the same endpoint
 pair is regenerated during hydrogen completion.
+
+Retained non-polymer hydrogen completion uses the strongest available support
+mode for each generated H anchor:
+
+- component-template anchors are `TEMPLATE_RESOLVED`;
+- explicit retained-ligand chemistry evidence and atom mapping are
+  `EVIDENCE_RESOLVED`;
+- template-less RDKit fallback anchors are `REPAIR_INFERRED`.
+
+Existing source-explicit retained-ligand H bonds remain authoritative when the
+same endpoint pair is regenerated during hydrogen completion.
