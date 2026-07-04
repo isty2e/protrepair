@@ -8,6 +8,9 @@ from protrepair.chemistry import (
     ResidueTemplate,
     build_default_component_library,
 )
+from protrepair.chemistry.component.topology import (
+    template_resolved_topology_bonds_for_new_atoms,
+)
 from protrepair.diagnostics.component_support import (
     diagnose_component_support,
     missing_component_definition_issue,
@@ -147,6 +150,7 @@ def repair_heavy_atoms_core(
     repaired_structure = _structure_from_repaired_chain_results(
         source_structure=stripped_structure,
         chain_results=tuple(repaired_chain_results),
+        component_library=library,
     )
     return TransformationResult(
         structure=repaired_structure,
@@ -226,6 +230,7 @@ def _structure_from_repaired_chain_results(
     *,
     source_structure: ProteinStructure,
     chain_results: tuple[_ChainHeavyRepairStageResult, ...],
+    component_library: ComponentLibrary,
 ) -> ProteinStructure:
     """Return one structure rebuilt from repaired chain residue payload."""
 
@@ -276,6 +281,15 @@ def _structure_from_repaired_chain_results(
         )
         for ligand_site in source_structure.constitution.ligands
     )
+    preserved_bonds = source_structure.topology.bonds_for_constitution(
+        source_constitution=source_structure.constitution,
+        target_constitution=updated_constitution,
+    )
+    repaired_atom_bonds = template_resolved_topology_bonds_for_new_atoms(
+        source_constitution=source_structure.constitution,
+        target_constitution=updated_constitution,
+        component_library=component_library,
+    )
     return ProteinStructure.from_payload(
         constitution=updated_constitution,
         geometry=StructureGeometry(
@@ -298,10 +312,7 @@ def _structure_from_repaired_chain_results(
                 for atom_site in residue.residue_site.atom_sites
                 for formal_charge in (dict(formal_charge_payload).get(atom_site.name),)
             ),
-            bonds=source_structure.topology.bonds_for_constitution(
-                source_constitution=source_structure.constitution,
-                target_constitution=updated_constitution,
-            ),
+            bonds=(*preserved_bonds, *repaired_atom_bonds),
         ),
         polymer_blueprint=source_structure.polymer_blueprint,
         provenance=source_structure.provenance,
