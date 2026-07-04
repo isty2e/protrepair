@@ -94,7 +94,11 @@ def read_structure_string_with_policy(
 
 
 def read_raw_structure(path: Path, file_format: FileFormat):
-    """Read one coordinate file with a format-specific gemmi ingress path."""
+    """Read one coordinate file with a format-specific gemmi ingress path.
+
+    The size guard is repeated here so direct raw-parser callers cannot bypass
+    the public ingress limit enforced by read_structure().
+    """
 
     _assert_structure_file_size(path)
     if file_format is FileFormat.PDB:

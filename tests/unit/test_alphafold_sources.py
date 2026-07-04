@@ -261,6 +261,35 @@ def test_fetch_alphafold_structure_artifact_rejects_untrusted_redirect(
     assert opened_urls == [artifact_url]
 
 
+def test_fetch_alphafold_model_set_rejects_untrusted_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Metadata fetch should validate the final URL after urllib redirects."""
+
+    opened_urls: list[str] = []
+
+    def fake_urlopen(request: Request, *, timeout: float) -> FakeResponse:
+        opened_urls.append(request.full_url)
+        return FakeResponse(
+            "[]",
+            final_url="https://127.0.0.1/api/prediction/P04406",
+        )
+
+    import protrepair.sources.alphafold_retrieval as alphafold_io
+
+    monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
+
+    outcome = fetch_alphafold_model_set(
+        UniProtSequenceReference(accession="P04406")
+    )
+
+    assert outcome.is_success() is False
+    assert outcome.failure is not None
+    assert outcome.failure.kind is AlphaFoldFetchFailureKind.INVALID_RESPONSE
+    assert "trusted" in outcome.failure.message
+    assert opened_urls == ["https://alphafold.ebi.ac.uk/api/prediction/P04406"]
+
+
 def test_fetch_alphafold_model_set_rejects_oversized_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

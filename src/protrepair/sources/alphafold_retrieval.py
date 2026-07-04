@@ -26,7 +26,7 @@ from protrepair.sources.uniprot import UniProtSequenceReference
 from protrepair.structure.provenance import FileFormat
 
 JsonMapping = dict[str, object]
-_ALLOWED_ALPHAFOLD_ARTIFACT_HOSTS = frozenset({"alphafold.ebi.ac.uk"})
+_ALLOWED_ALPHAFOLD_HOSTS = frozenset({"alphafold.ebi.ac.uk"})
 
 
 @runtime_checkable
@@ -134,7 +134,7 @@ def fetch_alphafold_structure_artifact(
             )
         )
 
-    invalid_artifact_url = _alphafold_artifact_url_failure(artifact_url)
+    invalid_artifact_url = _alphafold_url_failure(artifact_url)
     if invalid_artifact_url is not None:
         return AlphaFoldStructureFetchOutcome.failure_result(
             AlphaFoldStructureFetchFailure(
@@ -247,8 +247,8 @@ def _uniprot_reference_from_accession(
     return UniProtSequenceReference(accession=normalized_accession)
 
 
-def _alphafold_artifact_url_failure(request_url: str) -> _FetchFailure | None:
-    """Return a fetch failure when one artifact URL is outside AFDB HTTPS."""
+def _alphafold_url_failure(request_url: str) -> _FetchFailure | None:
+    """Return a fetch failure when one AlphaFold URL is outside AFDB HTTPS."""
 
     try:
         parsed_url = urlsplit(request_url)
@@ -256,26 +256,26 @@ def _alphafold_artifact_url_failure(request_url: str) -> _FetchFailure | None:
     except ValueError as error:
         return _FetchFailure(
             kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
-            message=f"AlphaFold artifact URL is invalid: {error}",
+            message=f"AlphaFold URL is invalid: {error}",
         )
 
     if parsed_url.scheme.lower() != "https":
         return _FetchFailure(
             kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
-            message="AlphaFold artifact URL must use HTTPS",
+            message="AlphaFold URL must use HTTPS",
         )
 
     host = parsed_url.hostname
-    if host is None or host.lower() not in _ALLOWED_ALPHAFOLD_ARTIFACT_HOSTS:
+    if host is None or host.lower() not in _ALLOWED_ALPHAFOLD_HOSTS:
         return _FetchFailure(
             kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
-            message="AlphaFold artifact URL host is not trusted",
+            message="AlphaFold URL host is not trusted",
         )
 
     if port not in (None, 443):
         return _FetchFailure(
             kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
-            message="AlphaFold artifact URL must use the default HTTPS port",
+            message="AlphaFold URL must use the default HTTPS port",
         )
 
     return None
@@ -302,6 +302,11 @@ def _fetch_json_payload(
     request = Request(request_url, headers={"Accept": "application/json"})
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
+            final_url = _response_url(response, fallback_url=request_url)
+            redirect_failure = _alphafold_url_failure(final_url)
+            if redirect_failure is not None:
+                return None, redirect_failure
+
             return json.loads(
                 read_bounded_response_text(response, source_name="AlphaFold")
             ), None
@@ -365,7 +370,7 @@ def _fetch_text_payload(
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
             final_url = _response_url(response, fallback_url=request_url)
-            redirect_failure = _alphafold_artifact_url_failure(final_url)
+            redirect_failure = _alphafold_url_failure(final_url)
             if redirect_failure is not None:
                 return None, redirect_failure
 
