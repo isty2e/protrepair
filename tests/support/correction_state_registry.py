@@ -31,6 +31,8 @@ from tests.support.correction_state_fixtures import (
     build_residue,
     build_structure,
     hydrogenated_refinement_fixture,
+    residue_bond_specs,
+    with_topology_bonds,
 )
 
 REQUIRED_CORRECTION_COVERAGE: frozenset[CorrectionCoverageTag] = frozenset(
@@ -141,13 +143,19 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
             "Heavy-complete residues with no H need hydrogen-only workflow completion."
         ),
         coverage_tags=(CorrectionCoverageTag.HYDROGEN_ONLY_WORKFLOW,),
-        structure_factory=lambda _library: build_structure(
-            "hydrogen-only-workflow",
-            (
-                build_chain(
-                    "A",
-                    (build_residue("GLY", "A", 1, ("N", "CA", "C", "O")),),
+        structure_factory=lambda _library: with_topology_bonds(
+            build_structure(
+                "hydrogen-only-workflow",
+                (
+                    build_chain(
+                        "A",
+                        (build_residue("GLY", "A", 1, ("N", "CA", "C", "O")),),
+                    ),
                 ),
+            ),
+            *residue_bond_specs(
+                ResidueId("A", 1),
+                (("N", "CA"), ("CA", "C"), ("C", "O")),
             ),
         ),
         workflow=WorkflowExpectation(
@@ -259,58 +267,88 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
             CorrectionCoverageTag.CHEMISTRY_PREPARATION,
             CorrectionCoverageTag.RELAXATION_READY,
         ),
-        structure_factory=lambda _library: build_structure(
-            "topology-coordinate-blocked",
-            (
-                build_chain(
-                    "A",
-                    (
-                        build_residue(
-                            "SER",
-                            "A",
-                            1,
-                            (
-                                "N",
-                                "CA",
-                                "C",
-                                "O",
-                                "CB",
-                                "OG",
-                                "H1",
-                                "H2",
-                                "H3",
-                                "HA",
-                                "HB1",
-                                "HB2",
-                                "HG",
+        structure_factory=lambda _library: with_topology_bonds(
+            build_structure(
+                "topology-coordinate-blocked",
+                (
+                    build_chain(
+                        "A",
+                        (
+                            build_residue(
+                                "SER",
+                                "A",
+                                1,
+                                (
+                                    "N",
+                                    "CA",
+                                    "C",
+                                    "O",
+                                    "CB",
+                                    "OG",
+                                    "H1",
+                                    "H2",
+                                    "H3",
+                                    "HA",
+                                    "HB1",
+                                    "HB2",
+                                    "HG",
+                                ),
+                            ),
+                        ),
+                    ),
+                    build_chain(
+                        "B",
+                        (
+                            build_residue(
+                                "SER",
+                                "B",
+                                1,
+                                (
+                                    "N",
+                                    "CA",
+                                    "C",
+                                    "O",
+                                    "CB",
+                                    "OG",
+                                    "H1",
+                                    "H2",
+                                    "H3",
+                                    "HA",
+                                    "HB1",
+                                    "HB2",
+                                    "HG",
+                                ),
                             ),
                         ),
                     ),
                 ),
-                build_chain(
-                    "B",
-                    (
-                        build_residue(
-                            "SER",
-                            "B",
-                            1,
-                            (
-                                "N",
-                                "CA",
-                                "C",
-                                "O",
-                                "CB",
-                                "OG",
-                                "H1",
-                                "H2",
-                                "H3",
-                                "HA",
-                                "HB1",
-                                "HB2",
-                                "HG",
-                            ),
-                        ),
-                    ),
+            ),
+            *residue_bond_specs(
+                ResidueId("A", 1),
+                (
+                    ("N", "CA"),
+                    ("CA", "C"),
+                    ("C", "O"),
+                    ("CA", "CB"),
+                    ("CB", "OG"),
+                    ("CA", "HA"),
+                    ("CB", "HB1"),
+                    ("CB", "HB2"),
+                    ("OG", "HG"),
+                ),
+            ),
+            *residue_bond_specs(
+                ResidueId("B", 1),
+                (
+                    ("N", "CA"),
+                    ("CA", "C"),
+                    ("C", "O"),
+                    ("CA", "CB"),
+                    ("CB", "OG"),
+                    ("CA", "HA"),
+                    ("CB", "HB1"),
+                    ("CB", "HB2"),
+                    ("OG", "HG"),
                 ),
             ),
         ),

@@ -10,8 +10,8 @@ from protrepair.chemistry import (
     build_default_component_library,
 )
 from protrepair.chemistry.component.graph import BondDefinition
-from protrepair.chemistry.component.semantics import (
-    IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS,
+from protrepair.chemistry.component.topology import (
+    template_hydrogen_bond_definitions_for_names,
 )
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     retained_non_polymer_rdkit_fallback_hydrogen_bond_definitions,
@@ -315,9 +315,9 @@ def _hydrogenate_retained_non_polymer_payload(
                 issues=contradiction_issues,
                 topology_plan=_topology_plan_for_new_hydrogens(
                     residue_id=payload.residue_id,
-                    bond_definitions=_template_hydrogen_bond_definitions(
+                    bond_definitions=template_hydrogen_bond_definitions_for_names(
                         template,
-                        added_atom_names=added_atom_names,
+                        hydrogen_atom_names=added_atom_names,
                     ),
                     added_atom_names=added_atom_names,
                     provenance=BondProvenance.TEMPLATE_RESOLVED,
@@ -522,25 +522,6 @@ def _topology_plan_for_new_hydrogens(
         residue_id=residue_id,
         bond_definitions=filtered_bond_definitions,
         provenance=provenance,
-    )
-
-
-def _template_hydrogen_bond_definitions(
-    template: ResidueTemplate,
-    *,
-    added_atom_names: tuple[str, ...],
-) -> tuple[BondDefinition, ...]:
-    """Return template H-anchor definitions for newly materialized hydrogens."""
-
-    return tuple(
-        BondDefinition(
-            atom_name_1=anchor_atom_name,
-            atom_name_2=hydrogen_atom_name,
-        )
-        for hydrogen_atom_name, anchor_atom_name in (
-            template.template_hydrogen_anchor_by_name(added_atom_names).items()
-        )
-        if anchor_atom_name not in IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS
     )
 
 

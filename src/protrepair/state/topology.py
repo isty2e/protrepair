@@ -4,10 +4,17 @@ from dataclasses import dataclass
 from enum import Enum
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
+from protrepair.chemistry.component.graph import BondDefinition
+from protrepair.chemistry.component.topology import (
+    template_heavy_bond_definitions_for_present_atoms,
+    template_hydrogen_bond_definitions_for_names,
+)
 from protrepair.scope import ResidueSetScope
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
+from protrepair.structure.topology import is_covalent_like_relationship
 
 
 class TopologyAvailabilityState(str, Enum):
@@ -23,6 +30,30 @@ class TopologyAvailabilityAspect(str, Enum):
 
     HEAVY_ATOM_CONNECTIVITY = "heavy_atom_connectivity"
     HYDROGEN_ATTACHMENTS = "hydrogen_attachments"
+
+
+def residue_bond_topology_availability_state(
+    structure: ProteinStructure,
+    residue: ResidueSite,
+    *,
+    expected_bond_definitions: tuple[BondDefinition, ...],
+    empty_state: TopologyAvailabilityState,
+) -> TopologyAvailabilityState:
+    """Return whether expected residue-local bonds exist in canonical topology."""
+
+    if not expected_bond_definitions:
+        return empty_state
+
+    for bond_definition in expected_bond_definitions:
+        if not _has_residue_topology_bond(
+            structure,
+            residue.residue_id,
+            bond_definition.atom_name_1,
+            bond_definition.atom_name_2,
+        ):
+            return TopologyAvailabilityState.ABSENT
+
+    return TopologyAvailabilityState.PRESENT
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,9 +135,20 @@ class TopologyAvailabilityFacts:
                             aspect=aspect,
                             state=TopologyAvailabilityState.ABSENT,
                         )
-                    )
+                )
                 continue
 
+            heavy_state = residue_bond_topology_availability_state(
+                snapshot.structure,
+                residue,
+                expected_bond_definitions=(
+                    template_heavy_bond_definitions_for_present_atoms(
+                        residue,
+                        template=template,
+                    )
+                ),
+                empty_state=TopologyAvailabilityState.PRESENT,
+            )
             residue_facts_by_key[
                 (
                     residue.residue_id,
@@ -115,7 +157,7 @@ class TopologyAvailabilityFacts:
             ] = ResidueTopologyAvailabilityFact(
                 residue_id=residue.residue_id,
                 aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
-                state=TopologyAvailabilityState.PRESENT,
+                state=heavy_state,
             )
 
             if not template.can_add_hydrogens():
@@ -139,7 +181,17 @@ class TopologyAvailabilityFacts:
             if not present_hydrogen_atom_names:
                 hydrogen_state = TopologyAvailabilityState.ABSENT
             else:
-                hydrogen_state = TopologyAvailabilityState.PRESENT
+                hydrogen_state = residue_bond_topology_availability_state(
+                    snapshot.structure,
+                    residue,
+                    expected_bond_definitions=(
+                        template_hydrogen_bond_definitions_for_names(
+                            template,
+                            hydrogen_atom_names=present_hydrogen_atom_names,
+                        )
+                    ),
+                    empty_state=TopologyAvailabilityState.ABSENT,
+                )
 
             residue_facts_by_key[
                 (
@@ -168,6 +220,29 @@ class TopologyAvailabilityFacts:
             scope=ResidueSetScope(residue_ids=residue_ids),
             residue_facts=tuple(residue_facts_by_key.values()),
         )
+
+
+def _has_residue_topology_bond(
+    structure: ProteinStructure,
+    residue_id: ResidueId,
+    atom_name_1: str,
+    atom_name_2: str,
+) -> bool:
+    atom_index_1 = structure.constitution.resolve_atom_index(
+        AtomRef(residue_id, atom_name_1)
+    )
+    atom_index_2 = structure.constitution.resolve_atom_index(
+        AtomRef(residue_id, atom_name_2)
+    )
+    if atom_index_1 is None or atom_index_2 is None:
+        return False
+
+    endpoint_pair = frozenset((atom_index_1, atom_index_2))
+    return any(
+        is_covalent_like_relationship(bond)
+        and frozenset((bond.atom_index_1, bond.atom_index_2)) == endpoint_pair
+        for bond in structure.topology.bonds
+    )
 
 
 class HydrogenAttachmentResolutionState(str, Enum):

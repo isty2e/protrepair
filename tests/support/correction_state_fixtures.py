@@ -17,9 +17,15 @@ from protrepair.structure.geometry import (
     ResidueGeometry,
     StructureGeometry,
 )
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import StructureIngress, StructureProvenance
-from protrepair.structure.topology import AtomTopology, StructureTopology
+from protrepair.structure.topology import (
+    AtomTopology,
+    BondProvenance,
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
     add_retained_non_polymer_hydrogens,
@@ -124,6 +130,61 @@ def build_structure(
                 source_name=source_name,
             )
         ),
+    )
+
+
+def residue_bond_specs(
+    residue_id: ResidueId,
+    atom_name_pairs: tuple[tuple[str, str], ...],
+    *,
+    provenance: BondProvenance = BondProvenance.TEMPLATE_RESOLVED,
+) -> tuple[tuple[ResidueId, str, str, BondProvenance], ...]:
+    """Return residue-local topology bond specs for correction-state fixtures."""
+
+    return tuple(
+        (residue_id, atom_name_1, atom_name_2, provenance)
+        for atom_name_1, atom_name_2 in atom_name_pairs
+    )
+
+
+def with_topology_bonds(
+    structure: ProteinStructure,
+    *bond_specs: tuple[ResidueId, str, str, BondProvenance],
+) -> ProteinStructure:
+    """Return a fixture copy with canonical residue-local topology bonds."""
+
+    topology_bonds = tuple(
+        _topology_bond_from_spec(structure, bond_spec) for bond_spec in bond_specs
+    )
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(*structure.topology.bonds, *topology_bonds),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
+
+
+def _topology_bond_from_spec(
+    structure: ProteinStructure,
+    bond_spec: tuple[ResidueId, str, str, BondProvenance],
+) -> TopologyBond:
+    """Return one topology bond from a residue-local fixture spec."""
+
+    residue_id, atom_name_1, atom_name_2, provenance = bond_spec
+    return TopologyBond(
+        atom_index_1=structure.constitution.atom_index(
+            AtomRef(residue_id, atom_name_1)
+        ),
+        atom_index_2=structure.constitution.atom_index(
+            AtomRef(residue_id, atom_name_2)
+        ),
+        relationship_type=BondRelationshipType.COVALENT,
+        provenance=provenance,
     )
 
 

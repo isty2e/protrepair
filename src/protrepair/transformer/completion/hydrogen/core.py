@@ -8,6 +8,7 @@ from protrepair.chemistry import (
     build_default_component_library,
 )
 from protrepair.chemistry.component.topology import (
+    polymer_context_hydrogen_anchor_definitions,
     template_resolved_hydrogen_topology_bonds_for_new_atoms,
 )
 from protrepair.diagnostics.component_support import (
@@ -24,7 +25,6 @@ from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import ChainIndex, ResidueIndex
 from protrepair.structure.topology import (
     AtomTopology,
-    BondProvenance,
     BondRelationshipType,
     StructureTopology,
     TopologyBond,
@@ -692,12 +692,13 @@ def _polymer_context_hydrogen_topology_bonds_for_new_atoms(
             continue
 
         residue_index = ResidueIndex(target_residue_index)
-        for hydrogen_atom_name, anchor_atom_name, provenance in (
-            _polymer_context_hydrogen_anchors(
-                component_id=target_residue_site.component_id,
-                hydrogen_atom_names=new_hydrogen_atom_names,
-            )
+        for anchor in polymer_context_hydrogen_anchor_definitions(
+            component_id=target_residue_site.component_id,
+            hydrogen_atom_names=new_hydrogen_atom_names,
         ):
+            bond_definition = anchor.bond_definition
+            hydrogen_atom_name = bond_definition.atom_name_2
+            anchor_atom_name = bond_definition.atom_name_1
             if anchor_atom_name not in present_atom_names:
                 continue
 
@@ -712,32 +713,11 @@ def _polymer_context_hydrogen_topology_bonds_for_new_atoms(
                         hydrogen_atom_name,
                     ),
                     relationship_type=BondRelationshipType.COVALENT,
-                    provenance=provenance,
+                    provenance=anchor.provenance,
                 )
             )
 
     return tuple(bonds)
-
-
-def _polymer_context_hydrogen_anchors(
-    *,
-    component_id: str,
-    hydrogen_atom_names: frozenset[str],
-) -> tuple[tuple[str, str, BondProvenance], ...]:
-    """Return polymer-context anchors not represented by residue templates."""
-
-    anchors: list[tuple[str, str, BondProvenance]] = []
-    for hydrogen_atom_name in sorted(hydrogen_atom_names):
-        if hydrogen_atom_name in {"H", "H1", "H2", "H3"}:
-            anchors.append(
-                (hydrogen_atom_name, "N", BondProvenance.SEQUENCE_INFERRED)
-            )
-        elif component_id == "HIS" and hydrogen_atom_name == "HD1":
-            anchors.append(
-                (hydrogen_atom_name, "ND1", BondProvenance.REPAIR_INFERRED)
-            )
-
-    return tuple(anchors)
 
 
 def _apply_hydrogen_directive(

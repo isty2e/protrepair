@@ -1,10 +1,14 @@
 """Topology projections derived from component chemistry definitions."""
 
+from collections.abc import Collection
+from dataclasses import dataclass
+
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.component.semantics import (
     IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS,
 )
+from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.structure.constitution import ResidueSite, StructureConstitution
 from protrepair.structure.slots import ResidueIndex
 from protrepair.structure.topology import (
@@ -12,6 +16,26 @@ from protrepair.structure.topology import (
     BondRelationshipType,
     TopologyBond,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class PolymerContextHydrogenAnchor:
+    """Non-template polymer H anchor resolved from polymer context."""
+
+    bond_definition: BondDefinition
+    provenance: BondProvenance
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.bond_definition, BondDefinition):
+            raise TypeError("polymer context H anchors require a BondDefinition")
+        if self.provenance not in {
+            BondProvenance.SEQUENCE_INFERRED,
+            BondProvenance.REPAIR_INFERRED,
+        }:
+            raise ValueError(
+                "polymer context H anchors require sequence- or repair-inferred "
+                "provenance"
+            )
 
 
 def template_resolved_topology_bonds(
@@ -115,6 +139,107 @@ def template_resolved_hydrogen_topology_bonds_for_new_atoms(
     return tuple(bonds)
 
 
+def template_heavy_bond_definitions_for_present_atoms(
+    residue_site: ResidueSite,
+    *,
+    template: ResidueTemplate,
+) -> tuple[BondDefinition, ...]:
+    """Return template heavy-atom bonds whose endpoints are present."""
+
+    present_atom_names = frozenset(residue_site.atom_site_names())
+    present_heavy_atom_names = frozenset(
+        atom_site.name
+        for atom_site in residue_site.atom_sites
+        if atom_site.element != "H"
+    )
+    return tuple(
+        bond_definition
+        for bond_definition in template.definition.bonds
+        if bond_definition.atom_name_1 in present_atom_names
+        and bond_definition.atom_name_2 in present_atom_names
+        and bond_definition.atom_name_1 in present_heavy_atom_names
+        and bond_definition.atom_name_2 in present_heavy_atom_names
+    )
+
+
+def template_hydrogen_bond_definitions_for_names(
+    template: ResidueTemplate,
+    *,
+    hydrogen_atom_names: tuple[str, ...],
+    excluded_anchor_atom_names: Collection[str] = (),
+) -> tuple[BondDefinition, ...]:
+    """Return template H-anchor bond definitions for selected hydrogens."""
+
+    excluded_anchor_names = {
+        atom_name.strip().upper()
+        for atom_name in excluded_anchor_atom_names
+        if atom_name.strip()
+    }
+    return tuple(
+        BondDefinition(
+            atom_name_1=anchor_atom_name,
+            atom_name_2=hydrogen_atom_name,
+        )
+        for hydrogen_atom_name, anchor_atom_name in (
+            template.template_hydrogen_anchor_by_name(hydrogen_atom_names).items()
+        )
+        if anchor_atom_name not in excluded_anchor_names
+    )
+
+
+def polymer_template_hydrogen_bond_definitions_for_names(
+    template: ResidueTemplate,
+    *,
+    hydrogen_atom_names: tuple[str, ...],
+) -> tuple[BondDefinition, ...]:
+    """Return template H anchors excluding polymer-context H anchors."""
+
+    return template_hydrogen_bond_definitions_for_names(
+        template,
+        hydrogen_atom_names=hydrogen_atom_names,
+        excluded_anchor_atom_names=IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS,
+    )
+
+
+def polymer_context_hydrogen_anchor_definitions(
+    *,
+    component_id: str,
+    hydrogen_atom_names: Collection[str],
+) -> tuple[PolymerContextHydrogenAnchor, ...]:
+    """Return non-template polymer H anchors implied by sequence/request context."""
+
+    normalized_component_id = component_id.strip().upper()
+    normalized_hydrogen_atom_names = {
+        atom_name.strip().upper()
+        for atom_name in hydrogen_atom_names
+        if atom_name.strip()
+    }
+    anchors: list[PolymerContextHydrogenAnchor] = []
+    for hydrogen_atom_name in sorted(normalized_hydrogen_atom_names):
+        if hydrogen_atom_name in {"H", "H1", "H2", "H3"}:
+            anchors.append(
+                PolymerContextHydrogenAnchor(
+                    bond_definition=BondDefinition(
+                        atom_name_1="N",
+                        atom_name_2=hydrogen_atom_name,
+                    ),
+                    provenance=BondProvenance.SEQUENCE_INFERRED,
+                )
+            )
+        elif normalized_component_id == "HIS" and hydrogen_atom_name == "HD1":
+            anchors.append(
+                PolymerContextHydrogenAnchor(
+                    bond_definition=BondDefinition(
+                        atom_name_1="ND1",
+                        atom_name_2="HD1",
+                    ),
+                    provenance=BondProvenance.REPAIR_INFERRED,
+                )
+            )
+
+    return tuple(anchors)
+
+
 def _template_resolved_topology_bonds_for_residue(
     constitution: StructureConstitution,
     *,
@@ -170,11 +295,21 @@ def _template_resolved_hydrogen_topology_bonds_for_residue(
             relationship_type=BondRelationshipType.COVALENT,
             provenance=BondProvenance.TEMPLATE_RESOLVED,
         )
+        for bond_definition in (
+            polymer_template_hydrogen_bond_definitions_for_names(
+                template,
+                hydrogen_atom_names=tuple(hydrogen_atom_names),
+            )
+            if not residue_site.is_hetero
+            else template_hydrogen_bond_definitions_for_names(
+                template,
+                hydrogen_atom_names=tuple(hydrogen_atom_names),
+            )
+        )
         for hydrogen_atom_name, anchor_atom_name in (
-            template.template_hydrogen_anchor_by_name(hydrogen_atom_names).items()
+            (bond_definition.atom_name_2, bond_definition.atom_name_1),
         )
         if anchor_atom_name in present_atom_names
-        and anchor_atom_name not in IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS
     )
 
 

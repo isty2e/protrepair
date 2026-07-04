@@ -4,14 +4,33 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from protrepair.chemistry import ComponentLibrary, build_default_component_library
+from protrepair.chemistry import (
+    ComponentLibrary,
+    ResidueTemplate,
+    build_default_component_library,
+)
+from protrepair.chemistry.component.graph import BondDefinition
+from protrepair.chemistry.component.topology import (
+    polymer_context_hydrogen_anchor_definitions,
+    polymer_template_hydrogen_bond_definitions_for_names,
+    template_heavy_bond_definitions_for_present_atoms,
+    template_hydrogen_bond_definitions_for_names,
+)
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_heavy_atom_elements,
+    retained_non_polymer_evidence_heavy_bond_definitions,
+    retained_non_polymer_evidence_hydrogen_bond_definitions,
+)
+from protrepair.chemistry.inference.retained_non_polymer_fallback import (
+    retained_non_polymer_rdkit_fallback_heavy_bond_definitions,
+    retained_non_polymer_rdkit_fallback_hydrogen_bond_definitions_for_names,
+    retained_non_polymer_rdkit_fallback_hydrogenated_molecule,
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
     evidence_by_residue_id,
 )
+from protrepair.errors import RdkitUnavailableError
 from protrepair.scope import ResidueSetScope
 from protrepair.state.hydrogen_expectation import (
     RetainedNonPolymerChemistryEvidenceSource,
@@ -35,7 +54,10 @@ from protrepair.state.structure_observation_rules import (
     sidechain_heavy_atom_completeness_state,
     stereochemistry_state,
 )
-from protrepair.state.topology import TopologyAvailabilityState
+from protrepair.state.topology import (
+    TopologyAvailabilityState,
+    residue_bond_topology_availability_state,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import ResidueId
@@ -214,6 +236,154 @@ class RetainedNonPolymerChemistryReadinessFact:
         )
 
 
+def _polymer_heavy_topology_availability_state(
+    structure: ProteinStructure,
+    residue: ResidueSite,
+    *,
+    component_library: ComponentLibrary,
+    support_state: ComponentSupportState,
+    coverage_facts: ResidueCoverageFacts,
+) -> TopologyAvailabilityState:
+    """Return polymer heavy topology availability from expected template bonds."""
+
+    if (
+        not support_state.is_fully_supported()
+        or coverage_facts.requires_backbone_completion()
+        or coverage_facts.requires_sidechain_completion()
+    ):
+        return TopologyAvailabilityState.ABSENT
+
+    template = component_library.get(residue.component_id)
+    if template is None:
+        return TopologyAvailabilityState.ABSENT
+
+    return residue_bond_topology_availability_state(
+        structure,
+        residue,
+        expected_bond_definitions=template_heavy_bond_definitions_for_present_atoms(
+            residue,
+            template=template,
+        ),
+        empty_state=TopologyAvailabilityState.PRESENT,
+    )
+
+
+def _polymer_hydrogen_topology_availability_state(
+    structure: ProteinStructure,
+    residue: ResidueSite,
+    *,
+    component_library: ComponentLibrary,
+    expected_hydrogen_atom_names: tuple[str, ...],
+) -> TopologyAvailabilityState:
+    """Return polymer hydrogen topology availability from expected H anchors."""
+
+    template = component_library.get(residue.component_id)
+    if template is None or not expected_hydrogen_atom_names:
+        return TopologyAvailabilityState.ABSENT
+
+    return residue_bond_topology_availability_state(
+        structure,
+        residue,
+        expected_bond_definitions=(
+            *polymer_template_hydrogen_bond_definitions_for_names(
+                template,
+                hydrogen_atom_names=expected_hydrogen_atom_names,
+            ),
+            *(
+                anchor.bond_definition
+                for anchor in polymer_context_hydrogen_anchor_definitions(
+                    component_id=residue.component_id,
+                    hydrogen_atom_names=expected_hydrogen_atom_names,
+                )
+            ),
+        ),
+        empty_state=TopologyAvailabilityState.ABSENT,
+    )
+
+
+def _retained_non_polymer_hydrogen_topology_availability_state(
+    structure: ProteinStructure,
+    residue: ResidueSite,
+    *,
+    hydrogen_expectation_source: RetainedNonPolymerChemistryEvidenceSource,
+    evidence: RetainedNonPolymerChemistryEvidence | None,
+    template: ResidueTemplate | None,
+    expected_hydrogen_atom_names: tuple[str, ...],
+) -> TopologyAvailabilityState:
+    """Return retained ligand H topology availability from expected anchors."""
+
+    bond_definitions = _retained_non_polymer_hydrogen_bond_definitions(
+        structure,
+        residue,
+        hydrogen_expectation_source=hydrogen_expectation_source,
+        evidence=evidence,
+        template=template,
+        expected_hydrogen_atom_names=expected_hydrogen_atom_names,
+    )
+    return residue_bond_topology_availability_state(
+        structure,
+        residue,
+        expected_bond_definitions=bond_definitions,
+        empty_state=TopologyAvailabilityState.ABSENT,
+    )
+
+
+def _retained_non_polymer_hydrogen_bond_definitions(
+    structure: ProteinStructure,
+    residue: ResidueSite,
+    *,
+    hydrogen_expectation_source: RetainedNonPolymerChemistryEvidenceSource,
+    evidence: RetainedNonPolymerChemistryEvidence | None,
+    template: ResidueTemplate | None,
+    expected_hydrogen_atom_names: tuple[str, ...],
+) -> tuple[BondDefinition, ...]:
+    """Return retained ligand expected H-anchor bond definitions."""
+
+    if (
+        hydrogen_expectation_source
+        is RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
+        and evidence is not None
+    ):
+        return retained_non_polymer_evidence_hydrogen_bond_definitions(evidence)
+
+    if (
+        hydrogen_expectation_source
+        is RetainedNonPolymerChemistryEvidenceSource.TEMPLATE
+        and template is not None
+    ):
+        return template_hydrogen_bond_definitions_for_names(
+            template,
+            hydrogen_atom_names=expected_hydrogen_atom_names,
+        )
+
+    if (
+        hydrogen_expectation_source
+        is RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
+    ):
+        try:
+            residue_index = structure.constitution.residue_index(residue.residue_id)
+            hydrogenated_molecule = (
+                retained_non_polymer_rdkit_fallback_hydrogenated_molecule(
+                    residue,
+                    structure.residue_geometry(residue_index),
+                    formal_charge_by_atom_name=dict(
+                        structure.residue_formal_charge_by_atom_name(residue_index)
+                    ),
+                )
+            )
+        except (RdkitUnavailableError, RuntimeError, ValueError):
+            return ()
+
+        return (
+            retained_non_polymer_rdkit_fallback_hydrogen_bond_definitions_for_names(
+                hydrogenated_molecule,
+                hydrogen_atom_names=expected_hydrogen_atom_names,
+            )
+        )
+
+    return ()
+
+
 @dataclass(frozen=True, slots=True)
 class ResidueCompletionStateFacts:
     """Transitional aggregate over residue coverage and chemistry-readiness."""
@@ -379,13 +549,13 @@ class ResidueProjectionFactRuntime:
             ),
         )
         heavy_atom_topology_availability_state = (
-            TopologyAvailabilityState.PRESENT
-            if (
-                support_state.is_fully_supported()
-                and not coverage_facts.requires_backbone_completion()
-                and not coverage_facts.requires_sidechain_completion()
+            _polymer_heavy_topology_availability_state(
+                self.context_structure,
+                residue,
+                component_library=self.component_library,
+                support_state=support_state,
+                coverage_facts=coverage_facts,
             )
-            else TopologyAvailabilityState.ABSENT
         )
         if heavy_atom_topology_availability_state is TopologyAvailabilityState.ABSENT:
             hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
@@ -394,7 +564,19 @@ class ResidueProjectionFactRuntime:
                 TopologyAvailabilityState.NOT_APPLICABLE
             )
         elif h_coverage_state is HydrogenCoverageState.COMPLETE:
-            hydrogen_topology_availability_state = TopologyAvailabilityState.PRESENT
+            hydrogen_topology_availability_state = (
+                _polymer_hydrogen_topology_availability_state(
+                    self.context_structure,
+                    residue,
+                    component_library=self.component_library,
+                    expected_hydrogen_atom_names=(
+                        self.hydrogen_expectation_model.expected_hydrogen_atom_names_by_residue.get(
+                            residue.residue_id,
+                            (),
+                        )
+                    ),
+                )
+            )
         else:
             hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
 
@@ -477,7 +659,14 @@ class ResidueProjectionFactRuntime:
                 if residue.has_atom_site(atom_name)
             )
             heavy_atom_topology_availability_state = (
-                TopologyAvailabilityState.PRESENT
+                residue_bond_topology_availability_state(
+                    self.context_structure,
+                    residue,
+                    expected_bond_definitions=(
+                        retained_non_polymer_evidence_heavy_bond_definitions(evidence)
+                    ),
+                    empty_state=TopologyAvailabilityState.PRESENT,
+                )
                 if heavy_atom_names_present and heavy_atom_elements_match
                 else TopologyAvailabilityState.ABSENT
             )
@@ -490,7 +679,17 @@ class ResidueProjectionFactRuntime:
             }
             expected_heavy_atom_names = set(template.expected_heavy_atom_names())
             heavy_atom_topology_availability_state = (
-                TopologyAvailabilityState.PRESENT
+                residue_bond_topology_availability_state(
+                    self.context_structure,
+                    residue,
+                    expected_bond_definitions=(
+                        template_heavy_bond_definitions_for_present_atoms(
+                            residue,
+                            template=template,
+                        )
+                    ),
+                    empty_state=TopologyAvailabilityState.PRESENT,
+                )
                 if expected_heavy_atom_names.issubset(present_heavy_atom_names)
                 else TopologyAvailabilityState.ABSENT
             )
@@ -501,7 +700,34 @@ class ResidueProjectionFactRuntime:
             heavy_topology_source = (
                 RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
             )
-            heavy_atom_topology_availability_state = TopologyAvailabilityState.PRESENT
+            residue_index = self.context_structure.constitution.residue_index(
+                residue.residue_id
+            )
+            try:
+                fallback_heavy_bonds = (
+                    retained_non_polymer_rdkit_fallback_heavy_bond_definitions(
+                        residue,
+                        self.context_structure.residue_geometry(residue_index),
+                        formal_charge_by_atom_name=dict(
+                            self.context_structure.residue_formal_charge_by_atom_name(
+                                residue_index
+                            )
+                        ),
+                    )
+                )
+            except (RdkitUnavailableError, RuntimeError, ValueError):
+                heavy_atom_topology_availability_state = (
+                    TopologyAvailabilityState.ABSENT
+                )
+            else:
+                heavy_atom_topology_availability_state = (
+                    residue_bond_topology_availability_state(
+                        self.context_structure,
+                        residue,
+                        expected_bond_definitions=fallback_heavy_bonds,
+                        empty_state=TopologyAvailabilityState.PRESENT,
+                    )
+                )
         else:
             heavy_topology_source = (
                 RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
@@ -530,7 +756,16 @@ class ResidueProjectionFactRuntime:
                 )
             elif h_coverage_state is HydrogenCoverageState.COMPLETE:
                 hydrogen_topology_availability_state = (
-                    TopologyAvailabilityState.PRESENT
+                    _retained_non_polymer_hydrogen_topology_availability_state(
+                        self.context_structure,
+                        residue,
+                        hydrogen_expectation_source=hydrogen_expectation_source,
+                        evidence=evidence,
+                        template=template,
+                        expected_hydrogen_atom_names=(
+                            selected_expected_hydrogen_atom_names
+                        ),
+                    )
                 )
             else:
                 hydrogen_topology_availability_state = (

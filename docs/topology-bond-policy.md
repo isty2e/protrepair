@@ -40,7 +40,9 @@ as PDB `CONECT` or mmCIF `_struct_conn`.
 
 Readiness must compare expected bond endpoint pairs against
 `StructureTopology.bonds`. Atom coordinates alone do not prove topology
-readiness.
+readiness. If a residue or retained non-polymer has all expected atoms but is
+missing the expected covalent-like endpoint pairs, readiness must report
+incomplete topology instead of treating coordinates as connectivity.
 
 ## Repair Requirements
 
@@ -73,3 +75,9 @@ mode for each generated H anchor:
 
 Existing source-explicit retained-ligand H bonds remain authoritative when the
 same endpoint pair is regenerated during hydrogen completion.
+
+Retained non-polymer readiness uses the same expected H atom naming policy as
+hydrogen coverage. When RDKit fallback infers generated hydrogens for a residue
+that already has complete H names, the generated anchor graph is projected onto
+those preferred names before comparing endpoint pairs against canonical
+topology.

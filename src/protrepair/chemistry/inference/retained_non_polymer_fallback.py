@@ -120,6 +120,46 @@ def retained_non_polymer_rdkit_fallback_hydrogen_bond_definitions(
     )
 
 
+def retained_non_polymer_rdkit_fallback_hydrogen_bond_definitions_for_names(
+    hydrogenated_molecule: "Mol",
+    *,
+    hydrogen_atom_names: tuple[str, ...],
+) -> tuple[BondDefinition, ...]:
+    """Return fallback H-heavy bonds projected onto preferred H atom names."""
+
+    generated_bonds = retained_non_polymer_rdkit_fallback_hydrogen_bond_definitions(
+        hydrogenated_molecule
+    )
+    generated_hydrogen_atom_names = tuple(
+        _hydrogen_atom_name(bond_definition)
+        for bond_definition in generated_bonds
+    )
+    if len(generated_hydrogen_atom_names) != len(hydrogen_atom_names):
+        raise ValueError(
+            "retained non-polymer fallback hydrogen bond count must match the "
+            "preferred hydrogen atom name count"
+        )
+
+    hydrogen_name_projection = dict(
+        zip(generated_hydrogen_atom_names, hydrogen_atom_names, strict=True)
+    )
+    return tuple(
+        BondDefinition(
+            atom_name_1=hydrogen_name_projection.get(
+                bond_definition.atom_name_1,
+                bond_definition.atom_name_1,
+            ),
+            atom_name_2=hydrogen_name_projection.get(
+                bond_definition.atom_name_2,
+                bond_definition.atom_name_2,
+            ),
+            order=bond_definition.order,
+            aromatic=bond_definition.aromatic,
+        )
+        for bond_definition in generated_bonds
+    )
+
+
 def retained_non_polymer_rdkit_fallback_supports_passive_context(
     residue_site: ResidueSite,
     residue_geometry: ResidueGeometry,
@@ -291,3 +331,22 @@ def _rdkit_fallback_atom_names_by_index(
         atom_names_by_index[atom_index] = _rdkit_atom_name(atom)
 
     return atom_names_by_index
+
+
+def _hydrogen_atom_name(bond_definition: BondDefinition) -> str:
+    """Return the generated hydrogen endpoint name from one H-heavy bond."""
+
+    atom_names = (bond_definition.atom_name_1, bond_definition.atom_name_2)
+    hydrogen_atom_names = tuple(
+        atom_name for atom_name in atom_names if _is_generated_hydrogen_name(atom_name)
+    )
+    if len(hydrogen_atom_names) != 1:
+        raise ValueError("fallback hydrogen bond definition must have one H endpoint")
+
+    return hydrogen_atom_names[0]
+
+
+def _is_generated_hydrogen_name(atom_name: str) -> bool:
+    """Return whether a fallback atom name is one of our generated H names."""
+
+    return len(atom_name) == 4 and atom_name.startswith("H") and atom_name[1:].isdigit()
