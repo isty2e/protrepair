@@ -2,6 +2,9 @@
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.library import ComponentLibrary
+from protrepair.chemistry.component.semantics import (
+    IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS,
+)
 from protrepair.structure.constitution import ResidueSite, StructureConstitution
 from protrepair.structure.slots import ResidueIndex
 from protrepair.structure.topology import (
@@ -71,6 +74,47 @@ def template_resolved_topology_bonds_for_new_atoms(
     return tuple(bonds)
 
 
+def template_resolved_hydrogen_topology_bonds_for_new_atoms(
+    *,
+    source_constitution: StructureConstitution,
+    target_constitution: StructureConstitution,
+    component_library: ComponentLibrary,
+) -> tuple[TopologyBond, ...]:
+    """Return template-resolved H-anchor bonds for newly added hydrogens."""
+
+    bonds: list[TopologyBond] = []
+    for residue_index, target_residue_site in enumerate(
+        target_constitution.residue_slots
+    ):
+        source_residue_site = source_constitution.residue_or_ligand(
+            target_residue_site.residue_id
+        )
+        source_atom_names = (
+            frozenset()
+            if source_residue_site is None
+            else frozenset(source_residue_site.atom_site_names())
+        )
+        new_hydrogen_atom_names = frozenset(
+            atom_site.name
+            for atom_site in target_residue_site.atom_sites
+            if atom_site.element == "H" and atom_site.name not in source_atom_names
+        )
+        if not new_hydrogen_atom_names:
+            continue
+
+        bonds.extend(
+            _template_resolved_hydrogen_topology_bonds_for_residue(
+                target_constitution,
+                residue_index=ResidueIndex(residue_index),
+                residue_site=target_residue_site,
+                component_library=component_library,
+                hydrogen_atom_names=new_hydrogen_atom_names,
+            )
+        )
+
+    return tuple(bonds)
+
+
 def _template_resolved_topology_bonds_for_residue(
     constitution: StructureConstitution,
     *,
@@ -97,6 +141,40 @@ def _template_resolved_topology_bonds_for_residue(
             ),
         )
         if topology_bond is not None
+    )
+
+
+def _template_resolved_hydrogen_topology_bonds_for_residue(
+    constitution: StructureConstitution,
+    *,
+    residue_index: ResidueIndex,
+    residue_site: ResidueSite,
+    component_library: ComponentLibrary,
+    hydrogen_atom_names: frozenset[str],
+) -> tuple[TopologyBond, ...]:
+    template = component_library.get(residue_site.component_id)
+    if template is None:
+        return ()
+
+    present_atom_names = frozenset(residue_site.atom_site_names())
+    return tuple(
+        TopologyBond(
+            atom_index_1=constitution.atom_index_in_residue(
+                residue_index,
+                anchor_atom_name,
+            ),
+            atom_index_2=constitution.atom_index_in_residue(
+                residue_index,
+                hydrogen_atom_name,
+            ),
+            relationship_type=BondRelationshipType.COVALENT,
+            provenance=BondProvenance.TEMPLATE_RESOLVED,
+        )
+        for hydrogen_atom_name, anchor_atom_name in (
+            template.template_hydrogen_anchor_by_name(hydrogen_atom_names).items()
+        )
+        if anchor_atom_name in present_atom_names
+        and anchor_atom_name not in IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS
     )
 
 

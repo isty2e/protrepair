@@ -30,6 +30,14 @@ from protrepair.structure.labels import (
     ResidueId,
 )
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    SourceBondMetadata,
+    SourceBondRecordType,
+    StructureTopology,
+    TopologyBond,
+)
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.completion.hydrogen import core as hydrogen_core
 from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
@@ -115,6 +123,182 @@ def test_targeted_hydrogen_materialization_processes_only_target_chain(
     assert any(atom_site.element == "H" for atom_site in target_residue.atom_sites)
 
 
+def test_polymer_hydrogen_materialization_adds_expected_topology() -> None:
+    """New polymer H atoms should have canonical topology anchor bonds."""
+
+    first_residue_id = ResidueId("A", 1)
+    second_residue_id = ResidueId("A", 2)
+    structure = build_canonical_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    _alanine_residue(first_residue_id, x_offset=0.0),
+                    _glycine_residue(second_residue_id, x_offset=5.0),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="polymer-hydrogen-topology",
+    )
+
+    result = add_hydrogens(structure, prepare_heavy_atoms=False)
+
+    assert _has_topology_bond(
+        result.structure,
+        first_residue_id,
+        "N",
+        "H1",
+        provenance=BondProvenance.SEQUENCE_INFERRED,
+    )
+    assert _has_topology_bond(
+        result.structure,
+        first_residue_id,
+        "CB",
+        "HB1",
+        provenance=BondProvenance.TEMPLATE_RESOLVED,
+    )
+    assert _has_topology_bond(
+        result.structure,
+        second_residue_id,
+        "N",
+        "H",
+        provenance=BondProvenance.SEQUENCE_INFERRED,
+    )
+
+
+def test_targeted_polymer_hydrogen_topology_preserves_charge_and_source_bonds() -> None:
+    """Targeted H updates should add H bonds without losing existing topology."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_canonical_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    _alanine_residue(
+                        residue_id,
+                        x_offset=0.0,
+                        n_formal_charge=1,
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="targeted-polymer-hydrogen-topology",
+    )
+    structure = ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    atom_index_1=structure.constitution.atom_index(
+                        AtomRef(residue_id, "N")
+                    ),
+                    atom_index_2=structure.constitution.atom_index(
+                        AtomRef(residue_id, "CA")
+                    ),
+                    relationship_type=BondRelationshipType.COVALENT,
+                    provenance=BondProvenance.SOURCE_EXPLICIT,
+                    source_metadata=SourceBondMetadata(
+                        record_type=SourceBondRecordType.PDB_LINK,
+                        source_id="targeted-source-link",
+                    ),
+                ),
+            ),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
+
+    result = materialize_hydrogens_core(
+        structure,
+        target_residue_ids=frozenset((residue_id,)),
+    )
+
+    assert result.structure.topology.formal_charge(
+        result.structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    ) == 1
+    source_bond = _topology_bond_between(result.structure, residue_id, "N", "CA")
+    assert source_bond is not None
+    assert source_bond.provenance is BondProvenance.SOURCE_EXPLICIT
+    assert source_bond.source_metadata is not None
+    assert source_bond.source_metadata.source_id == "targeted-source-link"
+    assert _has_topology_bond(
+        result.structure,
+        residue_id,
+        "CB",
+        "HB1",
+        provenance=BondProvenance.TEMPLATE_RESOLVED,
+    )
+
+
+def test_polymer_hydrogen_topology_preserves_existing_source_h_bond() -> None:
+    """Whole-structure H regeneration should not overwrite source H topology."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_canonical_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload("CA", "C", Vec3(1.45, 0.0, 0.0)),
+                            atom_payload("C", "C", Vec3(2.0, 1.3, 0.0)),
+                            atom_payload("O", "O", Vec3(2.0, 2.4, 0.0)),
+                            atom_payload("CB", "C", Vec3(1.45, -0.8, 1.1)),
+                            atom_payload("HB1", "H", Vec3(1.9, -1.2, 1.8)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="source-explicit-polymer-h",
+    )
+    structure = ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    atom_index_1=structure.constitution.atom_index(
+                        AtomRef(residue_id, "CB")
+                    ),
+                    atom_index_2=structure.constitution.atom_index(
+                        AtomRef(residue_id, "HB1")
+                    ),
+                    relationship_type=BondRelationshipType.COVALENT,
+                    provenance=BondProvenance.SOURCE_EXPLICIT,
+                    source_metadata=SourceBondMetadata(
+                        record_type=SourceBondRecordType.PDB_CONECT,
+                        source_id="source-h-conect",
+                    ),
+                ),
+            ),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
+
+    result = add_hydrogens(structure, prepare_heavy_atoms=False)
+
+    source_bond = _topology_bond_between(result.structure, residue_id, "CB", "HB1")
+    assert source_bond is not None
+    assert source_bond.provenance is BondProvenance.SOURCE_EXPLICIT
+    assert source_bond.source_metadata is not None
+    assert source_bond.source_metadata.source_id == "source-h-conect"
+
+
 @pytest.mark.parametrize(
     ("distance", "expect_hg"),
     (
@@ -171,6 +355,23 @@ def test_histidine_protonation_threshold_is_deterministic(
     assert len(protonated) == expected_protonated
     if expected_protonated:
         assert protonated[0].residue_id == residues[0].residue_id
+
+
+def test_histidine_delta_protonation_adds_repair_inferred_hd1_topology() -> None:
+    """Request-driven HIS delta protonation should not masquerade as template truth."""
+
+    structure = structure_from_tokens(
+        Path("tests/fixtures/corpus/pdb1afc.ent"),
+        ("A:41", "A:93", "A:102", "A:106", "A:124"),
+    )
+
+    result = add_hydrogens(structure, protonate_histidines=True)
+    residue_id = result.structure.chain_site("A").residues[0].residue_id
+    bond = _topology_bond_between(result.structure, residue_id, "ND1", "HD1")
+
+    assert bond is not None
+    assert bond.relationship_type is BondRelationshipType.COVALENT
+    assert bond.provenance is BondProvenance.REPAIR_INFERRED
 
 
 def test_insertion_code_survives_class6_hydrogen_placement() -> None:
@@ -1193,6 +1394,76 @@ def _glycine_residue(
             atom_payload("C", "C", Vec3(x_offset + 2.0, 1.3, 0.0)),
             atom_payload("O", "O", Vec3(x_offset + 2.0, 2.4, 0.0)),
         ),
+    )
+
+
+def _alanine_residue(
+    residue_id: ResidueId,
+    *,
+    x_offset: float,
+    n_formal_charge: int | None = None,
+) -> CanonicalResiduePayload:
+    """Return one minimal polymer alanine residue for hydrogenation tests."""
+
+    return residue_payload(
+        component_id="ALA",
+        residue_id=residue_id,
+        atoms=(
+            atom_payload(
+                "N",
+                "N",
+                Vec3(x_offset, 0.0, 0.0),
+                formal_charge=n_formal_charge,
+            ),
+            atom_payload("CA", "C", Vec3(x_offset + 1.45, 0.0, 0.0)),
+            atom_payload("C", "C", Vec3(x_offset + 2.0, 1.3, 0.0)),
+            atom_payload("O", "O", Vec3(x_offset + 2.0, 2.4, 0.0)),
+            atom_payload("CB", "C", Vec3(x_offset + 1.45, -0.8, 1.1)),
+        ),
+    )
+
+
+def _topology_bond_between(
+    structure: ProteinStructure,
+    residue_id: ResidueId,
+    atom_name_1: str,
+    atom_name_2: str,
+) -> TopologyBond | None:
+    """Return one residue-local topology bond when present."""
+
+    atom_index_1 = structure.constitution.atom_index(
+        AtomRef(residue_id, atom_name_1)
+    )
+    atom_index_2 = structure.constitution.atom_index(
+        AtomRef(residue_id, atom_name_2)
+    )
+    for bond in structure.topology.bonds:
+        if {bond.atom_index_1, bond.atom_index_2} == {atom_index_1, atom_index_2}:
+            return bond
+
+    return None
+
+
+def _has_topology_bond(
+    structure: ProteinStructure,
+    residue_id: ResidueId,
+    atom_name_1: str,
+    atom_name_2: str,
+    *,
+    provenance: BondProvenance,
+) -> bool:
+    """Return whether one residue-local covalent topology bond exists."""
+
+    bond = _topology_bond_between(
+        structure,
+        residue_id,
+        atom_name_1,
+        atom_name_2,
+    )
+    return (
+        bond is not None
+        and bond.relationship_type is BondRelationshipType.COVALENT
+        and bond.provenance is provenance
     )
 
 

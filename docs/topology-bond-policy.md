@@ -51,3 +51,14 @@ hydrogens.
 
 Topology rebuilds must preserve existing `SOURCE_EXPLICIT` bonds unless their
 endpoints are removed by a canonical normalization or rewrite.
+
+Polymer hydrogen completion uses the strongest available support mode for each
+new H anchor:
+
+- static or rotatable component-template anchors are `TEMPLATE_RESOLVED`;
+- backbone and N-terminal polymer context anchors are `SEQUENCE_INFERRED`;
+- request-driven histidine delta protonation is `REPAIR_INFERRED` until a
+  stronger microstate template or external evidence model exists.
+
+Existing source-explicit H bonds remain authoritative when the same endpoint
+pair is regenerated during hydrogen completion.

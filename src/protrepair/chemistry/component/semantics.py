@@ -24,31 +24,50 @@ class RotatableHydrogenKind(str, Enum):
     TYR = "TYR"
 
 
+ROTATABLE_HYDROGEN_ANCHOR_BY_NAME: Mapping[
+    RotatableHydrogenKind,
+    Mapping[str, str],
+] = MappingProxyType(
+    {
+        RotatableHydrogenKind.CYS: MappingProxyType(
+            {"HA": "CA", "HB1": "CB", "HB2": "CB", "HG": "SG"}
+        ),
+        RotatableHydrogenKind.SER: MappingProxyType(
+            {"HA": "CA", "HB1": "CB", "HB2": "CB", "HG": "OG"}
+        ),
+        RotatableHydrogenKind.THR: MappingProxyType(
+            {
+                "HG1": "OG1",
+                "HA": "CA",
+                "HB": "CB",
+                "1HG2": "CG2",
+                "2HG2": "CG2",
+                "3HG2": "CG2",
+            }
+        ),
+        RotatableHydrogenKind.TYR: MappingProxyType(
+            {
+                "HA": "CA",
+                "HB1": "CB",
+                "HB2": "CB",
+                "HD1": "CD1",
+                "HD2": "CD2",
+                "HE1": "CE1",
+                "HE2": "CE2",
+                "HH": "OH",
+            }
+        ),
+    }
+)
 ROTATABLE_HYDROGEN_ATOM_NAMES: Mapping[
     RotatableHydrogenKind,
     tuple[str, ...],
 ] = MappingProxyType(
     {
-        RotatableHydrogenKind.CYS: ("HA", "HB1", "HB2", "HG"),
-        RotatableHydrogenKind.SER: ("HA", "HB1", "HB2", "HG"),
-        RotatableHydrogenKind.THR: (
-            "HG1",
-            "HA",
-            "HB",
-            "1HG2",
-            "2HG2",
-            "3HG2",
-        ),
-        RotatableHydrogenKind.TYR: (
-            "HA",
-            "HB1",
-            "HB2",
-            "HD1",
-            "HD2",
-            "HE1",
-            "HE2",
-            "HH",
-        ),
+        rotatable_kind: tuple(anchor_by_name)
+        for rotatable_kind, anchor_by_name in (
+            ROTATABLE_HYDROGEN_ANCHOR_BY_NAME.items()
+        )
     }
 )
 IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS: frozenset[str] = frozenset(
@@ -196,7 +215,7 @@ class HydrogenSemantics:
         """Return explicit heavy-atom anchors encoded by static plans."""
 
         if self.rotatable_kind is not None:
-            return MappingProxyType({})
+            return ROTATABLE_HYDROGEN_ANCHOR_BY_NAME[self.rotatable_kind]
 
         anchor_by_name: dict[str, str] = {}
         for plan in (self.plan_with_backbone, self.plan_without_backbone):
