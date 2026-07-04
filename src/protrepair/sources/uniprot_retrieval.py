@@ -6,7 +6,9 @@ from urllib.request import Request, urlopen
 
 from protrepair.sources._network import (
     DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
+    SourceResponseTooLargeError,
     normalize_source_retrieval_timeout,
+    read_bounded_response_text,
 )
 from protrepair.sources.uniprot import (
     UniProtSequenceFamily,
@@ -157,7 +159,9 @@ def _fetch_uniprot_payload(
     )
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+            payload = json.loads(
+                read_bounded_response_text(response, source_name="UniProt")
+            )
     except HTTPError as error:
         return None, UniProtSequenceFetchFailure(
             requested_reference=reference,
@@ -203,6 +207,20 @@ def _fetch_uniprot_payload(
             requested_reference=reference,
             kind=UniProtSequenceFetchFailureKind.INVALID_RESPONSE,
             message=f"UniProt response was not valid JSON: {error.msg}",
+            source_url=request_url,
+        )
+    except UnicodeDecodeError as error:
+        return None, UniProtSequenceFetchFailure(
+            requested_reference=reference,
+            kind=UniProtSequenceFetchFailureKind.INVALID_RESPONSE,
+            message=f"UniProt response was not valid UTF-8: {error.reason}",
+            source_url=request_url,
+        )
+    except SourceResponseTooLargeError as error:
+        return None, UniProtSequenceFetchFailure(
+            requested_reference=reference,
+            kind=UniProtSequenceFetchFailureKind.INVALID_RESPONSE,
+            message=str(error),
             source_url=request_url,
         )
 

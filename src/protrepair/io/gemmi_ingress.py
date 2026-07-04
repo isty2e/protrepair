@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from protrepair.errors import StructureInputTooLargeError
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
@@ -15,6 +16,8 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 
+MAX_STRUCTURE_INPUT_BYTES = 256 * 1024 * 1024
+
 
 def read_structure(
     path: Path,
@@ -23,6 +26,7 @@ def read_structure(
 ) -> ProteinStructure:
     """Read a coordinate file into the canonical structure model."""
 
+    _assert_structure_file_size(path)
     file_format = infer_file_format(path)
     active_policy = StructureNormalizationPolicy() if policy is None else policy
     if file_format is FileFormat.PDB:
@@ -51,6 +55,7 @@ def read_structure_string(
 ) -> ProteinStructure:
     """Read an in-memory coordinate payload into the canonical model."""
 
+    _assert_structure_text_size(contents, source_name=source_name)
     raw_structure = read_raw_structure_string(contents, file_format)
     active_policy = StructureNormalizationPolicy() if policy is None else policy
     pdb_conect_atom_ref_pairs = (
@@ -74,6 +79,7 @@ def read_structure_string_with_policy(
 ) -> ProteinStructure:
     """Read one in-memory payload using one canonical normalization policy."""
 
+    _assert_structure_text_size(contents, source_name=source_name)
     raw_structure = read_raw_structure_string(contents, file_format)
     pdb_conect_atom_ref_pairs = (
         _pdb_conect_atom_ref_pairs(contents) if file_format is FileFormat.PDB else ()
@@ -88,8 +94,13 @@ def read_structure_string_with_policy(
 
 
 def read_raw_structure(path: Path, file_format: FileFormat):
-    """Read one coordinate file with a format-specific gemmi ingress path."""
+    """Read one coordinate file with a format-specific gemmi ingress path.
 
+    The size guard is repeated here so direct raw-parser callers cannot bypass
+    the public ingress limit enforced by read_structure().
+    """
+
+    _assert_structure_file_size(path)
     if file_format is FileFormat.PDB:
         return gemmi.read_pdb(str(path))
 
@@ -102,6 +113,7 @@ def read_raw_structure(path: Path, file_format: FileFormat):
 def read_raw_structure_string(contents: str, file_format: FileFormat):
     """Read one coordinate payload with a format-specific gemmi ingress path."""
 
+    _assert_structure_text_size(contents, source_name=None)
     if file_format is FileFormat.PDB:
         return gemmi.read_pdb_string(contents)
 
@@ -110,6 +122,32 @@ def read_raw_structure_string(contents: str, file_format: FileFormat):
         True,
         to_gemmi_coor_format(file_format),
     )
+
+
+def _assert_structure_file_size(path: Path) -> None:
+    """Reject oversized local coordinate files before parser ingress."""
+
+    file_size = path.stat().st_size
+    if file_size > MAX_STRUCTURE_INPUT_BYTES:
+        raise StructureInputTooLargeError(
+            "structure input file exceeds "
+            f"{MAX_STRUCTURE_INPUT_BYTES} bytes: {path.name}"
+        )
+
+
+def _assert_structure_text_size(
+    contents: str,
+    *,
+    source_name: str | None,
+) -> None:
+    """Reject oversized in-memory coordinate payloads before parser ingress."""
+
+    if len(contents) > MAX_STRUCTURE_INPUT_BYTES:
+        source = "" if source_name is None else f": {source_name}"
+        raise StructureInputTooLargeError(
+            "structure input text exceeds "
+            f"{MAX_STRUCTURE_INPUT_BYTES} characters{source}"
+        )
 
 
 def _pdb_conect_atom_ref_pairs(

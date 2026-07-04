@@ -14,6 +14,7 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
+import protrepair.transformer.packing.faspr.backend as faspr_backend
 import protrepair.transformer.packing.faspr.paths as faspr_paths
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, write_structure_string
@@ -215,6 +216,46 @@ def test_faspr_backend_converts_subprocess_timeout(
     assert "timed out" in error_message
     assert "0.05" in error_message
     assert str(executable_path) in error_message
+
+
+def test_faspr_backend_bounds_subprocess_failure_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FASPR failure diagnostics should not capture unbounded stderr/stdout."""
+
+    executable_path = tmp_path / "FASPR"
+    executable_path.write_text(
+        "\n".join(
+            (
+                "#!/bin/sh",
+                "set -eu",
+                "i=0",
+                'while [ "$i" -lt 64 ]; do',
+                '  printf "x" >&2',
+                "  i=$((i + 1))",
+                "done",
+                "exit 7",
+            )
+        ),
+        encoding="utf-8",
+    )
+    executable_path.chmod(0o755)
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    monkeypatch.setattr(faspr_backend, "MAX_FASPR_CAPTURED_OUTPUT_BYTES", 16)
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    with pytest.raises(PackingBackendExecutionError) as exc_info:
+        FasprPackingBackend(executable_path=executable_path).pack(plan)
+
+    error_message = str(exc_info.value)
+    assert "exit code 7" in error_message
+    assert "x" * 16 in error_message
+    assert "x" * 17 not in error_message
+    assert "truncated after 16 bytes" in error_message
 
 
 def test_faspr_backend_preserves_surviving_topology_bonds_with_fake_executable(

@@ -1,10 +1,8 @@
 """Opt-in parser-witness repair performance probes for whole-structure cases."""
 
-import pickle
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from enum import Enum
-from pathlib import Path
 from time import perf_counter
 from typing import ParamSpec, TypeVar
 
@@ -72,8 +70,7 @@ from tests.support.whole_structure_sources import WHOLE_STRUCTURE_CORPUS_SOURCES
 
 P = ParamSpec("P")
 T = TypeVar("T")
-HYDROGENATED_CACHE_SCHEMA_VERSION = 2
-PARSER_REPAIR_PERFORMANCE_SCHEMA_VERSION = 3
+PARSER_REPAIR_PERFORMANCE_SCHEMA_VERSION = 4
 
 
 class ParserRepairProbeMode(str, Enum):
@@ -167,19 +164,6 @@ class ParserRepairCandidateSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class ParserRepairHydrogenatedCache:
-    """Versioned parser-repair hydrogenated structure cache payload."""
-
-    schema_version: int
-    structure: ProteinStructure
-
-    def is_current(self) -> bool:
-        """Return whether this cache payload matches current preparation semantics."""
-
-        return self.schema_version == HYDROGENATED_CACHE_SCHEMA_VERSION
-
-
-@dataclass(frozen=True, slots=True)
 class ParserRepairClusterSummary:
     """The parser-witness cluster selected for one probe run."""
 
@@ -213,7 +197,6 @@ class ParserRepairPerformanceResult:
     schema_version: int
     case_id: str
     mode: str
-    hydrogen_cache_used: bool
     timings_sec: dict[str, float]
     cluster: ParserRepairClusterSummary
     candidate_count: int
@@ -253,7 +236,6 @@ class ParserRepairPerformanceResult:
             "schema_version": self.schema_version,
             "case_id": self.case_id,
             "mode": self.mode,
-            "hydrogen_cache_used": self.hydrogen_cache_used,
             "timings_sec": self.timings_sec,
             "cluster": {
                 "residue_ids": list(self.cluster.residue_ids),
@@ -304,8 +286,6 @@ def run_first_parser_cluster_repair_probe(
     *,
     case_id: str = "3ja8-whole-structure",
     mode: ParserRepairProbeMode | str = ParserRepairProbeMode.PRODUCTION_LIKE,
-    use_hydrogen_cache: bool = False,
-    hydrogen_cache_path: Path | None = None,
     context_radius_angstrom: float = 3.0,
     max_iterations: int = 20,
 ) -> ParserRepairPerformanceResult:
@@ -325,12 +305,10 @@ def run_first_parser_cluster_repair_probe(
     timings: dict[str, float] = {}
     component_library = build_default_component_library()
     restraint_library = build_default_restraint_library()
-    structure, cache_used = _load_or_prepare_hydrogenated_structure(
+    structure = _load_or_prepare_hydrogenated_structure(
         case_id=case_id,
         component_library=component_library,
         timings=timings,
-        use_hydrogen_cache=use_hydrogen_cache,
-        hydrogen_cache_path=hydrogen_cache_path,
     )
     before_parser_probe = _timed(
         "before_parser_probe",
@@ -472,7 +450,6 @@ def run_first_parser_cluster_repair_probe(
         schema_version=PARSER_REPAIR_PERFORMANCE_SCHEMA_VERSION,
         case_id=case_id,
         mode=probe_mode.value,
-        hydrogen_cache_used=cache_used,
         timings_sec=timings,
         cluster=ParserRepairClusterSummary(
             residue_ids=tuple(
@@ -646,22 +623,8 @@ def _load_or_prepare_hydrogenated_structure(
     case_id: str,
     component_library: ComponentLibrary,
     timings: dict[str, float],
-    use_hydrogen_cache: bool,
-    hydrogen_cache_path: Path | None,
-) -> tuple[ProteinStructure, bool]:
+) -> ProteinStructure:
     """Return a fully hydrogenated whole-structure corpus input."""
-
-    cache_path = hydrogen_cache_path or Path(
-        f"/tmp/protrepair_{case_id}_hydrogenated.pkl"
-    )
-    if use_hydrogen_cache and cache_path.exists():
-        cached_structure = _timed(
-            "load_hydrogenated_cache",
-            lambda: _current_hydrogenated_cache_structure(cache_path),
-            timings,
-        )
-        if cached_structure is not None:
-            return cached_structure, True
 
     case = WHOLE_STRUCTURE_CORPUS_SOURCES[case_id]
     normalized = _timed(
@@ -698,35 +661,7 @@ def _load_or_prepare_hydrogenated_structure(
         timings,
     )
     structure = retained_result.structure
-    if use_hydrogen_cache:
-        _timed(
-            "write_hydrogenated_cache",
-            lambda: cache_path.write_bytes(
-                pickle.dumps(
-                    ParserRepairHydrogenatedCache(
-                        schema_version=HYDROGENATED_CACHE_SCHEMA_VERSION,
-                        structure=structure,
-                    )
-                )
-            ),
-            timings,
-        )
-
-    return structure, False
-
-
-def _current_hydrogenated_cache_structure(
-    cache_path: Path,
-) -> ProteinStructure | None:
-    """Return a current cache structure or None when the cache is stale."""
-
-    payload = pickle.loads(cache_path.read_bytes())
-    if not isinstance(payload, ParserRepairHydrogenatedCache):
-        return None
-    if not payload.is_current():
-        return None
-
-    return payload.structure
+    return structure
 
 
 def _timed(name: str, action: Callable[[], T], timings: dict[str, float]) -> T:

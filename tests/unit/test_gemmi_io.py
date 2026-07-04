@@ -18,6 +18,7 @@ from tests.support.structure_summary import summarize_structure
 import protrepair.io.gemmi_ingress as gemmi_ingress
 import protrepair.io.gemmi_writer as gemmi_writer
 from protrepair.diagnostics.topology import detect_disulfide_topology
+from protrepair.errors import StructureInputTooLargeError
 from protrepair.geometry import Vec3
 from protrepair.io import (
     read_structure,
@@ -51,6 +52,31 @@ from protrepair.workflow.contracts import (
     MutationPolicy,
     OccupancyPolicy,
 )
+
+
+def test_read_structure_string_rejects_oversized_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """String ingress should bound hostile in-memory coordinate payloads."""
+
+    monkeypatch.setattr(gemmi_ingress, "MAX_STRUCTURE_INPUT_BYTES", 4)
+
+    with pytest.raises(StructureInputTooLargeError, match="exceeds 4 characters"):
+        read_structure_string("HEADER", FileFormat.PDB, source_name="oversized.pdb")
+
+
+def test_read_structure_rejects_oversized_file_before_parser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Path ingress should stat oversized coordinate files before gemmi parsing."""
+
+    pdb_path = tmp_path / "oversized.pdb"
+    pdb_path.write_text("HEADER", encoding="utf-8")
+    monkeypatch.setattr(gemmi_ingress, "MAX_STRUCTURE_INPUT_BYTES", 4)
+
+    with pytest.raises(StructureInputTooLargeError, match="exceeds 4 bytes"):
+        read_structure(pdb_path)
 
 
 def test_read_structure_string_resolves_atom_altloc_by_highest_occupancy() -> None:
