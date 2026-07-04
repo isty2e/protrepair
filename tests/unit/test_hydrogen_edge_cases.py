@@ -1437,11 +1437,7 @@ def _topology_bond_between(
     atom_index_2 = structure.constitution.atom_index(
         AtomRef(residue_id, atom_name_2)
     )
-    for bond in structure.topology.bonds:
-        if {bond.atom_index_1, bond.atom_index_2} == {atom_index_1, atom_index_2}:
-            return bond
-
-    return None
+    return structure.topology.bond_between(atom_index_1, atom_index_2)
 
 
 def _has_topology_bond(

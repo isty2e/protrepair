@@ -607,6 +607,41 @@ class TestStructureTopologyBonds:
         assert topology.atom_topologies[0] is not None
         assert topology.atom_topologies[0].formal_charge == 0
 
+    def test_bond_between_returns_canonical_endpoint_bond(self):
+        structure = _two_residue_constitution()
+        bond = TopologyBond(atom_index_1=AtomIndex(0), atom_index_2=AtomIndex(2))
+        topology = StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=(None,) * len(structure.constitution.atom_slots),
+            bonds=(bond,),
+        )
+
+        assert topology.bond_between(AtomIndex(2), AtomIndex(0)) == bond
+        assert topology.bond_between(AtomIndex(0), AtomIndex(0)) is None
+        assert topology.bond_between(AtomIndex(1), AtomIndex(3)) is None
+
+    def test_covalent_like_endpoint_pairs_exclude_non_covalent_bonds(self):
+        structure = _two_residue_constitution()
+        covalent_bond = TopologyBond(
+            atom_index_1=AtomIndex(0),
+            atom_index_2=AtomIndex(2),
+            relationship_type=BondRelationshipType.COVALENT,
+        )
+        metal_bond = TopologyBond(
+            atom_index_1=AtomIndex(1),
+            atom_index_2=AtomIndex(3),
+            relationship_type=BondRelationshipType.METAL_COORDINATION,
+        )
+        topology = StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=(None,) * len(structure.constitution.atom_slots),
+            bonds=(covalent_bond, metal_bond),
+        )
+
+        assert topology.covalent_like_endpoint_pairs() == frozenset(
+            {covalent_bond.endpoint_pair()}
+        )
+
     def test_bonds_for_constitution_remaps_surviving_endpoints(self):
         structure = _bonded_rewrite_structure()
         target_constitution = structure.constitution.with_chains(

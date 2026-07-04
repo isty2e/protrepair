@@ -41,6 +41,15 @@ or unknown relationships are not promoted to PDB `CONECT`; source-explicit
 non-covalent relationships remain source-preserving boundary records where the
 format supports them.
 
+PDB egress intentionally uses two boundary projections. Gemmi connection
+records preserve typed source relationships, so PDB `LINK`/`SSBOND`-like records
+carry source-explicit bonds except source records that originally came from PDB
+`CONECT`. PDB `CONECT` is an untyped connectivity table, so it is appended from
+canonical topology after gemmi serialization and includes source PDB `CONECT`
+records plus covalent-like model-resolved bonds. mmCIF has a single
+`_struct_conn` projection because that boundary can carry typed relationships
+and repaired/model-resolved covalent-like bonds in the same table.
+
 Readiness must compare expected bond endpoint pairs against
 `StructureTopology.bonds`. Atom coordinates alone do not prove topology
 readiness. If a residue or retained non-polymer has all expected atoms but is

@@ -196,7 +196,7 @@ def add_topology_connections_to_gemmi_structure(
     structure: ProteinStructure,
     *,
     include_pdb_conect_origin: bool,
-    include_model_resolved: bool,
+    include_model_resolved: bool = False,
 ) -> None:
     """Add topology bonds as gemmi connection records."""
 
@@ -239,7 +239,13 @@ def add_topology_connections_to_gemmi_structure(
 def source_explicit_topology_bonds_for_egress(
     structure: ProteinStructure,
 ) -> tuple[TopologyBond, ...]:
-    """Return topology bonds emitted by the default source-preserving policy."""
+    """Return all source-explicit topology bonds.
+
+    This is a source-preservation projection, not a concrete writer policy.
+    Format-specific writers should use gemmi_connection_topology_bonds_for_egress
+    or pdb_conect_topology_bonds_for_egress because PDB and mmCIF preserve
+    source-explicit relationships through different boundary records.
+    """
 
     return tuple(
         bond
@@ -253,7 +259,12 @@ def gemmi_connection_topology_bonds_for_egress(
     *,
     include_model_resolved: bool,
 ) -> tuple[TopologyBond, ...]:
-    """Return topology bonds emitted through gemmi connection records."""
+    """Return topology bonds emitted through gemmi connection records.
+
+    Gemmi connection records preserve typed relationships such as LINK,
+    struct_conn, disulfide, hydrogen, and metal coordination. PDB CONECT records
+    are appended separately because they are an untyped connectivity table.
+    """
 
     return tuple(
         bond
@@ -346,7 +357,7 @@ def append_pdb_conect_records_from_topology(
     pdb_text: str,
     structure: ProteinStructure,
 ) -> str:
-    """Append PDB CONECT records projected from PDB-bond topology."""
+    """Append PDB CONECT records projected from canonical topology."""
 
     serial_by_atom_ref = pdb_atom_serial_by_atom_ref(pdb_text)
     neighbor_serials_by_source: dict[int, set[int]] = {}
@@ -384,7 +395,13 @@ def append_pdb_conect_records_from_topology(
 def pdb_conect_topology_bonds_for_egress(
     structure: ProteinStructure,
 ) -> tuple[TopologyBond, ...]:
-    """Return topology bonds that should be represented as PDB CONECT."""
+    """Return topology bonds that should be represented as PDB CONECT.
+
+    PDB CONECT cannot encode relationship type, so this projection preserves
+    source PDB CONECT records and emits covalent-like repaired/model-resolved
+    bonds. Typed source relationships such as metal coordination stay in gemmi
+    connection records unless they came from PDB CONECT.
+    """
 
     return tuple(
         bond

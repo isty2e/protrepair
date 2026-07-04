@@ -288,17 +288,10 @@ def _topology_bond_between(
     atom_name_1: str,
     atom_name_2: str,
 ) -> TopologyBond | None:
-    endpoint_pair = frozenset(
-        (
-            structure.constitution.atom_index(AtomRef(residue_id, atom_name_1)),
-            structure.constitution.atom_index(AtomRef(residue_id, atom_name_2)),
-        )
+    return structure.topology.bond_between(
+        structure.constitution.atom_index(AtomRef(residue_id, atom_name_1)),
+        structure.constitution.atom_index(AtomRef(residue_id, atom_name_2)),
     )
-    for bond in structure.topology.bonds:
-        if frozenset(bond.endpoint_pair()) == endpoint_pair:
-            return bond
-
-    return None
 
 
 def _has_pdb_conect_between(

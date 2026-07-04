@@ -1,5 +1,6 @@
 """Shared topology-readiness basis facts and observations."""
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from enum import Enum
 
@@ -13,8 +14,8 @@ from protrepair.scope import ResidueSetScope
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.slots import AtomIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
-from protrepair.structure.topology import is_covalent_like_relationship
 
 
 class TopologyAvailabilityState(str, Enum):
@@ -38,18 +39,25 @@ def residue_bond_topology_availability_state(
     *,
     expected_bond_definitions: tuple[BondDefinition, ...],
     empty_state: TopologyAvailabilityState,
+    covalent_like_endpoint_pairs: Collection[tuple[AtomIndex, AtomIndex]] | None = None,
 ) -> TopologyAvailabilityState:
     """Return whether expected residue-local bonds exist in canonical topology."""
 
     if not expected_bond_definitions:
         return empty_state
 
+    endpoint_pairs = (
+        structure.topology.covalent_like_endpoint_pairs()
+        if covalent_like_endpoint_pairs is None
+        else covalent_like_endpoint_pairs
+    )
     for bond_definition in expected_bond_definitions:
         if not _has_residue_topology_bond(
             structure,
             residue.residue_id,
             bond_definition.atom_name_1,
             bond_definition.atom_name_2,
+            covalent_like_endpoint_pairs=endpoint_pairs,
         ):
             return TopologyAvailabilityState.ABSENT
 
@@ -100,6 +108,9 @@ class TopologyAvailabilityFacts:
             if component_library is None
             else component_library
         )
+        covalent_like_endpoint_pairs = (
+            snapshot.structure.topology.covalent_like_endpoint_pairs()
+        )
         residue_facts_by_key: dict[
             tuple[ResidueId, TopologyAvailabilityAspect],
             ResidueTopologyAvailabilityFact,
@@ -148,6 +159,7 @@ class TopologyAvailabilityFacts:
                     )
                 ),
                 empty_state=TopologyAvailabilityState.PRESENT,
+                covalent_like_endpoint_pairs=covalent_like_endpoint_pairs,
             )
             residue_facts_by_key[
                 (
@@ -191,6 +203,7 @@ class TopologyAvailabilityFacts:
                         )
                     ),
                     empty_state=TopologyAvailabilityState.ABSENT,
+                    covalent_like_endpoint_pairs=covalent_like_endpoint_pairs,
                 )
 
             residue_facts_by_key[
@@ -227,6 +240,8 @@ def _has_residue_topology_bond(
     residue_id: ResidueId,
     atom_name_1: str,
     atom_name_2: str,
+    *,
+    covalent_like_endpoint_pairs: Collection[tuple[AtomIndex, AtomIndex]],
 ) -> bool:
     atom_index_1 = structure.constitution.resolve_atom_index(
         AtomRef(residue_id, atom_name_1)
@@ -237,12 +252,12 @@ def _has_residue_topology_bond(
     if atom_index_1 is None or atom_index_2 is None:
         return False
 
-    endpoint_pair = frozenset((atom_index_1, atom_index_2))
-    return any(
-        is_covalent_like_relationship(bond)
-        and frozenset((bond.atom_index_1, bond.atom_index_2)) == endpoint_pair
-        for bond in structure.topology.bonds
+    endpoint_pair = (
+        (atom_index_2, atom_index_1)
+        if atom_index_2.value < atom_index_1.value
+        else (atom_index_1, atom_index_2)
     )
+    return endpoint_pair in covalent_like_endpoint_pairs
 
 
 class HydrogenAttachmentResolutionState(str, Enum):

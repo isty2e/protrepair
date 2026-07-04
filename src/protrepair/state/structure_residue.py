@@ -1,6 +1,6 @@
 """Residue-local structure state facts and derivation runtime."""
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import cast
 
@@ -61,6 +61,7 @@ from protrepair.state.topology import (
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import ResidueId
+from protrepair.structure.slots import AtomIndex
 
 __all__ = [
     "ResidueChemistryReadinessFacts",
@@ -243,6 +244,7 @@ def _polymer_heavy_topology_availability_state(
     component_library: ComponentLibrary,
     support_state: ComponentSupportState,
     coverage_facts: ResidueCoverageFacts,
+    covalent_like_endpoint_pairs: Collection[tuple[AtomIndex, AtomIndex]],
 ) -> TopologyAvailabilityState:
     """Return polymer heavy topology availability from expected template bonds."""
 
@@ -265,6 +267,7 @@ def _polymer_heavy_topology_availability_state(
             template=template,
         ),
         empty_state=TopologyAvailabilityState.PRESENT,
+        covalent_like_endpoint_pairs=covalent_like_endpoint_pairs,
     )
 
 
@@ -274,6 +277,7 @@ def _polymer_hydrogen_topology_availability_state(
     *,
     component_library: ComponentLibrary,
     expected_hydrogen_atom_names: tuple[str, ...],
+    covalent_like_endpoint_pairs: Collection[tuple[AtomIndex, AtomIndex]],
 ) -> TopologyAvailabilityState:
     """Return polymer hydrogen topology availability from expected H anchors."""
 
@@ -298,6 +302,7 @@ def _polymer_hydrogen_topology_availability_state(
             ),
         ),
         empty_state=TopologyAvailabilityState.ABSENT,
+        covalent_like_endpoint_pairs=covalent_like_endpoint_pairs,
     )
 
 
@@ -309,6 +314,7 @@ def _retained_non_polymer_hydrogen_topology_availability_state(
     evidence: RetainedNonPolymerChemistryEvidence | None,
     template: ResidueTemplate | None,
     expected_hydrogen_atom_names: tuple[str, ...],
+    covalent_like_endpoint_pairs: Collection[tuple[AtomIndex, AtomIndex]],
 ) -> TopologyAvailabilityState:
     """Return retained ligand H topology availability from expected anchors."""
 
@@ -325,6 +331,7 @@ def _retained_non_polymer_hydrogen_topology_availability_state(
         residue,
         expected_bond_definitions=bond_definitions,
         empty_state=TopologyAvailabilityState.ABSENT,
+        covalent_like_endpoint_pairs=covalent_like_endpoint_pairs,
     )
 
 
@@ -459,6 +466,7 @@ class ResidueProjectionFactRuntime:
     context_structure: ProteinStructure
     component_library: ComponentLibrary
     hydrogen_expectation_model: StructureHydrogenExpectationModel
+    covalent_like_endpoint_pairs: Collection[tuple[AtomIndex, AtomIndex]]
     retained_non_polymer_evidence_by_residue_id: Mapping[
         ResidueId,
         RetainedNonPolymerChemistryEvidence,
@@ -495,6 +503,9 @@ class ResidueProjectionFactRuntime:
             context_structure=context_structure,
             component_library=library,
             hydrogen_expectation_model=hydrogen_expectation_model,
+            covalent_like_endpoint_pairs=(
+                context_structure.topology.covalent_like_endpoint_pairs()
+            ),
             retained_non_polymer_evidence_by_residue_id=evidence_map,
         )
 
@@ -555,6 +566,7 @@ class ResidueProjectionFactRuntime:
                 component_library=self.component_library,
                 support_state=support_state,
                 coverage_facts=coverage_facts,
+                covalent_like_endpoint_pairs=self.covalent_like_endpoint_pairs,
             )
         )
         if heavy_atom_topology_availability_state is TopologyAvailabilityState.ABSENT:
@@ -575,6 +587,7 @@ class ResidueProjectionFactRuntime:
                             (),
                         )
                     ),
+                    covalent_like_endpoint_pairs=self.covalent_like_endpoint_pairs,
                 )
             )
         else:
@@ -666,6 +679,7 @@ class ResidueProjectionFactRuntime:
                         retained_non_polymer_evidence_heavy_bond_definitions(evidence)
                     ),
                     empty_state=TopologyAvailabilityState.PRESENT,
+                    covalent_like_endpoint_pairs=self.covalent_like_endpoint_pairs,
                 )
                 if heavy_atom_names_present and heavy_atom_elements_match
                 else TopologyAvailabilityState.ABSENT
@@ -689,6 +703,7 @@ class ResidueProjectionFactRuntime:
                         )
                     ),
                     empty_state=TopologyAvailabilityState.PRESENT,
+                    covalent_like_endpoint_pairs=self.covalent_like_endpoint_pairs,
                 )
                 if expected_heavy_atom_names.issubset(present_heavy_atom_names)
                 else TopologyAvailabilityState.ABSENT
@@ -726,6 +741,9 @@ class ResidueProjectionFactRuntime:
                         residue,
                         expected_bond_definitions=fallback_heavy_bonds,
                         empty_state=TopologyAvailabilityState.PRESENT,
+                        covalent_like_endpoint_pairs=(
+                            self.covalent_like_endpoint_pairs
+                        ),
                     )
                 )
         else:
@@ -764,6 +782,9 @@ class ResidueProjectionFactRuntime:
                         template=template,
                         expected_hydrogen_atom_names=(
                             selected_expected_hydrogen_atom_names
+                        ),
+                        covalent_like_endpoint_pairs=(
+                            self.covalent_like_endpoint_pairs
                         ),
                     )
                 )

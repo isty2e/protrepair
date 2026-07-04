@@ -294,6 +294,32 @@ class StructureTopology:
 
         return tuple(remapped_bonds)
 
+    def bond_between(
+        self,
+        atom_index_1: AtomIndex,
+        atom_index_2: AtomIndex,
+    ) -> TopologyBond | None:
+        """Return the topology bond between two atom slots when present."""
+
+        if atom_index_1 == atom_index_2:
+            return None
+
+        endpoint_pair = _canonical_endpoint_pair(atom_index_1, atom_index_2)
+        for bond in self.bonds:
+            if bond.endpoint_pair() == endpoint_pair:
+                return bond
+
+        return None
+
+    def covalent_like_endpoint_pairs(self) -> frozenset[tuple[AtomIndex, AtomIndex]]:
+        """Return canonical endpoint pairs for all covalent-like topology bonds."""
+
+        return frozenset(
+            bond.endpoint_pair()
+            for bond in self.bonds
+            if is_covalent_like_relationship(bond)
+        )
+
     def atom_count(self) -> int:
         """Return the number of stored atom-topology slots."""
 
@@ -348,6 +374,18 @@ class StructureTopology:
             for atom_topology in (self.atom_topology(atom_index),)
             if atom_topology is not None
         )
+
+
+def _canonical_endpoint_pair(
+    atom_index_1: AtomIndex,
+    atom_index_2: AtomIndex,
+) -> tuple[AtomIndex, AtomIndex]:
+    """Return a canonically ordered atom endpoint pair."""
+
+    if atom_index_2.value < atom_index_1.value:
+        return (atom_index_2, atom_index_1)
+
+    return (atom_index_1, atom_index_2)
 
 
 def _deduplicate_topology_bonds(

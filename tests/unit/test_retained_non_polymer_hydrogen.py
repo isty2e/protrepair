@@ -730,11 +730,7 @@ def _topology_bond_between(
     if atom_index_1 is None or atom_index_2 is None:
         return None
 
-    for bond in structure.topology.bonds:
-        if {bond.atom_index_1, bond.atom_index_2} == {atom_index_1, atom_index_2}:
-            return bond
-
-    return None
+    return structure.topology.bond_between(atom_index_1, atom_index_2)
 
 
 def _has_topology_bond(
