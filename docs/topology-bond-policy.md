@@ -34,9 +34,12 @@ bonds. `SOURCE_EXPLICIT` metal coordination remains topology truth, but it is
 not a covalent force-field bond merely because the source reported it.
 
 Egress must project from canonical topology instead of inventing writer-local
-connectivity. Source-explicit bonds preserve source roundtrip behavior. Repaired
-or model-resolved bonds require an explicit egress policy before they are written
-as PDB `CONECT` or mmCIF `_struct_conn`.
+connectivity. Source-explicit bonds preserve source roundtrip behavior.
+Covalent-like model-resolved bonds are egress-emittable: PDB writes them as
+`CONECT`, and mmCIF writes them as `_struct_conn`. Model-resolved non-covalent
+or unknown relationships are not promoted to PDB `CONECT`; source-explicit
+non-covalent relationships remain source-preserving boundary records where the
+format supports them.
 
 Readiness must compare expected bond endpoint pairs against
 `StructureTopology.bonds`. Atom coordinates alone do not prove topology
