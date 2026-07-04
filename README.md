@@ -19,6 +19,11 @@ Current implemented scope:
 - optional RDKit-backed hydrogenation and local refinement through the
   `refinement` extra
 
+Topology policy is documented in
+[`docs/topology-bond-policy.md`](docs/topology-bond-policy.md). In short,
+canonical topology owns bond truth; execution, readiness, and PDB/mmCIF egress
+project from that topology instead of carrying separate connectivity stories.
+
 Current deferred scope:
 
 - generic arbitrary nonstandard chemistry beyond supported component templates

@@ -1144,8 +1144,19 @@ def test_write_mmcif_emits_struct_conn_from_pdb_conect_topology_bonds() -> None:
     )
 
 
-def test_write_pdb_default_policy_does_not_emit_template_bonds() -> None:
-    """Default PDB egress should not serialize non-source topology bonds."""
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        BondProvenance.TEMPLATE_RESOLVED,
+        BondProvenance.SEQUENCE_INFERRED,
+        BondProvenance.EVIDENCE_RESOLVED,
+        BondProvenance.REPAIR_INFERRED,
+    ],
+)
+def test_write_pdb_default_policy_does_not_emit_model_resolved_bonds(
+    provenance: BondProvenance,
+) -> None:
+    """The source-roundtrip egress policy must not replay repaired bonds."""
 
     source = read_structure_string(
         build_pdb_text(
@@ -1187,13 +1198,16 @@ def test_write_pdb_default_policy_does_not_emit_template_bonds() -> None:
                     atom_index_1=source.constitution.atom_index(atom_ref_1),
                     atom_index_2=source.constitution.atom_index(atom_ref_2),
                     relationship_type=BondRelationshipType.COVALENT,
-                    provenance=BondProvenance.TEMPLATE_RESOLVED,
+                    provenance=provenance,
                 ),
             ),
         ),
         polymer_blueprint=source.polymer_blueprint,
         provenance=source.provenance,
     )
+
+    assert gemmi_writer.source_explicit_topology_bonds_for_egress(structure) == ()
+    assert gemmi_writer.pdb_conect_topology_bonds_for_egress(structure) == ()
 
     pdb_text = write_structure_string(structure, FileFormat.PDB)
 

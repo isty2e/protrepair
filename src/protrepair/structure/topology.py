@@ -27,11 +27,20 @@ class AtomTopology:
 
 
 class BondProvenance(str, Enum):
-    """How a canonical topology bond was established."""
+    """Evidence family supporting one canonical topology bond.
+
+    This is a support-mode axis, not a lifecycle or egress axis. A bond created
+    during repair can still be template-resolved, sequence-inferred, evidence-
+    resolved, or repair-inferred depending on what justified the endpoint pair.
+    Writers and readiness checks must project from provenance plus their own
+    boundary context instead of treating provenance as a serialization flag.
+    """
 
     SOURCE_EXPLICIT = "source_explicit"
     TEMPLATE_RESOLVED = "template_resolved"
     SEQUENCE_INFERRED = "sequence_inferred"
+    EVIDENCE_RESOLVED = "evidence_resolved"
+    REPAIR_INFERRED = "repair_inferred"
 
 
 class BondRelationshipType(str, Enum):
@@ -157,6 +166,12 @@ def is_source_provenance(bond: TopologyBond) -> bool:
     """Return whether a topology bond has source-explicit provenance."""
 
     return bond.provenance is BondProvenance.SOURCE_EXPLICIT
+
+
+def is_model_resolved_provenance(bond: TopologyBond) -> bool:
+    """Return whether a topology bond was resolved by canonical model policy."""
+
+    return not is_source_provenance(bond)
 
 
 @dataclass(frozen=True, slots=True, init=False)
