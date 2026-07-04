@@ -70,7 +70,7 @@ from tests.support.whole_structure_sources import WHOLE_STRUCTURE_CORPUS_SOURCES
 
 P = ParamSpec("P")
 T = TypeVar("T")
-PARSER_REPAIR_PERFORMANCE_SCHEMA_VERSION = 3
+PARSER_REPAIR_PERFORMANCE_SCHEMA_VERSION = 4
 
 
 class ParserRepairProbeMode(str, Enum):
