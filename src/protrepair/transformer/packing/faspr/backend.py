@@ -17,7 +17,10 @@ from protrepair.errors import (
     StructureNormalizationError,
 )
 from protrepair.io import write_structure_string
-from protrepair.io.gemmi_ingress import read_structure_string_with_policy
+from protrepair.io.gemmi_ingress import (
+    MAX_STRUCTURE_INPUT_BYTES,
+    read_structure_string_with_policy,
+)
 from protrepair.io.ingress_policy import (
     LigandHandling,
     StructureNormalizationPolicy,
@@ -48,6 +51,7 @@ FASPR_CAPABILITIES = PackingCapabilities(
     deterministic_given_same_inputs=True,
 )
 DEFAULT_FASPR_EXECUTION_TIMEOUT_SECONDS = 1800.0
+MAX_FASPR_CAPTURED_OUTPUT_BYTES = 64 * 1024
 FASPR_ALPHABET = PackingAlphabet(
     {
         "ALA": "A",
@@ -360,21 +364,28 @@ def run_faspr(
             command.extend(["-s", str(sequence_path)])
 
         try:
-            completed = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                cwd=executable_path.parent,
-                timeout=timeout_seconds,
-            )
+            stdout_path = temp_dir / "stdout.txt"
+            stderr_path = temp_dir / "stderr.txt"
+            with stdout_path.open("w", encoding="utf-8") as stdout_file:
+                with stderr_path.open("w", encoding="utf-8") as stderr_file:
+                    completed = subprocess.run(
+                        command,
+                        check=False,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        text=True,
+                        cwd=executable_path.parent,
+                        timeout=timeout_seconds,
+                    )
         except subprocess.TimeoutExpired as error:
             raise PackingBackendExecutionError(
                 "FASPR execution timed out after "
                 f"{timeout_seconds:g} seconds: {executable_path}"
             ) from error
         if completed.returncode != 0:
-            error_message = completed.stderr.strip() or completed.stdout.strip()
+            error_message = _bounded_output_excerpt(
+                stderr_path,
+            ) or _bounded_output_excerpt(stdout_path)
             raise PackingBackendExecutionError(
                 "FASPR execution failed with "
                 f"exit code {completed.returncode}: {error_message}"
@@ -386,6 +397,7 @@ def run_faspr(
             )
 
         try:
+            _assert_faspr_output_size(output_path)
             packed_core = read_structure_string_with_policy(
                 output_path.read_text(encoding="utf-8"),
                 FileFormat.PDB,
@@ -403,6 +415,39 @@ def run_faspr(
         packed_core=packed_core,
         original_structure=execution_input.structure,
     )
+
+
+def _bounded_output_excerpt(path: Path) -> str:
+    """Return a bounded FASPR output excerpt for error reporting."""
+
+    with path.open("rb") as output_file:
+        payload = output_file.read(MAX_FASPR_CAPTURED_OUTPUT_BYTES + 1)
+
+    truncated = len(payload) > MAX_FASPR_CAPTURED_OUTPUT_BYTES
+    if truncated:
+        payload = payload[:MAX_FASPR_CAPTURED_OUTPUT_BYTES]
+
+    excerpt = payload.decode("utf-8", errors="replace").strip()
+    if not excerpt:
+        return ""
+    if truncated:
+        return (
+            f"{excerpt}... [truncated after "
+            f"{MAX_FASPR_CAPTURED_OUTPUT_BYTES} bytes]"
+        )
+
+    return excerpt
+
+
+def _assert_faspr_output_size(path: Path) -> None:
+    """Reject oversized FASPR output before reading it into memory."""
+
+    output_size = path.stat().st_size
+    if output_size > MAX_STRUCTURE_INPUT_BYTES:
+        raise PackingBackendExecutionError(
+            "FASPR output exceeded "
+            f"{MAX_STRUCTURE_INPUT_BYTES} bytes: {path.name}"
+        )
 
 
 def _polymer_only_structure(structure: ProteinStructure) -> ProteinStructure:

@@ -21,7 +21,7 @@ from protrepair.sources.uniprot_retrieval import (
 class FakeResponse:
     """Minimal context-managed HTTP response for UniProt boundary tests."""
 
-    def __init__(self, payload: dict[str, object]) -> None:
+    def __init__(self, payload: dict[str, object] | str) -> None:
         self._payload = payload
 
     def __enter__(self) -> "FakeResponse":
@@ -39,10 +39,15 @@ class FakeResponse:
 
         return None
 
-    def read(self) -> bytes:
+    def read(self, size: int = -1) -> bytes:
         """Return one JSON-encoded payload body."""
 
-        return json.dumps(self._payload).encode("utf-8")
+        if isinstance(self._payload, str):
+            payload = self._payload.encode("utf-8")
+        else:
+            payload = json.dumps(self._payload).encode("utf-8")
+
+        return payload if size < 0 else payload[:size]
 
 
 def test_fetch_uniprot_sequence_family_fetches_canonical_and_isoforms(
@@ -210,6 +215,30 @@ def test_fetch_uniprot_sequence_passes_configured_timeout(
 
     assert outcome.is_success()
     assert seen_timeouts == [6.25]
+
+
+def test_fetch_uniprot_sequence_rejects_oversized_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """UniProt fetch should not read unbounded response bodies."""
+
+    def fake_urlopen(request: Request, *, timeout: float) -> FakeResponse:
+        return FakeResponse("x" * 5)
+
+    import protrepair.sources._network as network_policy
+    import protrepair.sources.uniprot_retrieval as uniprot_io
+
+    monkeypatch.setattr(network_policy, "DEFAULT_SOURCE_RETRIEVAL_MAX_BYTES", 4)
+    monkeypatch.setattr(uniprot_io, "urlopen", fake_urlopen)
+
+    outcome = fetch_uniprot_sequence(
+        UniProtSequenceReference(accession="P04406")
+    )
+
+    assert outcome.is_success() is False
+    assert outcome.failure is not None
+    assert outcome.failure.kind is UniProtSequenceFetchFailureKind.INVALID_RESPONSE
+    assert "exceeded 4 bytes" in outcome.failure.message
 
 
 def test_fetch_uniprot_sequence_family_passes_timeout_to_each_fetch(

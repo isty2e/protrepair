@@ -29,8 +29,11 @@ class FakeResponse:
     def __init__(
         self,
         payload: str | Mapping[str, object] | tuple[Mapping[str, object], ...],
+        *,
+        final_url: str | None = None,
     ) -> None:
         self._payload = payload
+        self._final_url = final_url
 
     def __enter__(self) -> "FakeResponse":
         """Enter the fake response context."""
@@ -47,13 +50,34 @@ class FakeResponse:
 
         return None
 
-    def read(self) -> bytes:
+    def read(self, size: int = -1) -> bytes:
         """Return one encoded payload body."""
 
         if isinstance(self._payload, str):
-            return self._payload.encode("utf-8")
+            payload = self._payload.encode("utf-8")
+        else:
+            payload = json.dumps(self._payload).encode("utf-8")
 
-        return json.dumps(self._payload).encode("utf-8")
+        return payload if size < 0 else payload[:size]
+
+    def geturl(self) -> str:
+        """Return the final URL observed by urllib after redirects."""
+
+        return "" if self._final_url is None else self._final_url
+
+
+def _alphafold_model_with_pdb_url(pdb_url: str) -> AlphaFoldModelRecord:
+    """Return one AlphaFold model record with a caller-selected PDB URL."""
+
+    return AlphaFoldModelRecord(
+        uniprot_reference=UniProtSequenceReference(accession="P04406"),
+        entry_id="AF-P04406-F1",
+        model_entity_id="AF-P04406-F1",
+        provider_id="GDM",
+        tool_used="AlphaFold Monomer v2.0 pipeline",
+        sequence="MPEPTIDE",
+        pdb_url=pdb_url,
+    )
 
 
 def test_fetch_alphafold_model_set_preserves_canonical_and_isoform_records(
@@ -155,6 +179,136 @@ def test_fetch_alphafold_structure_artifact_downloads_raw_text(
     assert artifact.file_format is FileFormat.PDB
     assert artifact.cache_key() == "AF-P04406-F1:pdb"
     assert "HEADER" in artifact.structure_text
+
+
+@pytest.mark.parametrize(
+    ("artifact_url", "message_fragment"),
+    [
+        ("file:///tmp/AF-P04406-F1-model_v6.pdb", "HTTPS"),
+        (
+            "http://alphafold.ebi.ac.uk/files/AF-P04406-F1-model_v6.pdb",
+            "HTTPS",
+        ),
+        (
+            "https://127.0.0.1/files/AF-P04406-F1-model_v6.pdb",
+            "trusted",
+        ),
+        (
+            "https://localhost/files/AF-P04406-F1-model_v6.pdb",
+            "trusted",
+        ),
+        (
+            "https://alphafold.ebi.ac.uk:444/files/AF-P04406-F1-model_v6.pdb",
+            "default HTTPS port",
+        ),
+    ],
+)
+def test_fetch_alphafold_structure_artifact_rejects_untrusted_artifact_urls(
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_url: str,
+    message_fragment: str,
+) -> None:
+    """Artifact fetch should reject hostile URLs before opening a connection."""
+
+    opened_urls: list[str] = []
+
+    def fake_urlopen(request: Request, *, timeout: float) -> FakeResponse:
+        opened_urls.append(request.full_url)
+        return FakeResponse("HEADER    SHOULD NOT BE READ")
+
+    import protrepair.sources.alphafold_retrieval as alphafold_io
+
+    monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
+
+    outcome = fetch_alphafold_structure_artifact(
+        _alphafold_model_with_pdb_url(artifact_url)
+    )
+
+    assert outcome.is_success() is False
+    assert outcome.failure is not None
+    assert outcome.failure.kind is AlphaFoldFetchFailureKind.INVALID_RESPONSE
+    assert message_fragment in outcome.failure.message
+    assert opened_urls == []
+
+
+def test_fetch_alphafold_structure_artifact_rejects_untrusted_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Artifact fetch should validate the final URL after urllib redirects."""
+
+    opened_urls: list[str] = []
+    artifact_url = "https://alphafold.ebi.ac.uk/files/AF-P04406-F1-model_v6.pdb"
+
+    def fake_urlopen(request: Request, *, timeout: float) -> FakeResponse:
+        opened_urls.append(request.full_url)
+        return FakeResponse(
+            "HEADER    SHOULD NOT BE ACCEPTED",
+            final_url="https://127.0.0.1/files/AF-P04406-F1-model_v6.pdb",
+        )
+
+    import protrepair.sources.alphafold_retrieval as alphafold_io
+
+    monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
+
+    outcome = fetch_alphafold_structure_artifact(
+        _alphafold_model_with_pdb_url(artifact_url)
+    )
+
+    assert outcome.is_success() is False
+    assert outcome.failure is not None
+    assert outcome.failure.kind is AlphaFoldFetchFailureKind.INVALID_RESPONSE
+    assert "trusted" in outcome.failure.message
+    assert opened_urls == [artifact_url]
+
+
+def test_fetch_alphafold_model_set_rejects_oversized_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AlphaFold metadata fetch should not read unbounded response bodies."""
+
+    def fake_urlopen(request: Request, *, timeout: float) -> FakeResponse:
+        return FakeResponse("x" * 5)
+
+    import protrepair.sources._network as network_policy
+    import protrepair.sources.alphafold_retrieval as alphafold_io
+
+    monkeypatch.setattr(network_policy, "DEFAULT_SOURCE_RETRIEVAL_MAX_BYTES", 4)
+    monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
+
+    outcome = fetch_alphafold_model_set(
+        UniProtSequenceReference(accession="P04406")
+    )
+
+    assert outcome.is_success() is False
+    assert outcome.failure is not None
+    assert outcome.failure.kind is AlphaFoldFetchFailureKind.INVALID_RESPONSE
+    assert "exceeded 4 bytes" in outcome.failure.message
+
+
+def test_fetch_alphafold_structure_artifact_rejects_oversized_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AlphaFold artifact fetch should enforce the same response-size limit."""
+
+    artifact_url = "https://alphafold.ebi.ac.uk/files/AF-P04406-F1-model_v6.pdb"
+
+    def fake_urlopen(request: Request, *, timeout: float) -> FakeResponse:
+        return FakeResponse("HEADER")
+
+    import protrepair.sources._network as network_policy
+    import protrepair.sources.alphafold_retrieval as alphafold_io
+
+    monkeypatch.setattr(network_policy, "DEFAULT_SOURCE_RETRIEVAL_MAX_BYTES", 4)
+    monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
+
+    outcome = fetch_alphafold_structure_artifact(
+        _alphafold_model_with_pdb_url(artifact_url)
+    )
+
+    assert outcome.is_success() is False
+    assert outcome.failure is not None
+    assert outcome.failure.kind is AlphaFoldFetchFailureKind.INVALID_RESPONSE
+    assert "exceeded 4 bytes" in outcome.failure.message
 
 
 def test_fetch_alphafold_model_set_surfaces_not_found_failures(

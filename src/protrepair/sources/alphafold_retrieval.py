@@ -1,12 +1,16 @@
 """AlphaFold source retrieval boundary."""
 
 import json
+from typing import Protocol, runtime_checkable
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from protrepair.sources._network import (
     DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
+    SourceResponseTooLargeError,
     normalize_source_retrieval_timeout,
+    read_bounded_response_text,
 )
 from protrepair.sources.alphafold import (
     AlphaFoldFetchFailureKind,
@@ -22,6 +26,17 @@ from protrepair.sources.uniprot import UniProtSequenceReference
 from protrepair.structure.provenance import FileFormat
 
 JsonMapping = dict[str, object]
+_ALLOWED_ALPHAFOLD_ARTIFACT_HOSTS = frozenset({"alphafold.ebi.ac.uk"})
+
+
+@runtime_checkable
+class _ResponseWithUrl(Protocol):
+    """Response object exposing urllib's final URL after redirects."""
+
+    def geturl(self) -> str:
+        """Return the final response URL."""
+
+        ...
 
 
 class _FetchFailure:
@@ -116,6 +131,18 @@ def fetch_alphafold_structure_artifact(
                     "AlphaFold model does not expose an artifact for "
                     f"{file_format.value}"
                 ),
+            )
+        )
+
+    invalid_artifact_url = _alphafold_artifact_url_failure(artifact_url)
+    if invalid_artifact_url is not None:
+        return AlphaFoldStructureFetchOutcome.failure_result(
+            AlphaFoldStructureFetchFailure(
+                model=model,
+                kind=invalid_artifact_url.kind,
+                message=invalid_artifact_url.message,
+                status_code=invalid_artifact_url.status_code,
+                source_url=artifact_url,
             )
         )
 
@@ -220,6 +247,51 @@ def _uniprot_reference_from_accession(
     return UniProtSequenceReference(accession=normalized_accession)
 
 
+def _alphafold_artifact_url_failure(request_url: str) -> _FetchFailure | None:
+    """Return a fetch failure when one artifact URL is outside AFDB HTTPS."""
+
+    try:
+        parsed_url = urlsplit(request_url)
+        port = parsed_url.port
+    except ValueError as error:
+        return _FetchFailure(
+            kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
+            message=f"AlphaFold artifact URL is invalid: {error}",
+        )
+
+    if parsed_url.scheme.lower() != "https":
+        return _FetchFailure(
+            kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
+            message="AlphaFold artifact URL must use HTTPS",
+        )
+
+    host = parsed_url.hostname
+    if host is None or host.lower() not in _ALLOWED_ALPHAFOLD_ARTIFACT_HOSTS:
+        return _FetchFailure(
+            kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
+            message="AlphaFold artifact URL host is not trusted",
+        )
+
+    if port not in (None, 443):
+        return _FetchFailure(
+            kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
+            message="AlphaFold artifact URL must use the default HTTPS port",
+        )
+
+    return None
+
+
+def _response_url(response: object, *, fallback_url: str) -> str:
+    """Return the final response URL when urllib exposes one."""
+
+    if isinstance(response, _ResponseWithUrl):
+        response_url = response.geturl().strip()
+        if response_url:
+            return response_url
+
+    return fallback_url
+
+
 def _fetch_json_payload(
     request_url: str,
     *,
@@ -230,7 +302,9 @@ def _fetch_json_payload(
     request = Request(request_url, headers={"Accept": "application/json"})
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
-            return json.loads(response.read().decode("utf-8")), None
+            return json.loads(
+                read_bounded_response_text(response, source_name="AlphaFold")
+            ), None
     except HTTPError as error:
         return None, _FetchFailure(
             kind=(
@@ -268,6 +342,16 @@ def _fetch_json_payload(
             kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
             message=f"AlphaFold response was not valid JSON: {error.msg}",
         )
+    except UnicodeDecodeError as error:
+        return None, _FetchFailure(
+            kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
+            message=f"AlphaFold response was not valid UTF-8: {error.reason}",
+        )
+    except SourceResponseTooLargeError as error:
+        return None, _FetchFailure(
+            kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
+            message=str(error),
+        )
 
 
 def _fetch_text_payload(
@@ -280,7 +364,18 @@ def _fetch_text_payload(
     request = Request(request_url)
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
-            return response.read().decode("utf-8"), None
+            final_url = _response_url(response, fallback_url=request_url)
+            redirect_failure = _alphafold_artifact_url_failure(final_url)
+            if redirect_failure is not None:
+                return None, redirect_failure
+
+            return (
+                read_bounded_response_text(
+                    response,
+                    source_name="AlphaFold artifact",
+                ),
+                None,
+            )
     except HTTPError as error:
         return None, _FetchFailure(
             kind=(
@@ -312,6 +407,19 @@ def _fetch_text_payload(
                 "AlphaFold artifact request timed out after "
                 f"{timeout_seconds:g} seconds: {error}"
             ),
+        )
+    except UnicodeDecodeError as error:
+        return None, _FetchFailure(
+            kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
+            message=(
+                "AlphaFold artifact response was not valid UTF-8: "
+                f"{error.reason}"
+            ),
+        )
+    except SourceResponseTooLargeError as error:
+        return None, _FetchFailure(
+            kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
+            message=str(error),
         )
 
 

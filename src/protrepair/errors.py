@@ -41,5 +41,9 @@ class UnsupportedFileFormatError(ProtrepairError):
     """Raised when a structure file format cannot be inferred or serialized."""
 
 
+class StructureInputTooLargeError(ProtrepairError):
+    """Raised when a structure input exceeds the public ingress size limit."""
+
+
 class StructureNormalizationError(ProtrepairError):
     """Raised when ingress normalization cannot produce a canonical structure."""

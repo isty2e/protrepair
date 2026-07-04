@@ -1,61 +1,25 @@
-import pickle
-from pathlib import Path
+import inspect
 
-from tests.support.canonical_builders import (
-    atom_payload,
-    build_structure,
-    chain_payload,
-    residue_payload,
-)
 from tests.support.parser_repair_performance import (
-    HYDROGENATED_CACHE_SCHEMA_VERSION,
     PARSER_REPAIR_PERFORMANCE_SCHEMA_VERSION,
     ParserBurdenSignal,
     ParserRepairClusterSummary,
     ParserRepairFocusQuality,
-    ParserRepairHydrogenatedCache,
     ParserRepairPerformanceResult,
     ParserRepairProbeMode,
     ParserRepairQualitySignal,
     RuntimeTrackingSignal,
-    _current_hydrogenated_cache_structure,
+    run_first_parser_cluster_repair_probe,
 )
 
-from protrepair.geometry import Vec3
-from protrepair.io import FileFormat
-from protrepair.structure import ProteinStructure
-from protrepair.structure.labels import ResidueId
 
+def test_parser_repair_probe_does_not_expose_pickle_cache_axis() -> None:
+    """Parser-repair probes should not expose unsafe object-cache controls."""
 
-def test_parser_repair_hydrogen_cache_rejects_unversioned_payload(
-    tmp_path: Path,
-) -> None:
-    """Parser-repair probes should not reuse stale pre-adjudication caches."""
+    parameters = inspect.signature(run_first_parser_cluster_repair_probe).parameters
 
-    structure = _single_residue_structure()
-    cache_path = tmp_path / "hydrogenated.pkl"
-    cache_path.write_bytes(pickle.dumps(structure))
-
-    assert _current_hydrogenated_cache_structure(cache_path) is None
-
-
-def test_parser_repair_hydrogen_cache_accepts_current_payload(
-    tmp_path: Path,
-) -> None:
-    """Parser-repair probes should reuse cache payloads with matching semantics."""
-
-    structure = _single_residue_structure()
-    cache_path = tmp_path / "hydrogenated.pkl"
-    cache_path.write_bytes(
-        pickle.dumps(
-            ParserRepairHydrogenatedCache(
-                schema_version=HYDROGENATED_CACHE_SCHEMA_VERSION,
-                structure=structure,
-            )
-        )
-    )
-
-    assert _current_hydrogenated_cache_structure(cache_path) == structure
+    assert "use_hydrogen_cache" not in parameters
+    assert "hydrogen_cache_path" not in parameters
 
 
 def test_parser_repair_probe_mode_rejects_unknown_value() -> None:
@@ -85,6 +49,7 @@ def test_parser_repair_result_serializes_schema_and_mode() -> None:
     assert payload["schema_version"] == PARSER_REPAIR_PERFORMANCE_SCHEMA_VERSION
     assert payload["mode"] == "production_like"
     assert payload["executed_count"] == 1
+    assert "hydrogen_cache_used" not in payload
     assert payload["signal"] == {
         "parser_burden": "present",
         "repair_quality": "improved",
@@ -143,7 +108,6 @@ def _parser_repair_result(
         schema_version=PARSER_REPAIR_PERFORMANCE_SCHEMA_VERSION,
         case_id=case_id,
         mode=ParserRepairProbeMode.PRODUCTION_LIKE.value,
-        hydrogen_cache_used=True,
         timings_sec={"candidate_construction": 1.0},
         cluster=ParserRepairClusterSummary(
             residue_ids=("A:1",),
@@ -170,30 +134,4 @@ def _parser_repair_result(
         ),
         backend_name="discrete_preconditioning",
         issue_count=0,
-    )
-
-
-def _single_residue_structure() -> ProteinStructure:
-    """Return a minimal canonical protein structure for cache tests."""
-
-    return build_structure(
-        chains=(
-            chain_payload(
-                "A",
-                (
-                    residue_payload(
-                        component_id="ALA",
-                        residue_id=ResidueId("A", 1),
-                        atoms=(
-                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
-                            atom_payload("CA", "C", Vec3(1.0, 0.0, 0.0)),
-                            atom_payload("C", "C", Vec3(2.0, 0.0, 0.0)),
-                            atom_payload("O", "O", Vec3(3.0, 0.0, 0.0)),
-                            atom_payload("CB", "C", Vec3(1.0, 1.0, 0.0)),
-                        ),
-                    ),
-                ),
-            ),
-        ),
-        source_format=FileFormat.PDB,
     )
