@@ -32,6 +32,7 @@ from protrepair.diagnostics.clash_pair_generation import (
     pair_can_be_rejected_before_distance,
 )
 from protrepair.geometry import Vec3
+from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.provenance import FileFormat
@@ -646,39 +647,11 @@ def test_detect_clashes_involving_residues_ignores_irrelevant_pairs() -> None:
 def test_detect_clashes_ignores_probable_hydrogen_bonds() -> None:
     """Inter-residue donor-H...acceptor pairs should not become clash warnings."""
 
-    structure = build_structure(
-        chains=(
-            chain_payload(
-                "A",
-                (
-                    build_residue(
-                        "GLY",
-                        "A",
-                        1,
-                        (
-                            atom("N", "N", Vec3(-5.0, 0.0, 0.0)),
-                            atom("CA", "C", Vec3(-4.0, 0.0, 0.0)),
-                            atom("C", "C", Vec3(-3.0, 0.0, 0.0)),
-                            atom("O", "O", Vec3(0.0, 0.0, 0.0)),
-                        ),
-                    ),
-                    build_residue(
-                        "GLY",
-                        "A",
-                        2,
-                        (
-                            atom("N", "N", Vec3(3.0, 0.0, 0.0)),
-                            atom("H", "H", Vec3(1.8, 0.0, 0.0)),
-                            atom("CA", "C", Vec3(4.0, 0.0, 0.0)),
-                            atom("C", "C", Vec3(5.0, 0.0, 0.0)),
-                            atom("O", "O", Vec3(6.2, 0.0, 0.0)),
-                        ),
-                    ),
-                ),
-            ),
-        ),
-        source_format=FileFormat.PDB,
-        source_name="hydrogen-bond-candidate",
+    structure = build_hydrogen_bond_candidate_structure(
+        donor_position=Vec3(3.0, 0.0, 0.0),
+        hydrogen_position=Vec3(1.8, 0.0, 0.0),
+        acceptor_position=Vec3(0.0, 0.0, 0.0),
+        source_name="linear-hydrogen-bond-candidate",
     )
 
     report = detect_clashes(
@@ -687,6 +660,123 @@ def test_detect_clashes_ignores_probable_hydrogen_bonds() -> None:
     )
 
     assert report.is_empty()
+
+
+def test_detect_clashes_reports_acute_angle_hydrogen_bond_candidates() -> None:
+    """Acute donor-H...acceptor contacts should remain steric clashes."""
+
+    structure = build_hydrogen_bond_candidate_structure(
+        donor_position=Vec3(1.8, 1.2, 0.0),
+        hydrogen_position=Vec3(1.8, 0.0, 0.0),
+        acceptor_position=Vec3(0.0, 0.0, 0.0),
+        source_name="acute-angle-hydrogen-bond-candidate",
+    )
+
+    report = detect_clashes(
+        structure,
+        component_library=build_standard_component_library(),
+        policy=ClashPolicy(heavy_overlap_tolerance_angstrom=2.0),
+    )
+
+    assert len(report.clashes) == 1
+    assert {report.clashes[0].left_atom_name, report.clashes[0].right_atom_name} == {
+        "H",
+        "O",
+    }
+
+
+def test_detect_clashes_reports_no_anchor_hydrogen_bond_candidates() -> None:
+    """Contacts without a donor anchor should not be suppressed as H-bonds."""
+
+    structure = build_hydrogen_bond_candidate_structure(
+        donor_position=Vec3(5.0, 0.0, 0.0),
+        hydrogen_position=Vec3(1.8, 0.0, 0.0),
+        acceptor_position=Vec3(0.0, 0.0, 0.0),
+        source_name="no-anchor-hydrogen-bond-candidate",
+    )
+
+    report = detect_clashes(
+        structure,
+        component_library=build_standard_component_library(),
+        policy=ClashPolicy(heavy_overlap_tolerance_angstrom=2.0),
+    )
+
+    assert len(report.clashes) == 1
+    assert {report.clashes[0].left_atom_name, report.clashes[0].right_atom_name} == {
+        "H",
+        "O",
+    }
+
+
+def test_detect_clashes_reports_degenerate_angle_hydrogen_bond_candidates() -> None:
+    """A zero-length donor-H vector should not suppress or crash clash checks."""
+
+    structure = build_hydrogen_bond_candidate_structure(
+        donor_position=Vec3(1.8, 0.0, 0.0),
+        hydrogen_position=Vec3(1.8, 0.0, 0.0),
+        acceptor_position=Vec3(0.0, 0.0, 0.0),
+        source_name="degenerate-angle-hydrogen-bond-candidate",
+    )
+
+    report = detect_clashes(
+        structure,
+        component_library=build_standard_component_library(),
+        policy=ClashPolicy(heavy_overlap_tolerance_angstrom=2.0),
+    )
+
+    assert len(report.clashes) == 1
+    assert {report.clashes[0].left_atom_name, report.clashes[0].right_atom_name} == {
+        "H",
+        "O",
+    }
+
+
+def test_detect_clashes_reports_non_acceptor_hydrogen_bond_candidates() -> None:
+    """Valid distance and angle should not suppress a non-acceptor contact."""
+
+    structure = build_hydrogen_bond_candidate_structure(
+        donor_position=Vec3(3.0, 0.0, 0.0),
+        hydrogen_position=Vec3(1.8, 0.0, 0.0),
+        acceptor_position=Vec3(0.0, 0.0, 0.0),
+        acceptor_atom_name="C1",
+        acceptor_element="C",
+        source_name="non-acceptor-hydrogen-bond-candidate",
+    )
+
+    report = detect_clashes(
+        structure,
+        component_library=build_standard_component_library(),
+        policy=ClashPolicy(heavy_overlap_tolerance_angstrom=2.0),
+    )
+
+    assert len(report.clashes) == 1
+    assert {report.clashes[0].left_atom_name, report.clashes[0].right_atom_name} == {
+        "C1",
+        "H",
+    }
+
+
+def test_detect_clashes_reports_too_short_hydrogen_bond_candidates() -> None:
+    """Too-short H...acceptor contacts should stay clashes, even when linear."""
+
+    structure = build_hydrogen_bond_candidate_structure(
+        donor_position=Vec3(2.7, 0.0, 0.0),
+        hydrogen_position=Vec3(1.5, 0.0, 0.0),
+        acceptor_position=Vec3(0.0, 0.0, 0.0),
+        source_name="too-short-hydrogen-bond-candidate",
+    )
+
+    report = detect_clashes(
+        structure,
+        component_library=build_standard_component_library(),
+        policy=ClashPolicy(heavy_overlap_tolerance_angstrom=2.0),
+    )
+
+    assert len(report.clashes) == 1
+    assert {report.clashes[0].left_atom_name, report.clashes[0].right_atom_name} == {
+        "H",
+        "O",
+    }
 
 
 def test_repair_heavy_atoms_supports_explicit_clash_reporting() -> None:
@@ -736,6 +826,56 @@ def test_repair_heavy_atoms_supports_explicit_clash_reporting() -> None:
 
     assert any(
         issue.kind is ValidationIssueKind.STERIC_CLASH for issue in report.to_issues()
+    )
+
+
+def build_hydrogen_bond_candidate_structure(
+    *,
+    donor_position: Vec3,
+    hydrogen_position: Vec3,
+    acceptor_position: Vec3,
+    source_name: str,
+    acceptor_atom_name: str = "O",
+    acceptor_element: str = "O",
+) -> ProteinStructure:
+    """Build a two-chain minimal donor-H...acceptor clash fixture."""
+
+    return build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    build_residue(
+                        "GLY",
+                        "A",
+                        1,
+                        (
+                            atom(
+                                acceptor_atom_name,
+                                acceptor_element,
+                                acceptor_position,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            chain_payload(
+                "B",
+                (
+                    build_residue(
+                        "GLY",
+                        "B",
+                        1,
+                        (
+                            atom("N", "N", donor_position),
+                            atom("H", "H", hydrogen_position),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name=source_name,
     )
 
 

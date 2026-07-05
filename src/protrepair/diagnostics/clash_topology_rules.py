@@ -1,15 +1,19 @@
 """Bonded/topological pair exclusion rules for clash diagnostics."""
 
 from collections.abc import Mapping
+from math import acos, degrees, sqrt
 
 from typing_extensions import Protocol
 
 from protrepair.chemistry import ResidueTemplate
 from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.geometry import ResidueGeometry
 
 DISULFIDE_BOND_DISTANCE_CUTOFF_ANGSTROM = 3.0
 HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
+# Baker-Hubbard-style minimum for diagnostic suppression, not full H-bond analysis.
+HYDROGEN_BOND_MIN_DONOR_HYDROGEN_ACCEPTOR_ANGLE_DEGREES = 120.0
 DONOR_ELEMENTS = frozenset({"N", "O", "S"})
 ACCEPTOR_ELEMENTS = frozenset({"N", "O", "S"})
 
@@ -20,6 +24,12 @@ class ClashTopologyResidueContext(Protocol):
     @property
     def residue_site(self) -> ResidueSite:
         """Return residue site."""
+
+        ...
+
+    @property
+    def residue_geometry(self) -> ResidueGeometry:
+        """Return residue geometry."""
 
         ...
 
@@ -56,11 +66,43 @@ class ClashTopologyResidueContext(Protocol):
         ...
 
 
-class ClashTopologyAtomGeometry(Protocol):
+class ClashTopologyPositionedGeometry(Protocol):
+    """Atom geometry surface required by coordinate-angle rules."""
+
+    @property
+    def position(self) -> "ClashTopologyVector":
+        """Return atom position."""
+
+        ...
+
+
+class ClashTopologyAtomGeometry(ClashTopologyPositionedGeometry, Protocol):
     """Atom geometry surface required by direct topology rules."""
 
     def distance_to(self, other: "ClashTopologyAtomGeometry") -> float:
         """Return distance to another atom geometry."""
+
+        ...
+
+
+class ClashTopologyVector(Protocol):
+    """Coordinate vector surface required by angle-based topology rules."""
+
+    @property
+    def x(self) -> float:
+        """Return x coordinate."""
+
+        ...
+
+    @property
+    def y(self) -> float:
+        """Return y coordinate."""
+
+        ...
+
+    @property
+    def z(self) -> float:
+        """Return z coordinate."""
 
         ...
 
@@ -348,7 +390,73 @@ def probable_hydrogen_bond(
         return False
 
     donor_atom = hydrogen_site.context.residue_site.atom_site(anchor_atom_name)
+    if (
+        donor_atom.element not in DONOR_ELEMENTS
+        or acceptor_site.element not in ACCEPTOR_ELEMENTS
+    ):
+        return False
+
+    angle_degrees = _donor_hydrogen_acceptor_angle_degrees(
+        hydrogen_site.context.residue_geometry.atom_geometry(anchor_atom_name),
+        hydrogen_site.geometry,
+        acceptor_site.geometry,
+    )
     return (
-        donor_atom.element in DONOR_ELEMENTS
-        and acceptor_site.element in ACCEPTOR_ELEMENTS
+        angle_degrees is not None
+        and angle_degrees
+        > HYDROGEN_BOND_MIN_DONOR_HYDROGEN_ACCEPTOR_ANGLE_DEGREES
+    )
+
+
+def _donor_hydrogen_acceptor_angle_degrees(
+    donor_geometry: ClashTopologyPositionedGeometry,
+    hydrogen_geometry: ClashTopologyPositionedGeometry,
+    acceptor_geometry: ClashTopologyPositionedGeometry,
+) -> float | None:
+    """Return D-H-A angle in degrees, or None when geometry is undefined."""
+
+    donor_vector = _vector_from_hydrogen_to_atom(donor_geometry, hydrogen_geometry)
+    acceptor_vector = _vector_from_hydrogen_to_atom(
+        acceptor_geometry,
+        hydrogen_geometry,
+    )
+    donor_norm = _vector_norm(donor_vector)
+    acceptor_norm = _vector_norm(acceptor_vector)
+    if donor_norm == 0.0 or acceptor_norm == 0.0:
+        return None
+
+    cosine = _dot_product(donor_vector, acceptor_vector) / (donor_norm * acceptor_norm)
+    clamped_cosine = max(-1.0, min(1.0, cosine))
+    return degrees(acos(clamped_cosine))
+
+
+def _vector_from_hydrogen_to_atom(
+    atom_geometry: ClashTopologyPositionedGeometry,
+    hydrogen_geometry: ClashTopologyPositionedGeometry,
+) -> tuple[float, float, float]:
+    """Return vector from hydrogen position to another atom position."""
+
+    return (
+        atom_geometry.position.x - hydrogen_geometry.position.x,
+        atom_geometry.position.y - hydrogen_geometry.position.y,
+        atom_geometry.position.z - hydrogen_geometry.position.z,
+    )
+
+
+def _vector_norm(vector: tuple[float, float, float]) -> float:
+    """Return Euclidean vector norm."""
+
+    return sqrt(_dot_product(vector, vector))
+
+
+def _dot_product(
+    left_vector: tuple[float, float, float],
+    right_vector: tuple[float, float, float],
+) -> float:
+    """Return 3D vector dot product."""
+
+    return (
+        left_vector[0] * right_vector[0]
+        + left_vector[1] * right_vector[1]
+        + left_vector[2] * right_vector[2]
     )
