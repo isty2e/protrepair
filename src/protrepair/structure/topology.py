@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from math import isfinite
 
 from protrepair.errors import ModelInvariantError
 from protrepair.structure.address_space import (
@@ -84,9 +85,14 @@ class SourceBondMetadata:
         source_id = None if self.source_id is None else self.source_id.strip() or None
         reported_distance = self.reported_distance_angstrom
         if reported_distance is not None:
-            if isinstance(reported_distance, bool) or reported_distance <= 0.0:
+            if (
+                isinstance(reported_distance, bool)
+                or not isfinite(reported_distance)
+                or reported_distance <= 0.0
+            ):
                 raise ValueError(
-                    "source bond metadata reported distance must be positive or None"
+                    "source bond metadata reported distance must be finite, positive, "
+                    "or None"
                 )
             reported_distance = float(reported_distance)
 

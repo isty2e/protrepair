@@ -241,6 +241,14 @@ class TestSourceBondMetadata:
                 reported_distance_angstrom=0.0,
             )
 
+    @pytest.mark.parametrize("reported_distance", (float("nan"), float("inf")))
+    def test_non_finite_distance_rejected(self, reported_distance: float):
+        with pytest.raises(ValueError, match="finite"):
+            SourceBondMetadata(
+                record_type=SourceBondRecordType.PDB_LINK,
+                reported_distance_angstrom=reported_distance,
+            )
+
 
 # --- TopologyBond ---
 
