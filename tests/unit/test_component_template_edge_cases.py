@@ -46,6 +46,7 @@ from protrepair.structure.topology import (
 )
 from protrepair.transformer.completion.heavy import repair_heavy_atoms
 from protrepair.transformer.completion.hydrogen import add_hydrogens
+from protrepair.transformer.completion.terminal import augment_c_terminal_oxt
 from protrepair.workflow.contracts import OrphanFragmentPolicy
 
 
@@ -694,6 +695,34 @@ def test_repair_heavy_atoms_does_not_duplicate_existing_oxt() -> None:
     residue_id = ResidueId(chain_id="A", seq_num=1)
 
     assert residue_atom_names(result.structure, residue_id).count("OXT") == 1
+    assert not any(
+        event.kind is RepairEventKind.C_TERMINAL_OXT_ADDED for event in result.repairs
+    )
+
+
+def test_terminal_oxt_augmentation_skips_degenerate_terminal_frame() -> None:
+    """Undefined terminal geometry should be a no-op, not a false repair event."""
+
+    structure = build_test_structure(
+        residues=(
+            residue_entry(
+                component_id="GLY",
+                seq_num=1,
+                atoms=(
+                    atom_entry("N", "N", Vec3(0.0, 0.0, 0.0)),
+                    atom_entry("CA", "C", Vec3(1.0, 0.0, 0.0)),
+                    atom_entry("C", "C", Vec3(1.0, 0.0, 0.0)),
+                    atom_entry("O", "O", Vec3(2.0, 0.0, 0.0)),
+                ),
+            ),
+        ),
+        source_name="degenerate-terminal-oxt-frame",
+    )
+
+    result = augment_c_terminal_oxt(structure)
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+
+    assert not has_atom(result.structure, residue_id, "OXT")
     assert not any(
         event.kind is RepairEventKind.C_TERMINAL_OXT_ADDED for event in result.repairs
     )

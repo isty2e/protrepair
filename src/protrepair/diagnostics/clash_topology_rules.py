@@ -14,6 +14,7 @@ HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
 # Baker-Hubbard-style minimum for diagnostic suppression, not full H-bond analysis.
 HYDROGEN_BOND_MIN_DONOR_HYDROGEN_ACCEPTOR_ANGLE_DEGREES = 120.0
+HYDROGEN_BOND_DEGENERATE_NORM_EPSILON = 1e-12
 DONOR_ELEMENTS = frozenset({"N", "O", "S"})
 ACCEPTOR_ELEMENTS = frozenset({"N", "O", "S"})
 
@@ -422,7 +423,10 @@ def _donor_hydrogen_acceptor_angle_degrees(
     )
     donor_norm = _vector_norm(donor_vector)
     acceptor_norm = _vector_norm(acceptor_vector)
-    if donor_norm == 0.0 or acceptor_norm == 0.0:
+    if (
+        donor_norm <= HYDROGEN_BOND_DEGENERATE_NORM_EPSILON
+        or acceptor_norm <= HYDROGEN_BOND_DEGENERATE_NORM_EPSILON
+    ):
         return None
 
     cosine = _dot_product(donor_vector, acceptor_vector) / (donor_norm * acceptor_norm)

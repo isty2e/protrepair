@@ -112,6 +112,9 @@ def augment_c_terminal_oxt(
         )
         augmented_terminal_residue = terminal_site.payload(augmented_terminal_snapshot)
         assert augmented_terminal_residue is not None
+        if not augmented_terminal_residue.has_atom_site("OXT"):
+            continue
+
         augmented_structure = augmented_structure.with_updated_residue_facets(
             augmented_terminal_residue.residue_site,
             residue_geometry=augmented_terminal_residue.residue_geometry,

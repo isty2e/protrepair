@@ -731,6 +731,29 @@ def test_detect_clashes_reports_degenerate_angle_hydrogen_bond_candidates() -> N
     }
 
 
+def test_detect_clashes_reports_near_degenerate_hbond_angle_candidates() -> None:
+    """Near-zero donor-H vectors should follow the same undefined-angle path."""
+
+    structure = build_hydrogen_bond_candidate_structure(
+        donor_position=Vec3(1.8 + 1e-14, 0.0, 0.0),
+        hydrogen_position=Vec3(1.8, 0.0, 0.0),
+        acceptor_position=Vec3(0.0, 0.0, 0.0),
+        source_name="nearly-degenerate-angle-hydrogen-bond-candidate",
+    )
+
+    report = detect_clashes(
+        structure,
+        component_library=build_standard_component_library(),
+        policy=ClashPolicy(heavy_overlap_tolerance_angstrom=2.0),
+    )
+
+    assert len(report.clashes) == 1
+    assert {report.clashes[0].left_atom_name, report.clashes[0].right_atom_name} == {
+        "H",
+        "O",
+    }
+
+
 def test_detect_clashes_reports_non_acceptor_hydrogen_bond_candidates() -> None:
     """Valid distance and angle should not suppress a non-acceptor contact."""
 
