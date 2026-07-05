@@ -11,16 +11,16 @@ from protrepair.errors import (
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
-    normalize_altloc,
-    normalize_chain_id,
-    normalize_insertion_code,
     to_gemmi_coor_format,
 )
 from protrepair.io.ingress_policy import StructureNormalizationPolicy
-from protrepair.io.structure_ingress import (
-    PdbConectAtomIdentity,
-    normalize_raw_structure,
+from protrepair.io.source_identity import (
+    SourceAtomIdentity,
+    normalize_altloc,
+    normalize_chain_id,
+    normalize_insertion_code,
 )
+from protrepair.io.structure_ingress import normalize_raw_structure
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
@@ -191,13 +191,13 @@ def _assert_structure_text_size(
 
 def _pdb_conect_atom_identity_pairs(
     contents: str,
-) -> tuple[tuple[PdbConectAtomIdentity, PdbConectAtomIdentity], ...]:
+) -> tuple[tuple[SourceAtomIdentity, SourceAtomIdentity], ...]:
     """Return all selected source-identity pairs declared by PDB CONECT."""
 
     atom_identity_by_serial = _first_model_unambiguous_pdb_atom_identities(contents)
 
-    pairs: list[tuple[PdbConectAtomIdentity, PdbConectAtomIdentity]] = []
-    seen: set[tuple[PdbConectAtomIdentity, PdbConectAtomIdentity]] = set()
+    pairs: list[tuple[SourceAtomIdentity, SourceAtomIdentity]] = []
+    seen: set[tuple[SourceAtomIdentity, SourceAtomIdentity]] = set()
     for line in contents.splitlines():
         if not line.startswith("CONECT"):
             continue
@@ -233,7 +233,7 @@ def _pdb_conect_atom_identity_pairs(
 
 def _first_model_unambiguous_pdb_atom_identities(
     contents: str,
-) -> dict[int, PdbConectAtomIdentity]:
+) -> dict[int, SourceAtomIdentity]:
     """Return source atom identities that unambiguously belong to model one.
 
     CONECT is lowered onto the canonical first-model structure, so serial reuse
@@ -242,7 +242,7 @@ def _first_model_unambiguous_pdb_atom_identities(
     malformed trailing atoms appear without another MODEL record.
     """
 
-    records_by_serial: dict[int, list[PdbConectAtomIdentity]] = {}
+    records_by_serial: dict[int, list[SourceAtomIdentity]] = {}
     current_model_index = 1
     explicit_model_count = 0
     first_model_closed = False
@@ -276,29 +276,21 @@ def _first_model_unambiguous_pdb_atom_identities(
 
 
 def _canonical_pdb_conect_identity_pair(
-    identity_1: PdbConectAtomIdentity,
-    identity_2: PdbConectAtomIdentity,
-) -> tuple[PdbConectAtomIdentity, PdbConectAtomIdentity]:
+    identity_1: SourceAtomIdentity,
+    identity_2: SourceAtomIdentity,
+) -> tuple[SourceAtomIdentity, SourceAtomIdentity]:
     """Return a deterministic order for one PDB CONECT identity pair."""
 
-    key_1 = (
-        identity_1.atom_ref.residue_id,
-        identity_1.atom_ref.atom_name,
-        identity_1.component_id,
-        identity_1.altloc or "",
+    return (
+        (identity_1, identity_2)
+        if identity_1.sort_key() <= identity_2.sort_key()
+        else (identity_2, identity_1)
     )
-    key_2 = (
-        identity_2.atom_ref.residue_id,
-        identity_2.atom_ref.atom_name,
-        identity_2.component_id,
-        identity_2.altloc or "",
-    )
-    return (identity_1, identity_2) if key_1 <= key_2 else (identity_2, identity_1)
 
 
 def _pdb_atom_serial_and_identity(
     line: str,
-) -> tuple[int, PdbConectAtomIdentity] | None:
+) -> tuple[int, SourceAtomIdentity] | None:
     """Return the PDB atom serial and source identity for one atom line."""
 
     if not line.startswith(("ATOM  ", "HETATM")):
@@ -320,7 +312,7 @@ def _pdb_atom_serial_and_identity(
 
     return (
         serial,
-        PdbConectAtomIdentity(
+        SourceAtomIdentity(
             atom_ref=AtomRef(
                 residue_id=ResidueId(
                     chain_id=chain_id,

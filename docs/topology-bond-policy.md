@@ -64,7 +64,11 @@ applies to missing heavy atoms, polymer hydrogens, and retained non-polymer
 hydrogens.
 
 Topology rebuilds must preserve existing `SOURCE_EXPLICIT` bonds unless their
-endpoints are removed by a canonical normalization or rewrite.
+endpoints are removed by a canonical normalization or rewrite. Source endpoint
+identity includes the source component id and altloc before lowering; a
+`LINK`, `CONECT`, or `_struct_conn` endpoint is not lowered onto the selected
+canonical atom when the source component variant or altloc did not survive
+normalization.
 
 Polymer hydrogen completion uses the strongest available support mode for each
 new H anchor:

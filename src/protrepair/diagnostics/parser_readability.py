@@ -10,7 +10,7 @@ from typing import Protocol
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
-from protrepair.io.gemmi_normalization import (
+from protrepair.io.source_identity import (
     normalize_chain_id,
     normalize_insertion_code,
 )

@@ -4,6 +4,7 @@ import stat
 from pathlib import Path
 from typing import cast
 
+import gemmi
 import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
@@ -36,7 +37,10 @@ from protrepair.io.ingress_policy import (
     LigandHandling,
     StructureNormalizationPolicy,
 )
-from protrepair.io.structure_ingress import apply_structure_normalization_policy
+from protrepair.io.structure_ingress import (
+    apply_structure_normalization_policy,
+    normalize_raw_structure,
+)
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
     AtomRef,
@@ -610,14 +614,13 @@ def test_read_structure_string_uses_first_model_for_multimodel_pdb() -> None:
         FileFormat.PDB,
     )
 
-    atom_index = structure.constitution.atom_index(
-        AtomRef(ResidueId("A", 1), "N")
-    )
+    atom_index = structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "N"))
 
     assert structure.geometry.atom_geometry(atom_index).position.x == 1.0
-    assert structure.constitution.resolve_atom_site(
-        AtomRef(ResidueId("A", 1), "CA")
-    ) is None
+    assert (
+        structure.constitution.resolve_atom_site(AtomRef(ResidueId("A", 1), "CA"))
+        is None
+    )
 
 
 def test_read_structure_string_uses_first_model_for_multimodel_mmcif() -> None:
@@ -653,18 +656,17 @@ ATOM 3 C CA . GLY A 1 1 ? 8.000 7.000 6.000 1.00 20.00 1 A 2
         FileFormat.MMCIF,
     )
 
-    atom_index = structure.constitution.atom_index(
-        AtomRef(ResidueId("A", 1), "N")
-    )
+    atom_index = structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "N"))
 
     assert structure.geometry.atom_geometry(atom_index).position == Vec3(
         x=1.0,
         y=2.0,
         z=3.0,
     )
-    assert structure.constitution.resolve_atom_site(
-        AtomRef(ResidueId("A", 1), "CA")
-    ) is None
+    assert (
+        structure.constitution.resolve_atom_site(AtomRef(ResidueId("A", 1), "CA"))
+        is None
+    )
 
 
 def test_read_structure_string_empty_first_model_does_not_fall_through() -> None:
@@ -1737,6 +1739,95 @@ def test_read_structure_string_ignores_nonfinite_pdb_link_distance() -> None:
     assert link_bonds[1].source_metadata.reported_distance_angstrom == 1.44
 
 
+@pytest.mark.parametrize(
+    ("file_format", "record_type"),
+    (
+        (FileFormat.PDB, SourceBondRecordType.PDB_LINK),
+        (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
+    ),
+)
+def test_normalize_raw_structure_keeps_source_connection_for_selected_altloc_atom(
+    file_format: FileFormat,
+    record_type: SourceBondRecordType,
+) -> None:
+    """LINK/struct_conn endpoints should survive only when their altloc survived."""
+
+    structure = normalize_raw_structure(
+        build_raw_source_connection_structure(linked_altloc="A"),
+        file_format=file_format,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+
+    source_bonds = tuple(
+        bond
+        for bond in structure.topology.bonds
+        if bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+    )
+
+    assert len(source_bonds) == 1
+    assert _bond_display_token(structure, source_bonds[0]) == "A:1.C1-L:1.O1"
+
+
+@pytest.mark.parametrize(
+    ("file_format", "record_type"),
+    (
+        (FileFormat.PDB, SourceBondRecordType.PDB_LINK),
+        (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
+    ),
+)
+def test_normalize_raw_structure_drops_source_connection_from_discarded_altloc_atom(
+    file_format: FileFormat,
+    record_type: SourceBondRecordType,
+) -> None:
+    """LINK/struct_conn from a discarded altloc must not bind to selected AtomRef."""
+
+    structure = normalize_raw_structure(
+        build_raw_source_connection_structure(linked_altloc="B"),
+        file_format=file_format,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+
+    assert not any(
+        bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+        for bond in structure.topology.bonds
+    )
+
+
+@pytest.mark.parametrize(
+    ("file_format", "record_type"),
+    (
+        (FileFormat.PDB, SourceBondRecordType.PDB_LINK),
+        (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
+    ),
+)
+def test_normalize_raw_structure_drops_source_connection_from_discarded_component(
+    file_format: FileFormat,
+    record_type: SourceBondRecordType,
+) -> None:
+    """LINK/struct_conn from discarded microheterogeneity must not survive."""
+
+    structure = normalize_raw_structure(
+        build_raw_source_connection_structure(
+            selected_component_id="NAD",
+            source_component_id="FAD",
+            linked_altloc="A",
+        ),
+        file_format=file_format,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+
+    selected_residue = structure.constitution.residue_or_ligand(ResidueId("A", 1))
+    assert selected_residue is not None
+    assert selected_residue.component_id == "NAD"
+    assert not any(
+        bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+        for bond in structure.topology.bonds
+    )
+
+
 def test_read_structure_string_surfaces_pdb_conect_inter_residue_bonds() -> None:
     """PDB CONECT records should become source-explicit topology bonds."""
 
@@ -2608,9 +2699,9 @@ def test_write_mmcif_emits_struct_conn_from_source_explicit_topology_bonds() -> 
         for bond in roundtripped.topology.bonds
         if bond.provenance is BondProvenance.SOURCE_EXPLICIT
     )
-    assert {
-        bond.endpoint_pair() for bond in source_bonds
-    } <= {bond.endpoint_pair() for bond in roundtripped_source_bonds}
+    assert {bond.endpoint_pair() for bond in source_bonds} <= {
+        bond.endpoint_pair() for bond in roundtripped_source_bonds
+    }
     for bond in roundtripped_source_bonds:
         assert bond.source_metadata is not None
         assert (
@@ -3331,6 +3422,96 @@ def infer_element(atom_name: str) -> str:
         raise ValueError(f"atom_name must contain at least one letter: {atom_name}")
 
     return letters[0]
+
+
+def build_raw_source_connection_structure(
+    *,
+    selected_component_id: str = "MOV",
+    source_component_id: str = "MOV",
+    selected_altloc: str = "A",
+    discarded_altloc: str = "B",
+    linked_altloc: str = "A",
+) -> gemmi.Structure:
+    """Build a raw gemmi structure with one source-declared connection."""
+
+    structure = gemmi.Structure()
+    model = gemmi.Model(1)
+
+    moving_chain = gemmi.Chain("A")
+    moving_residue = gemmi.Residue()
+    moving_residue.name = selected_component_id
+    moving_residue.seqid = gemmi.SeqId(1, " ")
+    moving_residue.entity_type = gemmi.EntityType.Polymer
+    moving_residue.add_atom(
+        build_raw_atom(
+            "C1",
+            "C",
+            x=0.0,
+            altloc=selected_altloc,
+            occupancy=0.80,
+        )
+    )
+    moving_residue.add_atom(
+        build_raw_atom(
+            "C1",
+            "C",
+            x=1.0,
+            altloc=discarded_altloc,
+            occupancy=0.20,
+        )
+    )
+    moving_chain.add_residue(moving_residue)
+
+    observer_chain = gemmi.Chain("L")
+    observer_residue = gemmi.Residue()
+    observer_residue.name = "OBS"
+    observer_residue.seqid = gemmi.SeqId(1, " ")
+    observer_residue.het_flag = "H"
+    observer_residue.entity_type = gemmi.EntityType.NonPolymer
+    observer_residue.add_atom(build_raw_atom("O1", "O", x=2.0))
+    observer_chain.add_residue(observer_residue)
+
+    model.add_chain(moving_chain)
+    model.add_chain(observer_chain)
+    structure.add_model(model)
+
+    source_residue_identity = gemmi.Residue()
+    source_residue_identity.name = source_component_id
+    source_residue_identity.seqid = gemmi.SeqId(1, " ")
+
+    connection = gemmi.Connection()
+    connection.partner1.chain_name = "A"
+    connection.partner1.res_id = source_residue_identity
+    connection.partner1.atom_name = "C1"
+    connection.partner1.altloc = linked_altloc
+    connection.partner2.chain_name = "L"
+    connection.partner2.res_id = observer_residue
+    connection.partner2.atom_name = "O1"
+    connection.type = gemmi.ConnectionType.Covale
+    connection.link_id = "source-conn"
+    connection.reported_distance = 1.44
+    structure.connections.append(connection)
+    return structure
+
+
+def build_raw_atom(
+    atom_name: str,
+    element: str,
+    *,
+    x: float,
+    altloc: str | None = None,
+    occupancy: float = 1.0,
+) -> gemmi.Atom:
+    """Build one raw gemmi atom for ingress-normalization tests."""
+
+    atom = gemmi.Atom()
+    atom.name = atom_name
+    atom.element = gemmi.Element(element)
+    atom.pos = gemmi.Position(x, 0.0, 0.0)
+    atom.altloc = "\0" if altloc is None else altloc
+    atom.occ = occupancy
+    atom.b_iso = 20.0
+    return atom
 
 
 def _bond_display_token(structure: ProteinStructure, bond: TopologyBond) -> str:

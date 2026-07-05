@@ -1,10 +1,9 @@
 """Structure topology facets aligned to constitution-owned atom slots."""
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from math import isfinite
-from types import MappingProxyType
+from numbers import Real
 
 from protrepair.errors import ModelInvariantError
 from protrepair.structure.address_space import (
@@ -87,18 +86,14 @@ class SourceBondMetadata:
         source_id = None if self.source_id is None else self.source_id.strip() or None
         reported_distance = self.reported_distance_angstrom
         if reported_distance is not None:
-            if isinstance(reported_distance, bool):
+            if isinstance(reported_distance, bool) or not isinstance(
+                reported_distance, Real
+            ):
                 raise ValueError(
                     "source bond metadata reported distance must be finite, positive, "
                     "or None"
                 )
-            try:
-                reported_distance = float(reported_distance)
-            except (TypeError, ValueError) as error:
-                raise ValueError(
-                    "source bond metadata reported distance must be finite, positive, "
-                    "or None"
-                ) from error
+            reported_distance = float(reported_distance)
             if not isfinite(reported_distance) or reported_distance <= 0.0:
                 raise ValueError(
                     "source bond metadata reported distance must be finite, positive, "
@@ -196,11 +191,6 @@ class StructureTopology:
     atom_topologies: tuple[AtomTopology | None, ...]
     bonds: tuple[TopologyBond, ...]
     _address_space_key: StructureAddressSpaceKey
-    _bond_by_endpoint_pair: Mapping[tuple[AtomIndex, AtomIndex], TopologyBond] = field(
-        init=False,
-        repr=False,
-        compare=False,
-    )
 
     def __init__(
         self,
@@ -216,11 +206,6 @@ class StructureTopology:
         )
         object.__setattr__(self, "atom_topologies", structure_topology.atom_topologies)
         object.__setattr__(self, "bonds", structure_topology.bonds)
-        object.__setattr__(
-            self,
-            "_bond_by_endpoint_pair",
-            structure_topology._bond_by_endpoint_pair,
-        )
         object.__setattr__(
             self,
             "_address_space_key",
@@ -258,13 +243,6 @@ class StructureTopology:
             bonds, atom_slot_count=atom_slot_count
         )
         object.__setattr__(structure_topology, "bonds", deduplicated_bonds)
-        object.__setattr__(
-            structure_topology,
-            "_bond_by_endpoint_pair",
-            MappingProxyType(
-                {bond.endpoint_pair(): bond for bond in deduplicated_bonds}
-            ),
-        )
         return structure_topology
 
     def is_aligned_to(self, constitution: StructureConstitution) -> bool:
@@ -337,7 +315,11 @@ class StructureTopology:
             return None
 
         endpoint_pair = _canonical_endpoint_pair(atom_index_1, atom_index_2)
-        return self._bond_by_endpoint_pair.get(endpoint_pair)
+        for bond in self.bonds:
+            if bond.endpoint_pair() == endpoint_pair:
+                return bond
+
+        return None
 
     def covalent_like_endpoint_pairs(self) -> frozenset[tuple[AtomIndex, AtomIndex]]:
         """Return canonical endpoint pairs for all covalent-like topology bonds."""

@@ -9,15 +9,18 @@ from protrepair.errors import StructureNormalizationError
 from protrepair.geometry import Vec3
 from protrepair.io.gemmi_normalization import (
     gemmi,
-    normalize_altloc,
-    normalize_chain_id,
     normalize_formal_charge,
-    normalize_insertion_code,
 )
 from protrepair.io.ingress_policy import (
     MutationPolicy,
     OccupancyPolicy,
     StructureNormalizationPolicy,
+)
+from protrepair.io.source_identity import (
+    SourceAtomIdentity,
+    normalize_altloc,
+    normalize_chain_id,
+    normalize_insertion_code,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import (
@@ -85,19 +88,19 @@ class _NormalizedResiduePayload:
 class _SourceExplicitInterResidueConnection:
     """Ingress-local source connection before lowering to TopologyBond."""
 
-    atom_ref_1: AtomRef
-    atom_ref_2: AtomRef
+    endpoint_1: SourceAtomIdentity
+    endpoint_2: SourceAtomIdentity
     relationship_type: BondRelationshipType
     source_id: str | None = None
     reported_distance_angstrom: float | None = None
 
     def __post_init__(self) -> None:
-        atom_ref_1 = self.atom_ref_1
-        atom_ref_2 = self.atom_ref_2
-        if atom_ref_1 == atom_ref_2:
+        endpoint_1 = self.endpoint_1
+        endpoint_2 = self.endpoint_2
+        if endpoint_1.atom_ref == endpoint_2.atom_ref:
             raise ValueError("source connections require two distinct atoms")
-        if atom_ref_2 < atom_ref_1:
-            atom_ref_1, atom_ref_2 = atom_ref_2, atom_ref_1
+        if endpoint_2.sort_key() < endpoint_1.sort_key():
+            endpoint_1, endpoint_2 = endpoint_2, endpoint_1
 
         if not isinstance(self.relationship_type, BondRelationshipType):
             raise TypeError(
@@ -113,8 +116,8 @@ class _SourceExplicitInterResidueConnection:
                 )
             reported_distance = float(reported_distance)
 
-        object.__setattr__(self, "atom_ref_1", atom_ref_1)
-        object.__setattr__(self, "atom_ref_2", atom_ref_2)
+        object.__setattr__(self, "endpoint_1", endpoint_1)
+        object.__setattr__(self, "endpoint_2", endpoint_2)
         object.__setattr__(self, "source_id", source_id)
         object.__setattr__(self, "reported_distance_angstrom", reported_distance)
 
@@ -134,27 +137,6 @@ class _RawAtomPayload:
         return self.atom_site.name.strip().upper()
 
 
-@dataclass(frozen=True, slots=True)
-class PdbConectAtomIdentity:
-    """PDB CONECT source endpoint identity before canonical lowering."""
-
-    atom_ref: AtomRef
-    component_id: str
-    altloc: str | None = None
-
-    def __post_init__(self) -> None:
-        component_id = self.component_id.strip().upper()
-        if not component_id:
-            raise ValueError("PDB CONECT atom identities require a component id")
-
-        altloc = self.altloc
-        if altloc is not None:
-            altloc = altloc.strip() or None
-
-        object.__setattr__(self, "component_id", component_id)
-        object.__setattr__(self, "altloc", altloc)
-
-
 def normalize_raw_structure(
     raw_structure,
     *,
@@ -162,7 +144,7 @@ def normalize_raw_structure(
     policy: StructureNormalizationPolicy,
     source_name: str | None = None,
     pdb_conect_atom_identity_pairs: tuple[
-        tuple[PdbConectAtomIdentity, PdbConectAtomIdentity], ...
+        tuple[SourceAtomIdentity, SourceAtomIdentity], ...
     ] = (),
 ) -> ProteinStructure:
     """Normalize the first model from one raw gemmi structure."""
@@ -226,6 +208,7 @@ def normalize_raw_structure(
     source_connections = _source_inter_residue_connections_from_raw_structure(
         raw_structure,
         constitution=constitution,
+        geometry=geometry,
     )
     connection_record_type = (
         SourceBondRecordType.PDB_LINK
@@ -438,21 +421,21 @@ def _source_inter_residue_connections_from_raw_structure(
     raw_structure,
     *,
     constitution: StructureConstitution,
+    geometry: StructureGeometry,
 ) -> tuple[_SourceExplicitInterResidueConnection, ...]:
     """Extract source-declared inter-residue connections from gemmi."""
 
     connections: list[_SourceExplicitInterResidueConnection] = []
     for connection in raw_structure.connections:
-        atom_ref_1 = _atom_ref_from_connection_partner(connection.partner1)
-        atom_ref_2 = _atom_ref_from_connection_partner(connection.partner2)
-        if atom_ref_1 is None or atom_ref_2 is None:
+        endpoint_1 = _source_atom_identity_from_connection_partner(connection.partner1)
+        endpoint_2 = _source_atom_identity_from_connection_partner(connection.partner2)
+        if endpoint_1 is None or endpoint_2 is None:
             continue
-        if atom_ref_1.residue_id == atom_ref_2.residue_id:
+        if endpoint_1.atom_ref.residue_id == endpoint_2.atom_ref.residue_id:
             continue
-        if (
-            constitution.resolve_atom_site(atom_ref_1) is None
-            or constitution.resolve_atom_site(atom_ref_2) is None
-        ):
+        if not _source_endpoint_survived(
+            endpoint_1, constitution, geometry=geometry
+        ) or not _source_endpoint_survived(endpoint_2, constitution, geometry=geometry):
             continue
 
         reported_distance = _normalize_reported_connection_distance(
@@ -460,8 +443,8 @@ def _source_inter_residue_connections_from_raw_structure(
         )
         connections.append(
             _SourceExplicitInterResidueConnection(
-                atom_ref_1=atom_ref_1,
-                atom_ref_2=atom_ref_2,
+                endpoint_1=endpoint_1,
+                endpoint_2=endpoint_2,
                 relationship_type=_relationship_type_from_connection(connection.type),
                 source_id=connection.link_id or connection.name,
                 reported_distance_angstrom=reported_distance,
@@ -471,22 +454,31 @@ def _source_inter_residue_connections_from_raw_structure(
     return tuple(dict.fromkeys(connections))
 
 
-def _atom_ref_from_connection_partner(partner) -> AtomRef | None:
-    """Return a canonical atom reference for one gemmi connection partner."""
+def _source_atom_identity_from_connection_partner(
+    partner,
+) -> SourceAtomIdentity | None:
+    """Return source endpoint identity for one gemmi connection partner."""
 
     chain_id = normalize_chain_id(partner.chain_name)
     atom_name = partner.atom_name.strip()
     if not atom_name:
         return None
+    component_id = partner.res_id.name.strip()
+    if not component_id:
+        return None
 
     seqid = partner.res_id.seqid
-    return AtomRef(
-        residue_id=ResidueId(
-            chain_id=chain_id,
-            seq_num=int(seqid.num),
-            insertion_code=normalize_insertion_code(seqid.icode),
+    return SourceAtomIdentity(
+        atom_ref=AtomRef(
+            residue_id=ResidueId(
+                chain_id=chain_id,
+                seq_num=int(seqid.num),
+                insertion_code=normalize_insertion_code(seqid.icode),
+            ),
+            atom_name=atom_name,
         ),
-        atom_name=atom_name,
+        component_id=component_id,
+        altloc=normalize_altloc(partner.altloc),
     )
 
 
@@ -697,10 +689,7 @@ def _select_atom_name_variants(
         ):
             selected_atoms[atom_name] = atom_payload
 
-    return [
-        selected_atoms[atom_name]
-        for atom_name in atom_order
-    ]
+    return [selected_atoms[atom_name] for atom_name in atom_order]
 
 
 def _selected_altloc_priority(
@@ -799,7 +788,7 @@ def _atom_payload_from_raw_site(
     *,
     residue_id: ResidueId,
 ) -> _RawAtomPayload:
-    """Project one selected gemmi atom site into constitution and geometry payload."""
+    """Validate and project one raw gemmi atom before variant selection."""
 
     altloc = normalize_altloc(raw_atom.altloc)
     x = _validated_raw_atom_float(
@@ -960,16 +949,10 @@ def _topology_bonds_from_source_connections(
 
     bonds: list[TopologyBond] = []
     for link in connections:
-        if (
-            constitution.resolve_atom_site(link.atom_ref_1) is None
-            or constitution.resolve_atom_site(link.atom_ref_2) is None
-        ):
-            continue
-
         bonds.append(
             TopologyBond(
-                atom_index_1=constitution.atom_index(link.atom_ref_1),
-                atom_index_2=constitution.atom_index(link.atom_ref_2),
+                atom_index_1=constitution.atom_index(link.endpoint_1.atom_ref),
+                atom_index_2=constitution.atom_index(link.endpoint_2.atom_ref),
                 order=1,
                 relationship_type=link.relationship_type,
                 provenance=BondProvenance.SOURCE_EXPLICIT,
@@ -984,7 +967,7 @@ def _topology_bonds_from_source_connections(
 
 
 def _topology_bonds_from_conect_pairs(
-    pairs: tuple[tuple[PdbConectAtomIdentity, PdbConectAtomIdentity], ...],
+    pairs: tuple[tuple[SourceAtomIdentity, SourceAtomIdentity], ...],
     *,
     constitution: StructureConstitution,
     geometry: StructureGeometry,
@@ -993,10 +976,9 @@ def _topology_bonds_from_conect_pairs(
 
     bonds: list[TopologyBond] = []
     for endpoint_1, endpoint_2 in pairs:
-        if (
-            not _pdb_conect_endpoint_survived(endpoint_1, constitution, geometry)
-            or not _pdb_conect_endpoint_survived(endpoint_2, constitution, geometry)
-        ):
+        if not _source_endpoint_survived(
+            endpoint_1, constitution, geometry=geometry
+        ) or not _source_endpoint_survived(endpoint_2, constitution, geometry=geometry):
             continue
 
         atom_ref_1 = endpoint_1.atom_ref
@@ -1017,12 +999,13 @@ def _topology_bonds_from_conect_pairs(
     return tuple(bonds)
 
 
-def _pdb_conect_endpoint_survived(
-    endpoint: PdbConectAtomIdentity,
+def _source_endpoint_survived(
+    endpoint: SourceAtomIdentity,
     constitution: StructureConstitution,
+    *,
     geometry: StructureGeometry,
 ) -> bool:
-    """Return whether one PDB CONECT source endpoint survived normalization."""
+    """Return whether one source endpoint survived canonical normalization."""
 
     residue_site = constitution.residue_or_ligand(endpoint.atom_ref.residue_id)
     if residue_site is None or residue_site.component_id != endpoint.component_id:
