@@ -27,7 +27,9 @@ Initial public release candidate of the rewritten `protrepair` package.
   cohorts by mean occupancy with lexical tie-breaks, validating non-finite atom
   coordinates/occupancy/B-factors at the boundary, preserving first-model PDB
   CONECT records safely, and dropping source connectivity that refers to
-  discarded altloc or ligand variants
+  discarded altloc or source component variants
+- tighten source-bond metadata validation so public topology metadata requires
+  finite positive numeric reported distances rather than float-like strings
 - expose unsupported topology as an explicit readiness state for polymer
   components whose expected topology cannot be resolved from supported chemistry
   evidence, including separate absent-vs-unsupported workflow deficit fields

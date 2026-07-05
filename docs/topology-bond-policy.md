@@ -70,6 +70,10 @@ identity includes the source component id and altloc before lowering; a
 canonical atom when the source component variant or altloc did not survive
 normalization.
 
+Source bond metadata is canonical metadata, not raw boundary text. Reported
+distances are stored only as finite positive numeric angstrom values; corrupt,
+non-finite, or non-numeric boundary distances are ignored before lowering.
+
 Polymer hydrogen completion uses the strongest available support mode for each
 new H anchor:
 

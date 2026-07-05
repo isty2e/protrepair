@@ -92,8 +92,7 @@ def _open_same_directory_temp_file(output_path: Path) -> tuple[Path, int]:
         return temp_path, file_descriptor
 
     raise FileExistsError(
-        "could not allocate an unused temporary output path for "
-        f"{output_path}"
+        f"could not allocate an unused temporary output path for {output_path}"
     )
 
 
@@ -339,6 +338,8 @@ def populate_gemmi_connection_partner(
         atom_ref.residue_id.insertion_code or " ",
     )
     raw_partner.atom_name = atom_ref.atom_name
+    atom_geometry = structure.geometry.atom_geometry(atom_index)
+    raw_partner.altloc = "\0" if atom_geometry.altloc is None else atom_geometry.altloc
 
 
 def gemmi_connection_type(relationship_type: BondRelationshipType):

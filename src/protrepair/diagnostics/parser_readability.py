@@ -10,14 +10,14 @@ from typing import Protocol
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
-from protrepair.io.source_identity import (
-    normalize_chain_id,
-    normalize_insertion_code,
-)
 from protrepair.io.pdb_projection import (
     RDKitNoConectPDBBlockProjector,
     pdb_without_conect,
     pdb_without_conect_for_parser_probe,
+)
+from protrepair.io.source_identity import (
+    normalize_chain_id,
+    normalize_insertion_code,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId

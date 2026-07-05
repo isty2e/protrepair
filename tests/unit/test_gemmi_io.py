@@ -1828,6 +1828,52 @@ def test_normalize_raw_structure_drops_source_connection_from_discarded_componen
     )
 
 
+@pytest.mark.parametrize(
+    ("file_format", "record_type"),
+    (
+        (FileFormat.PDB, SourceBondRecordType.PDB_LINK),
+        (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
+    ),
+)
+@pytest.mark.parametrize(
+    ("source_component_id", "linked_altloc", "expected_source_bonds"),
+    (
+        ("MOV", "A", 1),
+        ("MOV", "B", 0),
+        ("FAD", "A", 0),
+    ),
+)
+def test_read_structure_string_filters_source_connection_identity_from_text(
+    file_format: FileFormat,
+    record_type: SourceBondRecordType,
+    source_component_id: str,
+    linked_altloc: str,
+    expected_source_bonds: int,
+) -> None:
+    """Public text ingress should enforce source component and altloc identity."""
+
+    structure = read_structure_string(
+        build_source_connection_text(
+            file_format,
+            source_component_id=source_component_id,
+            linked_altloc=linked_altloc,
+        ),
+        file_format,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+
+    source_bonds = tuple(
+        bond
+        for bond in structure.topology.bonds
+        if bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+    )
+
+    assert len(source_bonds) == expected_source_bonds
+    if expected_source_bonds:
+        assert _bond_display_token(structure, source_bonds[0]) == "A:1.C1-L:1.O1"
+
+
 def test_read_structure_string_surfaces_pdb_conect_inter_residue_bonds() -> None:
     """PDB CONECT records should become source-explicit topology bonds."""
 
@@ -2616,6 +2662,42 @@ def test_write_pdb_preserves_link_metadata_via_topology_connections() -> None:
     for bond in roundtripped_source_bonds:
         assert bond.source_metadata is not None
         assert bond.source_metadata.record_type is SourceBondRecordType.PDB_LINK
+
+
+@pytest.mark.parametrize(
+    ("file_format", "record_type"),
+    (
+        (FileFormat.PDB, SourceBondRecordType.PDB_LINK),
+        (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
+    ),
+)
+def test_write_structure_string_preserves_source_connection_altloc(
+    file_format: FileFormat,
+    record_type: SourceBondRecordType,
+) -> None:
+    """Connection egress must preserve source endpoint altloc identity."""
+
+    structure = read_structure_string(
+        build_source_connection_text(FileFormat.PDB, linked_altloc="A"),
+        FileFormat.PDB,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+
+    structure_text = write_structure_string(structure, file_format)
+    roundtripped = read_structure_string(
+        structure_text,
+        file_format,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+    source_bonds = tuple(
+        bond
+        for bond in roundtripped.topology.bonds
+        if bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+    )
+
+    assert len(source_bonds) == 1
+    assert _bond_display_token(roundtripped, source_bonds[0]) == "A:1.C1-L:1.O1"
 
 
 def test_write_pdb_does_not_emit_non_covalent_source_bonds_as_conect() -> None:
@@ -3492,6 +3574,31 @@ def build_raw_source_connection_structure(
     connection.reported_distance = 1.44
     structure.connections.append(connection)
     return structure
+
+
+def build_source_connection_text(
+    file_format: FileFormat,
+    *,
+    selected_component_id: str = "MOV",
+    source_component_id: str = "MOV",
+    selected_altloc: str = "A",
+    discarded_altloc: str = "B",
+    linked_altloc: str = "A",
+) -> str:
+    """Build source-connection coordinate text for public ingress tests."""
+
+    raw_structure = build_raw_source_connection_structure(
+        selected_component_id=selected_component_id,
+        source_component_id=source_component_id,
+        selected_altloc=selected_altloc,
+        discarded_altloc=discarded_altloc,
+        linked_altloc=linked_altloc,
+    )
+    if file_format is FileFormat.PDB:
+        return raw_structure.make_pdb_string()
+    if file_format is FileFormat.MMCIF:
+        return raw_structure.make_mmcif_document().as_string()
+    raise AssertionError(f"unsupported test format: {file_format}")
 
 
 def build_raw_atom(
