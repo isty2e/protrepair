@@ -114,13 +114,36 @@ class _SourceExplicitInterResidueConnection:
         object.__setattr__(self, "reported_distance_angstrom", reported_distance)
 
 
+@dataclass(frozen=True, slots=True)
+class PdbConectAtomIdentity:
+    """PDB CONECT source endpoint identity before canonical lowering."""
+
+    atom_ref: AtomRef
+    component_id: str
+    altloc: str | None = None
+
+    def __post_init__(self) -> None:
+        component_id = self.component_id.strip().upper()
+        if not component_id:
+            raise ValueError("PDB CONECT atom identities require a component id")
+
+        altloc = self.altloc
+        if altloc is not None:
+            altloc = altloc.strip() or None
+
+        object.__setattr__(self, "component_id", component_id)
+        object.__setattr__(self, "altloc", altloc)
+
+
 def normalize_raw_structure(
     raw_structure,
     *,
     file_format: FileFormat,
     policy: StructureNormalizationPolicy,
     source_name: str | None = None,
-    pdb_conect_atom_ref_pairs: tuple[tuple[AtomRef, AtomRef], ...] = (),
+    pdb_conect_atom_identity_pairs: tuple[
+        tuple[PdbConectAtomIdentity, PdbConectAtomIdentity], ...
+    ] = (),
 ) -> ProteinStructure:
     """Normalize the first model from one raw gemmi structure."""
 
@@ -195,8 +218,9 @@ def normalize_raw_structure(
         record_type=connection_record_type,
     )
     conect_bonds = _topology_bonds_from_conect_pairs(
-        pdb_conect_atom_ref_pairs,
+        pdb_conect_atom_identity_pairs,
         constitution=constitution,
+        geometry=geometry,
     )
     connection_endpoint_pairs = frozenset(
         bond.endpoint_pair() for bond in connection_bonds
@@ -830,20 +854,23 @@ def _topology_bonds_from_source_connections(
 
 
 def _topology_bonds_from_conect_pairs(
-    pairs: tuple[tuple[AtomRef, AtomRef], ...],
+    pairs: tuple[tuple[PdbConectAtomIdentity, PdbConectAtomIdentity], ...],
     *,
     constitution: StructureConstitution,
+    geometry: StructureGeometry,
 ) -> tuple[TopologyBond, ...]:
-    """Project PDB CONECT atom-ref pairs into canonical topology bonds."""
+    """Project selected PDB CONECT endpoint pairs into canonical topology bonds."""
 
     bonds: list[TopologyBond] = []
-    for atom_ref_1, atom_ref_2 in pairs:
+    for endpoint_1, endpoint_2 in pairs:
         if (
-            constitution.resolve_atom_site(atom_ref_1) is None
-            or constitution.resolve_atom_site(atom_ref_2) is None
+            not _pdb_conect_endpoint_survived(endpoint_1, constitution, geometry)
+            or not _pdb_conect_endpoint_survived(endpoint_2, constitution, geometry)
         ):
             continue
 
+        atom_ref_1 = endpoint_1.atom_ref
+        atom_ref_2 = endpoint_2.atom_ref
         bonds.append(
             TopologyBond(
                 atom_index_1=constitution.atom_index(atom_ref_1),
@@ -858,6 +885,24 @@ def _topology_bonds_from_conect_pairs(
             )
         )
     return tuple(bonds)
+
+
+def _pdb_conect_endpoint_survived(
+    endpoint: PdbConectAtomIdentity,
+    constitution: StructureConstitution,
+    geometry: StructureGeometry,
+) -> bool:
+    """Return whether one PDB CONECT source endpoint survived normalization."""
+
+    residue_site = constitution.residue_or_ligand(endpoint.atom_ref.residue_id)
+    if residue_site is None or residue_site.component_id != endpoint.component_id:
+        return False
+
+    atom_index = constitution.resolve_atom_index(endpoint.atom_ref)
+    if atom_index is None:
+        return False
+
+    return geometry.atom_geometry(atom_index).altloc == endpoint.altloc
 
 
 def _sequence_inferred_topology_bonds(

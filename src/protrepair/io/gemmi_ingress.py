@@ -6,12 +6,16 @@ from protrepair.errors import StructureInputTooLargeError
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
+    normalize_altloc,
     normalize_chain_id,
     normalize_insertion_code,
     to_gemmi_coor_format,
 )
 from protrepair.io.ingress_policy import StructureNormalizationPolicy
-from protrepair.io.structure_ingress import normalize_raw_structure
+from protrepair.io.structure_ingress import (
+    PdbConectAtomIdentity,
+    normalize_raw_structure,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
@@ -32,17 +36,17 @@ def read_structure(
     if file_format is FileFormat.PDB:
         contents = path.read_text(encoding="utf-8")
         raw_structure = read_raw_structure_string(contents, file_format)
-        pdb_conect_atom_ref_pairs = _pdb_conect_atom_ref_pairs(contents)
+        pdb_conect_atom_identity_pairs = _pdb_conect_atom_identity_pairs(contents)
     else:
         raw_structure = read_raw_structure(path, file_format)
-        pdb_conect_atom_ref_pairs = ()
+        pdb_conect_atom_identity_pairs = ()
 
     return normalize_raw_structure(
         raw_structure,
         file_format=file_format,
         policy=active_policy,
         source_name=path.name,
-        pdb_conect_atom_ref_pairs=pdb_conect_atom_ref_pairs,
+        pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
     )
 
 
@@ -58,15 +62,17 @@ def read_structure_string(
     _assert_structure_text_size(contents, source_name=source_name)
     raw_structure = read_raw_structure_string(contents, file_format)
     active_policy = StructureNormalizationPolicy() if policy is None else policy
-    pdb_conect_atom_ref_pairs = (
-        _pdb_conect_atom_ref_pairs(contents) if file_format is FileFormat.PDB else ()
+    pdb_conect_atom_identity_pairs = (
+        _pdb_conect_atom_identity_pairs(contents)
+        if file_format is FileFormat.PDB
+        else ()
     )
     return normalize_raw_structure(
         raw_structure,
         file_format=file_format,
         policy=active_policy,
         source_name=source_name,
-        pdb_conect_atom_ref_pairs=pdb_conect_atom_ref_pairs,
+        pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
     )
 
 
@@ -81,15 +87,17 @@ def read_structure_string_with_policy(
 
     _assert_structure_text_size(contents, source_name=source_name)
     raw_structure = read_raw_structure_string(contents, file_format)
-    pdb_conect_atom_ref_pairs = (
-        _pdb_conect_atom_ref_pairs(contents) if file_format is FileFormat.PDB else ()
+    pdb_conect_atom_identity_pairs = (
+        _pdb_conect_atom_identity_pairs(contents)
+        if file_format is FileFormat.PDB
+        else ()
     )
     return normalize_raw_structure(
         raw_structure,
         file_format=file_format,
         policy=policy,
         source_name=source_name,
-        pdb_conect_atom_ref_pairs=pdb_conect_atom_ref_pairs,
+        pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
     )
 
 
@@ -150,22 +158,15 @@ def _assert_structure_text_size(
         )
 
 
-def _pdb_conect_atom_ref_pairs(
+def _pdb_conect_atom_identity_pairs(
     contents: str,
-) -> tuple[tuple[AtomRef, AtomRef], ...]:
-    """Return all canonically-ordered atom-ref pairs declared by PDB CONECT."""
+) -> tuple[tuple[PdbConectAtomIdentity, PdbConectAtomIdentity], ...]:
+    """Return all selected source-identity pairs declared by PDB CONECT."""
 
-    atom_ref_by_serial: dict[int, AtomRef] = {}
-    for line in contents.splitlines():
-        atom_serial_and_ref = _pdb_atom_serial_and_ref(line)
-        if atom_serial_and_ref is None:
-            continue
+    atom_identity_by_serial = _first_model_unambiguous_pdb_atom_identities(contents)
 
-        serial, atom_ref = atom_serial_and_ref
-        atom_ref_by_serial[serial] = atom_ref
-
-    pairs: list[tuple[AtomRef, AtomRef]] = []
-    seen: set[tuple[AtomRef, AtomRef]] = set()
+    pairs: list[tuple[PdbConectAtomIdentity, PdbConectAtomIdentity]] = []
+    seen: set[tuple[PdbConectAtomIdentity, PdbConectAtomIdentity]] = set()
     for line in contents.splitlines():
         if not line.startswith("CONECT"):
             continue
@@ -174,20 +175,21 @@ def _pdb_conect_atom_ref_pairs(
         if len(serials) < 2:
             continue
 
-        source_atom_ref = atom_ref_by_serial.get(serials[0])
-        if source_atom_ref is None:
+        source_identity = atom_identity_by_serial.get(serials[0])
+        if source_identity is None:
             continue
 
         for target_serial in serials[1:]:
-            target_atom_ref = atom_ref_by_serial.get(target_serial)
-            if target_atom_ref is None or target_atom_ref == source_atom_ref:
+            target_identity = atom_identity_by_serial.get(target_serial)
+            if (
+                target_identity is None
+                or target_identity.atom_ref == source_identity.atom_ref
+            ):
                 continue
 
-            canonical = (
-                (source_atom_ref, target_atom_ref)
-                if (source_atom_ref.residue_id, source_atom_ref.atom_name)
-                <= (target_atom_ref.residue_id, target_atom_ref.atom_name)
-                else (target_atom_ref, source_atom_ref)
+            canonical = _canonical_pdb_conect_identity_pair(
+                source_identity,
+                target_identity,
             )
             if canonical in seen:
                 continue
@@ -198,8 +200,62 @@ def _pdb_conect_atom_ref_pairs(
     return tuple(pairs)
 
 
-def _pdb_atom_serial_and_ref(line: str) -> tuple[int, AtomRef] | None:
-    """Return the PDB atom serial and canonical atom reference for one atom line."""
+def _first_model_unambiguous_pdb_atom_identities(
+    contents: str,
+) -> dict[int, PdbConectAtomIdentity]:
+    """Return source atom identities that unambiguously belong to model one."""
+
+    records_by_serial: dict[int, list[tuple[int, PdbConectAtomIdentity]]] = {}
+    current_model_index = 1
+    explicit_model_count = 0
+    for line in contents.splitlines():
+        if line.startswith("MODEL"):
+            explicit_model_count += 1
+            current_model_index = explicit_model_count
+            continue
+        if line.startswith("ENDMDL"):
+            current_model_index = explicit_model_count + 1
+            continue
+
+        atom_serial_and_identity = _pdb_atom_serial_and_identity(line)
+        if atom_serial_and_identity is None:
+            continue
+
+        serial, identity = atom_serial_and_identity
+        records_by_serial.setdefault(serial, []).append((current_model_index, identity))
+
+    return {
+        serial: records[0][1]
+        for serial, records in records_by_serial.items()
+        if len(records) == 1 and records[0][0] == 1
+    }
+
+
+def _canonical_pdb_conect_identity_pair(
+    identity_1: PdbConectAtomIdentity,
+    identity_2: PdbConectAtomIdentity,
+) -> tuple[PdbConectAtomIdentity, PdbConectAtomIdentity]:
+    """Return a deterministic order for one PDB CONECT identity pair."""
+
+    key_1 = (
+        identity_1.atom_ref.residue_id,
+        identity_1.atom_ref.atom_name,
+        identity_1.component_id,
+        identity_1.altloc or "",
+    )
+    key_2 = (
+        identity_2.atom_ref.residue_id,
+        identity_2.atom_ref.atom_name,
+        identity_2.component_id,
+        identity_2.altloc or "",
+    )
+    return (identity_1, identity_2) if key_1 <= key_2 else (identity_2, identity_1)
+
+
+def _pdb_atom_serial_and_identity(
+    line: str,
+) -> tuple[int, PdbConectAtomIdentity] | None:
+    """Return the PDB atom serial and source identity for one atom line."""
 
     if not line.startswith(("ATOM  ", "HETATM")):
         return None
@@ -220,13 +276,17 @@ def _pdb_atom_serial_and_ref(line: str) -> tuple[int, AtomRef] | None:
 
     return (
         serial,
-        AtomRef(
-            residue_id=ResidueId(
-                chain_id=chain_id,
-                seq_num=seq_num,
-                insertion_code=normalize_insertion_code(line[26:27]),
+        PdbConectAtomIdentity(
+            atom_ref=AtomRef(
+                residue_id=ResidueId(
+                    chain_id=chain_id,
+                    seq_num=seq_num,
+                    insertion_code=normalize_insertion_code(line[26:27]),
+                ),
+                atom_name=atom_name,
             ),
-            atom_name=atom_name,
+            component_id=residue_name,
+            altloc=normalize_altloc(line[16:17]),
         ),
     )
 

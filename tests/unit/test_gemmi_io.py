@@ -1130,6 +1130,220 @@ def test_read_structure_string_surfaces_pdb_conect_inter_residue_bonds() -> None
     )
 
 
+def test_read_structure_string_keeps_conect_for_selected_altloc_atom() -> None:
+    """CONECT endpoints should survive when their source altloc was selected."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C1 ",
+                    altloc="A",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" C1 ",
+                    altloc="B",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="OBS",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    element="O",
+                ),
+                "CONECT    1    3",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert tuple(
+        bond.source_metadata.record_type
+        for bond in structure.topology.bonds
+        if bond.source_metadata is not None
+    ) == (SourceBondRecordType.PDB_CONECT,)
+
+
+def test_read_structure_string_drops_conect_from_discarded_altloc_atom() -> None:
+    """CONECT from an unselected altloc atom must not bind to selected AtomRef."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C1 ",
+                    altloc="A",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" C1 ",
+                    altloc="B",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="OBS",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    element="O",
+                ),
+                "CONECT    2    3",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert not any(
+        bond.source_metadata is not None
+        and bond.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
+        for bond in structure.topology.bonds
+    )
+
+
+def test_read_structure_string_drops_conect_from_discarded_ligand_variant() -> None:
+    """CONECT from discarded ligand microheterogeneity should not survive."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    residue_name="NAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    element="N",
+                ),
+                "CONECT    1    3",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+        policy=ingress_options(
+            ligand_policy=LigandPolicy.KEEP
+        ).structure_normalization_policy(),
+    )
+
+    assert structure.constitution.ligands[0].component_id == "NAD"
+    assert not any(
+        bond.source_metadata is not None
+        and bond.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
+        for bond in structure.topology.bonds
+    )
+
+
+def test_read_structure_string_drops_conect_with_reused_multimodel_serials() -> None:
+    """CONECT with serials reused across models should be treated ambiguous."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                "MODEL        1",
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C1 ",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="OBS",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    element="O",
+                ),
+                "ENDMDL",
+                "MODEL        2",
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C1 ",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=9.0,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="OBS",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=8.0,
+                    element="O",
+                ),
+                "ENDMDL",
+                "CONECT    1    2",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert not any(
+        bond.source_metadata is not None
+        and bond.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
+        for bond in structure.topology.bonds
+    )
+
+
 def test_apply_structure_normalization_policy_drops_links_with_missing_endpoints() -> (
     None
 ):
