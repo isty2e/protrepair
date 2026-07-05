@@ -365,6 +365,83 @@ ATOM 1 N N . GLY A 1 1 ? nan 2.000 3.000 1.00 20.00 1 A 1
         )
 
 
+@pytest.mark.parametrize(
+    "occupancy",
+    [
+        pytest.param(0.0, id="lower-boundary"),
+        pytest.param(0.0000001, id="just-inside-lower"),
+        pytest.param(0.9999999, id="just-inside-upper"),
+        pytest.param(1.0, id="upper-boundary"),
+    ],
+)
+def test_read_structure_string_accepts_strict_occupancy_boundaries(
+    occupancy: float,
+) -> None:
+    """Strict ingress accepts only finite occupancy values inside [0, 1]."""
+
+    structure = read_structure_string(
+        build_mmcif_single_atom_text(occupancy=occupancy),
+        FileFormat.MMCIF,
+    )
+    atom_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "N"))
+    )
+
+    assert atom_geometry.occupancy == pytest.approx(occupancy)
+
+
+@pytest.mark.parametrize(
+    "occupancy",
+    [
+        pytest.param(-0.0000001, id="just-outside-lower"),
+        pytest.param(1.0000001, id="just-outside-upper"),
+    ],
+)
+def test_read_structure_string_rejects_boundary_adjacent_invalid_occupancy(
+    occupancy: float,
+) -> None:
+    """Boundary-adjacent invalid occupancy is rejected, not clamped."""
+
+    with pytest.raises(StructureNormalizationError, match="occupancy outside"):
+        read_structure_string(
+            build_mmcif_single_atom_text(occupancy=occupancy),
+            FileFormat.MMCIF,
+        )
+
+
+@pytest.mark.parametrize(
+    "b_factor",
+    [
+        pytest.param(0.0, id="zero-boundary"),
+        pytest.param(0.0000001, id="just-inside"),
+    ],
+)
+def test_read_structure_string_accepts_strict_b_factor_boundary(
+    b_factor: float,
+) -> None:
+    """Strict ingress accepts finite non-negative B factors without clamping."""
+
+    structure = read_structure_string(
+        build_mmcif_single_atom_text(b_factor=b_factor),
+        FileFormat.MMCIF,
+    )
+    atom_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "N"))
+    )
+
+    assert atom_geometry.b_factor == pytest.approx(b_factor)
+
+
+def test_read_structure_string_rejects_boundary_adjacent_negative_b_factor() -> None:
+    """Boundary-adjacent invalid B factor is rejected, not clamped."""
+
+    with pytest.raises(StructureNormalizationError, match="negative B factor"):
+        read_structure_string(
+            build_mmcif_single_atom_text(b_factor=-0.0000001),
+            FileFormat.MMCIF,
+        )
+
+
 @pytest.mark.parametrize("occupancy", [-0.01, 1.01])
 def test_read_structure_string_rejects_out_of_range_occupancy(
     occupancy: float,
@@ -3633,6 +3710,39 @@ def build_pdb_text(lines: list[str]) -> str:
     """Join fixed-width PDB records into a text payload."""
 
     return "\n".join(lines) + "\n"
+
+
+def build_mmcif_single_atom_text(
+    *,
+    occupancy: float = 1.0,
+    b_factor: float = 20.0,
+) -> str:
+    """Build one mmCIF atom-site payload without PDB fixed-width rounding."""
+
+    return f"""data_numeric
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N . GLY A 1 1 ? 1.000 2.000 3.000 {occupancy:.7f} {b_factor:.7f} 1 A 1
+#
+"""
 
 
 def build_2q6f_linked_pdb_text() -> str:

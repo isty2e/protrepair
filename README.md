@@ -29,6 +29,12 @@ For multi-model PDB or mmCIF files, ProtRepair currently reads the first model
 only; choose a different model upstream before calling `process_structure()` if
 you need another realization.
 
+Numeric atom scalar validation at ingress is strict. Occupancy must be finite
+and within the closed interval `[0.0, 1.0]`; B factors must be finite and
+non-negative. ProtRepair rejects boundary-adjacent invalid values such as
+`1.0000001` occupancy or `-0.0000001` B factor instead of clamping them, because
+silent normalization would hide source data quality problems.
+
 Current deferred scope:
 
 - generic arbitrary nonstandard chemistry beyond supported component templates
