@@ -1,5 +1,6 @@
 """Analysis runtime tests over the canonical structure model."""
 
+import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     atom_payload,
@@ -9,7 +10,9 @@ from tests.support.canonical_builders import (
 )
 
 from protrepair.analysis.kinds import AnalysisKind
+from protrepair.analysis.ramachandran import _ramachandran_category
 from protrepair.analysis.runtime import build_analysis_bundle
+from protrepair.analysis.secondary_structure import _secondary_structure_label
 from protrepair.geometry import Vec3
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
@@ -144,6 +147,76 @@ def test_ramachandran_torsions_accept_sane_topology_covalent_gap() -> None:
     assert middle_point.category in {"helix", "beta", "left_handed", "other"}
 
 
+def test_ramachandran_torsions_reject_non_covalent_topology_gap() -> None:
+    """Non-covalent topology does not authorize a peptide numbering gap."""
+
+    structure = _with_peptide_topology_bond(
+        analysis_fixture_structure(seq_nums=(1, 3, 4)),
+        left_residue_id=ResidueId(chain_id="A", seq_num=1),
+        right_residue_id=ResidueId(chain_id="A", seq_num=3),
+        relationship_type=BondRelationshipType.METAL_COORDINATION,
+    )
+
+    bundle = build_analysis_bundle(
+        structure,
+        requested_analyses=frozenset({AnalysisKind.RAMACHANDRAN}),
+    )
+
+    assert bundle.ramachandran is not None
+    first_point, middle_point, _last_point = bundle.ramachandran.points
+    assert first_point.psi_degrees is None
+    assert middle_point.phi_degrees is None
+    assert middle_point.psi_degrees is not None
+    assert middle_point.category is None
+
+
+@pytest.mark.parametrize(
+    ("phi_degrees", "psi_degrees", "expected_category"),
+    (
+        (-60.0, -45.0, "helix"),
+        (-120.0, 120.0, "beta"),
+        (-120.0, -130.0, "beta"),
+        (60.0, 60.0, "left_handed"),
+        (0.0, 0.0, "other"),
+        (None, -45.0, None),
+        (-60.0, None, None),
+    ),
+)
+def test_ramachandran_category_projection_is_exact(
+    phi_degrees: float | None,
+    psi_degrees: float | None,
+    expected_category: str | None,
+) -> None:
+    """Documented coarse Ramachandran bins should stay exact."""
+
+    assert (
+        _ramachandran_category(
+            phi_degrees=phi_degrees,
+            psi_degrees=psi_degrees,
+        )
+        == expected_category
+    )
+
+
+@pytest.mark.parametrize(
+    ("category", "expected_label"),
+    (
+        ("helix", "H"),
+        ("beta", "E"),
+        ("left_handed", "C"),
+        ("other", "C"),
+        (None, "C"),
+    ),
+)
+def test_secondary_structure_label_projection_is_exact(
+    category: str | None,
+    expected_label: str,
+) -> None:
+    """Secondary structure should project only documented coarse labels."""
+
+    assert _secondary_structure_label(category) == expected_label
+
+
 def analysis_fixture_structure(
     *,
     seq_nums: tuple[int, int, int] = (1, 2, 3),
@@ -205,6 +278,7 @@ def _with_peptide_topology_bond(
     *,
     left_residue_id: ResidueId,
     right_residue_id: ResidueId,
+    relationship_type: BondRelationshipType = BondRelationshipType.COVALENT,
 ) -> ProteinStructure:
     left_carbon = structure.constitution.atom_index(AtomRef(left_residue_id, "C"))
     right_nitrogen = structure.constitution.atom_index(AtomRef(right_residue_id, "N"))
@@ -216,8 +290,8 @@ def _with_peptide_topology_bond(
             TopologyBond(
                 atom_index_1=left_carbon,
                 atom_index_2=right_nitrogen,
-                relationship_type=BondRelationshipType.COVALENT,
-                provenance=BondProvenance.SEQUENCE_INFERRED,
+                relationship_type=relationship_type,
+                provenance=BondProvenance.EVIDENCE_RESOLVED,
             ),
         ),
     )

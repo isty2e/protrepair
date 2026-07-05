@@ -64,7 +64,7 @@ def test_scientific_regression_backbone_oxygen_uses_current_context() -> None:
     )
     next_residue = _ala_payload(
         seq_num=3,
-        n=Vec3(1.5, 0.0, 1.0),
+        n=Vec3(1.6, 0.0, 1.0),
         ca=Vec3(2.6, 0.4, 1.4),
         c=Vec3(3.4, 1.4, 1.2),
     )

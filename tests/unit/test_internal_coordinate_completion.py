@@ -12,10 +12,16 @@ from tests.support.canonical_builders import (
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.geometry import Vec3
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import ResidueIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
 from protrepair.transformer.completion.atom.backbone import (
     PeptideCarbonylFrame,
     backbone_psi_degrees,
@@ -52,7 +58,7 @@ def test_backbone_oxygen_uses_current_residue_psi_not_previous_context() -> None
     )
     next_residue = _ala_payload(
         seq_num=3,
-        n=Vec3(1.5, 0.0, 1.0),
+        n=Vec3(1.6, 0.0, 1.0),
         ca=Vec3(2.6, 0.4, 1.4),
         c=Vec3(3.4, 1.4, 1.2),
     )
@@ -262,6 +268,163 @@ def test_backbone_oxygen_gap_uses_local_fallback_not_next_residue() -> None:
     ) > 0.5
 
 
+def test_backbone_oxygen_implausible_peptide_geometry_uses_local_fallback() -> None:
+    """Sequence adjacency alone must not orient O from an implausibly distant N."""
+
+    residue = _ala_payload(
+        seq_num=1,
+        n=Vec3(0.0, 0.0, 0.0),
+        ca=Vec3(1.45, 0.0, 0.0),
+        c=Vec3(2.40, 1.20, 0.0),
+        o=None,
+    )
+    distant_next_residue = _ala_payload(
+        seq_num=2,
+        n=Vec3(20.0, 20.0, 20.0),
+        ca=Vec3(21.0, 20.5, 20.0),
+        c=Vec3(22.0, 20.0, 20.5),
+    )
+    snapshot = ProteinStructureSnapshot.from_structure(
+        _structure_from_residues((residue, distant_next_residue))
+    )
+    site = _completion_site(
+        snapshot,
+        residue_index=ResidueIndex(0),
+        original_payload=residue,
+    )
+    transformer = InternalCoordinatePlacementTransformer(site)
+    context = _context_for_site(snapshot, site)
+
+    transformed_residue = site.payload(transformer.transform(context))
+    assert transformed_residue is not None
+    assert transformed_residue.has_atom_site("O")
+
+    fallback_position = _oxygen_position(residue, residue.position("N"), 0.0)
+    distant_psi = backbone_psi_degrees(
+        (
+            residue.position("N"),
+            residue.position("CA"),
+            residue.position("C"),
+            distant_next_residue.position("N"),
+        )
+    )
+    distant_position = _oxygen_position(
+        residue,
+        distant_next_residue.position("N"),
+        distant_psi,
+    )
+    actual_position = transformed_residue.position("O")
+    np.testing.assert_allclose(
+        _vec_array(actual_position),
+        _vec_array(fallback_position),
+        atol=1e-12,
+    )
+    assert np.linalg.norm(
+        _vec_array(actual_position) - _vec_array(distant_position)
+    ) > 0.5
+
+
+def test_backbone_oxygen_topology_covalent_gap_uses_next_peptide_context() -> None:
+    """Canonical topology can authorize O placement across a numbering gap."""
+
+    residue = _ala_payload(
+        seq_num=1,
+        n=Vec3(0.0, 0.0, 0.0),
+        ca=Vec3(1.45, 0.0, 0.0),
+        c=Vec3(2.40, 1.20, 0.0),
+        o=None,
+    )
+    gapped_next_residue = _ala_payload(
+        seq_num=3,
+        n=Vec3(2.9, 1.0, 1.2),
+        ca=Vec3(3.8, 1.8, 1.6),
+        c=Vec3(4.9, 1.2, 0.9),
+    )
+    structure = _structure_with_peptide_topology_bond(
+        _structure_from_residues((residue, gapped_next_residue)),
+        left_residue_id=residue.residue_id,
+        right_residue_id=gapped_next_residue.residue_id,
+        relationship_type=BondRelationshipType.COVALENT,
+    )
+    snapshot = ProteinStructureSnapshot.from_structure(structure)
+    site = _completion_site(
+        snapshot,
+        residue_index=ResidueIndex(0),
+        original_payload=residue,
+    )
+
+    transformed_residue = site.payload(
+        InternalCoordinatePlacementTransformer(site).transform(
+            _context_for_site(snapshot, site)
+        )
+    )
+    assert transformed_residue is not None
+    assert transformed_residue.has_atom_site("O")
+
+    topology_psi = backbone_psi_degrees(
+        (
+            residue.position("N"),
+            residue.position("CA"),
+            residue.position("C"),
+            gapped_next_residue.position("N"),
+        )
+    )
+    np.testing.assert_allclose(
+        _vec_array(transformed_residue.position("O")),
+        _vec_array(
+            _oxygen_position(
+                residue,
+                gapped_next_residue.position("N"),
+                topology_psi,
+            )
+        ),
+        atol=1e-12,
+    )
+
+
+def test_backbone_oxygen_non_covalent_topology_gap_uses_local_fallback() -> None:
+    """Non-covalent topology edges do not authorize peptide-next context."""
+
+    residue = _ala_payload(
+        seq_num=1,
+        n=Vec3(0.0, 0.0, 0.0),
+        ca=Vec3(1.45, 0.0, 0.0),
+        c=Vec3(2.40, 1.20, 0.0),
+        o=None,
+    )
+    gapped_next_residue = _ala_payload(
+        seq_num=3,
+        n=Vec3(2.9, 1.0, 1.2),
+        ca=Vec3(3.8, 1.8, 1.6),
+        c=Vec3(4.9, 1.2, 0.9),
+    )
+    structure = _structure_with_peptide_topology_bond(
+        _structure_from_residues((residue, gapped_next_residue)),
+        left_residue_id=residue.residue_id,
+        right_residue_id=gapped_next_residue.residue_id,
+        relationship_type=BondRelationshipType.METAL_COORDINATION,
+    )
+    snapshot = ProteinStructureSnapshot.from_structure(structure)
+    site = _completion_site(
+        snapshot,
+        residue_index=ResidueIndex(0),
+        original_payload=residue,
+    )
+
+    transformed_residue = site.payload(
+        InternalCoordinatePlacementTransformer(site).transform(
+            _context_for_site(snapshot, site)
+        )
+    )
+    assert transformed_residue is not None
+    assert transformed_residue.has_atom_site("O")
+    np.testing.assert_allclose(
+        _vec_array(transformed_residue.position("O")),
+        _vec_array(_oxygen_position(residue, residue.position("N"), 0.0)),
+        atol=1e-12,
+    )
+
+
 def test_backbone_oxygen_missing_next_nitrogen_uses_local_fallback() -> None:
     """A next residue without N cannot provide psi context."""
 
@@ -426,6 +589,37 @@ def _structure_from_residues(
         ),
         source_format=FileFormat.PDB,
         source_name="internal-coordinate-completion-test",
+    )
+
+
+def _structure_with_peptide_topology_bond(
+    structure: ProteinStructure,
+    *,
+    left_residue_id: ResidueId,
+    right_residue_id: ResidueId,
+    relationship_type: BondRelationshipType,
+) -> ProteinStructure:
+    left_carbon = structure.constitution.atom_index(AtomRef(left_residue_id, "C"))
+    right_nitrogen = structure.constitution.atom_index(AtomRef(right_residue_id, "N"))
+    topology = StructureTopology(
+        constitution=structure.constitution,
+        atom_topologies=structure.topology.atom_topologies,
+        bonds=(
+            *structure.topology.bonds,
+            TopologyBond(
+                atom_index_1=left_carbon,
+                atom_index_2=right_nitrogen,
+                relationship_type=relationship_type,
+                provenance=BondProvenance.EVIDENCE_RESOLVED,
+            ),
+        ),
+    )
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=topology,
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
     )
 
 
