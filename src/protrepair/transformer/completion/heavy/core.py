@@ -545,18 +545,19 @@ def _repair_heavy_atom_chain(
         )
         repaired_terminal_residue = terminal_site.payload(working_snapshot)
         assert repaired_terminal_residue is not None
-        repairs.append(
-            RepairEvent.for_residue(
-                kind=RepairEventKind.C_TERMINAL_OXT_ADDED,
-                residue_id=repaired_terminal_residue.residue_id,
-                component_id=repaired_terminal_residue.component_id,
-                atom_names=("OXT",),
+        if repaired_terminal_residue.has_atom_site("OXT"):
+            repairs.append(
+                RepairEvent.for_residue(
+                    kind=RepairEventKind.C_TERMINAL_OXT_ADDED,
+                    residue_id=repaired_terminal_residue.residue_id,
+                    component_id=repaired_terminal_residue.component_id,
+                    atom_names=("OXT",),
+                )
             )
-        )
-        repaired_residues = _chain_residue_payloads_from_snapshot(
-            working_snapshot,
-            residue_count=len(normalized_residues),
-        )
+            repaired_residues = _chain_residue_payloads_from_snapshot(
+                working_snapshot,
+                residue_count=len(normalized_residues),
+            )
 
     return _ChainHeavyRepairStageResult(
         chain_id=chain_id,
@@ -617,11 +618,9 @@ def _repair_standard_residue(
         template=template,
         original_payload=original_residue,
         reference_payload=reference_payload,
-        neighborhood=ResidueBackboneNeighborhood(
-            previous_residue_index=ResidueIndex(
-                (residue_index.value - 1) % chain_length
-            ),
-            next_residue_index=ResidueIndex((residue_index.value + 1) % chain_length),
+        neighborhood=ResidueBackboneNeighborhood.from_linear_residue_slots(
+            residue_index,
+            residue_count=chain_length,
         ),
     )
     current_residue = site.payload(snapshot)

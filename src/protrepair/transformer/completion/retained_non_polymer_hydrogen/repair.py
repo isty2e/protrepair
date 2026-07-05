@@ -35,7 +35,7 @@ from protrepair.diagnostics.kinds import (
     ValidationIssueKind,
 )
 from protrepair.errors import RdkitUnavailableError
-from protrepair.geometry import Vec3
+from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import ResidueId
@@ -548,13 +548,16 @@ def _apply_retained_non_polymer_hydrogen_directive(
             payload.residue_site,
             residue_geometry=payload.residue_geometry,
         )
-        return payload.apply_patch(
-            generate_hydrogen_patch(
+        try:
+            hydrogen_patch = generate_hydrogen_patch(
                 site=site,
                 patch=patch,
                 semantics=placement_directive.semantics,
             )
-        )
+        except GeometryPlacementError:
+            return None
+
+        return payload.apply_patch(hydrogen_patch)
 
     semantics = placement_directive.semantics
     if not isinstance(semantics, IdealGeometryHydrogenSemantics):

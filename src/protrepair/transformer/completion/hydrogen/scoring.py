@@ -8,10 +8,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from protrepair.chemistry import van_der_waals_radius_angstrom
-from protrepair.geometry import InternalCoordinateFrame, Vec3
+from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
 
 CoordinateLike = Vec3 | Sequence[float] | NDArray[np.float64]
 Vector = NDArray[np.float64]
+ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON = 1e-12
 ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM = 6.25
 ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE = 100.0
 ROTATABLE_HYDROGEN_HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
@@ -80,21 +81,26 @@ class RotatableHydrogenSearch:
         for increment in range(0, 360, 60):
             # The legacy rotatable-H scan uses the potential-energy helper's
             # parameter ordering: dihedral first, scanned torsion second.
-            candidate = InternalCoordinateFrame(
-                self.outer_anchor,
-                self.inner_anchor,
-                self.donor,
-            ).place(
-                bond_length=self.build_bond_length,
-                bond_angle_degrees=current_dihedral,
-                dihedral_degrees=109.5,
-            )
-            adjusted = recalculate_coordinate(
-                self.inner_anchor,
-                self.donor,
-                candidate,
-                self.reproject_bond_length,
-            )
+            try:
+                candidate = InternalCoordinateFrame(
+                    self.outer_anchor,
+                    self.inner_anchor,
+                    self.donor,
+                ).place(
+                    bond_length=self.build_bond_length,
+                    bond_angle_degrees=current_dihedral,
+                    dihedral_degrees=109.5,
+                )
+                adjusted = recalculate_coordinate(
+                    self.inner_anchor,
+                    self.donor,
+                    candidate,
+                    self.reproject_bond_length,
+                )
+            except GeometryPlacementError:
+                current_dihedral += increment
+                continue
+
             candidates.append(adjusted)
             current_dihedral += increment
 
@@ -358,24 +364,72 @@ def recalculate_coordinate(
 
     bond_cb = point_b - point_c
     bond_dc = point_d - point_c
-    angle_bcd = acos(
-        np.dot(bond_cb, bond_dc) / (np.linalg.norm(bond_cb) * np.linalg.norm(bond_dc))
-    )
+    angle_bcd = _angle_between_vectors_radians(bond_cb, bond_dc)
     rotate = theta - degrees(angle_bcd)
 
-    normal = np.cross(bond_cb, bond_dc)
-    unit_normal = normal / np.linalg.norm(normal)
+    normal = np.asarray(np.cross(bond_cb, bond_dc), dtype=np.float64)
+    unit_normal = _unit_vector(
+        normal,
+        error_message="rotatable-hydrogen reprojection requires a rotation plane",
+    )
     rotated = (
         point_c
         + bond_dc * np.cos(rotate * pi / 180.0)
         + np.cross(unit_normal, bond_dc) * np.sin(rotate * pi / 180.0)
-        + unit_normal * np.dot(unit_normal, bond_dc) * (1 - np.cos(rotate * pi / 180.0))
+        + unit_normal
+        * np.dot(unit_normal, bond_dc)
+        * (1 - np.cos(rotate * pi / 180.0))
     )
 
-    scaled = (
-        (rotated - point_c) * (bond_length / np.linalg.norm(rotated - point_c))
-    ) + point_c
+    scaled = _scale_from_origin(point_c, rotated, bond_length)
     return Vec3.from_iterable(scaled)
+
+
+def _angle_between_vectors_radians(left_vector: Vector, right_vector: Vector) -> float:
+    """Return the finite angle between two non-zero vectors in radians."""
+
+    left_norm = _vector_norm(left_vector)
+    right_norm = _vector_norm(right_vector)
+    if (
+        left_norm <= ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON
+        or right_norm <= ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON
+    ):
+        raise GeometryPlacementError(
+            "rotatable-hydrogen reprojection requires non-zero vectors"
+        )
+
+    cosine = float(np.dot(left_vector, right_vector)) / (left_norm * right_norm)
+    clamped = min(1.0, max(-1.0, cosine))
+    return acos(clamped)
+
+
+def _unit_vector(vector: Vector, *, error_message: str) -> Vector:
+    """Return one unit vector or raise when the vector is degenerate."""
+
+    norm = _vector_norm(vector)
+    if norm <= ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON:
+        raise GeometryPlacementError(error_message)
+
+    return np.asarray(vector / norm, dtype=np.float64)
+
+
+def _scale_from_origin(origin: Vector, candidate: Vector, bond_length: float) -> Vector:
+    """Return a candidate scaled to the requested distance from the origin."""
+
+    direction = candidate - origin
+    direction_norm = _vector_norm(direction)
+    if direction_norm <= ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON:
+        raise GeometryPlacementError(
+            "rotatable-hydrogen reprojection produced a degenerate bond vector"
+        )
+
+    return origin + (direction * (bond_length / direction_norm))
+
+
+def _vector_norm(vector: Vector) -> float:
+    """Return the Euclidean norm for one vector."""
+
+    return float(np.linalg.norm(vector))
 
 
 __all__ = [

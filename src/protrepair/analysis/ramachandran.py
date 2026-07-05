@@ -4,6 +4,7 @@ from protrepair.analysis.results import RamachandranAnalysis, RamachandranPoint
 from protrepair.geometry.internal_coordinates import InternalCoordinateFrame
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.peptide import are_peptide_adjacent
 
 
 def build_ramachandran_analysis(
@@ -60,6 +61,8 @@ def _phi_degrees(
 
     if previous_residue is None:
         return None
+    if not are_peptide_adjacent(previous_residue, residue, structure=structure):
+        return None
     if not previous_residue.has_atom_site("C"):
         return None
     if not residue.has_atom_site("N"):
@@ -92,6 +95,8 @@ def _psi_degrees(
     """Return psi torsion in degrees when the required atoms are present."""
 
     if next_residue is None:
+        return None
+    if not are_peptide_adjacent(residue, next_residue, structure=structure):
         return None
     if not residue.has_atom_site("N"):
         return None

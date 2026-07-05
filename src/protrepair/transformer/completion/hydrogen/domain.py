@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from protrepair.chemistry import ResidueTemplate
-from protrepair.geometry import Vec3
+from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.scope import ResidueSetScope
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
@@ -358,13 +358,16 @@ class HydrogenResidueSite:
         if next_patch is None:
             return None
 
-        return Vec3.from_iterable(
-            backbone_hydrogen(
-                list(next_patch.position("CA")),
-                list(next_patch.position("N")),
-                list(self.patch(snapshot).position("C")),
+        try:
+            return Vec3.from_iterable(
+                backbone_hydrogen(
+                    list(next_patch.position("CA")),
+                    list(next_patch.position("N")),
+                    list(self.patch(snapshot).position("C")),
+                )
             )
-        )
+        except GeometryPlacementError:
+            return None
 
     def apply_patch(
         self,

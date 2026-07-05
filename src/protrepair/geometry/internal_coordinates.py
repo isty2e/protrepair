@@ -6,6 +6,7 @@ from math import acos, degrees, pi, sqrt
 import numpy as np
 import numpy.typing as npt
 
+from protrepair.geometry.exceptions import GeometryPlacementError
 from protrepair.geometry.vector import CoordinateLike, Vec3
 
 Vector = npt.NDArray[np.float64]
@@ -13,6 +14,10 @@ TORSION_DEGENERATE_NORM_EPSILON = 1e-12
 UNIT_X_AXIS = np.array((1.0, 0.0, 0.0), dtype=np.float64)
 UNIT_Y_AXIS = np.array((0.0, 1.0, 0.0), dtype=np.float64)
 UNIT_Z_AXIS = np.array((0.0, 0.0, 1.0), dtype=np.float64)
+
+
+class InternalCoordinatePlacementError(GeometryPlacementError):
+    """Raised when an internal-coordinate frame is geometrically undefined."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,11 +44,16 @@ class InternalCoordinateFrame:
 
         axis_bc = point_c - point_b
         axis_ba = point_a - point_b
-        axis_bc_norm_sq = float(np.dot(axis_bc, axis_bc))
-        unit_axis_bc = axis_bc / sqrt(axis_bc_norm_sq)
-        projected = (
-            axis_ba - (np.dot(axis_ba, axis_bc) / axis_bc_norm_sq) * axis_bc
-        )
+        axis_bc_norm = _vector_norm(axis_bc)
+        if axis_bc_norm <= TORSION_DEGENERATE_NORM_EPSILON:
+            raise InternalCoordinatePlacementError(
+                "internal-coordinate placement requires distinct B/C anchors"
+            )
+
+        unit_axis_bc = axis_bc / axis_bc_norm
+        projected = axis_ba - (
+            np.dot(axis_ba, axis_bc) / (axis_bc_norm * axis_bc_norm)
+        ) * axis_bc
         projected_norm = float(np.linalg.norm(projected))
         if projected_norm <= TORSION_DEGENERATE_NORM_EPSILON:
             unit_projected = InternalCoordinateFrame._unit_orthogonal_vector(
@@ -52,8 +62,10 @@ class InternalCoordinateFrame:
         else:
             unit_projected = projected / projected_norm
 
-        unit_perpendicular = np.cross(unit_axis_bc, unit_projected)
-        unit_perpendicular = unit_perpendicular / np.linalg.norm(unit_perpendicular)
+        unit_perpendicular = _unit_vector(
+            np.asarray(np.cross(unit_axis_bc, unit_projected), dtype=np.float64),
+            error_message="internal-coordinate placement requires non-collinear basis",
+        )
 
         temp_point = point_b + (
             unit_projected * np.cos(dihedral_radians)
@@ -62,14 +74,14 @@ class InternalCoordinateFrame:
 
         bond_cb = point_b - point_c
         bond_ct = temp_point - point_c
-        angle_bct = acos(
-            np.dot(bond_cb, bond_ct)
-            / (np.linalg.norm(bond_cb) * np.linalg.norm(bond_ct))
-        )
-        rotate = bond_angle_degrees - degrees(angle_bct)
+        angle_bct = _angle_between_vectors_degrees(bond_cb, bond_ct)
+        rotate = bond_angle_degrees - angle_bct
 
-        normal = np.cross(bond_cb, bond_ct)
-        unit_normal = normal / np.linalg.norm(normal)
+        normal = np.asarray(np.cross(bond_cb, bond_ct), dtype=np.float64)
+        unit_normal = _unit_vector(
+            normal,
+            error_message="internal-coordinate placement requires a rotation plane",
+        )
         rotated = (
             point_c
             + bond_ct * np.cos(rotate * pi / 180.0)
@@ -79,9 +91,7 @@ class InternalCoordinateFrame:
             * (1 - np.cos(rotate * pi / 180.0))
         )
 
-        scaled = (
-            (rotated - point_c) * (bond_length / np.linalg.norm(rotated - point_c))
-        ) + point_c
+        scaled = _scale_from_origin(point_c, rotated, bond_length)
         return Vec3.from_iterable(scaled)
 
     @staticmethod
@@ -152,8 +162,11 @@ class InternalCoordinateFrame:
             (UNIT_X_AXIS, UNIT_Y_AXIS, UNIT_Z_AXIS),
             key=lambda candidate: abs(float(np.dot(axis, candidate))),
         )
-        orthogonal = np.cross(axis, reference_axis)
-        return orthogonal / np.linalg.norm(orthogonal)
+        orthogonal = np.asarray(np.cross(axis, reference_axis), dtype=np.float64)
+        return _unit_vector(
+            orthogonal,
+            error_message="internal-coordinate orthogonal basis is undefined",
+        )
 
     @staticmethod
     def distance(coord_1: CoordinateLike, coord_2: CoordinateLike) -> float:
@@ -165,3 +178,50 @@ class InternalCoordinateFrame:
         delta_y = float(point_1[1]) - float(point_2[1])
         delta_z = float(point_1[2]) - float(point_2[2])
         return sqrt((delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z))
+
+
+def _angle_between_vectors_degrees(left_vector: Vector, right_vector: Vector) -> float:
+    """Return the finite angle between two non-zero vectors."""
+
+    left_norm = _vector_norm(left_vector)
+    right_norm = _vector_norm(right_vector)
+    if (
+        left_norm <= TORSION_DEGENERATE_NORM_EPSILON
+        or right_norm <= TORSION_DEGENERATE_NORM_EPSILON
+    ):
+        raise InternalCoordinatePlacementError(
+            "internal-coordinate angle requires non-zero vectors"
+        )
+
+    cosine = float(np.dot(left_vector, right_vector)) / (left_norm * right_norm)
+    clamped = min(1.0, max(-1.0, cosine))
+    return degrees(acos(clamped))
+
+
+def _unit_vector(vector: Vector, *, error_message: str) -> Vector:
+    """Return one unit vector or raise when the vector is degenerate."""
+
+    norm = _vector_norm(vector)
+    if norm <= TORSION_DEGENERATE_NORM_EPSILON:
+        raise InternalCoordinatePlacementError(error_message)
+
+    return np.asarray(vector / norm, dtype=np.float64)
+
+
+def _scale_from_origin(origin: Vector, candidate: Vector, bond_length: float) -> Vector:
+    """Return a candidate scaled to the requested distance from the origin."""
+
+    direction = candidate - origin
+    direction_norm = _vector_norm(direction)
+    if direction_norm <= TORSION_DEGENERATE_NORM_EPSILON:
+        raise InternalCoordinatePlacementError(
+            "internal-coordinate placement produced a degenerate bond vector"
+        )
+
+    return origin + (direction * (bond_length / direction_norm))
+
+
+def _vector_norm(vector: Vector) -> float:
+    """Return the Euclidean norm for one vector."""
+
+    return float(np.linalg.norm(vector))

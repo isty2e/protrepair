@@ -18,6 +18,7 @@ from protrepair.diagnostics.component_support import (
 )
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.diagnostics.kinds import RepairEventKind
+from protrepair.geometry import GeometryPlacementError
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ChainSite, StructureConstitution
 from protrepair.structure.geometry import StructureGeometry
@@ -740,14 +741,17 @@ def _apply_hydrogen_directive(
             current_residue.residue_site,
             residue_geometry=current_residue.residue_geometry,
         )
-        chain_residues_by_index[directive.residue_index.value] = (
-            current_residue.apply_patch(
-                generate_hydrogen_patch(
-                    site=site,
-                    patch=patch,
-                    semantics=directive.semantics,
-                )
+        try:
+            hydrogen_patch = generate_hydrogen_patch(
+                site=site,
+                patch=patch,
+                semantics=directive.semantics,
             )
+        except GeometryPlacementError:
+            return
+
+        chain_residues_by_index[directive.residue_index.value] = (
+            current_residue.apply_patch(hydrogen_patch)
         )
         return
 
@@ -778,13 +782,16 @@ def _apply_hydrogen_directive(
             current_residue.residue_site,
             residue_geometry=current_residue.residue_geometry,
         )
-        chain_residues_by_index[directive.residue_index.value] = (
-            current_residue.apply_patch(
-                current_patch.append_atoms(
-                    ("HD1",),
-                    (histidine_delta_hydrogen(current_patch),),
-                )
+        try:
+            hydrogen_patch = current_patch.append_atoms(
+                ("HD1",),
+                (histidine_delta_hydrogen(current_patch),),
             )
+        except GeometryPlacementError:
+            return
+
+        chain_residues_by_index[directive.residue_index.value] = (
+            current_residue.apply_patch(hydrogen_patch)
         )
         return
 
@@ -799,11 +806,15 @@ def _apply_hydrogen_directive(
         ):
             return
 
-        position = backbone_hydrogen(
-            next_residue.residue_geometry.position("CA"),
-            next_residue.residue_geometry.position("N"),
-            current_residue.residue_geometry.position("C"),
-        )
+        try:
+            position = backbone_hydrogen(
+                next_residue.residue_geometry.position("CA"),
+                next_residue.residue_geometry.position("N"),
+                current_residue.residue_geometry.position("C"),
+            )
+        except GeometryPlacementError:
+            return
+
         next_patch = OrderedAtomPatch.from_residue_payload(
             next_residue.residue_site,
             residue_geometry=next_residue.residue_geometry,
@@ -819,12 +830,16 @@ def _apply_hydrogen_directive(
             current_residue.residue_site,
             residue_geometry=current_residue.residue_geometry,
         )
-        atom_coordinates = tuple(
-            n_terminal_hydrogen_coordinates(
-                current_patch,
-                directive.backbone_family_component_id,
+        try:
+            atom_coordinates = tuple(
+                n_terminal_hydrogen_coordinates(
+                    current_patch,
+                    directive.backbone_family_component_id,
+                )
             )
-        )
+        except GeometryPlacementError:
+            return
+
         atom_names = (
             ("H1", "H2")
             if directive.backbone_family_component_id == "PRO"

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from protrepair.geometry import GeometryPlacementError
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.base import DeterministicContextOperation
 from protrepair.transformer.completion.atom.backbone import PeptideCarbonylFrame
@@ -50,11 +51,15 @@ class TerminalAtomPlacementTransformer(
             return context.source_snapshot
 
         residue_geometry = payload.residue_geometry
-        oxt_position = PeptideCarbonylFrame(
-            nitrogen=residue_geometry.position("N"),
-            alpha_carbon=residue_geometry.position("CA"),
-            carbonyl_carbon=residue_geometry.position("C"),
-        ).terminal_oxygen(residue_geometry.position("O"))
+        try:
+            oxt_position = PeptideCarbonylFrame(
+                nitrogen=residue_geometry.position("N"),
+                alpha_carbon=residue_geometry.position("CA"),
+                carbonyl_carbon=residue_geometry.position("C"),
+            ).terminal_oxygen(residue_geometry.position("O"))
+        except GeometryPlacementError:
+            return context.source_snapshot
+
         patch = OrderedAtomPatch.from_atom_coordinates(
             atom_names=(*payload.atom_names(), "OXT"),
             atom_coordinates=(

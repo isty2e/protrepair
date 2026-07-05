@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import HydrogenSemantics
+from protrepair.geometry import GeometryPlacementError
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.base import DeterministicContextOperation
 from protrepair.transformer.completion.hydrogen.domain import HydrogenResidueSite
@@ -47,11 +48,15 @@ class StaticHydrogenPlacementTransformer(
             return context.source_snapshot
 
         patch = self.site.patch(context.source_snapshot)
-        patch = generate_hydrogen_patch(
-            site=self.site,
-            patch=patch,
-            semantics=self.semantics,
-        )
+        try:
+            patch = generate_hydrogen_patch(
+                site=self.site,
+                patch=patch,
+                semantics=self.semantics,
+            )
+        except GeometryPlacementError:
+            return context.source_snapshot
+
         return self.site.apply_patch(context.source_snapshot, patch)
 
 
@@ -90,10 +95,14 @@ class HistidineDeltaHydrogenTransformer(
             return context.source_snapshot
 
         patch = self.site.patch(context.source_snapshot)
-        patch = patch.append_atoms(
-            ("HD1",),
-            (histidine_delta_hydrogen(patch),),
-        )
+        try:
+            patch = patch.append_atoms(
+                ("HD1",),
+                (histidine_delta_hydrogen(patch),),
+            )
+        except GeometryPlacementError:
+            return context.source_snapshot
+
         return self.site.apply_patch(context.source_snapshot, patch)
 
 
@@ -133,12 +142,16 @@ class NTerminalHydrogenPlacementTransformer(
         backbone_family_component_id = self.site.backbone_family_component_id
         assert backbone_family_component_id is not None
         patch = self.site.patch(context.source_snapshot)
-        atom_coordinates = tuple(
-            n_terminal_hydrogen_coordinates(
-                patch,
-                backbone_family_component_id,
+        try:
+            atom_coordinates = tuple(
+                n_terminal_hydrogen_coordinates(
+                    patch,
+                    backbone_family_component_id,
+                )
             )
-        )
+        except GeometryPlacementError:
+            return context.source_snapshot
+
         atom_names = (
             ("H1", "H2")
             if backbone_family_component_id == "PRO"
