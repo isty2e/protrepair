@@ -60,6 +60,16 @@ from protrepair.workflow.contracts import (
 )
 
 
+class _PathLikeFixture:
+    """Minimal path-like object for public I/O boundary tests."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def __fspath__(self) -> str:
+        return str(self._path)
+
+
 def test_read_structure_string_rejects_oversized_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -190,6 +200,109 @@ def test_write_structure_string_rejects_bad_explicit_project_error() -> None:
         write_structure_string(structure, cast(FileFormat, "xyz"))
 
     assert isinstance(error_info.value, UnsupportedFileFormatError)
+
+
+def test_read_structure_accepts_str_path(tmp_path: Path) -> None:
+    """Public file ingress should accept common string path inputs."""
+
+    structure = build_canonical_structure()
+    source_path = tmp_path / "fixture.pdb"
+    source_path.write_text(write_structure_string(structure, FileFormat.PDB))
+
+    roundtripped = read_structure(str(source_path))
+
+    assert summarize_structure(roundtripped) == summarize_structure(structure)
+
+
+def test_read_structure_accepts_pathlike_input(tmp_path: Path) -> None:
+    """Public file ingress should accept os.PathLike-style inputs."""
+
+    structure = build_canonical_structure()
+    source_path = tmp_path / "fixture.pdb"
+    source_path.write_text(write_structure_string(structure, FileFormat.PDB))
+
+    roundtripped = read_structure(_PathLikeFixture(source_path))
+
+    assert summarize_structure(roundtripped) == summarize_structure(structure)
+
+
+def test_read_structure_normalizes_str_before_raw_file_parser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Internal raw parser helpers should receive Path after public coercion."""
+
+    structure = build_canonical_structure()
+    source_path = tmp_path / "fixture.cif"
+    source_path.write_text(
+        write_structure_string(structure, FileFormat.MMCIF),
+        encoding="utf-8",
+    )
+    original_read_raw_structure = gemmi_ingress.read_raw_structure
+    observed_path_inputs: list[Path] = []
+
+    def _spy_read_raw_structure(path: Path, file_format: FileFormat) -> object:
+        observed_path_inputs.append(path)
+        return original_read_raw_structure(path, file_format)
+
+    monkeypatch.setattr(gemmi_ingress, "read_raw_structure", _spy_read_raw_structure)
+
+    roundtripped = read_structure(str(source_path))
+
+    assert summarize_structure(roundtripped) == summarize_structure(structure)
+    assert len(observed_path_inputs) == 1
+    assert isinstance(observed_path_inputs[0], Path)
+
+
+def test_write_structure_accepts_str_path(tmp_path: Path) -> None:
+    """Public file egress should accept common string path inputs."""
+
+    structure = build_canonical_structure()
+    output_path = tmp_path / "fixture.pdb"
+
+    write_structure(structure, str(output_path))
+
+    assert summarize_structure(read_structure(output_path)) == summarize_structure(
+        structure
+    )
+
+
+def test_write_structure_accepts_pathlike_input(tmp_path: Path) -> None:
+    """Public file egress should accept os.PathLike-style inputs."""
+
+    structure = build_canonical_structure()
+    output_path = tmp_path / "fixture.pdb"
+
+    write_structure(structure, _PathLikeFixture(output_path))
+
+    assert summarize_structure(read_structure(output_path)) == summarize_structure(
+        structure
+    )
+
+
+def test_write_structure_normalizes_pathlike_before_atomic_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Internal writer helpers should receive Path after public coercion."""
+
+    structure = build_canonical_structure()
+    output_path = tmp_path / "fixture.pdb"
+    observed_path_inputs: list[Path] = []
+
+    def _spy_atomic_write_text(path: Path, text: str) -> None:
+        observed_path_inputs.append(path)
+        path.write_text(text, encoding="utf-8")
+
+    monkeypatch.setattr(gemmi_writer, "_atomic_write_text", _spy_atomic_write_text)
+
+    write_structure(structure, _PathLikeFixture(output_path))
+
+    assert summarize_structure(read_structure(output_path)) == summarize_structure(
+        structure
+    )
+    assert len(observed_path_inputs) == 1
+    assert isinstance(observed_path_inputs[0], Path)
 
 
 def test_read_structure_string_rejects_nonfinite_pdb_coordinate() -> None:

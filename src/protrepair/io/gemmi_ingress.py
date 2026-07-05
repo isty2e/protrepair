@@ -1,5 +1,6 @@
 """gemmi-backed canonical structure ingress for coordinate formats."""
 
+from os import PathLike
 from pathlib import Path
 
 from protrepair.errors import (
@@ -28,44 +29,45 @@ MAX_STRUCTURE_INPUT_BYTES = 256 * 1024 * 1024
 
 
 def read_structure(
-    path: Path,
+    path: Path | str | PathLike[str],
     *,
     policy: StructureNormalizationPolicy | None = None,
 ) -> ProteinStructure:
-    """Read a coordinate file into the canonical first-model structure."""
+    """Read a path-like coordinate file into the canonical first-model structure."""
 
+    source_path = Path(path)
     try:
-        _assert_structure_file_size(path)
-        file_format = infer_file_format(path)
+        _assert_structure_file_size(source_path)
+        file_format = infer_file_format(source_path)
         active_policy = StructureNormalizationPolicy() if policy is None else policy
         if file_format is FileFormat.PDB:
-            contents = path.read_text(encoding="utf-8")
+            contents = source_path.read_text(encoding="utf-8")
             raw_structure = read_raw_structure_string(contents, file_format)
             pdb_conect_atom_identity_pairs = _pdb_conect_atom_identity_pairs(contents)
         else:
-            raw_structure = read_raw_structure(path, file_format)
+            raw_structure = read_raw_structure(source_path, file_format)
             pdb_conect_atom_identity_pairs = ()
 
         return normalize_raw_structure(
             raw_structure,
             file_format=file_format,
             policy=active_policy,
-            source_name=path.name,
+            source_name=source_path.name,
             pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
         )
     except ProtrepairError:
         raise
     except UnicodeDecodeError as error:
         raise StructureNormalizationError(
-            f"could not decode structure file {path.name!r} as UTF-8"
+            f"could not decode structure file {source_path.name!r} as UTF-8"
         ) from error
     except OSError as error:
         raise StructureNormalizationError(
-            f"could not read structure file {path.name!r}: {error.strerror}"
+            f"could not read structure file {source_path.name!r}: {error.strerror}"
         ) from error
     except (RuntimeError, ValueError) as error:
         raise StructureNormalizationError(
-            f"could not parse structure file {path.name!r}: {error}"
+            f"could not parse structure file {source_path.name!r}: {error}"
         ) from error
 
 

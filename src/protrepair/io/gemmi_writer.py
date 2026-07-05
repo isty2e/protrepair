@@ -2,6 +2,7 @@
 
 import os
 import secrets
+from os import PathLike
 from pathlib import Path
 
 from protrepair.errors import UnsupportedFileFormatError
@@ -27,17 +28,18 @@ from protrepair.structure.topology import (
 
 def write_structure(
     structure: ProteinStructure,
-    output_path: Path,
+    output_path: Path | str | PathLike[str],
     *,
     file_format: FileFormat | None = None,
 ) -> None:
-    """Serialize a canonical structure to a coordinate file."""
+    """Serialize a canonical structure to a path-like coordinate file."""
 
+    target_path = Path(output_path)
     resolved_format = (
-        infer_file_format(output_path) if file_format is None else file_format
+        infer_file_format(target_path) if file_format is None else file_format
     )
     serialized_structure = write_structure_string(structure, resolved_format)
-    _atomic_write_text(output_path, serialized_structure)
+    _atomic_write_text(target_path, serialized_structure)
 
 
 def _atomic_write_text(output_path: Path, text: str) -> None:
