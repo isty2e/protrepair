@@ -122,7 +122,7 @@ def normalize_raw_structure(
     source_name: str | None = None,
     pdb_conect_atom_ref_pairs: tuple[tuple[AtomRef, AtomRef], ...] = (),
 ) -> ProteinStructure:
-    """Normalize one raw gemmi structure into the canonical structure model."""
+    """Normalize the first model from one raw gemmi structure."""
 
     chains: list[tuple[str, list[_NormalizedResiduePayload]]] = []
     ligands: list[_NormalizedResiduePayload] = []

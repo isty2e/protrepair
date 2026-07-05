@@ -79,6 +79,135 @@ def test_read_structure_rejects_oversized_file_before_parser(
         read_structure(pdb_path)
 
 
+def test_read_structure_string_uses_first_model_for_multimodel_pdb() -> None:
+    """PDB ingress should materialize only the first source model."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                "MODEL        1",
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    element="N",
+                ),
+                "ENDMDL",
+                "MODEL        2",
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=9.0,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" CA ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=8.0,
+                    element="C",
+                ),
+                "ENDMDL",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    atom_index = structure.constitution.atom_index(
+        AtomRef(ResidueId("A", 1), "N")
+    )
+
+    assert structure.geometry.atom_geometry(atom_index).position.x == 1.0
+    assert structure.constitution.resolve_atom_site(
+        AtomRef(ResidueId("A", 1), "CA")
+    ) is None
+
+
+def test_read_structure_string_uses_first_model_for_multimodel_mmcif() -> None:
+    """mmCIF ingress should match the same first-model-only contract as PDB."""
+
+    structure = read_structure_string(
+        """data_multimodel
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N . GLY A 1 1 ? 1.000 2.000 3.000 1.00 20.00 1 A 1
+ATOM 2 N N . GLY A 1 1 ? 9.000 8.000 7.000 1.00 20.00 1 A 2
+ATOM 3 C CA . GLY A 1 1 ? 8.000 7.000 6.000 1.00 20.00 1 A 2
+#
+""",
+        FileFormat.MMCIF,
+    )
+
+    atom_index = structure.constitution.atom_index(
+        AtomRef(ResidueId("A", 1), "N")
+    )
+
+    assert structure.geometry.atom_geometry(atom_index).position == Vec3(
+        x=1.0,
+        y=2.0,
+        z=3.0,
+    )
+    assert structure.constitution.resolve_atom_site(
+        AtomRef(ResidueId("A", 1), "CA")
+    ) is None
+
+
+def test_read_structure_string_empty_first_model_does_not_fall_through() -> None:
+    """An empty first model should not be replaced by a populated later model."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                "MODEL        1",
+                "ENDMDL",
+                "MODEL        2",
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=9.0,
+                    element="N",
+                ),
+                "ENDMDL",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert structure.constitution.chains == ()
+    assert structure.geometry.atom_geometries == ()
+
+
 def test_read_structure_string_resolves_atom_altloc_by_highest_occupancy() -> None:
     """Altloc sites should normalize to one atom by occupancy policy."""
 

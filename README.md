@@ -24,6 +24,11 @@ Topology policy is documented in
 canonical topology owns bond truth; execution, readiness, and PDB/mmCIF egress
 project from that topology instead of carrying separate connectivity stories.
 
+Ingress normalizes each source into one canonical structure realization.
+For multi-model PDB or mmCIF files, ProtRepair currently reads the first model
+only; choose a different model upstream before calling `process_structure()` if
+you need another realization.
+
 Current deferred scope:
 
 - generic arbitrary nonstandard chemistry beyond supported component templates

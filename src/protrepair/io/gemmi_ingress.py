@@ -24,7 +24,7 @@ def read_structure(
     *,
     policy: StructureNormalizationPolicy | None = None,
 ) -> ProteinStructure:
-    """Read a coordinate file into the canonical structure model."""
+    """Read a coordinate file into the canonical first-model structure."""
 
     _assert_structure_file_size(path)
     file_format = infer_file_format(path)
@@ -53,7 +53,7 @@ def read_structure_string(
     policy: StructureNormalizationPolicy | None = None,
     source_name: str | None = None,
 ) -> ProteinStructure:
-    """Read an in-memory coordinate payload into the canonical model."""
+    """Read an in-memory coordinate payload into the canonical first-model structure."""
 
     _assert_structure_text_size(contents, source_name=source_name)
     raw_structure = read_raw_structure_string(contents, file_format)
@@ -77,7 +77,7 @@ def read_structure_string_with_policy(
     policy: StructureNormalizationPolicy,
     source_name: str | None = None,
 ) -> ProteinStructure:
-    """Read one in-memory payload using one canonical normalization policy."""
+    """Read one first-model payload using one canonical normalization policy."""
 
     _assert_structure_text_size(contents, source_name=source_name)
     raw_structure = read_raw_structure_string(contents, file_format)
