@@ -20,6 +20,7 @@ from protrepair.structure.topology import (
     SourceBondRecordType,
     TopologyBond,
     is_covalent_like_relationship,
+    is_model_resolved_provenance,
 )
 
 
@@ -122,6 +123,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             raw_structure,
             structure,
             include_pdb_conect_origin=False,
+            include_model_resolved=False,
         )
         pdb_text = raw_structure.make_pdb_string()
         return append_pdb_conect_records_from_topology(
@@ -134,6 +136,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             raw_structure,
             structure,
             include_pdb_conect_origin=True,
+            include_model_resolved=True,
         )
         return raw_structure.make_mmcif_document().as_string()
 
@@ -148,6 +151,7 @@ def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> st
         raw_structure,
         structure,
         include_pdb_conect_origin=False,
+        include_model_resolved=False,
     )
     return raw_structure.make_pdb_string()
 
@@ -192,10 +196,14 @@ def add_topology_connections_to_gemmi_structure(
     structure: ProteinStructure,
     *,
     include_pdb_conect_origin: bool,
+    include_model_resolved: bool = False,
 ) -> None:
-    """Add source-explicit topology bonds as gemmi connection records."""
+    """Add topology bonds as gemmi connection records."""
 
-    for bond in source_explicit_topology_bonds_for_egress(structure):
+    for bond in gemmi_connection_topology_bonds_for_egress(
+        structure,
+        include_model_resolved=include_model_resolved,
+    ):
         if (
             not include_pdb_conect_origin
             and bond.source_metadata is not None
@@ -231,13 +239,54 @@ def add_topology_connections_to_gemmi_structure(
 def source_explicit_topology_bonds_for_egress(
     structure: ProteinStructure,
 ) -> tuple[TopologyBond, ...]:
-    """Return topology bonds emitted by the default source-preserving policy."""
+    """Return all source-explicit topology bonds.
+
+    This is a source-preservation projection, not a concrete writer policy.
+    Format-specific writers should use gemmi_connection_topology_bonds_for_egress
+    or pdb_conect_topology_bonds_for_egress because PDB and mmCIF preserve
+    source-explicit relationships through different boundary records.
+    """
 
     return tuple(
         bond
         for bond in structure.topology.bonds
         if bond.provenance is BondProvenance.SOURCE_EXPLICIT
     )
+
+
+def gemmi_connection_topology_bonds_for_egress(
+    structure: ProteinStructure,
+    *,
+    include_model_resolved: bool,
+) -> tuple[TopologyBond, ...]:
+    """Return topology bonds emitted through gemmi connection records.
+
+    Gemmi connection records preserve typed relationships such as LINK,
+    struct_conn, disulfide, hydrogen, and metal coordination. PDB CONECT records
+    are appended separately because they are an untyped connectivity table.
+    """
+
+    return tuple(
+        bond
+        for bond in structure.topology.bonds
+        if _topology_bond_is_gemmi_connection_emittable(
+            bond,
+            include_model_resolved=include_model_resolved,
+        )
+    )
+
+
+def _topology_bond_is_gemmi_connection_emittable(
+    bond: TopologyBond,
+    *,
+    include_model_resolved: bool,
+) -> bool:
+    """Return whether one topology bond may become a gemmi connection."""
+
+    if bond.provenance is BondProvenance.SOURCE_EXPLICIT:
+        return True
+
+    return include_model_resolved and _topology_bond_is_model_resolved_emittable(bond)
 
 
 def source_connection_name(bond: TopologyBond) -> str:
@@ -308,7 +357,7 @@ def append_pdb_conect_records_from_topology(
     pdb_text: str,
     structure: ProteinStructure,
 ) -> str:
-    """Append PDB CONECT records projected from PDB-bond topology."""
+    """Append PDB CONECT records projected from canonical topology."""
 
     serial_by_atom_ref = pdb_atom_serial_by_atom_ref(pdb_text)
     neighbor_serials_by_source: dict[int, set[int]] = {}
@@ -346,7 +395,13 @@ def append_pdb_conect_records_from_topology(
 def pdb_conect_topology_bonds_for_egress(
     structure: ProteinStructure,
 ) -> tuple[TopologyBond, ...]:
-    """Return topology bonds that should be represented as PDB CONECT."""
+    """Return topology bonds that should be represented as PDB CONECT.
+
+    PDB CONECT cannot encode relationship type, so this projection preserves
+    source PDB CONECT records and emits covalent-like repaired/model-resolved
+    bonds. Typed source relationships such as metal coordination stay in gemmi
+    connection records unless they came from PDB CONECT.
+    """
 
     return tuple(
         bond
@@ -358,15 +413,22 @@ def pdb_conect_topology_bonds_for_egress(
 def _topology_bond_is_pdb_conect_emittable(bond: TopologyBond) -> bool:
     """Return whether one topology bond may be serialized as PDB CONECT."""
 
-    if bond.provenance is not BondProvenance.SOURCE_EXPLICIT:
-        return False
-    if (
-        bond.source_metadata is not None
-        and bond.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
-    ):
-        return True
+    if bond.provenance is BondProvenance.SOURCE_EXPLICIT:
+        if (
+            bond.source_metadata is not None
+            and bond.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
+        ):
+            return True
 
-    return is_covalent_like_relationship(bond)
+        return is_covalent_like_relationship(bond)
+
+    return _topology_bond_is_model_resolved_emittable(bond)
+
+
+def _topology_bond_is_model_resolved_emittable(bond: TopologyBond) -> bool:
+    """Return whether one model-resolved topology bond may be serialized."""
+
+    return is_model_resolved_provenance(bond) and is_covalent_like_relationship(bond)
 
 
 def _source_metadata_id_is_specific(bond: TopologyBond) -> bool:

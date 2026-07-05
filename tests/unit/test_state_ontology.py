@@ -87,6 +87,12 @@ from protrepair.structure.slots import AtomIndex
 from protrepair.structure.snapshot import (
     ProteinStructureSnapshot,
 )
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
 from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
 from protrepair.transformer.continuous.readiness import (
     atom_scope_facts_continuous_relaxation_error,
@@ -358,6 +364,81 @@ def test_structure_chemistry_readiness_facts_surface_topology_readiness() -> Non
     )
 
 
+@pytest.mark.parametrize(
+    ("context_bond_pairs", "expected_state"),
+    [
+        ((), TopologyAvailabilityState.ABSENT),
+        (
+            (("N", "H1"), ("N", "H2"), ("N", "H3")),
+            TopologyAvailabilityState.PRESENT,
+        ),
+    ],
+)
+def test_structure_chemistry_readiness_requires_polymer_context_hydrogen_bonds(
+    context_bond_pairs: tuple[tuple[str, str], ...],
+    expected_state: TopologyAvailabilityState,
+) -> None:
+    """N-terminal hydrogens require sequence-inferred anchor topology."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            build_chain(
+                "A",
+                (
+                    build_residue(
+                        "ALA",
+                        "A",
+                        1,
+                        (
+                            "N",
+                            "CA",
+                            "C",
+                            "O",
+                            "CB",
+                            "H1",
+                            "H2",
+                            "H3",
+                            "HA",
+                            "HB1",
+                            "HB2",
+                            "HB3",
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="polymer-context-hydrogen-topology-readiness",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            residue_id,
+            (
+                ("N", "CA"),
+                ("CA", "C"),
+                ("C", "O"),
+                ("CA", "CB"),
+                ("CA", "HA"),
+                ("CB", "HB1"),
+                ("CB", "HB2"),
+                ("CB", "HB3"),
+                *context_bond_pairs,
+            ),
+        ),
+    )
+
+    chemistry_readiness_facts = StructureChemistryReadinessFacts.from_structure(
+        structure
+    )
+
+    residue_fact = chemistry_readiness_facts.residue_facts[0]
+    assert residue_fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
+    assert residue_fact.hydrogen_topology_availability_state is expected_state
+
+
 def test_split_structure_fact_derivation_reuses_orthogonal_fact_owners() -> None:
     """Shared derivation should return explicit coverage and chemistry owners."""
 
@@ -546,12 +627,13 @@ def test_structure_chemistry_readiness_splits_template_heavy_from_fallback_hydro
 ) -> None:
     """Template heavy topology and fallback hydrogen expectation should split."""
 
+    residue_id = ResidueId("L", 1)
     structure = build_structure(
         chains=(),
         ligands=(
             residue_payload(
                 component_id="MIX",
-                residue_id=ResidueId("L", 1),
+                residue_id=residue_id,
                 atoms=(
                     atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),
                     atom_payload("O1", "O", Vec3(1.4, 0.0, 0.0)),
@@ -561,6 +643,10 @@ def test_structure_chemistry_readiness_splits_template_heavy_from_fallback_hydro
         ),
         source_format=FileFormat.PDB,
         source_name="retained-non-polymer-mixed-source",
+    )
+    structure = with_topology_bonds(
+        structure,
+        topology_bond_spec(residue_id, "C1", "O1"),
     )
     component_library = ComponentLibrary(
         templates={
@@ -603,6 +689,7 @@ def test_structure_chemistry_readiness_supports_override_backed_retained_non_pol
 ) -> None:
     """Override-backed retained non-polymers should become hydrogenatable."""
 
+    ligand_residue_id = ResidueId("L", 1)
     structure = build_structure(
         chains=(
             chain_payload(
@@ -619,7 +706,7 @@ def test_structure_chemistry_readiness_supports_override_backed_retained_non_pol
         ligands=(
             residue_payload(
                 component_id="UNK",
-                residue_id=ResidueId("L", 1),
+                residue_id=ligand_residue_id,
                 atoms=(
                     atom_payload("C1", "C", Vec3(3.0, 0.0, 0.0)),
                     atom_payload("O1", "O", Vec3(4.4, 0.0, 0.0)),
@@ -629,6 +716,15 @@ def test_structure_chemistry_readiness_supports_override_backed_retained_non_pol
         ),
         source_format=FileFormat.PDB,
         source_name="retained-non-polymer-override-supported",
+    )
+    structure = with_topology_bonds(
+        structure,
+        topology_bond_spec(
+            ligand_residue_id,
+            "C1",
+            "O1",
+            provenance=BondProvenance.EVIDENCE_RESOLVED,
+        ),
     )
 
     _, chemistry_readiness_facts = (
@@ -666,6 +762,50 @@ def test_structure_chemistry_readiness_supports_override_backed_retained_non_pol
         HydrogenApplicabilityState.APPLICABLE
     )
     assert retained_fact.hydrogen_coverage_state is HydrogenCoverageState.NONE
+
+
+def test_structure_chemistry_readiness_rejects_override_atoms_without_bonds() -> None:
+    """Override-backed retained heavy atoms still require canonical topology."""
+
+    ligand_residue_id = ResidueId("L", 1)
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ligand_residue_id,
+                atoms=(
+                    atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(1.4, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="override-atoms-without-bonds",
+    )
+
+    _, chemistry_readiness_facts = (
+        derive_structure_coverage_and_chemistry_readiness_facts(
+            structure,
+            component_library=build_retained_non_polymer_component_library(),
+            retained_non_polymer_chemistry_evidence=(
+                RetainedNonPolymerChemistryOverride(
+                    residue_id=ligand_residue_id,
+                    smiles="CO",
+                    heavy_atom_names=("C1", "O1"),
+                ).to_evidence(),
+            ),
+        )
+    )
+
+    retained_fact = chemistry_readiness_facts.retained_non_polymer_facts[0]
+    assert retained_fact.heavy_topology_source is (
+        RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
+    )
+    assert retained_fact.heavy_atom_topology_availability_state is (
+        TopologyAvailabilityState.ABSENT
+    )
 
 
 @pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
@@ -710,6 +850,67 @@ def test_structure_chemistry_readiness_respects_complete_retained_non_polymer_hy
     )
     assert retained_fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
     assert not retained_fact.requires_hydrogen_completion()
+    assert retained_fact.hydrogen_topology_availability_state is (
+        TopologyAvailabilityState.ABSENT
+    )
+
+
+@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
+def test_structure_chemistry_readiness_accepts_complete_retained_hydrogen_bonds(
+) -> None:
+    """Complete retained H coverage is topology-ready only with H-heavy bonds."""
+
+    ligand_residue_id = ResidueId("L", 1)
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ligand_residue_id,
+                atoms=(
+                    atom_payload("C1", "C", Vec3(3.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(4.4, 0.0, 0.0)),
+                    atom_payload("H1", "H", Vec3(2.6, 0.8, 0.0)),
+                    atom_payload("H2", "H", Vec3(2.6, -0.8, 0.0)),
+                    atom_payload("H3", "H", Vec3(3.0, 0.0, 1.0)),
+                    atom_payload("H4", "H", Vec3(5.0, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="retained-non-polymer-fallback-complete-topology",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            ligand_residue_id,
+            (
+                ("C1", "O1"),
+                ("C1", "H1"),
+                ("C1", "H2"),
+                ("C1", "H3"),
+                ("O1", "H4"),
+            ),
+            provenance=BondProvenance.REPAIR_INFERRED,
+        ),
+    )
+
+    _, chemistry_readiness_facts = (
+        derive_structure_coverage_and_chemistry_readiness_facts(
+            structure,
+            component_library=build_retained_non_polymer_component_library(),
+        )
+    )
+
+    retained_fact = chemistry_readiness_facts.retained_non_polymer_facts[0]
+    assert retained_fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
+    assert retained_fact.heavy_atom_topology_availability_state is (
+        TopologyAvailabilityState.PRESENT
+    )
+    assert retained_fact.hydrogen_topology_availability_state is (
+        TopologyAvailabilityState.PRESENT
+    )
 
 
 def test_coarse_stereochemistry_derives_from_singleton_residue_facts() -> None:
@@ -1312,6 +1513,7 @@ def test_atom_domain_state_projects_local_structure_state_axes() -> None:
 def test_atom_domain_state_marks_topology_unresolved_without_hydrogens() -> None:
     """Continuous topology should remain unresolved while hydrogens are missing."""
 
+    residue_id = ResidueId("A", 1)
     structure = build_structure(
         chains=(
             build_chain(
@@ -1322,6 +1524,13 @@ def test_atom_domain_state_marks_topology_unresolved_without_hydrogens() -> None
         ligands=(),
         source_format=FileFormat.PDB,
         source_name="topology-unresolved",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            residue_id,
+            (("N", "CA"), ("CA", "C"), ("C", "O")),
+        ),
     )
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     selected_atom_refs = tuple(
@@ -1356,9 +1565,107 @@ def test_atom_domain_state_marks_topology_unresolved_without_hydrogens() -> None
     assert not atom_scope_facts_supports_continuous_relaxation(domain_facts)
 
 
+def test_atom_domain_state_marks_missing_heavy_bond_topology_absent() -> None:
+    """Present heavy coordinates do not imply heavy connectivity readiness."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            build_chain(
+                "A",
+                (build_residue("ALA", "A", 1, ("N", "CA", "C", "O", "CB")),),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="topology-heavy-bond-missing",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            residue_id,
+            (("N", "CA"), ("CA", "C"), ("C", "O")),
+        ),
+    )
+    snapshot = ProteinStructureSnapshot.from_structure(structure)
+    atom_input = AtomInput(
+        atom_indices=tuple(
+            snapshot.structure.constitution.atom_index(build_atom_ref("A", 1, name))
+            for name in ("N", "CA", "C", "O", "CB")
+        ),
+        basis=AtomInputBasis.RESIDUEWISE,
+        selected_scope=ResidueSetScope(residue_ids=(residue_id,)),
+    )
+
+    domain_state = derive_atom_scope_continuous_relaxation_observation(
+        snapshot,
+        OBSERVED_ATOM_SCOPE_LOWERING.lower(atom_input.as_scope(), carrier=snapshot),
+    )
+
+    assert domain_state.topology_availability.is_uniform(
+        aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
+        state=TopologyAvailabilityState.ABSENT,
+    )
+
+
+def test_atom_domain_state_marks_missing_hydrogen_anchor_topology_absent() -> None:
+    """Present hydrogen coordinates do not imply H-anchor readiness."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            build_chain(
+                "A",
+                (
+                    build_residue(
+                        "ALA",
+                        "A",
+                        1,
+                        ("N", "CA", "C", "O", "CB", "HA", "HB1", "HB2", "HB3"),
+                    ),
+                ),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="topology-hydrogen-anchor-missing",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            residue_id,
+            (("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB")),
+        ),
+    )
+    snapshot = ProteinStructureSnapshot.from_structure(structure)
+    atom_input = AtomInput(
+        atom_indices=tuple(
+            snapshot.structure.constitution.atom_index(build_atom_ref("A", 1, name))
+            for name in ("N", "CA", "C", "O", "CB", "HA", "HB1", "HB2", "HB3")
+        ),
+        basis=AtomInputBasis.RESIDUEWISE,
+        selected_scope=ResidueSetScope(residue_ids=(residue_id,)),
+    )
+
+    domain_state = derive_atom_scope_continuous_relaxation_observation(
+        snapshot,
+        OBSERVED_ATOM_SCOPE_LOWERING.lower(atom_input.as_scope(), carrier=snapshot),
+    )
+
+    assert domain_state.topology_availability.is_uniform(
+        aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
+        state=TopologyAvailabilityState.PRESENT,
+    )
+    assert domain_state.topology_availability.is_uniform(
+        aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
+        state=TopologyAvailabilityState.ABSENT,
+    )
+
+
 def test_atom_domain_state_marks_hydrogen_topology_available_without_clashes() -> None:
     """Hydrogen-complete residues should surface available hydrogen topology."""
 
+    residue_id = ResidueId("A", 1)
     structure = build_structure(
         chains=(
             build_chain(
@@ -1389,6 +1696,22 @@ def test_atom_domain_state_marks_hydrogen_topology_available_without_clashes() -
         ligands=(),
         source_format=FileFormat.PDB,
         source_name="topology-template-resolved",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            residue_id,
+            (
+                ("N", "CA"),
+                ("CA", "C"),
+                ("C", "O"),
+                ("CA", "CB"),
+                ("CA", "HA"),
+                ("CB", "HB1"),
+                ("CB", "HB2"),
+                ("CB", "HB3"),
+            ),
+        ),
     )
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     selected_atom_refs = tuple(
@@ -1439,6 +1762,7 @@ def test_atom_domain_state_marks_hydrogen_topology_available_without_clashes() -
 def test_atom_domain_state_surfaces_template_resolved_hydrogen_attachments() -> None:
     """Template-resolved hydrogens should stay distinct from topology truth."""
 
+    residue_id = ResidueId("A", 1)
     structure = build_structure(
         chains=(
             build_chain(
@@ -1466,6 +1790,22 @@ def test_atom_domain_state_surfaces_template_resolved_hydrogen_attachments() -> 
         ligands=(),
         source_format=FileFormat.PDB,
         source_name="topology-template-resolved-detail",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            residue_id,
+            (
+                ("N", "CA"),
+                ("CA", "C"),
+                ("C", "O"),
+                ("CA", "CB"),
+                ("CA", "HA"),
+                ("CB", "HB1"),
+                ("CB", "HB2"),
+                ("CB", "HB3"),
+            ),
+        ),
     )
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     selected_atom_refs = tuple(
@@ -1509,6 +1849,7 @@ def test_atom_domain_state_surfaces_template_resolved_hydrogen_attachments() -> 
 def test_atom_domain_state_surfaces_coordinate_inferred_hydrogen_attachments() -> None:
     """Coordinate-inferred hydrogens should not be collapsed into topology absence."""
 
+    residue_id = ResidueId("A", 1)
     structure = build_structure(
         chains=(
             build_chain(
@@ -1540,6 +1881,23 @@ def test_atom_domain_state_surfaces_coordinate_inferred_hydrogen_attachments() -
         ligands=(),
         source_format=FileFormat.PDB,
         source_name="topology-coordinate-inferred-detail",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            residue_id,
+            (
+                ("N", "CA"),
+                ("CA", "C"),
+                ("C", "O"),
+                ("CA", "CB"),
+                ("CB", "OG"),
+                ("CA", "HA"),
+                ("CB", "HB1"),
+                ("CB", "HB2"),
+                ("OG", "HG"),
+            ),
+        ),
     )
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     selected_atom_refs = tuple(
@@ -1653,6 +2011,37 @@ def test_atom_domain_state_preserves_hydrogen_topology_on_clashes() -> None:
         ligands=(),
         source_format=FileFormat.PDB,
         source_name="topology-coordinate-blocked",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            ResidueId("A", 1),
+            (
+                ("N", "CA"),
+                ("CA", "C"),
+                ("C", "O"),
+                ("CA", "CB"),
+                ("CB", "OG"),
+                ("CA", "HA"),
+                ("CB", "HB1"),
+                ("CB", "HB2"),
+                ("OG", "HG"),
+            ),
+        ),
+        *residue_bond_specs(
+            ResidueId("B", 1),
+            (
+                ("N", "CA"),
+                ("CA", "C"),
+                ("C", "O"),
+                ("CA", "CB"),
+                ("CB", "OG"),
+                ("CA", "HA"),
+                ("CB", "HB1"),
+                ("CB", "HB2"),
+                ("OG", "HG"),
+            ),
+        ),
     )
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     selected_atom_refs = tuple(
@@ -1978,6 +2367,30 @@ def test_atom_scope_relaxation_allows_connected_template_less_passive_context(
             atom_payload("H4", "H", Vec3(2.1, -0.7, 0.0)),
         ),
         source_name="connected-template-less-passive-context",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            ResidueId("A", 1),
+            (
+                ("N", "CA"),
+                ("CA", "C"),
+                ("C", "O"),
+                ("CA", "CB"),
+                ("CB", "OG"),
+            ),
+        ),
+        *residue_bond_specs(
+            ResidueId("L", 1),
+            (
+                ("C1", "O1"),
+                ("C1", "H1"),
+                ("C1", "H2"),
+                ("C1", "H3"),
+                ("O1", "H4"),
+            ),
+            provenance=BondProvenance.REPAIR_INFERRED,
+        ),
     )
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     atom_scope = OBSERVED_ATOM_SCOPE_LOWERING.lower(
@@ -2571,6 +2984,78 @@ def test_transformation_termination_memory_is_closed_terminal_memory() -> None:
     assert termination.terminated(
         TransformationTerminationReason.NO_LEGAL_TRANSFORMATIONS
     ).is_terminal()
+
+
+def topology_bond_spec(
+    residue_id: ResidueId,
+    atom_name_1: str,
+    atom_name_2: str,
+    *,
+    provenance: BondProvenance = BondProvenance.TEMPLATE_RESOLVED,
+) -> tuple[ResidueId, str, str, BondProvenance]:
+    """Return one residue-local topology bond spec for state tests."""
+
+    return (residue_id, atom_name_1, atom_name_2, provenance)
+
+
+def residue_bond_specs(
+    residue_id: ResidueId,
+    atom_name_pairs: tuple[tuple[str, str], ...],
+    *,
+    provenance: BondProvenance = BondProvenance.TEMPLATE_RESOLVED,
+) -> tuple[tuple[ResidueId, str, str, BondProvenance], ...]:
+    """Return residue-local topology bond specs for state tests."""
+
+    return tuple(
+        topology_bond_spec(
+            residue_id,
+            atom_name_1,
+            atom_name_2,
+            provenance=provenance,
+        )
+        for atom_name_1, atom_name_2 in atom_name_pairs
+    )
+
+
+def with_topology_bonds(
+    structure: ProteinStructure,
+    *bond_specs: tuple[ResidueId, str, str, BondProvenance],
+) -> ProteinStructure:
+    """Return a copy with residue-local canonical topology bonds."""
+
+    topology_bonds = tuple(
+        _topology_bond_from_spec(structure, bond_spec) for bond_spec in bond_specs
+    )
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(*structure.topology.bonds, *topology_bonds),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
+
+
+def _topology_bond_from_spec(
+    structure: ProteinStructure,
+    bond_spec: tuple[ResidueId, str, str, BondProvenance],
+) -> TopologyBond:
+    """Return one canonical topology bond from residue-local atom names."""
+
+    residue_id, atom_name_1, atom_name_2, provenance = bond_spec
+    return TopologyBond(
+        atom_index_1=structure.constitution.atom_index(
+            AtomRef(residue_id, atom_name_1)
+        ),
+        atom_index_2=structure.constitution.atom_index(
+            AtomRef(residue_id, atom_name_2)
+        ),
+        relationship_type=BondRelationshipType.COVALENT,
+        provenance=provenance,
+    )
 
 
 def uniform_topology_availability(

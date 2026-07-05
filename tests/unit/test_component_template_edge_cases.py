@@ -36,6 +36,14 @@ from protrepair.structure.labels import (
     ResidueId,
 )
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    SourceBondMetadata,
+    SourceBondRecordType,
+    StructureTopology,
+    TopologyBond,
+)
 from protrepair.transformer.completion.heavy import repair_heavy_atoms
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.workflow.contracts import OrphanFragmentPolicy
@@ -153,6 +161,39 @@ def has_atom(
             AtomRef(residue_id=residue_id, atom_name=atom_name)
         )
         is not None
+    )
+
+
+def topology_bond_between(
+    structure: ProteinStructure,
+    residue_id: ResidueId,
+    atom_name_1: str,
+    atom_name_2: str,
+) -> TopologyBond | None:
+    """Return a canonical residue-local topology bond when present."""
+
+    atom_index_1 = structure.constitution.atom_index(AtomRef(residue_id, atom_name_1))
+    atom_index_2 = structure.constitution.atom_index(AtomRef(residue_id, atom_name_2))
+    for bond in structure.topology.bonds:
+        if {bond.atom_index_1, bond.atom_index_2} == {atom_index_1, atom_index_2}:
+            return bond
+
+    return None
+
+
+def has_template_topology_bond(
+    structure: ProteinStructure,
+    residue_id: ResidueId,
+    atom_name_1: str,
+    atom_name_2: str,
+) -> bool:
+    """Return whether canonical topology has one template-resolved covalent bond."""
+
+    bond = topology_bond_between(structure, residue_id, atom_name_1, atom_name_2)
+    return (
+        bond is not None
+        and bond.relationship_type is BondRelationshipType.COVALENT
+        and bond.provenance is BondProvenance.TEMPLATE_RESOLVED
     )
 
 
@@ -312,12 +353,128 @@ def test_custom_alias_template_normalizes_and_repairs_heavy_atoms() -> None:
 
     assert residue_component_id(result.structure, residue_id) == "ALA"
     assert has_atom(result.structure, residue_id, "CB")
+    assert has_template_topology_bond(result.structure, residue_id, "CA", "CB")
     assert any(
         event.kind is RepairEventKind.COMPONENT_NORMALIZED for event in result.repairs
     )
     assert any(
         event.kind is RepairEventKind.HEAVY_ATOMS_ADDED for event in result.repairs
     )
+
+
+def test_heavy_repair_adds_topology_for_sidechain_branch_atoms() -> None:
+    """Repaired side-chain heavy atoms should carry template topology bonds."""
+
+    structure = build_test_structure(
+        residues=(
+            residue_entry(
+                component_id="SER",
+                seq_num=1,
+                atoms=(
+                    atom_entry("N", "N", Vec3(1.0, 1.0, 1.0)),
+                    atom_entry("CA", "C", Vec3(2.0, 1.5, 1.0)),
+                    atom_entry("C", "C", Vec3(3.0, 1.0, 1.5)),
+                    atom_entry("O", "O", Vec3(3.8, 1.2, 2.3)),
+                    atom_entry("CB", "C", Vec3(2.0, 2.5, 0.2)),
+                ),
+            ),
+        ),
+        source_name="ser-sidechain-topology-repair",
+    )
+
+    result = repair_heavy_atoms(structure)
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+
+    assert has_atom(result.structure, residue_id, "OG")
+    assert has_template_topology_bond(result.structure, residue_id, "CB", "OG")
+    assert any(
+        event.kind is RepairEventKind.HEAVY_ATOMS_ADDED
+        and event.atom_names == ("OG",)
+        for event in result.repairs
+    )
+
+
+def test_heavy_repair_preserves_source_explicit_topology_bonds() -> None:
+    """Source-explicit topology bonds should survive heavy repair remapping."""
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    structure = build_test_structure(
+        residues=(
+            residue_entry(
+                component_id="ALA",
+                seq_num=1,
+                atoms=(
+                    atom_entry("N", "N", Vec3(1.0, 1.0, 1.0)),
+                    atom_entry("CA", "C", Vec3(2.0, 1.5, 1.0)),
+                    atom_entry("C", "C", Vec3(3.0, 1.0, 1.5)),
+                    atom_entry("O", "O", Vec3(3.8, 1.2, 2.3)),
+                ),
+            ),
+        ),
+        source_name="source-link-heavy-repair",
+    )
+    structure_with_source_bond = ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    atom_index_1=structure.constitution.atom_index(
+                        AtomRef(residue_id, "N")
+                    ),
+                    atom_index_2=structure.constitution.atom_index(
+                        AtomRef(residue_id, "CA")
+                    ),
+                    relationship_type=BondRelationshipType.COVALENT,
+                    provenance=BondProvenance.SOURCE_EXPLICIT,
+                    source_metadata=SourceBondMetadata(
+                        record_type=SourceBondRecordType.PDB_LINK,
+                        source_id="toy-source-link",
+                    ),
+                ),
+            ),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
+
+    result = repair_heavy_atoms(structure_with_source_bond)
+
+    source_bond = topology_bond_between(result.structure, residue_id, "N", "CA")
+    assert source_bond is not None
+    assert source_bond.provenance is BondProvenance.SOURCE_EXPLICIT
+    assert source_bond.source_metadata is not None
+    assert source_bond.source_metadata.source_id == "toy-source-link"
+    assert has_template_topology_bond(result.structure, residue_id, "CA", "CB")
+
+
+def test_heavy_repair_adds_topology_for_terminal_oxt() -> None:
+    """Terminal heavy-atom augmentation should add the C-OXT topology bond."""
+
+    structure = build_test_structure(
+        residues=(
+            residue_entry(
+                component_id="ALA",
+                seq_num=1,
+                atoms=(
+                    atom_entry("N", "N", Vec3(1.0, 1.0, 1.0)),
+                    atom_entry("CA", "C", Vec3(2.0, 1.5, 1.0)),
+                    atom_entry("C", "C", Vec3(3.0, 1.0, 1.5)),
+                    atom_entry("O", "O", Vec3(3.8, 1.2, 2.3)),
+                    atom_entry("CB", "C", Vec3(2.0, 2.5, 0.2)),
+                ),
+            ),
+        ),
+        source_name="terminal-oxt-topology-repair",
+    )
+
+    result = repair_heavy_atoms(structure)
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+
+    assert has_atom(result.structure, residue_id, "OXT")
+    assert has_template_topology_bond(result.structure, residue_id, "C", "OXT")
 
 
 def test_integer_hydrogen_plan_arguments_are_accepted_end_to_end() -> None:

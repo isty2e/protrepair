@@ -498,11 +498,11 @@ class StructureConstitution:
     ) -> ResidueSite | None:
         """Return one residue or ligand constitution by identifier when present."""
 
-        for residue in self.iter_residues(include_ligands=True):
-            if residue.residue_id == residue_id:
-                return residue
+        residue_index = self._residue_index_by_id.get(residue_id)
+        if residue_index is None:
+            return None
 
-        return None
+        return self.residue_site_at(residue_index)
 
     def residue_index(self, residue_id: ResidueId) -> ResidueIndex:
         """Return the canonical slot index for one residue identifier."""

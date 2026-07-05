@@ -7,6 +7,10 @@ from protrepair.chemistry import (
     ResidueTemplate,
     build_default_component_library,
 )
+from protrepair.chemistry.component.topology import (
+    polymer_context_hydrogen_anchor_definitions,
+    template_resolved_hydrogen_topology_bonds_for_new_atoms,
+)
 from protrepair.diagnostics.component_support import (
     diagnose_component_support,
     missing_component_definition_issue,
@@ -15,11 +19,16 @@ from protrepair.diagnostics.component_support import (
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.diagnostics.kinds import RepairEventKind
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ChainSite
+from protrepair.structure.constitution import ChainSite, StructureConstitution
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import ChainIndex, ResidueIndex
-from protrepair.structure.topology import AtomTopology, StructureTopology
+from protrepair.structure.topology import (
+    AtomTopology,
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
 from protrepair.transformer.completion.hydrogen.component_patch import (
     generate_component_hydrogen_patch,
 )
@@ -277,8 +286,10 @@ def _execute_hydrogen_placement_stage(
 
     repaired_structure = _structure_from_hydrogen_chain_results(
         source_structure=placement_input,
+        topology_source_structure=prepared_result.structure,
         original_structure=original_structure,
         chain_results=tuple(repaired_chain_results),
+        component_library=component_library,
     )
     return TransformationResult(
         structure=repaired_structure,
@@ -343,6 +354,11 @@ def _execute_targeted_polymer_hydrogen_placement_stage(
                 residue.formal_charge_by_atom_name,
             )
             for residue in repaired_target_residues
+        )
+        repaired_structure = _with_polymer_hydrogen_topology_bonds(
+            source_structure=source_structure,
+            target_structure=repaired_structure,
+            component_library=component_library,
         )
 
     return TransformationResult(
@@ -495,8 +511,10 @@ def _supports_peptide_backbone_hydrogens(
 def _structure_from_hydrogen_chain_results(
     *,
     source_structure: ProteinStructure,
+    topology_source_structure: ProteinStructure,
     original_structure: ProteinStructure,
     chain_results: tuple[_HydrogenChainStageResult, ...],
+    component_library: ComponentLibrary,
 ) -> ProteinStructure:
     """Return one structure rebuilt from hydrogenated chain residue payload."""
 
@@ -567,14 +585,139 @@ def _structure_from_hydrogen_chain_results(
                 for atom_site in residue.residue_site.atom_sites
                 for formal_charge in (dict(formal_charge_payload).get(atom_site.name),)
             ),
-            bonds=source_structure.topology.bonds_for_constitution(
-                source_constitution=source_structure.constitution,
+            bonds=_topology_bonds_with_polymer_hydrogen_anchors(
+                topology_source_structure=topology_source_structure,
+                hydrogen_source_constitution=source_structure.constitution,
                 target_constitution=updated_constitution,
+                component_library=component_library,
             ),
         ),
         polymer_blueprint=source_structure.polymer_blueprint,
         provenance=original_structure.provenance,
     )
+
+
+def _with_polymer_hydrogen_topology_bonds(
+    *,
+    source_structure: ProteinStructure,
+    target_structure: ProteinStructure,
+    component_library: ComponentLibrary,
+) -> ProteinStructure:
+    """Return target structure with H topology introduced by polymer H completion."""
+
+    return ProteinStructure.from_payload(
+        constitution=target_structure.constitution,
+        geometry=target_structure.geometry,
+        topology=StructureTopology(
+            constitution=target_structure.constitution,
+            atom_topologies=target_structure.topology.atom_topologies,
+            bonds=_topology_bonds_with_polymer_hydrogen_anchors(
+                topology_source_structure=source_structure,
+                hydrogen_source_constitution=source_structure.constitution,
+                target_constitution=target_structure.constitution,
+                component_library=component_library,
+            ),
+        ),
+        polymer_blueprint=target_structure.polymer_blueprint,
+        provenance=target_structure.provenance,
+    )
+
+
+def _topology_bonds_with_polymer_hydrogen_anchors(
+    *,
+    topology_source_structure: ProteinStructure,
+    hydrogen_source_constitution: StructureConstitution,
+    target_constitution: StructureConstitution,
+    component_library: ComponentLibrary,
+) -> tuple[TopologyBond, ...]:
+    """Return remapped topology plus bonds for newly materialized polymer H atoms."""
+
+    remapped_bonds = topology_source_structure.topology.bonds_for_constitution(
+        source_constitution=topology_source_structure.constitution,
+        target_constitution=target_constitution,
+    )
+    added_bonds = (
+        *template_resolved_hydrogen_topology_bonds_for_new_atoms(
+            source_constitution=hydrogen_source_constitution,
+            target_constitution=target_constitution,
+            component_library=component_library,
+        ),
+        *_polymer_context_hydrogen_topology_bonds_for_new_atoms(
+            source_constitution=hydrogen_source_constitution,
+            target_constitution=target_constitution,
+        ),
+    )
+    occupied_endpoint_pairs = {
+        bond.endpoint_pair() for bond in remapped_bonds
+    }
+    return (
+        *remapped_bonds,
+        *(
+            bond
+            for bond in added_bonds
+            if bond.endpoint_pair() not in occupied_endpoint_pairs
+        ),
+    )
+
+
+def _polymer_context_hydrogen_topology_bonds_for_new_atoms(
+    *,
+    source_constitution: StructureConstitution,
+    target_constitution: StructureConstitution,
+) -> tuple[TopologyBond, ...]:
+    """Return non-template polymer H topology bonds introduced by H completion."""
+
+    bonds: list[TopologyBond] = []
+    for target_residue_index, target_residue_site in enumerate(
+        target_constitution.residue_slots
+    ):
+        if target_residue_site.is_hetero:
+            continue
+
+        source_residue_site = source_constitution.residue_or_ligand(
+            target_residue_site.residue_id
+        )
+        source_atom_names = (
+            frozenset()
+            if source_residue_site is None
+            else frozenset(source_residue_site.atom_site_names())
+        )
+        present_atom_names = frozenset(target_residue_site.atom_site_names())
+        new_hydrogen_atom_names = frozenset(
+            atom_site.name
+            for atom_site in target_residue_site.atom_sites
+            if atom_site.element == "H" and atom_site.name not in source_atom_names
+        )
+        if not new_hydrogen_atom_names:
+            continue
+
+        residue_index = ResidueIndex(target_residue_index)
+        for anchor in polymer_context_hydrogen_anchor_definitions(
+            component_id=target_residue_site.component_id,
+            hydrogen_atom_names=new_hydrogen_atom_names,
+        ):
+            bond_definition = anchor.bond_definition
+            hydrogen_atom_name = bond_definition.atom_name_2
+            anchor_atom_name = bond_definition.atom_name_1
+            if anchor_atom_name not in present_atom_names:
+                continue
+
+            bonds.append(
+                TopologyBond(
+                    atom_index_1=target_constitution.atom_index_in_residue(
+                        residue_index,
+                        anchor_atom_name,
+                    ),
+                    atom_index_2=target_constitution.atom_index_in_residue(
+                        residue_index,
+                        hydrogen_atom_name,
+                    ),
+                    relationship_type=BondRelationshipType.COVALENT,
+                    provenance=anchor.provenance,
+                )
+            )
+
+    return tuple(bonds)
 
 
 def _apply_hydrogen_directive(

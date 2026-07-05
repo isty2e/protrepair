@@ -22,6 +22,7 @@ from protrepair.structure.topology import (
     StructureTopology,
     TopologyBond,
     is_covalent_like_relationship,
+    is_model_resolved_provenance,
     is_source_provenance,
 )
 
@@ -160,9 +161,22 @@ class TestBondProvenance:
         assert BondProvenance.SOURCE_EXPLICIT == "source_explicit"
         assert BondProvenance.TEMPLATE_RESOLVED == "template_resolved"
         assert BondProvenance.SEQUENCE_INFERRED == "sequence_inferred"
+        assert BondProvenance.EVIDENCE_RESOLVED == "evidence_resolved"
+        assert BondProvenance.REPAIR_INFERRED == "repair_inferred"
 
     def test_is_str_enum(self):
         assert isinstance(BondProvenance.SOURCE_EXPLICIT, str)
+
+    def test_closed_support_mode_axis(self):
+        """Provenance records support mode, not lifecycle or serialization."""
+
+        assert set(BondProvenance) == {
+            BondProvenance.SOURCE_EXPLICIT,
+            BondProvenance.TEMPLATE_RESOLVED,
+            BondProvenance.SEQUENCE_INFERRED,
+            BondProvenance.EVIDENCE_RESOLVED,
+            BondProvenance.REPAIR_INFERRED,
+        }
 
 
 # --- BondRelationshipType ---
@@ -291,12 +305,21 @@ class TestTopologyBond:
                 order=True,
             )
 
-    def test_source_metadata_requires_source_explicit_provenance(self):
+    @pytest.mark.parametrize(
+        "provenance",
+        [
+            BondProvenance.TEMPLATE_RESOLVED,
+            BondProvenance.SEQUENCE_INFERRED,
+            BondProvenance.EVIDENCE_RESOLVED,
+            BondProvenance.REPAIR_INFERRED,
+        ],
+    )
+    def test_source_metadata_requires_source_explicit_provenance(self, provenance):
         with pytest.raises(ValueError, match="SOURCE_EXPLICIT"):
             TopologyBond(
                 atom_index_1=AtomIndex(0),
                 atom_index_2=AtomIndex(1),
-                provenance=BondProvenance.TEMPLATE_RESOLVED,
+                provenance=provenance,
                 source_metadata=SourceBondMetadata(
                     record_type=SourceBondRecordType.PDB_LINK,
                 ),
@@ -427,7 +450,12 @@ class TestIsSourceProvenance:
 
     @pytest.mark.parametrize(
         "provenance",
-        [BondProvenance.TEMPLATE_RESOLVED, BondProvenance.SEQUENCE_INFERRED],
+        [
+            BondProvenance.TEMPLATE_RESOLVED,
+            BondProvenance.SEQUENCE_INFERRED,
+            BondProvenance.EVIDENCE_RESOLVED,
+            BondProvenance.REPAIR_INFERRED,
+        ],
     )
     def test_non_source_false(self, provenance):
         bond = TopologyBond(
@@ -435,6 +463,53 @@ class TestIsSourceProvenance:
             atom_index_2=AtomIndex(1),
             provenance=provenance,
         )
+        assert is_source_provenance(bond) is False
+
+
+# --- is_model_resolved_provenance ---
+
+
+class TestIsModelResolvedProvenance:
+    @pytest.mark.parametrize(
+        "provenance",
+        [
+            BondProvenance.TEMPLATE_RESOLVED,
+            BondProvenance.SEQUENCE_INFERRED,
+            BondProvenance.EVIDENCE_RESOLVED,
+            BondProvenance.REPAIR_INFERRED,
+        ],
+    )
+    def test_model_resolved_true(self, provenance):
+        bond = TopologyBond(
+            atom_index_1=AtomIndex(0),
+            atom_index_2=AtomIndex(1),
+            provenance=provenance,
+        )
+        assert is_model_resolved_provenance(bond) is True
+
+    def test_source_explicit_false(self):
+        bond = TopologyBond(
+            atom_index_1=AtomIndex(0),
+            atom_index_2=AtomIndex(1),
+            provenance=BondProvenance.SOURCE_EXPLICIT,
+            source_metadata=SourceBondMetadata(
+                record_type=SourceBondRecordType.PDB_CONECT,
+            ),
+        )
+        assert is_model_resolved_provenance(bond) is False
+
+    def test_repaired_evidence_covalent_is_not_source(self):
+        """Evidence-resolved repaired bonds are model truth, not source replay."""
+
+        bond = TopologyBond(
+            atom_index_1=AtomIndex(0),
+            atom_index_2=AtomIndex(1),
+            relationship_type=BondRelationshipType.COVALENT,
+            provenance=BondProvenance.EVIDENCE_RESOLVED,
+        )
+
+        assert is_covalent_like_relationship(bond) is True
+        assert is_model_resolved_provenance(bond) is True
         assert is_source_provenance(bond) is False
 
 
@@ -531,6 +606,41 @@ class TestStructureTopologyBonds:
         assert len(topology.bonds) == 1
         assert topology.atom_topologies[0] is not None
         assert topology.atom_topologies[0].formal_charge == 0
+
+    def test_bond_between_returns_canonical_endpoint_bond(self):
+        structure = _two_residue_constitution()
+        bond = TopologyBond(atom_index_1=AtomIndex(0), atom_index_2=AtomIndex(2))
+        topology = StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=(None,) * len(structure.constitution.atom_slots),
+            bonds=(bond,),
+        )
+
+        assert topology.bond_between(AtomIndex(2), AtomIndex(0)) == bond
+        assert topology.bond_between(AtomIndex(0), AtomIndex(0)) is None
+        assert topology.bond_between(AtomIndex(1), AtomIndex(3)) is None
+
+    def test_covalent_like_endpoint_pairs_exclude_non_covalent_bonds(self):
+        structure = _two_residue_constitution()
+        covalent_bond = TopologyBond(
+            atom_index_1=AtomIndex(0),
+            atom_index_2=AtomIndex(2),
+            relationship_type=BondRelationshipType.COVALENT,
+        )
+        metal_bond = TopologyBond(
+            atom_index_1=AtomIndex(1),
+            atom_index_2=AtomIndex(3),
+            relationship_type=BondRelationshipType.METAL_COORDINATION,
+        )
+        topology = StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=(None,) * len(structure.constitution.atom_slots),
+            bonds=(covalent_bond, metal_bond),
+        )
+
+        assert topology.covalent_like_endpoint_pairs() == frozenset(
+            {covalent_bond.endpoint_pair()}
+        )
 
     def test_bonds_for_constitution_remaps_surviving_endpoints(self):
         structure = _bonded_rewrite_structure()

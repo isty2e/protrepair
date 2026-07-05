@@ -974,6 +974,8 @@ def test_write_pdb_preserves_link_metadata_via_topology_connections() -> None:
         bond
         for bond in roundtripped.topology.bonds
         if bond.provenance is BondProvenance.SOURCE_EXPLICIT
+        and bond.source_metadata is not None
+        and bond.source_metadata.record_type is SourceBondRecordType.PDB_LINK
     )
     assert len(roundtripped_source_bonds) == len(source_bonds)
     for bond in roundtripped_source_bonds:
@@ -1062,7 +1064,9 @@ def test_write_mmcif_emits_struct_conn_from_source_explicit_topology_bonds() -> 
         for bond in roundtripped.topology.bonds
         if bond.provenance is BondProvenance.SOURCE_EXPLICIT
     )
-    assert len(roundtripped_source_bonds) == len(source_bonds)
+    assert {
+        bond.endpoint_pair() for bond in source_bonds
+    } <= {bond.endpoint_pair() for bond in roundtripped_source_bonds}
     for bond in roundtripped_source_bonds:
         assert bond.source_metadata is not None
         assert (
@@ -1144,8 +1148,19 @@ def test_write_mmcif_emits_struct_conn_from_pdb_conect_topology_bonds() -> None:
     )
 
 
-def test_write_pdb_default_policy_does_not_emit_template_bonds() -> None:
-    """Default PDB egress should not serialize non-source topology bonds."""
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        BondProvenance.TEMPLATE_RESOLVED,
+        BondProvenance.SEQUENCE_INFERRED,
+        BondProvenance.EVIDENCE_RESOLVED,
+        BondProvenance.REPAIR_INFERRED,
+    ],
+)
+def test_write_pdb_emits_conect_from_model_resolved_covalent_bonds(
+    provenance: BondProvenance,
+) -> None:
+    """PDB egress should serialize covalent-like repaired topology as CONECT."""
 
     source = read_structure_string(
         build_pdb_text(
@@ -1187,7 +1202,7 @@ def test_write_pdb_default_policy_does_not_emit_template_bonds() -> None:
                     atom_index_1=source.constitution.atom_index(atom_ref_1),
                     atom_index_2=source.constitution.atom_index(atom_ref_2),
                     relationship_type=BondRelationshipType.COVALENT,
-                    provenance=BondProvenance.TEMPLATE_RESOLVED,
+                    provenance=provenance,
                 ),
             ),
         ),
@@ -1195,9 +1210,133 @@ def test_write_pdb_default_policy_does_not_emit_template_bonds() -> None:
         provenance=source.provenance,
     )
 
+    assert gemmi_writer.source_explicit_topology_bonds_for_egress(structure) == ()
+    assert gemmi_writer.pdb_conect_topology_bonds_for_egress(structure) == (
+        structure.topology.bonds[0],
+    )
+
+    pdb_text = write_structure_string(structure, FileFormat.PDB)
+
+    assert "CONECT    1    2" in pdb_text
+
+
+def test_write_pdb_does_not_emit_model_resolved_non_covalent_as_conect() -> None:
+    """Only covalent-like model-resolved topology may become PDB CONECT."""
+
+    source = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    record_name="HETATM",
+                    atom_name=" ZN ",
+                    residue_name="ZN",
+                    chain_id="L",
+                    residue_seq=1,
+                    element="ZN",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="OBS",
+                    chain_id="M",
+                    residue_seq=1,
+                    x=2.0,
+                    element="O",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+    structure = ProteinStructure.from_payload(
+        constitution=source.constitution,
+        geometry=source.geometry,
+        topology=StructureTopology(
+            constitution=source.constitution,
+            atom_topologies=source.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    atom_index_1=source.constitution.atom_index(
+                        AtomRef(ResidueId("L", 1), "ZN")
+                    ),
+                    atom_index_2=source.constitution.atom_index(
+                        AtomRef(ResidueId("M", 1), "O1")
+                    ),
+                    relationship_type=BondRelationshipType.METAL_COORDINATION,
+                    provenance=BondProvenance.REPAIR_INFERRED,
+                ),
+            ),
+        ),
+        polymer_blueprint=source.polymer_blueprint,
+        provenance=source.provenance,
+    )
+
+    assert gemmi_writer.pdb_conect_topology_bonds_for_egress(structure) == ()
+
     pdb_text = write_structure_string(structure, FileFormat.PDB)
 
     assert not any(line.startswith("CONECT") for line in pdb_text.splitlines())
+
+
+def test_write_mmcif_emits_struct_conn_from_model_resolved_covalent_bonds() -> None:
+    """mmCIF egress should serialize covalent-like repaired topology."""
+
+    source = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    residue_name="LIG",
+                    chain_id="L",
+                    residue_seq=1,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="LIG",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    element="O",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+    atom_ref_1 = AtomRef(ResidueId("L", 1), "C1")
+    atom_ref_2 = AtomRef(ResidueId("L", 1), "O1")
+    structure = ProteinStructure.from_payload(
+        constitution=source.constitution,
+        geometry=source.geometry,
+        topology=StructureTopology(
+            constitution=source.constitution,
+            atom_topologies=source.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    atom_index_1=source.constitution.atom_index(atom_ref_1),
+                    atom_index_2=source.constitution.atom_index(atom_ref_2),
+                    relationship_type=BondRelationshipType.COVALENT,
+                    provenance=BondProvenance.REPAIR_INFERRED,
+                ),
+            ),
+        ),
+        polymer_blueprint=source.polymer_blueprint,
+        provenance=source.provenance,
+    )
+
+    mmcif_text = write_structure_string(structure, FileFormat.MMCIF)
+
+    assert "_struct_conn.id" in mmcif_text
+    assert "'protrepair_0_1' covale" in mmcif_text
+    assert " C1 " in mmcif_text
+    assert " O1 " in mmcif_text
 
 
 def test_apply_structure_normalization_policy_drops_bonds_with_missing_endpoints() -> (

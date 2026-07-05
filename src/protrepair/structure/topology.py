@@ -27,11 +27,20 @@ class AtomTopology:
 
 
 class BondProvenance(str, Enum):
-    """How a canonical topology bond was established."""
+    """Evidence family supporting one canonical topology bond.
+
+    This is a support-mode axis, not a lifecycle or egress axis. A bond created
+    during repair can still be template-resolved, sequence-inferred, evidence-
+    resolved, or repair-inferred depending on what justified the endpoint pair.
+    Writers and readiness checks must project from provenance plus their own
+    boundary context instead of treating provenance as a serialization flag.
+    """
 
     SOURCE_EXPLICIT = "source_explicit"
     TEMPLATE_RESOLVED = "template_resolved"
     SEQUENCE_INFERRED = "sequence_inferred"
+    EVIDENCE_RESOLVED = "evidence_resolved"
+    REPAIR_INFERRED = "repair_inferred"
 
 
 class BondRelationshipType(str, Enum):
@@ -159,6 +168,12 @@ def is_source_provenance(bond: TopologyBond) -> bool:
     return bond.provenance is BondProvenance.SOURCE_EXPLICIT
 
 
+def is_model_resolved_provenance(bond: TopologyBond) -> bool:
+    """Return whether a topology bond was resolved by canonical model policy."""
+
+    return not is_source_provenance(bond)
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class StructureTopology:
     """Structure-level topology aligned to constitution-owned atom slots."""
@@ -279,6 +294,32 @@ class StructureTopology:
 
         return tuple(remapped_bonds)
 
+    def bond_between(
+        self,
+        atom_index_1: AtomIndex,
+        atom_index_2: AtomIndex,
+    ) -> TopologyBond | None:
+        """Return the topology bond between two atom slots when present."""
+
+        if atom_index_1 == atom_index_2:
+            return None
+
+        endpoint_pair = _canonical_endpoint_pair(atom_index_1, atom_index_2)
+        for bond in self.bonds:
+            if bond.endpoint_pair() == endpoint_pair:
+                return bond
+
+        return None
+
+    def covalent_like_endpoint_pairs(self) -> frozenset[tuple[AtomIndex, AtomIndex]]:
+        """Return canonical endpoint pairs for all covalent-like topology bonds."""
+
+        return frozenset(
+            bond.endpoint_pair()
+            for bond in self.bonds
+            if is_covalent_like_relationship(bond)
+        )
+
     def atom_count(self) -> int:
         """Return the number of stored atom-topology slots."""
 
@@ -333,6 +374,18 @@ class StructureTopology:
             for atom_topology in (self.atom_topology(atom_index),)
             if atom_topology is not None
         )
+
+
+def _canonical_endpoint_pair(
+    atom_index_1: AtomIndex,
+    atom_index_2: AtomIndex,
+) -> tuple[AtomIndex, AtomIndex]:
+    """Return a canonically ordered atom endpoint pair."""
+
+    if atom_index_2.value < atom_index_1.value:
+        return (atom_index_2, atom_index_1)
+
+    return (atom_index_1, atom_index_2)
 
 
 def _deduplicate_topology_bonds(
