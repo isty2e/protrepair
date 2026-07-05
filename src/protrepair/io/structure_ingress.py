@@ -519,27 +519,139 @@ def _normalize_ligands(
     if policy.drops_ligands():
         return []
 
-    ligands: list[_NormalizedResiduePayload] = []
+    grouped_ligands: dict[ResidueId, list[_NormalizedResiduePayload]] = {}
+    ligand_order: list[ResidueId] = []
     for raw_residue in raw_chain:
         if not _is_ligand_residue(raw_residue):
             continue
 
+        residue_id = ResidueId(
+            chain_id=chain_id,
+            seq_num=int(raw_residue.seqid.num),
+            insertion_code=normalize_insertion_code(raw_residue.seqid.icode),
+        )
         if policy.rejects_ligands():
-            residue_id = ResidueId(
-                chain_id=chain_id,
-                seq_num=int(raw_residue.seqid.num),
-                insertion_code=normalize_insertion_code(raw_residue.seqid.icode),
-            )
             raise StructureNormalizationError(
                 "structure normalization rejected unexpected ligand "
                 f"{raw_residue.name} at {residue_id.display_token()}"
             )
 
-        ligands.append(
-            _normalize_residue(raw_residue, chain_id, policy.occupancy_policy)
-        )
+        ligand = _normalize_residue(raw_residue, chain_id, policy.occupancy_policy)
+        if residue_id not in grouped_ligands:
+            grouped_ligands[residue_id] = []
+            ligand_order.append(residue_id)
 
-    return ligands
+        grouped_ligands[residue_id].append(ligand)
+
+    return [
+        _select_residue_variant(grouped_ligands[residue_id], policy.mutation_policy)
+        for residue_id in ligand_order
+    ]
+
+
+def _residue_altloc_score_by_label(raw_residue) -> tuple[tuple[str, float], ...]:
+    """Return first-seen nonblank altloc labels and residue-level scores."""
+
+    score_by_altloc: dict[str, float] = {}
+    altloc_order: list[str] = []
+    for raw_atom in raw_residue:
+        altloc = normalize_altloc(raw_atom.altloc)
+        if altloc is None:
+            continue
+        if altloc not in score_by_altloc:
+            score_by_altloc[altloc] = 0.0
+            altloc_order.append(altloc)
+
+        score_by_altloc[altloc] += float(raw_atom.occ)
+
+    return tuple((altloc, score_by_altloc[altloc]) for altloc in altloc_order)
+
+
+def _select_residue_altloc(
+    raw_residue,
+    occupancy_policy: OccupancyPolicy,
+) -> str | None:
+    """Select one residue-level altloc cohort or None for non-altloc residues."""
+
+    altloc_scores = _residue_altloc_score_by_label(raw_residue)
+    if not altloc_scores:
+        return None
+
+    selected_altloc, selected_score = altloc_scores[0]
+    for candidate_altloc, candidate_score in altloc_scores[1:]:
+        if _should_replace_occupancy_score(
+            selected_score,
+            candidate_score,
+            occupancy_policy,
+        ):
+            selected_altloc = candidate_altloc
+            selected_score = candidate_score
+
+    return selected_altloc
+
+
+def _raw_atoms_for_selected_altloc(
+    raw_residue,
+    selected_altloc: str | None,
+):
+    """Yield raw atoms belonging to the selected residue-level altloc cohort."""
+
+    for raw_atom in raw_residue:
+        atom_altloc = normalize_altloc(raw_atom.altloc)
+        if (
+            selected_altloc is None
+            or atom_altloc is None
+            or atom_altloc == selected_altloc
+        ):
+            yield raw_atom
+
+
+def _select_atom_name_variants(
+    raw_atoms,
+    *,
+    selected_altloc: str | None,
+    occupancy_policy: OccupancyPolicy,
+) -> list:
+    """Resolve duplicate atom names within one selected residue altloc cohort."""
+
+    selected_atoms = {}
+    atom_order: list[str] = []
+
+    for raw_atom in raw_atoms:
+        atom_name = raw_atom.name.strip().upper()
+        if atom_name not in selected_atoms:
+            selected_atoms[atom_name] = raw_atom
+            atom_order.append(atom_name)
+            continue
+
+        current_atom = selected_atoms[atom_name]
+        current_priority = _selected_altloc_priority(current_atom, selected_altloc)
+        candidate_priority = _selected_altloc_priority(raw_atom, selected_altloc)
+        if candidate_priority < current_priority:
+            continue
+        if candidate_priority > current_priority or _should_replace_occupancy_score(
+            current_score=float(current_atom.occ),
+            candidate_score=float(raw_atom.occ),
+            occupancy_policy=occupancy_policy,
+        ):
+            selected_atoms[atom_name] = raw_atom
+
+    return [
+        selected_atoms[atom_name]
+        for atom_name in atom_order
+    ]
+
+
+def _selected_altloc_priority(
+    raw_atom,
+    selected_altloc: str | None,
+) -> int:
+    """Return whether one raw atom is explicit member of the selected cohort."""
+
+    if selected_altloc is None:
+        return 0
+
+    return int(normalize_altloc(raw_atom.altloc) == selected_altloc)
 
 
 def _normalize_residue(
@@ -580,43 +692,31 @@ def _select_atom_variants(
     raw_residue,
     occupancy_policy: OccupancyPolicy,
 ) -> list[tuple[AtomSite, AtomGeometry, int | None]]:
-    """Resolve duplicate atom sites by atom name using one occupancy policy."""
+    """Resolve atom sites by residue altloc cohort, then by atom name."""
 
-    selected_atoms = {}
-    atom_order: list[str] = []
-
-    for raw_atom in raw_residue:
-        atom_name = raw_atom.name.strip().upper()
-        if atom_name not in selected_atoms:
-            selected_atoms[atom_name] = raw_atom
-            atom_order.append(atom_name)
-            continue
-
-        current_atom = selected_atoms[atom_name]
-        if _should_replace_atom(
-            float(current_atom.occ),
-            float(raw_atom.occ),
-            occupancy_policy,
-        ):
-            selected_atoms[atom_name] = raw_atom
-
+    selected_altloc = _select_residue_altloc(raw_residue, occupancy_policy)
+    selected_atoms = _select_atom_name_variants(
+        _raw_atoms_for_selected_altloc(raw_residue, selected_altloc),
+        selected_altloc=selected_altloc,
+        occupancy_policy=occupancy_policy,
+    )
     return [
-        _atom_payload_from_raw_site(selected_atoms[atom_name])
-        for atom_name in atom_order
+        _atom_payload_from_raw_site(raw_atom)
+        for raw_atom in selected_atoms
     ]
 
 
-def _should_replace_atom(
-    current_occupancy: float,
-    candidate_occupancy: float,
+def _should_replace_occupancy_score(
+    current_score: float,
+    candidate_score: float,
     occupancy_policy: OccupancyPolicy,
 ) -> bool:
-    """Decide whether a candidate atom site should replace the current choice."""
+    """Decide whether a candidate occupancy score should replace current choice."""
 
     if occupancy_policy is OccupancyPolicy.LOWEST:
-        return candidate_occupancy < current_occupancy
+        return candidate_score < current_score
 
-    return candidate_occupancy > current_occupancy
+    return candidate_score > current_score
 
 
 def _atom_payload_from_raw_site(

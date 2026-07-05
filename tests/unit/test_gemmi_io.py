@@ -182,6 +182,345 @@ def test_read_structure_string_can_select_lowest_occupancy_atom_site() -> None:
     assert atom_geometry.position == Vec3(x=1.0, y=2.0, z=3.0)
 
 
+def test_read_structure_string_selects_coherent_residue_altloc_cohort() -> None:
+    """Residue altloc normalization should not mix atoms from different cohorts."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.60,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" N  ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.40,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.40,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    atom_name=" CA ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.60,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=5,
+                    atom_name=" CB ",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=5.0,
+                    occupancy=1.00,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    n_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    )
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+    cb_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CB"))
+    )
+
+    assert (n_geometry.altloc, n_geometry.position.x) == ("A", 1.0)
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("A", 3.0)
+    assert (cb_geometry.altloc, cb_geometry.position.x) == (None, 5.0)
+
+
+def test_read_structure_string_lowest_policy_selects_residue_altloc_cohort() -> None:
+    """LOWEST occupancy policy should select one residue altloc cohort coherently."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    altloc="A",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.80,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" N  ",
+                    altloc="B",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.20,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    atom_name=" CA ",
+                    altloc="B",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+        policy=ingress_options(
+            occupancy_policy=OccupancyPolicy.LOWEST
+        ).structure_normalization_policy(),
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    n_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    )
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (n_geometry.altloc, n_geometry.position.x) == ("B", 3.0)
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("B", 4.0)
+
+
+def test_read_structure_string_altloc_tie_uses_first_seen_cohort() -> None:
+    """Altloc cohort ties should be deterministic and not lexical-order based."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    altloc="B",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.50,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    altloc="B",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.50,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" N  ",
+                    altloc="A",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.50,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.50,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    n_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    )
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (n_geometry.altloc, n_geometry.position.x) == ("B", 1.0)
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("B", 2.0)
+
+
+def test_read_structure_string_resolves_duplicates_inside_selected_altloc_cohort() -> (
+    None
+):
+    """Duplicate atom names inside a selected cohort should still use occupancy."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" CB ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.10,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("A", 2.0)
+
+
+def test_read_structure_string_selected_altloc_overrides_blank_duplicate_atom() -> None:
+    """A cohort-specific atom should win over a blank duplicate for the same atom."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.80,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=1.00,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.40,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    atom_name=" N  ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.20,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("A", 3.0)
+
+
 def test_read_structure_string_can_select_residue_variant_by_mutation_policy() -> None:
     """Duplicate residue ids should normalize by residue occupancy score."""
 
@@ -318,6 +657,155 @@ def test_read_structure_string_can_select_residue_variant_by_mutation_policy() -
     assert lowest_structure_residue is not None
     assert structure_residue.component_id == "ALA"
     assert lowest_structure_residue.component_id == "GLY"
+
+
+def test_read_structure_string_selects_duplicate_ligand_residue_variant() -> None:
+    """Ligand microheterogeneity should resolve before canonical duplicate ids."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" N1 ",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.20,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    residue_name="NAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    record_name="HETATM",
+                    atom_name=" N1 ",
+                    residue_name="NAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.80,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+        policy=ingress_options(
+            ligand_policy=LigandPolicy.KEEP
+        ).structure_normalization_policy(),
+    )
+
+    assert len(structure.constitution.ligands) == 1
+    ligand = structure.constitution.ligands[0]
+    ligand_geometry = structure.residue_geometry(
+        structure.constitution.residue_index(ligand.residue_id)
+    )
+
+    assert ligand.component_id == "NAD"
+    assert ligand_geometry.atom_geometry("C1").position.x == 3.0
+    assert ligand_geometry.atom_geometry("N1").position.x == 4.0
+
+
+def test_read_structure_string_selects_ligand_altloc_cohort_without_mixing() -> None:
+    """Retained ligand altloc normalization should also use one coherent cohort."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    altloc="A",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.60,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    altloc="B",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.40,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    record_name="HETATM",
+                    atom_name=" N1 ",
+                    altloc="A",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.40,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    record_name="HETATM",
+                    atom_name=" N1 ",
+                    altloc="B",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.60,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+        policy=ingress_options(
+            ligand_policy=LigandPolicy.KEEP
+        ).structure_normalization_policy(),
+    )
+
+    ligand = structure.constitution.ligands[0]
+    ligand_geometry = structure.residue_geometry(
+        structure.constitution.residue_index(ligand.residue_id)
+    )
+
+    assert ligand.component_id == "FAD"
+    assert (
+        ligand_geometry.atom_geometry("C1").altloc,
+        ligand_geometry.atom_geometry("C1").position.x,
+    ) == ("A", 1.0)
+    assert (
+        ligand_geometry.atom_geometry("N1").altloc,
+        ligand_geometry.atom_geometry("N1").position.x,
+    ) == ("A", 3.0)
 
 
 def test_read_structure_string_can_filter_chains_and_drop_ligands() -> None:
