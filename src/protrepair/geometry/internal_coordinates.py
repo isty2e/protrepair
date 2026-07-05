@@ -77,7 +77,7 @@ class InternalCoordinateFrame:
         angle_bct = _angle_between_vectors_degrees(bond_cb, bond_ct)
         rotate = bond_angle_degrees - angle_bct
 
-        normal = np.cross(bond_cb, bond_ct)
+        normal = np.asarray(np.cross(bond_cb, bond_ct), dtype=np.float64)
         unit_normal = _unit_vector(
             normal,
             error_message="internal-coordinate placement requires a rotation plane",
