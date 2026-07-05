@@ -15,6 +15,7 @@ from tests.support.canonical_builders import (
 
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import (
+    ClashPolicy,
     EventScopeKind,
     ValidationIssueKind,
     bind_clash_detection_context,
@@ -142,6 +143,40 @@ def test_clash_pair_generation_has_no_stringly_domain_coercion() -> None:
     assert "_domain_value" not in source
     assert "getattr(" not in source
     assert '== "ligand"' not in source
+
+
+def test_clash_context_uses_explicit_common_metal_vdw_radii() -> None:
+    """Common retained metals should not enter clash diagnostics as carbon fallback."""
+
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="ION",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom("FE", "Fe", Vec3(0.0, 0.0, 0.0)),
+                    atom("ZN", "Zn", Vec3(6.0, 0.0, 0.0)),
+                    atom("MG", "Mg", Vec3(12.0, 0.0, 0.0)),
+                    atom("CA1", "Ca", Vec3(18.0, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="common-metal-radius-cache",
+    )
+
+    context = prepare_clash_detection_context(
+        structure,
+        component_library=build_standard_component_library(),
+        policy=ClashPolicy(include_ligands=True),
+    )
+
+    assert context.van_der_waals_radius("FE") == 2.00
+    assert context.van_der_waals_radius("ZN") == 1.39
+    assert context.van_der_waals_radius("MG") == 1.73
+    assert context.van_der_waals_radius("CA") == 2.31
 
 
 def test_standard_component_templates_expose_heavy_bond_hops() -> None:

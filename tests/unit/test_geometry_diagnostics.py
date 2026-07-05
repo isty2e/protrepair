@@ -13,7 +13,14 @@ from tests.support.canonical_builders import (
     build_structure as build_canonical_structure,
 )
 
-from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry import (
+    BondDefinition,
+    ChemicalComponentDefinition,
+    ComponentLibrary,
+    ResidueTemplate,
+    RestraintLibrary,
+    build_default_component_library,
+)
 from protrepair.chemistry.nonstandard.ingestion import (
     ingest_component_library,
     ingest_restraint_library,
@@ -222,6 +229,78 @@ def test_detect_heavy_geometry_uses_bundled_nonstandard_restraints_by_default() 
         and outlier.tolerance_angstrom < 0.25
         for outlier in report.bond_length_outliers
     )
+
+
+def test_detect_heavy_geometry_does_not_false_flag_mse_c_se_fallback() -> None:
+    """MSE C-Se fallback lengths should use selenium radii, not carbon defaults."""
+
+    structure = build_structure(
+        (
+            build_residue(
+                component_id="MSE",
+                residue_id=ResidueId(chain_id="A", seq_num=1),
+                atoms=(
+                    atom_payload("N", "N", Vec3(-0.531, 1.358, 0.0)),
+                    atom_payload("CA", "C", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("C", "C", Vec3(1.525, 0.0, 0.0)),
+                    atom_payload("O", "O", Vec3(2.100, 1.200, 0.0)),
+                    atom_payload("CB", "C", Vec3(-1.165, 0.978, 0.0)),
+                    atom_payload("CG", "C", Vec3(-2.250, 0.050, 0.0)),
+                    atom_payload("SE", "SE", Vec3(-4.183, 0.375, 0.0)),
+                    atom_payload("CE", "C", Vec3(-5.100, 2.104, 0.0)),
+                ),
+            ),
+        )
+    )
+
+    report = detect_heavy_geometry(
+        structure,
+        component_library=build_default_component_library(),
+        restraint_library=RestraintLibrary(),
+    )
+
+    assert not any(
+        outlier.component_id == "MSE"
+        and {outlier.atom_name_1, outlier.atom_name_2}
+        in ({"CG", "SE"}, {"SE", "CE"})
+        for outlier in report.bond_length_outliers
+    )
+
+
+def test_detect_heavy_geometry_does_not_false_flag_fe_n_fallback() -> None:
+    """Template-declared Fe-N bonds should not use the default carbon radius."""
+
+    component_library = ComponentLibrary(
+        templates={
+            "FEX": ResidueTemplate(
+                definition=ChemicalComponentDefinition(
+                    component_id="FEX",
+                    atom_names=("FE", "N1"),
+                    bonds=(BondDefinition("FE", "N1"),),
+                )
+            )
+        }
+    )
+    structure = build_structure(
+        (
+            build_residue(
+                component_id="FEX",
+                residue_id=ResidueId(chain_id="A", seq_num=1),
+                atoms=(
+                    atom_payload("FE", "FE", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("N1", "N", Vec3(2.03, 0.0, 0.0)),
+                ),
+            ),
+        )
+    )
+
+    report = detect_heavy_geometry(
+        structure,
+        component_library=component_library,
+        restraint_library=RestraintLibrary(),
+    )
+
+    assert report.is_empty()
 
 
 def test_detect_heavy_geometry_accepts_external_ingested_restraints(
