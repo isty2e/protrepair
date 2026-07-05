@@ -5,7 +5,7 @@ from math import acos, degrees
 import numpy as np
 import pytest
 
-from protrepair.geometry import InternalCoordinateFrame, Vec3
+from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
 
 
 def test_torsion_returns_180_for_collinear_trans_outer_bonds() -> None:
@@ -61,3 +61,18 @@ def test_place_returns_finite_coordinate_for_collinear_anchors() -> None:
     assert np.isfinite(placed_array).all()
     assert InternalCoordinateFrame.distance(placed, point_c) == pytest.approx(1.25)
     assert bond_angle_degrees == pytest.approx(122.5)
+
+
+def test_place_raises_structured_error_for_coincident_b_c_anchors() -> None:
+    """Coincident B/C anchors make placement undefined, not merely inaccurate."""
+
+    with pytest.raises(GeometryPlacementError, match="distinct B/C anchors"):
+        InternalCoordinateFrame(
+            Vec3(0.0, 0.0, 0.0),
+            Vec3(1.0, 0.0, 0.0),
+            Vec3(1.0, 0.0, 0.0),
+        ).place(
+            bond_length=1.25,
+            bond_angle_degrees=122.5,
+            dihedral_degrees=180.0,
+        )

@@ -6,6 +6,7 @@ from math import acos, degrees, pi
 import numpy as np
 import numpy.typing as npt
 
+from protrepair.geometry.exceptions import GeometryPlacementError
 from protrepair.geometry.vector import CoordinateLike, Vec3
 
 Vector = npt.NDArray[np.float64]
@@ -18,9 +19,14 @@ UNIT_Z_AXIS = np.array((0.0, 0.0, 1.0), dtype=np.float64)
 def _scale_bond(origin: Vector, candidate: Vector, bond_length: float) -> Vec3:
     """Return one point scaled to the desired bond length from the origin."""
 
-    scaled = (
-        (candidate - origin) * (bond_length / np.linalg.norm(candidate - origin))
-    ) + origin
+    direction = candidate - origin
+    direction_norm = _vector_norm(direction)
+    if direction_norm <= POLYHEDRA_DEGENERATE_NORM_EPSILON:
+        raise GeometryPlacementError(
+            "polyhedral placement produced a degenerate bond vector"
+        )
+
+    scaled = origin + (direction * (bond_length / direction_norm))
     return Vec3.from_iterable(scaled)
 
 
@@ -31,8 +37,11 @@ def _unit_orthogonal_vector(axis: Vector) -> Vector:
         (UNIT_X_AXIS, UNIT_Y_AXIS, UNIT_Z_AXIS),
         key=lambda candidate: abs(float(np.dot(axis, candidate))),
     )
-    orthogonal = np.cross(axis, reference_axis)
-    return np.asarray(orthogonal / np.linalg.norm(orthogonal), dtype=np.float64)
+    orthogonal = np.asarray(np.cross(axis, reference_axis), dtype=np.float64)
+    return _unit_vector(
+        orthogonal,
+        error_message="polyhedral orthogonal basis is undefined",
+    )
 
 
 def _tetrahedral_offset(
@@ -141,26 +150,20 @@ class PlanarCenter:
         bond_b = point_b - point_center
         bond_candidate = candidate - point_center
         bond_a = point_a - point_center
-        angle_b = acos(
-            np.dot(bond_b, bond_candidate)
-            / (np.linalg.norm(bond_b) * np.linalg.norm(bond_candidate))
-        )
+        angle_b = _angle_between_vectors_radians(bond_b, bond_candidate)
         average_angle = (
             degrees(
-                acos(
-                    np.dot(bond_b, bond_candidate)
-                    / (np.linalg.norm(bond_b) * np.linalg.norm(bond_candidate))
-                )
-                + acos(
-                    np.dot(bond_a, bond_candidate)
-                    / (np.linalg.norm(bond_a) * np.linalg.norm(bond_candidate))
-                )
+                angle_b
+                + _angle_between_vectors_radians(bond_a, bond_candidate)
             )
         ) / 2
         rotate = average_angle - degrees(angle_b)
 
-        normal = np.cross(bond_b, bond_candidate)
-        unit_normal = normal / np.linalg.norm(normal)
+        normal = np.asarray(np.cross(bond_b, bond_candidate), dtype=np.float64)
+        unit_normal = _unit_vector(
+            normal,
+            error_message="polyhedral placement requires a rotation plane",
+        )
         rotated = (
             point_center
             + bond_candidate * np.cos(rotate * pi / 180.0)
@@ -170,3 +173,37 @@ class PlanarCenter:
             * (1 - np.cos(rotate * pi / 180.0))
         )
         return _scale_bond(point_center, rotated, bond_length)
+
+
+def _angle_between_vectors_radians(left_vector: Vector, right_vector: Vector) -> float:
+    """Return the finite angle between two non-zero vectors in radians."""
+
+    left_norm = _vector_norm(left_vector)
+    right_norm = _vector_norm(right_vector)
+    if (
+        left_norm <= POLYHEDRA_DEGENERATE_NORM_EPSILON
+        or right_norm <= POLYHEDRA_DEGENERATE_NORM_EPSILON
+    ):
+        raise GeometryPlacementError(
+            "polyhedral placement angle requires non-zero vectors"
+        )
+
+    cosine = float(np.dot(left_vector, right_vector)) / (left_norm * right_norm)
+    clamped = min(1.0, max(-1.0, cosine))
+    return acos(clamped)
+
+
+def _unit_vector(vector: Vector, *, error_message: str) -> Vector:
+    """Return one unit vector or raise when the vector is degenerate."""
+
+    norm = _vector_norm(vector)
+    if norm <= POLYHEDRA_DEGENERATE_NORM_EPSILON:
+        raise GeometryPlacementError(error_message)
+
+    return np.asarray(vector / norm, dtype=np.float64)
+
+
+def _vector_norm(vector: Vector) -> float:
+    """Return the Euclidean norm for one vector."""
+
+    return float(np.linalg.norm(vector))

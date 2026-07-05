@@ -1,5 +1,6 @@
 """Focused tests for placement-time rotatable-hydrogen scoring."""
 
+import numpy as np
 import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
@@ -8,13 +9,15 @@ from tests.support.canonical_builders import (
 )
 
 from protrepair.chemistry.standard.components import build_standard_component_library
-from protrepair.geometry import Vec3
+from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.structure.labels import ResidueId
+from protrepair.transformer.completion.hydrogen.geometry import scale_bond
 from protrepair.transformer.completion.hydrogen.rotatable import (
     RotatableHydrogenEnvironment,
     RotatableHydrogenSearch,
     build_rotatable_hydrogen_environments,
 )
+from protrepair.transformer.completion.hydrogen.scoring import recalculate_coordinate
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
 
@@ -137,6 +140,62 @@ def test_optimize_rotatable_hydrogen_selects_least_bad_candidate(
     )
 
     assert result == Vec3(1.8, 0.0, 0.0)
+
+
+def test_rotatable_hydrogen_search_skips_undefined_candidate_frames() -> None:
+    """Degenerate anchor frames should fall back instead of leaking math errors."""
+
+    search = RotatableHydrogenSearch(
+        outer_anchor=[0.0, 0.0, 0.0],
+        inner_anchor=[1.0, 0.0, 0.0],
+        donor=[1.0, 0.0, 0.0],
+        hydrogen=[9.0, 9.0, 9.0],
+        build_bond_length=1.0,
+        reproject_bond_length=1.0,
+        dihedral=0.0,
+        partial_charge=0.0,
+        sigma=0.0,
+        epsilon=0.0,
+        donor_element="O",
+    )
+
+    assert search.candidate_positions() == ()
+    assert search.optimized_coordinate(
+        residue_number="7",
+        environments=(
+            RotatableHydrogenEnvironment(
+                residue_number="7",
+                atom_x=(0.0,),
+                atom_y=(0.0,),
+                atom_z=(0.0,),
+                elements=("C",),
+                charges=(0.0,),
+                sigmas_nm=(0.0,),
+                epsilons_kj_mol=(0.0,),
+            ),
+        ),
+    ) == Vec3(9.0, 9.0, 9.0)
+
+
+def test_rotatable_hydrogen_reprojection_rejects_zero_length_bonds() -> None:
+    """Rotatable-H reprojection should reject undefined vectors explicitly."""
+
+    with pytest.raises(GeometryPlacementError, match="non-zero vectors"):
+        recalculate_coordinate(
+            atom_b=[0.0, 0.0, 0.0],
+            atom_c=[0.0, 0.0, 0.0],
+            atom_d=[1.0, 0.0, 0.0],
+            bond_length=1.0,
+        )
+
+
+def test_hydrogen_scale_bond_rejects_degenerate_candidate() -> None:
+    """Hydrogen-specific bond scaling should not divide by a zero norm."""
+
+    origin = np.array((1.0, 1.0, 1.0), dtype=np.float64)
+
+    with pytest.raises(GeometryPlacementError, match="degenerate bond vector"):
+        scale_bond(origin, origin.copy(), 1.0)
 
 
 def test_build_rotatable_hydrogen_environments_pack_local_steric_sites() -> None:

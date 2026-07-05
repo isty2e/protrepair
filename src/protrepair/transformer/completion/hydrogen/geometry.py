@@ -7,6 +7,7 @@ import numpy as np
 
 from protrepair.geometry import (
     AxisRotation,
+    GeometryPlacementError,
     InternalCoordinateFrame,
     PlanarCenter,
     TetrahedralCenter,
@@ -33,6 +34,8 @@ from protrepair.transformer.completion.hydrogen.scoring import (
     recalculate_coordinate,
     rotatable_hydrogen_vdw_radius_angstrom,
 )
+
+HYDROGEN_PLACEMENT_DEGENERATE_NORM_EPSILON = 1e-12
 
 
 def backbone_hydrogen(
@@ -177,9 +180,14 @@ def n_terminal_hydrogens(
 def scale_bond(origin: Vector, candidate: Vector, bond_length: float) -> Vec3:
     """Scale a candidate point to the desired bond length from the origin."""
 
-    scaled = (
-        (candidate - origin) * (bond_length / np.linalg.norm(candidate - origin))
-    ) + origin
+    direction = candidate - origin
+    direction_norm = float(np.linalg.norm(direction))
+    if direction_norm <= HYDROGEN_PLACEMENT_DEGENERATE_NORM_EPSILON:
+        raise GeometryPlacementError(
+            "hydrogen placement produced a degenerate bond vector"
+        )
+
+    scaled = origin + (direction * (bond_length / direction_norm))
     return Vec3.from_iterable(scaled)
 
 

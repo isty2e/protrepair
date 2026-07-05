@@ -3,7 +3,12 @@
 import numpy as np
 import pytest
 
-from protrepair.geometry import TetrahedralCenter, Vec3
+from protrepair.geometry import (
+    GeometryPlacementError,
+    PlanarCenter,
+    TetrahedralCenter,
+    Vec3,
+)
 
 
 def test_tetrahedral_pair_returns_finite_points_for_collinear_anchors() -> None:
@@ -37,3 +42,14 @@ def test_tetrahedral_remaining_returns_finite_point_for_collinear_anchors() -> N
 
     assert np.isfinite(placed.to_array()).all()
     assert placed.distance_to(center) == pytest.approx(1.09)
+
+
+def test_planar_projected_raises_structured_error_for_coincident_anchor() -> None:
+    """Planar projection should reject undefined angles before producing NaNs."""
+
+    with pytest.raises(GeometryPlacementError, match="non-zero vectors"):
+        PlanarCenter(
+            anchor_a=Vec3(0.0, 0.0, 0.0),
+            center=Vec3(0.0, 0.0, 0.0),
+            anchor_b=Vec3(1.0, 0.0, 0.0),
+        ).projected(bond_length=1.01)

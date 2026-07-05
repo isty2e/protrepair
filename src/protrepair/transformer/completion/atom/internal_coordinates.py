@@ -8,7 +8,7 @@ from protrepair.chemistry.internal_coordinates import (
     InternalCoordinateExecutionContext,
     InternalCoordinatePlacement,
 )
-from protrepair.geometry import InternalCoordinateFrame, Vec3
+from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.base import DeterministicContextOperation
 from protrepair.transformer.completion.atom.backbone import (
@@ -235,7 +235,11 @@ class InternalCoordinatePlacementTransformer(
             next_residue=next_residue,
             missing_atom_names=missing_atom_names,
         )
-        semantics.program.apply(environment)
+        try:
+            semantics.program.apply(environment)
+        except GeometryPlacementError:
+            return context.source_snapshot
+
         patch = environment.build_patch(semantics.atom_order)
         return self.site.apply_patch(context.source_snapshot, patch)
 

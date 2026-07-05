@@ -26,6 +26,8 @@ from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import ResidueId
 
+GEOMETRY_DEGENERATE_NORM_EPSILON = 1e-12
+
 
 @dataclass(frozen=True, slots=True)
 class HeavyGeometryPolicy:
@@ -494,6 +496,9 @@ def detect_fallback_bond_angle_outliers(
                 center_atom_name=center_atom_name,
                 atom_name_2=atom_name_2,
             )
+            if observed_angle is None:
+                continue
+
             if (
                 policy.minimum_bond_angle_degrees
                 <= observed_angle
@@ -544,6 +549,9 @@ def detect_restraint_bond_angle_outliers(
             center_atom_name=target.center_atom_name,
             atom_name_2=target.atom_name_2,
         )
+        if observed_angle is None:
+            continue
+
         tolerance = bond_angle_tolerance_degrees(
             policy=policy,
             target=target,
@@ -624,8 +632,8 @@ def bond_angle_degrees(
     atom_name_1: str,
     center_atom_name: str,
     atom_name_2: str,
-) -> float:
-    """Return the angle in degrees for one residue-local heavy-atom triplet."""
+) -> float | None:
+    """Return the angle in degrees, or None when a triplet is undefined."""
 
     atom_1 = residue_geometry.position(atom_name_1)
     center = residue_geometry.position(center_atom_name)
@@ -655,6 +663,12 @@ def bond_angle_degrees(
         + vector_2[1] * vector_2[1]
         + vector_2[2] * vector_2[2]
     )
+    if (
+        norm_1 <= GEOMETRY_DEGENERATE_NORM_EPSILON
+        or norm_2 <= GEOMETRY_DEGENERATE_NORM_EPSILON
+    ):
+        return None
+
     cosine = max(-1.0, min(1.0, dot_product / (norm_1 * norm_2)))
     return degrees(acos(cosine))
 

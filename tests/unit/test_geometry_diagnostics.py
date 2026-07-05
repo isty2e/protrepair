@@ -30,7 +30,10 @@ from protrepair.diagnostics import (
     ValidationIssueKind,
     detect_heavy_geometry,
 )
-from protrepair.diagnostics.geometry import severe_intrinsic_geometry_residues
+from protrepair.diagnostics.geometry import (
+    bond_angle_degrees,
+    severe_intrinsic_geometry_residues,
+)
 from protrepair.geometry import Vec3
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
@@ -161,6 +164,51 @@ def test_detect_heavy_geometry_reports_bond_angle_outlier() -> None:
     assert len(report.bond_angle_outliers) >= 1
     assert any(
         outlier.center_atom_name == "CA" for outlier in report.bond_angle_outliers
+    )
+
+
+def test_detect_heavy_geometry_skips_undefined_bond_angle_triplets() -> None:
+    """Coincident atoms should not be converted into fake angle outliers."""
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    structure = build_structure(
+        (
+            build_residue(
+                component_id="SER",
+                residue_id=residue_id,
+                atoms=(
+                    atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("CA", "C", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("C", "C", Vec3(1.525, 0.0, 0.0)),
+                    atom_payload("O", "O", Vec3(2.100, 1.200, 0.0)),
+                    atom_payload("CB", "C", Vec3(-1.165, 0.978, 0.0)),
+                    atom_payload("OG", "O", Vec3(-1.500, 2.250, 0.0)),
+                ),
+            ),
+        )
+    )
+    residue_geometry = structure.residue_geometry(
+        structure.constitution.residue_index(residue_id)
+    )
+
+    report = detect_heavy_geometry(
+        structure,
+        component_library=build_standard_component_library(),
+    )
+
+    assert (
+        bond_angle_degrees(
+            residue_geometry,
+            atom_name_1="N",
+            center_atom_name="CA",
+            atom_name_2="C",
+        )
+        is None
+    )
+    assert not any(
+        outlier.center_atom_name == "CA"
+        and {outlier.atom_name_1, outlier.atom_name_2} == {"N", "C"}
+        for outlier in report.bond_angle_outliers
     )
 
 
