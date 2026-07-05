@@ -4,6 +4,7 @@ import os
 import secrets
 from pathlib import Path
 
+from protrepair.errors import UnsupportedFileFormatError
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
@@ -140,7 +141,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         )
         return raw_structure.make_mmcif_document().as_string()
 
-    raise ValueError(f"unsupported file format: {file_format}")
+    raise UnsupportedFileFormatError(f"unsupported file format: {file_format}")
 
 
 def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> str:

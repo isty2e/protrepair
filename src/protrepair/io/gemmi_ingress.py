@@ -2,7 +2,11 @@
 
 from pathlib import Path
 
-from protrepair.errors import StructureInputTooLargeError
+from protrepair.errors import (
+    ProtrepairError,
+    StructureInputTooLargeError,
+    StructureNormalizationError,
+)
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
@@ -30,24 +34,39 @@ def read_structure(
 ) -> ProteinStructure:
     """Read a coordinate file into the canonical first-model structure."""
 
-    _assert_structure_file_size(path)
-    file_format = infer_file_format(path)
-    active_policy = StructureNormalizationPolicy() if policy is None else policy
-    if file_format is FileFormat.PDB:
-        contents = path.read_text(encoding="utf-8")
-        raw_structure = read_raw_structure_string(contents, file_format)
-        pdb_conect_atom_identity_pairs = _pdb_conect_atom_identity_pairs(contents)
-    else:
-        raw_structure = read_raw_structure(path, file_format)
-        pdb_conect_atom_identity_pairs = ()
+    try:
+        _assert_structure_file_size(path)
+        file_format = infer_file_format(path)
+        active_policy = StructureNormalizationPolicy() if policy is None else policy
+        if file_format is FileFormat.PDB:
+            contents = path.read_text(encoding="utf-8")
+            raw_structure = read_raw_structure_string(contents, file_format)
+            pdb_conect_atom_identity_pairs = _pdb_conect_atom_identity_pairs(contents)
+        else:
+            raw_structure = read_raw_structure(path, file_format)
+            pdb_conect_atom_identity_pairs = ()
 
-    return normalize_raw_structure(
-        raw_structure,
-        file_format=file_format,
-        policy=active_policy,
-        source_name=path.name,
-        pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
-    )
+        return normalize_raw_structure(
+            raw_structure,
+            file_format=file_format,
+            policy=active_policy,
+            source_name=path.name,
+            pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
+        )
+    except ProtrepairError:
+        raise
+    except UnicodeDecodeError as error:
+        raise StructureNormalizationError(
+            f"could not decode structure file {path.name!r} as UTF-8"
+        ) from error
+    except OSError as error:
+        raise StructureNormalizationError(
+            f"could not read structure file {path.name!r}: {error.strerror}"
+        ) from error
+    except (RuntimeError, ValueError) as error:
+        raise StructureNormalizationError(
+            f"could not parse structure file {path.name!r}: {error}"
+        ) from error
 
 
 def read_structure_string(
@@ -59,20 +78,12 @@ def read_structure_string(
 ) -> ProteinStructure:
     """Read an in-memory coordinate payload into the canonical first-model structure."""
 
-    _assert_structure_text_size(contents, source_name=source_name)
-    raw_structure = read_raw_structure_string(contents, file_format)
     active_policy = StructureNormalizationPolicy() if policy is None else policy
-    pdb_conect_atom_identity_pairs = (
-        _pdb_conect_atom_identity_pairs(contents)
-        if file_format is FileFormat.PDB
-        else ()
-    )
-    return normalize_raw_structure(
-        raw_structure,
-        file_format=file_format,
+    return read_structure_string_with_policy(
+        contents,
+        file_format,
         policy=active_policy,
         source_name=source_name,
-        pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
     )
 
 
@@ -85,20 +96,28 @@ def read_structure_string_with_policy(
 ) -> ProteinStructure:
     """Read one first-model payload using one canonical normalization policy."""
 
-    _assert_structure_text_size(contents, source_name=source_name)
-    raw_structure = read_raw_structure_string(contents, file_format)
-    pdb_conect_atom_identity_pairs = (
-        _pdb_conect_atom_identity_pairs(contents)
-        if file_format is FileFormat.PDB
-        else ()
-    )
-    return normalize_raw_structure(
-        raw_structure,
-        file_format=file_format,
-        policy=policy,
-        source_name=source_name,
-        pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
-    )
+    try:
+        _assert_structure_text_size(contents, source_name=source_name)
+        raw_structure = read_raw_structure_string(contents, file_format)
+        pdb_conect_atom_identity_pairs = (
+            _pdb_conect_atom_identity_pairs(contents)
+            if file_format is FileFormat.PDB
+            else ()
+        )
+        return normalize_raw_structure(
+            raw_structure,
+            file_format=file_format,
+            policy=policy,
+            source_name=source_name,
+            pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
+        )
+    except ProtrepairError:
+        raise
+    except (RuntimeError, ValueError) as error:
+        source = "" if source_name is None else f" {source_name!r}"
+        raise StructureNormalizationError(
+            f"could not parse structure text{source}: {error}"
+        ) from error
 
 
 def read_raw_structure(path: Path, file_format: FileFormat):

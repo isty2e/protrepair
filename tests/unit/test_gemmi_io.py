@@ -2,6 +2,7 @@
 
 import stat
 from pathlib import Path
+from typing import cast
 
 import pytest
 from tests.support.canonical_builders import (
@@ -18,7 +19,12 @@ from tests.support.structure_summary import summarize_structure
 import protrepair.io.gemmi_ingress as gemmi_ingress
 import protrepair.io.gemmi_writer as gemmi_writer
 from protrepair.diagnostics.topology import detect_disulfide_topology
-from protrepair.errors import StructureInputTooLargeError, StructureNormalizationError
+from protrepair.errors import (
+    ProtrepairError,
+    StructureInputTooLargeError,
+    StructureNormalizationError,
+    UnsupportedFileFormatError,
+)
 from protrepair.geometry import Vec3
 from protrepair.io import (
     read_structure,
@@ -77,6 +83,113 @@ def test_read_structure_rejects_oversized_file_before_parser(
 
     with pytest.raises(StructureInputTooLargeError, match="exceeds 4 bytes"):
         read_structure(pdb_path)
+
+
+def test_read_structure_wraps_missing_file_errors(tmp_path: Path) -> None:
+    """Public path ingress should expose missing files as project errors."""
+
+    with pytest.raises(StructureNormalizationError, match="could not read"):
+        read_structure(tmp_path / "missing.pdb")
+
+
+def test_read_structure_wraps_unicode_decode_errors(tmp_path: Path) -> None:
+    """Invalid text decoding should not leak UnicodeDecodeError to callers."""
+
+    pdb_path = tmp_path / "invalid-utf8.pdb"
+    pdb_path.write_bytes(b"\xff\xfe\x00")
+
+    with pytest.raises(StructureNormalizationError, match="could not decode"):
+        read_structure(pdb_path)
+
+
+def test_read_structure_string_wraps_gemmi_parser_errors() -> None:
+    """Raw gemmi parser failures should be project-owned ingress errors."""
+
+    with pytest.raises(StructureNormalizationError, match="could not parse"):
+        read_structure_string("not mmcif", FileFormat.MMCIF)
+
+
+def test_read_structure_string_with_policy_wraps_gemmi_parser_errors() -> None:
+    """Policy-specific string ingress should share public parser error wrapping."""
+
+    with pytest.raises(StructureNormalizationError) as error_info:
+        gemmi_ingress.read_structure_string_with_policy(
+            "not mmcif",
+            FileFormat.MMCIF,
+            policy=StructureNormalizationPolicy(),
+            source_name="bad.cif",
+        )
+
+    assert "could not parse structure text 'bad.cif'" in str(error_info.value)
+
+
+def test_read_structure_rejects_bad_suffix_with_project_error(tmp_path: Path) -> None:
+    """Unsupported suffix inference should stay inside project error hierarchy."""
+
+    source_path = tmp_path / "structure.xyz"
+    source_path.write_text("HEADER", encoding="utf-8")
+
+    with pytest.raises(UnsupportedFileFormatError):
+        read_structure(source_path)
+
+
+def test_read_structure_string_rejects_bad_explicit_format_with_project_error() -> None:
+    """Unsupported explicit read formats should be catchable as ProtrepairError."""
+
+    with pytest.raises(ProtrepairError) as error_info:
+        read_structure_string("data_x\n", cast(FileFormat, "xyz"))
+
+    assert isinstance(error_info.value, UnsupportedFileFormatError)
+
+
+def test_write_structure_rejects_bad_suffix_with_project_error(tmp_path: Path) -> None:
+    """Unsupported output suffix inference should use project format errors."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    with pytest.raises(UnsupportedFileFormatError):
+        write_structure(structure, tmp_path / "output.xyz")
+
+
+def test_write_structure_string_rejects_bad_explicit_project_error() -> None:
+    """Unsupported explicit write formats should not raise raw ValueError."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    with pytest.raises(ProtrepairError) as error_info:
+        write_structure_string(structure, cast(FileFormat, "xyz"))
+
+    assert isinstance(error_info.value, UnsupportedFileFormatError)
 
 
 def test_read_structure_string_rejects_nonfinite_pdb_coordinate() -> None:
