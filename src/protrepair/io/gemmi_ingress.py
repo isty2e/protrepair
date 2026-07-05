@@ -1,16 +1,25 @@
 """gemmi-backed canonical structure ingress for coordinate formats."""
 
+from os import PathLike
 from pathlib import Path
 
-from protrepair.errors import StructureInputTooLargeError
+from protrepair.errors import (
+    ProtrepairError,
+    StructureInputTooLargeError,
+    StructureNormalizationError,
+)
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
-    normalize_chain_id,
-    normalize_insertion_code,
     to_gemmi_coor_format,
 )
 from protrepair.io.ingress_policy import StructureNormalizationPolicy
+from protrepair.io.source_identity import (
+    SourceAtomIdentity,
+    normalize_altloc,
+    normalize_chain_id,
+    normalize_insertion_code,
+)
 from protrepair.io.structure_ingress import normalize_raw_structure
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -20,30 +29,46 @@ MAX_STRUCTURE_INPUT_BYTES = 256 * 1024 * 1024
 
 
 def read_structure(
-    path: Path,
+    path: Path | str | PathLike[str],
     *,
     policy: StructureNormalizationPolicy | None = None,
 ) -> ProteinStructure:
-    """Read a coordinate file into the canonical structure model."""
+    """Read a path-like coordinate file into the canonical first-model structure."""
 
-    _assert_structure_file_size(path)
-    file_format = infer_file_format(path)
-    active_policy = StructureNormalizationPolicy() if policy is None else policy
-    if file_format is FileFormat.PDB:
-        contents = path.read_text(encoding="utf-8")
-        raw_structure = read_raw_structure_string(contents, file_format)
-        pdb_conect_atom_ref_pairs = _pdb_conect_atom_ref_pairs(contents)
-    else:
-        raw_structure = read_raw_structure(path, file_format)
-        pdb_conect_atom_ref_pairs = ()
+    source_path = Path(path)
+    try:
+        _assert_structure_file_size(source_path)
+        file_format = infer_file_format(source_path)
+        active_policy = StructureNormalizationPolicy() if policy is None else policy
+        if file_format is FileFormat.PDB:
+            contents = source_path.read_text(encoding="utf-8")
+            raw_structure = read_raw_structure_string(contents, file_format)
+            pdb_conect_atom_identity_pairs = _pdb_conect_atom_identity_pairs(contents)
+        else:
+            raw_structure = read_raw_structure(source_path, file_format)
+            pdb_conect_atom_identity_pairs = ()
 
-    return normalize_raw_structure(
-        raw_structure,
-        file_format=file_format,
-        policy=active_policy,
-        source_name=path.name,
-        pdb_conect_atom_ref_pairs=pdb_conect_atom_ref_pairs,
-    )
+        return normalize_raw_structure(
+            raw_structure,
+            file_format=file_format,
+            policy=active_policy,
+            source_name=source_path.name,
+            pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
+        )
+    except ProtrepairError:
+        raise
+    except UnicodeDecodeError as error:
+        raise StructureNormalizationError(
+            f"could not decode structure file {source_path.name!r} as UTF-8"
+        ) from error
+    except OSError as error:
+        raise StructureNormalizationError(
+            f"could not read structure file {source_path.name!r}: {error.strerror}"
+        ) from error
+    except (RuntimeError, ValueError) as error:
+        raise StructureNormalizationError(
+            f"could not parse structure file {source_path.name!r}: {error}"
+        ) from error
 
 
 def read_structure_string(
@@ -53,20 +78,14 @@ def read_structure_string(
     policy: StructureNormalizationPolicy | None = None,
     source_name: str | None = None,
 ) -> ProteinStructure:
-    """Read an in-memory coordinate payload into the canonical model."""
+    """Read an in-memory coordinate payload into the canonical first-model structure."""
 
-    _assert_structure_text_size(contents, source_name=source_name)
-    raw_structure = read_raw_structure_string(contents, file_format)
     active_policy = StructureNormalizationPolicy() if policy is None else policy
-    pdb_conect_atom_ref_pairs = (
-        _pdb_conect_atom_ref_pairs(contents) if file_format is FileFormat.PDB else ()
-    )
-    return normalize_raw_structure(
-        raw_structure,
-        file_format=file_format,
+    return read_structure_string_with_policy(
+        contents,
+        file_format,
         policy=active_policy,
         source_name=source_name,
-        pdb_conect_atom_ref_pairs=pdb_conect_atom_ref_pairs,
     )
 
 
@@ -77,27 +96,43 @@ def read_structure_string_with_policy(
     policy: StructureNormalizationPolicy,
     source_name: str | None = None,
 ) -> ProteinStructure:
-    """Read one in-memory payload using one canonical normalization policy."""
+    """Read one first-model payload using one canonical normalization policy.
 
-    _assert_structure_text_size(contents, source_name=source_name)
-    raw_structure = read_raw_structure_string(contents, file_format)
-    pdb_conect_atom_ref_pairs = (
-        _pdb_conect_atom_ref_pairs(contents) if file_format is FileFormat.PDB else ()
-    )
-    return normalize_raw_structure(
-        raw_structure,
-        file_format=file_format,
-        policy=policy,
-        source_name=source_name,
-        pdb_conect_atom_ref_pairs=pdb_conect_atom_ref_pairs,
-    )
+    Parser and normalization failures are exposed as project-owned
+    StructureNormalizationError values.
+    """
+
+    try:
+        _assert_structure_text_size(contents, source_name=source_name)
+        raw_structure = read_raw_structure_string(contents, file_format)
+        pdb_conect_atom_identity_pairs = (
+            _pdb_conect_atom_identity_pairs(contents)
+            if file_format is FileFormat.PDB
+            else ()
+        )
+        return normalize_raw_structure(
+            raw_structure,
+            file_format=file_format,
+            policy=policy,
+            source_name=source_name,
+            pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
+        )
+    except ProtrepairError:
+        raise
+    except (RuntimeError, ValueError) as error:
+        source = "" if source_name is None else f" {source_name!r}"
+        raise StructureNormalizationError(
+            f"could not parse structure text{source}: {error}"
+        ) from error
 
 
 def read_raw_structure(path: Path, file_format: FileFormat):
     """Read one coordinate file with a format-specific gemmi ingress path.
 
     The size guard is repeated here so direct raw-parser callers cannot bypass
-    the public ingress limit enforced by read_structure().
+    the public ingress limit enforced by read_structure(). The returned gemmi
+    object can contain multiple source models; canonical normalization consumes
+    the first model only.
     """
 
     _assert_structure_file_size(path)
@@ -111,7 +146,11 @@ def read_raw_structure(path: Path, file_format: FileFormat):
 
 
 def read_raw_structure_string(contents: str, file_format: FileFormat):
-    """Read one coordinate payload with a format-specific gemmi ingress path."""
+    """Read one coordinate payload with a format-specific gemmi ingress path.
+
+    The returned gemmi object can contain multiple source models; canonical
+    normalization consumes the first model only.
+    """
 
     _assert_structure_text_size(contents, source_name=None)
     if file_format is FileFormat.PDB:
@@ -150,22 +189,15 @@ def _assert_structure_text_size(
         )
 
 
-def _pdb_conect_atom_ref_pairs(
+def _pdb_conect_atom_identity_pairs(
     contents: str,
-) -> tuple[tuple[AtomRef, AtomRef], ...]:
-    """Return all canonically-ordered atom-ref pairs declared by PDB CONECT."""
+) -> tuple[tuple[SourceAtomIdentity, SourceAtomIdentity], ...]:
+    """Return all selected source-identity pairs declared by PDB CONECT."""
 
-    atom_ref_by_serial: dict[int, AtomRef] = {}
-    for line in contents.splitlines():
-        atom_serial_and_ref = _pdb_atom_serial_and_ref(line)
-        if atom_serial_and_ref is None:
-            continue
+    atom_identity_by_serial = _first_model_unambiguous_pdb_atom_identities(contents)
 
-        serial, atom_ref = atom_serial_and_ref
-        atom_ref_by_serial[serial] = atom_ref
-
-    pairs: list[tuple[AtomRef, AtomRef]] = []
-    seen: set[tuple[AtomRef, AtomRef]] = set()
+    pairs: list[tuple[SourceAtomIdentity, SourceAtomIdentity]] = []
+    seen: set[tuple[SourceAtomIdentity, SourceAtomIdentity]] = set()
     for line in contents.splitlines():
         if not line.startswith("CONECT"):
             continue
@@ -174,20 +206,21 @@ def _pdb_conect_atom_ref_pairs(
         if len(serials) < 2:
             continue
 
-        source_atom_ref = atom_ref_by_serial.get(serials[0])
-        if source_atom_ref is None:
+        source_identity = atom_identity_by_serial.get(serials[0])
+        if source_identity is None:
             continue
 
         for target_serial in serials[1:]:
-            target_atom_ref = atom_ref_by_serial.get(target_serial)
-            if target_atom_ref is None or target_atom_ref == source_atom_ref:
+            target_identity = atom_identity_by_serial.get(target_serial)
+            if (
+                target_identity is None
+                or target_identity.atom_ref == source_identity.atom_ref
+            ):
                 continue
 
-            canonical = (
-                (source_atom_ref, target_atom_ref)
-                if (source_atom_ref.residue_id, source_atom_ref.atom_name)
-                <= (target_atom_ref.residue_id, target_atom_ref.atom_name)
-                else (target_atom_ref, source_atom_ref)
+            canonical = _canonical_pdb_conect_identity_pair(
+                source_identity,
+                target_identity,
             )
             if canonical in seen:
                 continue
@@ -198,8 +231,67 @@ def _pdb_conect_atom_ref_pairs(
     return tuple(pairs)
 
 
-def _pdb_atom_serial_and_ref(line: str) -> tuple[int, AtomRef] | None:
-    """Return the PDB atom serial and canonical atom reference for one atom line."""
+def _first_model_unambiguous_pdb_atom_identities(
+    contents: str,
+) -> dict[int, SourceAtomIdentity]:
+    """Return source atom identities that unambiguously belong to model one.
+
+    CONECT is lowered onto the canonical first-model structure, so serial reuse
+    in later MODEL sections does not make a first-model serial ambiguous. After
+    first-model ENDMDL, atom records are treated as outside model one even when
+    malformed trailing atoms appear without another MODEL record.
+    """
+
+    records_by_serial: dict[int, list[SourceAtomIdentity]] = {}
+    current_model_index = 1
+    explicit_model_count = 0
+    first_model_closed = False
+    for line in contents.splitlines():
+        if line.startswith("MODEL"):
+            explicit_model_count += 1
+            current_model_index = explicit_model_count
+            if current_model_index > 1:
+                first_model_closed = True
+            continue
+        if line.startswith("ENDMDL"):
+            if current_model_index == 1:
+                first_model_closed = True
+            current_model_index = explicit_model_count + 1
+            continue
+        if first_model_closed or current_model_index != 1:
+            continue
+
+        atom_serial_and_identity = _pdb_atom_serial_and_identity(line)
+        if atom_serial_and_identity is None:
+            continue
+
+        serial, identity = atom_serial_and_identity
+        records_by_serial.setdefault(serial, []).append(identity)
+
+    return {
+        serial: records[0]
+        for serial, records in records_by_serial.items()
+        if len(records) == 1
+    }
+
+
+def _canonical_pdb_conect_identity_pair(
+    identity_1: SourceAtomIdentity,
+    identity_2: SourceAtomIdentity,
+) -> tuple[SourceAtomIdentity, SourceAtomIdentity]:
+    """Return a deterministic order for one PDB CONECT identity pair."""
+
+    return (
+        (identity_1, identity_2)
+        if identity_1.sort_key() <= identity_2.sort_key()
+        else (identity_2, identity_1)
+    )
+
+
+def _pdb_atom_serial_and_identity(
+    line: str,
+) -> tuple[int, SourceAtomIdentity] | None:
+    """Return the PDB atom serial and source identity for one atom line."""
 
     if not line.startswith(("ATOM  ", "HETATM")):
         return None
@@ -220,13 +312,17 @@ def _pdb_atom_serial_and_ref(line: str) -> tuple[int, AtomRef] | None:
 
     return (
         serial,
-        AtomRef(
-            residue_id=ResidueId(
-                chain_id=chain_id,
-                seq_num=seq_num,
-                insertion_code=normalize_insertion_code(line[26:27]),
+        SourceAtomIdentity(
+            atom_ref=AtomRef(
+                residue_id=ResidueId(
+                    chain_id=chain_id,
+                    seq_num=seq_num,
+                    insertion_code=normalize_insertion_code(line[26:27]),
+                ),
+                atom_name=atom_name,
             ),
-            atom_name=atom_name,
+            component_id=residue_name,
+            altloc=normalize_altloc(line[16:17]),
         ),
     )
 

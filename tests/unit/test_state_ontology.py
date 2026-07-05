@@ -76,6 +76,7 @@ from protrepair.state.domain import (
     HydrogenAttachmentResolutionObservation,
     HydrogenAttachmentResolutionState,
 )
+from protrepair.state.structure_readiness import _aggregate_topology_availability_state
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.polymer_blueprint import (
@@ -361,6 +362,192 @@ def test_structure_chemistry_readiness_facts_surface_topology_readiness() -> Non
     )
     assert chemistry_readiness_facts.hydrogen_topology_availability_state is (
         TopologyAvailabilityState.ABSENT
+    )
+
+
+def test_template_less_polymer_topology_is_unsupported_not_absent() -> None:
+    """Missing component templates should surface unsupported topology explicitly."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (build_residue("UNK", "A", 1, ("N", "CA", "C", "O")),),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="template-less-polymer-topology",
+    )
+    facts = TopologyAvailabilityFacts.from_projection(
+        ProteinStructureSnapshot.from_structure(structure),
+        residue_ids=(residue_id,),
+        component_library=ComponentLibrary(),
+    )
+    observation = TopologyAvailabilityObservation.from_facts(facts)
+
+    assert observation.state_for(
+        residue_id,
+        aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
+    ) is TopologyAvailabilityState.UNSUPPORTED
+    assert observation.state_for(
+        residue_id,
+        aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
+    ) is TopologyAvailabilityState.UNSUPPORTED
+    assert not topology_availability_facts_supports_continuous_relaxation(facts)
+
+
+def test_template_backed_missing_atoms_keep_topology_absent() -> None:
+    """Known expected topology with missing atoms is absent, not unsupported."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (build_residue("ALA", "A", 1, ("N", "CA", "C", "O")),),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="template-backed-missing-atoms",
+    )
+    facts = TopologyAvailabilityFacts.from_projection(
+        ProteinStructureSnapshot.from_structure(structure),
+        residue_ids=(residue_id,),
+        component_library=build_default_component_library(),
+    )
+    observation = TopologyAvailabilityObservation.from_facts(facts)
+
+    assert observation.state_for(
+        residue_id,
+        aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
+    ) is TopologyAvailabilityState.ABSENT
+    assert observation.state_for(
+        residue_id,
+        aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
+    ) is TopologyAvailabilityState.ABSENT
+
+
+def test_template_less_hetero_topology_projection_stays_absent() -> None:
+    """Retained non-polymer fallback policy is outside this polymer topology ticket."""
+
+    ligand_id = ResidueId("L", 1)
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="LIG",
+                residue_id=ligand_id,
+                atoms=(atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="template-less-hetero-topology",
+    )
+    facts = TopologyAvailabilityFacts.from_projection(
+        ProteinStructureSnapshot.from_structure(structure),
+        residue_ids=(ligand_id,),
+        component_library=ComponentLibrary(),
+    )
+    observation = TopologyAvailabilityObservation.from_facts(facts)
+
+    assert observation.state_for(
+        ligand_id,
+        aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
+    ) is TopologyAvailabilityState.ABSENT
+    assert observation.state_for(
+        ligand_id,
+        aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
+    ) is TopologyAvailabilityState.ABSENT
+
+
+def test_structure_readiness_preserves_unsupported_polymer_topology() -> None:
+    """Whole-structure readiness should not collapse unsupported topology to absent."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (build_residue("UNK", "A", 1, ("N", "CA", "C", "O")),),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="unsupported-polymer-topology-readiness",
+    )
+
+    chemistry_readiness_facts = StructureChemistryReadinessFacts.from_structure(
+        structure
+    )
+
+    assert chemistry_readiness_facts.component_support_state is (
+        ComponentSupportState.UNSUPPORTED_COMPONENTS_PRESENT
+    )
+    assert chemistry_readiness_facts.heavy_atom_topology_availability_state is (
+        TopologyAvailabilityState.UNSUPPORTED
+    )
+    # Hydrogen topology is aggregated only over hydrogen-applicable residues.
+    # Unsupported component chemistry makes the top-level hydrogen axis
+    # NOT_APPLICABLE, while the residue-local fact below still records
+    # UNSUPPORTED so the unsupported topology evidence is not lost.
+    assert chemistry_readiness_facts.hydrogen_topology_availability_state is (
+        TopologyAvailabilityState.NOT_APPLICABLE
+    )
+    assert chemistry_readiness_facts.residue_facts[0].residue_id == residue_id
+    assert (
+        chemistry_readiness_facts.residue_facts[
+            0
+        ].heavy_atom_topology_availability_state
+        is TopologyAvailabilityState.UNSUPPORTED
+    )
+    assert (
+        chemistry_readiness_facts.residue_facts[0].hydrogen_topology_availability_state
+        is TopologyAvailabilityState.UNSUPPORTED
+    )
+
+
+def test_topology_availability_aggregate_preserves_all_not_applicable() -> None:
+    """All non-applicable topology inputs should aggregate to NOT_APPLICABLE."""
+
+    assert (
+        _aggregate_topology_availability_state(
+            (
+                TopologyAvailabilityState.NOT_APPLICABLE,
+                TopologyAvailabilityState.NOT_APPLICABLE,
+            )
+        )
+        is TopologyAvailabilityState.NOT_APPLICABLE
+    )
+
+
+def test_structure_readiness_unsupported_topology_dominates_absent_aggregate() -> None:
+    """Unsupported residue-local topology should not vanish in mixed aggregates."""
+
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    build_residue("ALA", "A", 1, ("N", "CA", "C", "O")),
+                    build_residue("UNK", "A", 2, ("N", "CA", "C", "O")),
+                ),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="mixed-unsupported-absent-topology",
+    )
+
+    chemistry_readiness_facts = StructureChemistryReadinessFacts.from_structure(
+        structure
+    )
+
+    assert chemistry_readiness_facts.heavy_atom_topology_availability_state is (
+        TopologyAvailabilityState.UNSUPPORTED
     )
 
 
@@ -1502,11 +1689,11 @@ def test_atom_domain_state_projects_local_structure_state_axes() -> None:
     assert domain_state.clash_state is ClashState.NONE
     assert domain_state.topology_availability.is_uniform(
         aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
-        state=TopologyAvailabilityState.ABSENT,
+        state=TopologyAvailabilityState.UNSUPPORTED,
     )
     assert domain_state.topology_availability.is_uniform(
         aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
-        state=TopologyAvailabilityState.ABSENT,
+        state=TopologyAvailabilityState.UNSUPPORTED,
     )
 
 

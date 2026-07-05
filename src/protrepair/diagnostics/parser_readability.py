@@ -15,6 +15,10 @@ from protrepair.io.pdb_projection import (
     pdb_without_conect,
     pdb_without_conect_for_parser_probe,
 )
+from protrepair.io.source_identity import (
+    normalize_chain_id,
+    normalize_insertion_code,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import (
@@ -697,9 +701,9 @@ def _atom_ref_from_pdb_atom_line(line: str) -> AtomRef | None:
     try:
         return AtomRef(
             residue_id=ResidueId(
-                chain_id=line[21].strip(),
+                chain_id=normalize_chain_id(line[21:22]),
                 seq_num=int(line[22:26]),
-                insertion_code=line[26].strip() or None,
+                insertion_code=normalize_insertion_code(line[26:27]),
             ),
             atom_name=line[12:16].strip(),
         )

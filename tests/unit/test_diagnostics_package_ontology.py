@@ -34,6 +34,7 @@ def test_diagnostics_package_does_not_own_coordinate_text_projection() -> None:
     """Diagnostics may consume parser PDB projections but must not own gemmi IO."""
 
     forbidden_modules = {
+        "protrepair.io.gemmi_normalization",
         "protrepair.io.gemmi_writer",
     }
     violations: list[str] = []
@@ -42,6 +43,11 @@ def test_diagnostics_package_does_not_own_coordinate_text_projection() -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module in forbidden_modules:
                 violations.append(f"{path}:{node.lineno}:{node.module}")
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                for alias in node.names:
+                    imported_module = f"{node.module}.{alias.name}"
+                    if imported_module in forbidden_modules:
+                        violations.append(f"{path}:{node.lineno}:{imported_module}")
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name in forbidden_modules:

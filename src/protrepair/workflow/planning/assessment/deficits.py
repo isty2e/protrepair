@@ -79,11 +79,18 @@ class StructureCoverageDeficit:
 
 @dataclass(frozen=True, slots=True)
 class StructureChemistryReadinessDeficit:
-    """Chemistry-readiness burdens over support, topology, and hydrogens."""
+    """Chemistry-readiness burdens over support, topology, and hydrogens.
+
+    Topology ``absent`` fields mean expected topology is known but missing;
+    ``unsupported`` fields mean the expected topology cannot be resolved from
+    the currently supported chemistry basis.
+    """
 
     unsupported_component_residue_ids: tuple[ResidueId, ...] = ()
     heavy_atom_topology_absent_residue_ids: tuple[ResidueId, ...] = ()
+    heavy_atom_topology_unsupported_residue_ids: tuple[ResidueId, ...] = ()
     hydrogen_topology_absent_residue_ids: tuple[ResidueId, ...] = ()
+    hydrogen_topology_unsupported_residue_ids: tuple[ResidueId, ...] = ()
     hydrogen_missing_residue_ids: tuple[ResidueId, ...] = ()
     hydrogen_prerequisite_residue_ids: tuple[ResidueId, ...] = ()
     hydrogen_blocked_residue_ids: tuple[ResidueId, ...] = ()
@@ -93,7 +100,9 @@ class StructureChemistryReadinessDeficit:
         for field_name in (
             "unsupported_component_residue_ids",
             "heavy_atom_topology_absent_residue_ids",
+            "heavy_atom_topology_unsupported_residue_ids",
             "hydrogen_topology_absent_residue_ids",
+            "hydrogen_topology_unsupported_residue_ids",
             "hydrogen_missing_residue_ids",
             "hydrogen_prerequisite_residue_ids",
             "hydrogen_blocked_residue_ids",
@@ -107,7 +116,9 @@ class StructureChemistryReadinessDeficit:
             (
                 self.unsupported_component_residue_ids,
                 self.heavy_atom_topology_absent_residue_ids,
+                self.heavy_atom_topology_unsupported_residue_ids,
                 self.hydrogen_topology_absent_residue_ids,
+                self.hydrogen_topology_unsupported_residue_ids,
                 self.hydrogen_missing_residue_ids,
                 self.hydrogen_prerequisite_residue_ids,
                 self.hydrogen_blocked_residue_ids,
@@ -388,7 +399,9 @@ def _chemistry_readiness_deficit(
     }
     unsupported_component_residue_ids: list[ResidueId] = []
     heavy_atom_topology_absent_residue_ids: list[ResidueId] = []
+    heavy_atom_topology_unsupported_residue_ids: list[ResidueId] = []
     hydrogen_topology_absent_residue_ids: list[ResidueId] = []
+    hydrogen_topology_unsupported_residue_ids: list[ResidueId] = []
     hydrogen_missing_residue_ids: list[ResidueId] = []
     hydrogen_prerequisite_residue_ids: list[ResidueId] = []
     hydrogen_blocked_residue_ids: list[ResidueId] = []
@@ -408,10 +421,22 @@ def _chemistry_readiness_deficit(
         ):
             heavy_atom_topology_absent_residue_ids.append(residue_fact.residue_id)
         if (
+            residue_fact.heavy_atom_topology_availability_state
+            is TopologyAvailabilityState.UNSUPPORTED
+        ):
+            heavy_atom_topology_unsupported_residue_ids.append(
+                residue_fact.residue_id
+            )
+        if (
             residue_fact.hydrogen_topology_availability_state
             is TopologyAvailabilityState.ABSENT
         ):
             hydrogen_topology_absent_residue_ids.append(residue_fact.residue_id)
+        if (
+            residue_fact.hydrogen_topology_availability_state
+            is TopologyAvailabilityState.UNSUPPORTED
+        ):
+            hydrogen_topology_unsupported_residue_ids.append(residue_fact.residue_id)
 
         if (
             residue_fact.hydrogen_applicability_state
@@ -443,8 +468,14 @@ def _chemistry_readiness_deficit(
         heavy_atom_topology_absent_residue_ids=tuple(
             heavy_atom_topology_absent_residue_ids
         ),
+        heavy_atom_topology_unsupported_residue_ids=tuple(
+            heavy_atom_topology_unsupported_residue_ids
+        ),
         hydrogen_topology_absent_residue_ids=tuple(
             hydrogen_topology_absent_residue_ids
+        ),
+        hydrogen_topology_unsupported_residue_ids=tuple(
+            hydrogen_topology_unsupported_residue_ids
         ),
         hydrogen_missing_residue_ids=tuple(hydrogen_missing_residue_ids),
         hydrogen_prerequisite_residue_ids=tuple(

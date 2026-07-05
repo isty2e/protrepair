@@ -258,12 +258,73 @@ def test_workflow_state_deficit_marks_unsupported_hydrogen_burden_blocked() -> N
     assert deficit.chemistry_readiness.unsupported_component_residue_ids == (
         residue_id,
     )
+    assert (
+        deficit.chemistry_readiness.heavy_atom_topology_unsupported_residue_ids
+        == (residue_id,)
+    )
+    assert (
+        deficit.chemistry_readiness.hydrogen_topology_unsupported_residue_ids
+        == (residue_id,)
+    )
+    assert deficit.chemistry_readiness.heavy_atom_topology_absent_residue_ids == ()
+    assert deficit.chemistry_readiness.hydrogen_topology_absent_residue_ids == ()
     assert deficit.chemistry_readiness.hydrogen_blocked_residue_ids == (
         residue_id,
     )
     assert (
         deficit.chemistry_readiness.disposition
         is WorkflowDeficitDisposition.BLOCKED
+    )
+
+
+def test_workflow_state_deficit_records_unsupported_topology_when_optional() -> None:
+    """Unsupported topology is still a burden when hydrogen readiness is optional."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="UNK",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload("CA", "C", Vec3(1.0, 0.0, 0.0)),
+                            atom_payload("C", "C", Vec3(2.0, 0.0, 0.0)),
+                            atom_payload("O", "O", Vec3(3.0, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="workflow-deficit-optional-unsupported-topology",
+    )
+    coverage_facts, chemistry_readiness_facts = (
+        derive_structure_coverage_and_chemistry_readiness_facts(structure)
+    )
+
+    deficit = WorkflowStateDeficit.from_facts(
+        coverage_facts=coverage_facts,
+        chemistry_readiness_facts=chemistry_readiness_facts,
+        requested_goals=RequestedGoalSet(),
+        planning_context=WorkflowPlanningContext(),
+    )
+
+    assert (
+        deficit.chemistry_readiness.heavy_atom_topology_unsupported_residue_ids
+        == (residue_id,)
+    )
+    assert (
+        deficit.chemistry_readiness.hydrogen_topology_unsupported_residue_ids
+        == (residue_id,)
+    )
+    assert deficit.chemistry_readiness.hydrogen_blocked_residue_ids == ()
+    assert (
+        deficit.chemistry_readiness.disposition
+        is WorkflowDeficitDisposition.OPTIONAL
     )
 
 

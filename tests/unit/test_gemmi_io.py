@@ -2,7 +2,9 @@
 
 import stat
 from pathlib import Path
+from typing import cast
 
+import gemmi
 import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
@@ -18,7 +20,12 @@ from tests.support.structure_summary import summarize_structure
 import protrepair.io.gemmi_ingress as gemmi_ingress
 import protrepair.io.gemmi_writer as gemmi_writer
 from protrepair.diagnostics.topology import detect_disulfide_topology
-from protrepair.errors import StructureInputTooLargeError
+from protrepair.errors import (
+    ProtrepairError,
+    StructureInputTooLargeError,
+    StructureNormalizationError,
+    UnsupportedFileFormatError,
+)
 from protrepair.geometry import Vec3
 from protrepair.io import (
     read_structure,
@@ -30,7 +37,10 @@ from protrepair.io.ingress_policy import (
     LigandHandling,
     StructureNormalizationPolicy,
 )
-from protrepair.io.structure_ingress import apply_structure_normalization_policy
+from protrepair.io.structure_ingress import (
+    apply_structure_normalization_policy,
+    normalize_raw_structure,
+)
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
     AtomRef,
@@ -52,6 +62,16 @@ from protrepair.workflow.contracts import (
     MutationPolicy,
     OccupancyPolicy,
 )
+
+
+class _PathLikeFixture:
+    """Minimal path-like object for public I/O boundary tests."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def __fspath__(self) -> str:
+        return str(self._path)
 
 
 def test_read_structure_string_rejects_oversized_input(
@@ -77,6 +97,605 @@ def test_read_structure_rejects_oversized_file_before_parser(
 
     with pytest.raises(StructureInputTooLargeError, match="exceeds 4 bytes"):
         read_structure(pdb_path)
+
+
+def test_read_structure_wraps_missing_file_errors(tmp_path: Path) -> None:
+    """Public path ingress should expose missing files as project errors."""
+
+    with pytest.raises(StructureNormalizationError, match="could not read"):
+        read_structure(tmp_path / "missing.pdb")
+
+
+def test_read_structure_wraps_unicode_decode_errors(tmp_path: Path) -> None:
+    """Invalid text decoding should not leak UnicodeDecodeError to callers."""
+
+    pdb_path = tmp_path / "invalid-utf8.pdb"
+    pdb_path.write_bytes(b"\xff\xfe\x00")
+
+    with pytest.raises(StructureNormalizationError, match="could not decode"):
+        read_structure(pdb_path)
+
+
+def test_read_structure_string_wraps_gemmi_parser_errors() -> None:
+    """Raw gemmi parser failures should be project-owned ingress errors."""
+
+    with pytest.raises(StructureNormalizationError, match="could not parse"):
+        read_structure_string("not mmcif", FileFormat.MMCIF)
+
+
+def test_read_structure_string_with_policy_wraps_gemmi_parser_errors() -> None:
+    """Policy-specific string ingress should share public parser error wrapping."""
+
+    with pytest.raises(StructureNormalizationError) as error_info:
+        gemmi_ingress.read_structure_string_with_policy(
+            "not mmcif",
+            FileFormat.MMCIF,
+            policy=StructureNormalizationPolicy(),
+            source_name="bad.cif",
+        )
+
+    assert "could not parse structure text 'bad.cif'" in str(error_info.value)
+
+
+def test_read_structure_rejects_bad_suffix_with_project_error(tmp_path: Path) -> None:
+    """Unsupported suffix inference should stay inside project error hierarchy."""
+
+    source_path = tmp_path / "structure.xyz"
+    source_path.write_text("HEADER", encoding="utf-8")
+
+    with pytest.raises(UnsupportedFileFormatError):
+        read_structure(source_path)
+
+
+def test_read_structure_string_rejects_bad_explicit_format_with_project_error() -> None:
+    """Unsupported explicit read formats should be catchable as ProtrepairError."""
+
+    with pytest.raises(ProtrepairError) as error_info:
+        read_structure_string("data_x\n", cast(FileFormat, "xyz"))
+
+    assert isinstance(error_info.value, UnsupportedFileFormatError)
+
+
+def test_write_structure_rejects_bad_suffix_with_project_error(tmp_path: Path) -> None:
+    """Unsupported output suffix inference should use project format errors."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    with pytest.raises(UnsupportedFileFormatError):
+        write_structure(structure, tmp_path / "output.xyz")
+
+
+def test_write_structure_string_rejects_bad_explicit_project_error() -> None:
+    """Unsupported explicit write formats should not raise raw ValueError."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    with pytest.raises(ProtrepairError) as error_info:
+        write_structure_string(structure, cast(FileFormat, "xyz"))
+
+    assert isinstance(error_info.value, UnsupportedFileFormatError)
+
+
+def test_read_structure_accepts_str_path(tmp_path: Path) -> None:
+    """Public file ingress should accept common string path inputs."""
+
+    structure = build_canonical_structure()
+    source_path = tmp_path / "fixture.pdb"
+    source_path.write_text(write_structure_string(structure, FileFormat.PDB))
+
+    roundtripped = read_structure(str(source_path))
+
+    assert summarize_structure(roundtripped) == summarize_structure(structure)
+
+
+def test_read_structure_accepts_pathlike_input(tmp_path: Path) -> None:
+    """Public file ingress should accept os.PathLike-style inputs."""
+
+    structure = build_canonical_structure()
+    source_path = tmp_path / "fixture.pdb"
+    source_path.write_text(write_structure_string(structure, FileFormat.PDB))
+
+    roundtripped = read_structure(_PathLikeFixture(source_path))
+
+    assert summarize_structure(roundtripped) == summarize_structure(structure)
+
+
+def test_read_structure_normalizes_str_before_raw_file_parser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Internal raw parser helpers should receive Path after public coercion."""
+
+    structure = build_canonical_structure()
+    source_path = tmp_path / "fixture.cif"
+    source_path.write_text(
+        write_structure_string(structure, FileFormat.MMCIF),
+        encoding="utf-8",
+    )
+    original_read_raw_structure = gemmi_ingress.read_raw_structure
+    observed_path_inputs: list[Path] = []
+
+    def _spy_read_raw_structure(path: Path, file_format: FileFormat) -> object:
+        observed_path_inputs.append(path)
+        return original_read_raw_structure(path, file_format)
+
+    monkeypatch.setattr(gemmi_ingress, "read_raw_structure", _spy_read_raw_structure)
+
+    roundtripped = read_structure(str(source_path))
+
+    assert summarize_structure(roundtripped) == summarize_structure(structure)
+    assert len(observed_path_inputs) == 1
+    assert isinstance(observed_path_inputs[0], Path)
+
+
+def test_write_structure_accepts_str_path(tmp_path: Path) -> None:
+    """Public file egress should accept common string path inputs."""
+
+    structure = build_canonical_structure()
+    output_path = tmp_path / "fixture.pdb"
+
+    write_structure(structure, str(output_path))
+
+    assert summarize_structure(read_structure(output_path)) == summarize_structure(
+        structure
+    )
+
+
+def test_write_structure_accepts_pathlike_input(tmp_path: Path) -> None:
+    """Public file egress should accept os.PathLike-style inputs."""
+
+    structure = build_canonical_structure()
+    output_path = tmp_path / "fixture.pdb"
+
+    write_structure(structure, _PathLikeFixture(output_path))
+
+    assert summarize_structure(read_structure(output_path)) == summarize_structure(
+        structure
+    )
+
+
+def test_write_structure_normalizes_pathlike_before_atomic_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Internal writer helpers should receive Path after public coercion."""
+
+    structure = build_canonical_structure()
+    output_path = tmp_path / "fixture.pdb"
+    observed_path_inputs: list[Path] = []
+
+    def _spy_atomic_write_text(path: Path, text: str) -> None:
+        observed_path_inputs.append(path)
+        path.write_text(text, encoding="utf-8")
+
+    monkeypatch.setattr(gemmi_writer, "_atomic_write_text", _spy_atomic_write_text)
+
+    write_structure(structure, _PathLikeFixture(output_path))
+
+    assert summarize_structure(read_structure(output_path)) == summarize_structure(
+        structure
+    )
+    assert len(observed_path_inputs) == 1
+    assert isinstance(observed_path_inputs[0], Path)
+
+
+def test_read_structure_string_rejects_nonfinite_pdb_coordinate() -> None:
+    """PDB ingress should reject non-finite coordinates before canonical geometry."""
+
+    with pytest.raises(StructureNormalizationError, match="non-finite x coordinate"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        residue_name="GLY",
+                        chain_id="A",
+                        residue_seq=1,
+                        x=float("nan"),
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_read_structure_string_rejects_nonfinite_mmcif_coordinate() -> None:
+    """mmCIF ingress should share the same finite-coordinate contract as PDB."""
+
+    with pytest.raises(StructureNormalizationError, match="non-finite x coordinate"):
+        read_structure_string(
+            """data_numeric
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N . GLY A 1 1 ? nan 2.000 3.000 1.00 20.00 1 A 1
+#
+""",
+            FileFormat.MMCIF,
+        )
+
+
+@pytest.mark.parametrize("occupancy", [-0.01, 1.01])
+def test_read_structure_string_rejects_out_of_range_occupancy(
+    occupancy: float,
+) -> None:
+    """Ingress occupancy must stay within the accepted PDB/mmCIF range."""
+
+    with pytest.raises(StructureNormalizationError, match="occupancy"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        residue_name="GLY",
+                        chain_id="A",
+                        residue_seq=1,
+                        occupancy=occupancy,
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_read_structure_string_rejects_negative_b_factor() -> None:
+    """Ingress B factors must be finite and non-negative."""
+
+    with pytest.raises(StructureNormalizationError, match="B factor"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        residue_name="GLY",
+                        chain_id="A",
+                        residue_seq=1,
+                        b_factor=-0.01,
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_read_structure_string_rejects_nonfinite_occupancy_and_b_factor() -> None:
+    """Ingress should reject non-finite scalar atom geometry values."""
+
+    with pytest.raises(StructureNormalizationError, match="non-finite occupancy"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        residue_name="GLY",
+                        chain_id="A",
+                        residue_seq=1,
+                        occupancy=float("nan"),
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+    with pytest.raises(StructureNormalizationError, match="non-finite B factor"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        residue_name="GLY",
+                        chain_id="A",
+                        residue_seq=1,
+                        b_factor=float("inf"),
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_read_structure_string_rejects_nan_occupancy_on_altloc_atom() -> None:
+    """Altloc scoring should fail fast instead of allowing NaN-poisoned cohorts."""
+
+    with pytest.raises(StructureNormalizationError, match="non-finite occupancy"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        altloc="A",
+                        residue_name="SER",
+                        chain_id="A",
+                        residue_seq=1,
+                        occupancy=0.80,
+                        element="N",
+                    ),
+                    build_pdb_atom_line(
+                        serial=2,
+                        atom_name=" N  ",
+                        altloc="B",
+                        residue_name="SER",
+                        chain_id="A",
+                        residue_seq=1,
+                        occupancy=float("nan"),
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_read_structure_string_rejects_bad_coordinate_on_discarded_altloc() -> None:
+    """Boundary validation should cover discarded altloc atom payloads too."""
+
+    with pytest.raises(StructureNormalizationError, match="non-finite x coordinate"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        altloc="A",
+                        residue_name="SER",
+                        chain_id="A",
+                        residue_seq=1,
+                        occupancy=0.80,
+                        element="N",
+                    ),
+                    build_pdb_atom_line(
+                        serial=2,
+                        atom_name=" N  ",
+                        altloc="B",
+                        residue_name="SER",
+                        chain_id="A",
+                        residue_seq=1,
+                        x=float("nan"),
+                        occupancy=0.20,
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_read_structure_string_accepts_numeric_boundary_values() -> None:
+    """Ingress validation should not reject valid occupancy and B-factor limits."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.00,
+                    b_factor=0.00,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=1.00,
+                    b_factor=999.99,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId("A", 1)
+    n_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    )
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (n_geometry.occupancy, n_geometry.b_factor) == (0.0, 0.0)
+    assert ca_geometry.occupancy == 1.0
+    assert ca_geometry.b_factor == pytest.approx(999.99)
+
+
+def test_read_structure_string_uses_first_model_for_multimodel_pdb() -> None:
+    """PDB ingress should materialize only the first source model."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                "MODEL        1",
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    element="N",
+                ),
+                "ENDMDL",
+                "MODEL        2",
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=9.0,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" CA ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=8.0,
+                    element="C",
+                ),
+                "ENDMDL",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    atom_index = structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "N"))
+
+    assert structure.geometry.atom_geometry(atom_index).position.x == 1.0
+    assert (
+        structure.constitution.resolve_atom_site(AtomRef(ResidueId("A", 1), "CA"))
+        is None
+    )
+
+
+def test_read_structure_string_uses_first_model_for_multimodel_mmcif() -> None:
+    """mmCIF ingress should match the same first-model-only contract as PDB."""
+
+    structure = read_structure_string(
+        """data_multimodel
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N . GLY A 1 1 ? 1.000 2.000 3.000 1.00 20.00 1 A 1
+ATOM 2 N N . GLY A 1 1 ? 9.000 8.000 7.000 1.00 20.00 1 A 2
+ATOM 3 C CA . GLY A 1 1 ? 8.000 7.000 6.000 1.00 20.00 1 A 2
+#
+""",
+        FileFormat.MMCIF,
+    )
+
+    atom_index = structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "N"))
+
+    assert structure.geometry.atom_geometry(atom_index).position == Vec3(
+        x=1.0,
+        y=2.0,
+        z=3.0,
+    )
+    assert (
+        structure.constitution.resolve_atom_site(AtomRef(ResidueId("A", 1), "CA"))
+        is None
+    )
+
+
+def test_read_structure_string_empty_first_model_does_not_fall_through() -> None:
+    """An empty first model should not be replaced by a populated later model."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                "MODEL        1",
+                "ENDMDL",
+                "MODEL        2",
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=9.0,
+                    element="N",
+                ),
+                "ENDMDL",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert structure.constitution.chains == ()
+    assert structure.geometry.atom_geometries == ()
 
 
 def test_read_structure_string_resolves_atom_altloc_by_highest_occupancy() -> None:
@@ -180,6 +799,424 @@ def test_read_structure_string_can_select_lowest_occupancy_atom_site() -> None:
     assert atom_site is not None
     assert atom_geometry.altloc == "A"
     assert atom_geometry.position == Vec3(x=1.0, y=2.0, z=3.0)
+
+
+def test_read_structure_string_selects_coherent_residue_altloc_cohort() -> None:
+    """Residue altloc normalization should not mix atoms from different cohorts."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.60,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" N  ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.40,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.40,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    atom_name=" CA ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.60,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=5,
+                    atom_name=" CB ",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=5.0,
+                    occupancy=1.00,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    n_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    )
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+    cb_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CB"))
+    )
+
+    assert (n_geometry.altloc, n_geometry.position.x) == ("A", 1.0)
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("A", 3.0)
+    assert (cb_geometry.altloc, cb_geometry.position.x) == (None, 5.0)
+
+
+def test_read_structure_string_scores_altloc_cohorts_by_mean_occupancy() -> None:
+    """Cohort selection should not favor lower-occupancy conformers with more atoms."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.80,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" N  ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.60,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    atom_name=" CA ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.60,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=5,
+                    atom_name=" CB ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=5.0,
+                    occupancy=0.60,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    n_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    )
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (n_geometry.altloc, n_geometry.position.x) == ("A", 1.0)
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("A", 2.0)
+
+
+def test_read_structure_string_lowest_policy_selects_residue_altloc_cohort() -> None:
+    """LOWEST occupancy policy should select one residue altloc cohort coherently."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    altloc="A",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.80,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" N  ",
+                    altloc="B",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.20,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    atom_name=" CA ",
+                    altloc="B",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+        policy=ingress_options(
+            occupancy_policy=OccupancyPolicy.LOWEST
+        ).structure_normalization_policy(),
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    n_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    )
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (n_geometry.altloc, n_geometry.position.x) == ("B", 3.0)
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("B", 4.0)
+
+
+def test_read_structure_string_altloc_tie_uses_lexical_cohort() -> None:
+    """Altloc cohort ties should be deterministic across parser iteration order."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    altloc="B",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.50,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    altloc="B",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.50,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" N  ",
+                    altloc="A",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.50,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="SER",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.50,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    n_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    )
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (n_geometry.altloc, n_geometry.position.x) == ("A", 3.0)
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("A", 4.0)
+
+
+def test_read_structure_string_resolves_duplicates_inside_selected_altloc_cohort() -> (
+    None
+):
+    """Duplicate atom names inside a selected cohort should still use occupancy."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" CB ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.10,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("A", 2.0)
+
+
+def test_read_structure_string_selected_altloc_overrides_blank_duplicate_atom() -> None:
+    """A cohort-specific atom should win over a blank duplicate for the same atom."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.80,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=1.00,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" CA ",
+                    altloc="A",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.40,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    atom_name=" N  ",
+                    altloc="B",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.20,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId(chain_id="A", seq_num=1)
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (ca_geometry.altloc, ca_geometry.position.x) == ("A", 3.0)
 
 
 def test_read_structure_string_can_select_residue_variant_by_mutation_policy() -> None:
@@ -318,6 +1355,223 @@ def test_read_structure_string_can_select_residue_variant_by_mutation_policy() -
     assert lowest_structure_residue is not None
     assert structure_residue.component_id == "ALA"
     assert lowest_structure_residue.component_id == "GLY"
+
+
+def test_read_structure_string_scores_residue_variants_by_mean_occupancy() -> None:
+    """Microheterogeneity selection should not favor variants with more atoms."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.80,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.60,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    atom_name=" CA ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.60,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=5,
+                    atom_name=" C  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=5.0,
+                    occupancy=0.60,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue = structure.constitution.residue_or_ligand(ResidueId("A", 1))
+
+    assert residue is not None
+    assert residue.component_id == "ALA"
+
+
+def test_read_structure_string_selects_duplicate_ligand_residue_variant() -> None:
+    """Ligand microheterogeneity should resolve before canonical duplicate ids."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" N1 ",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.20,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    residue_name="NAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    record_name="HETATM",
+                    atom_name=" N1 ",
+                    residue_name="NAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.80,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+        policy=ingress_options(
+            ligand_policy=LigandPolicy.KEEP
+        ).structure_normalization_policy(),
+    )
+
+    assert len(structure.constitution.ligands) == 1
+    ligand = structure.constitution.ligands[0]
+    ligand_geometry = structure.residue_geometry(
+        structure.constitution.residue_index(ligand.residue_id)
+    )
+
+    assert ligand.component_id == "NAD"
+    assert ligand_geometry.atom_geometry("C1").position.x == 3.0
+    assert ligand_geometry.atom_geometry("N1").position.x == 4.0
+
+
+def test_read_structure_string_selects_ligand_altloc_cohort_without_mixing() -> None:
+    """Retained ligand altloc normalization should also use one coherent cohort."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    altloc="A",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=1.0,
+                    occupancy=0.60,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    altloc="B",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=0.40,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    record_name="HETATM",
+                    atom_name=" N1 ",
+                    altloc="A",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=3.0,
+                    occupancy=0.40,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    record_name="HETATM",
+                    atom_name=" N1 ",
+                    altloc="B",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=4.0,
+                    occupancy=0.60,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+        policy=ingress_options(
+            ligand_policy=LigandPolicy.KEEP
+        ).structure_normalization_policy(),
+    )
+
+    ligand = structure.constitution.ligands[0]
+    ligand_geometry = structure.residue_geometry(
+        structure.constitution.residue_index(ligand.residue_id)
+    )
+
+    assert ligand.component_id == "FAD"
+    assert (
+        ligand_geometry.atom_geometry("C1").altloc,
+        ligand_geometry.atom_geometry("C1").position.x,
+    ) == ("A", 1.0)
+    assert (
+        ligand_geometry.atom_geometry("N1").altloc,
+        ligand_geometry.atom_geometry("N1").position.x,
+    ) == ("A", 3.0)
 
 
 def test_read_structure_string_can_filter_chains_and_drop_ligands() -> None:
@@ -463,6 +1717,163 @@ def test_read_structure_string_surfaces_source_explicit_inter_residue_bonds() ->
     )
 
 
+def test_read_structure_string_ignores_nonfinite_pdb_link_distance() -> None:
+    """Corrupt LINK distance metadata should not reject an otherwise usable link."""
+
+    structure = read_structure_string(
+        build_2q6f_linked_pdb_text().replace("  1.35  ", "   nan  ", 1),
+        FileFormat.PDB,
+    )
+
+    link_bonds = tuple(
+        bond
+        for bond in structure.topology.bonds
+        if bond.source_metadata is not None
+        and bond.source_metadata.record_type is SourceBondRecordType.PDB_LINK
+    )
+
+    assert len(link_bonds) == 2
+    assert link_bonds[0].source_metadata is not None
+    assert link_bonds[0].source_metadata.reported_distance_angstrom is None
+    assert link_bonds[1].source_metadata is not None
+    assert link_bonds[1].source_metadata.reported_distance_angstrom == 1.44
+
+
+@pytest.mark.parametrize(
+    ("file_format", "record_type"),
+    (
+        (FileFormat.PDB, SourceBondRecordType.PDB_LINK),
+        (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
+    ),
+)
+def test_normalize_raw_structure_keeps_source_connection_for_selected_altloc_atom(
+    file_format: FileFormat,
+    record_type: SourceBondRecordType,
+) -> None:
+    """LINK/struct_conn endpoints should survive only when their altloc survived."""
+
+    structure = normalize_raw_structure(
+        build_raw_source_connection_structure(linked_altloc="A"),
+        file_format=file_format,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+
+    source_bonds = tuple(
+        bond
+        for bond in structure.topology.bonds
+        if bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+    )
+
+    assert len(source_bonds) == 1
+    assert _bond_display_token(structure, source_bonds[0]) == "A:1.C1-L:1.O1"
+
+
+@pytest.mark.parametrize(
+    ("file_format", "record_type"),
+    (
+        (FileFormat.PDB, SourceBondRecordType.PDB_LINK),
+        (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
+    ),
+)
+def test_normalize_raw_structure_drops_source_connection_from_discarded_altloc_atom(
+    file_format: FileFormat,
+    record_type: SourceBondRecordType,
+) -> None:
+    """LINK/struct_conn from a discarded altloc must not bind to selected AtomRef."""
+
+    structure = normalize_raw_structure(
+        build_raw_source_connection_structure(linked_altloc="B"),
+        file_format=file_format,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+
+    assert not any(
+        bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+        for bond in structure.topology.bonds
+    )
+
+
+@pytest.mark.parametrize(
+    ("file_format", "record_type"),
+    (
+        (FileFormat.PDB, SourceBondRecordType.PDB_LINK),
+        (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
+    ),
+)
+def test_normalize_raw_structure_drops_source_connection_from_discarded_component(
+    file_format: FileFormat,
+    record_type: SourceBondRecordType,
+) -> None:
+    """LINK/struct_conn from discarded microheterogeneity must not survive."""
+
+    structure = normalize_raw_structure(
+        build_raw_source_connection_structure(
+            selected_component_id="NAD",
+            source_component_id="FAD",
+            linked_altloc="A",
+        ),
+        file_format=file_format,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+
+    selected_residue = structure.constitution.residue_or_ligand(ResidueId("A", 1))
+    assert selected_residue is not None
+    assert selected_residue.component_id == "NAD"
+    assert not any(
+        bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+        for bond in structure.topology.bonds
+    )
+
+
+@pytest.mark.parametrize(
+    ("file_format", "record_type"),
+    (
+        (FileFormat.PDB, SourceBondRecordType.PDB_LINK),
+        (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
+    ),
+)
+@pytest.mark.parametrize(
+    ("source_component_id", "linked_altloc", "expected_source_bonds"),
+    (
+        ("MOV", "A", 1),
+        ("MOV", "B", 0),
+        ("FAD", "A", 0),
+    ),
+)
+def test_read_structure_string_filters_source_connection_identity_from_text(
+    file_format: FileFormat,
+    record_type: SourceBondRecordType,
+    source_component_id: str,
+    linked_altloc: str,
+    expected_source_bonds: int,
+) -> None:
+    """Public text ingress should enforce source component and altloc identity."""
+
+    structure = read_structure_string(
+        build_source_connection_text(
+            file_format,
+            source_component_id=source_component_id,
+            linked_altloc=linked_altloc,
+        ),
+        file_format,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+
+    source_bonds = tuple(
+        bond
+        for bond in structure.topology.bonds
+        if bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+    )
+
+    assert len(source_bonds) == expected_source_bonds
+    if expected_source_bonds:
+        assert _bond_display_token(structure, source_bonds[0]) == "A:1.C1-L:1.O1"
+
+
 def test_read_structure_string_surfaces_pdb_conect_inter_residue_bonds() -> None:
     """PDB CONECT records should become source-explicit topology bonds."""
 
@@ -511,6 +1922,276 @@ def test_read_structure_string_surfaces_pdb_conect_inter_residue_bonds() -> None
             ),
         ),
     )
+
+
+def test_read_structure_string_keeps_conect_for_selected_altloc_atom() -> None:
+    """CONECT endpoints should survive when their source altloc was selected."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C1 ",
+                    altloc="A",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" C1 ",
+                    altloc="B",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="OBS",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    element="O",
+                ),
+                "CONECT    1    3",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert tuple(
+        bond.source_metadata.record_type
+        for bond in structure.topology.bonds
+        if bond.source_metadata is not None
+    ) == (SourceBondRecordType.PDB_CONECT,)
+
+
+def test_read_structure_string_keeps_conect_to_blank_atom_in_altloc_residue() -> None:
+    """Blank-altloc atoms retained with a selected cohort can keep CONECT."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    altloc="A",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.80,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="OBS",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=4.0,
+                    element="O",
+                ),
+                "CONECT    2    3",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    conect_bonds = tuple(
+        bond
+        for bond in structure.topology.bonds
+        if bond.source_metadata is not None
+        and bond.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
+    )
+
+    assert len(conect_bonds) == 1
+    assert _bond_display_token(structure, conect_bonds[0]) == "A:1.CA-L:1.O1"
+
+
+def test_read_structure_string_drops_conect_from_discarded_altloc_atom() -> None:
+    """CONECT from an unselected altloc atom must not bind to selected AtomRef."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C1 ",
+                    altloc="A",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" C1 ",
+                    altloc="B",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="OBS",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    element="O",
+                ),
+                "CONECT    2    3",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert not any(
+        bond.source_metadata is not None
+        and bond.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
+        for bond in structure.topology.bonds
+    )
+
+
+def test_read_structure_string_drops_conect_from_discarded_ligand_variant() -> None:
+    """CONECT from discarded ligand microheterogeneity should not survive."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    residue_name="FAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    occupancy=0.20,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" C1 ",
+                    residue_name="NAD",
+                    chain_id="L",
+                    residue_seq=1,
+                    occupancy=0.80,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    element="N",
+                ),
+                "CONECT    1    3",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+        policy=ingress_options(
+            ligand_policy=LigandPolicy.KEEP
+        ).structure_normalization_policy(),
+    )
+
+    assert structure.constitution.ligands[0].component_id == "NAD"
+    assert not any(
+        bond.source_metadata is not None
+        and bond.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
+        for bond in structure.topology.bonds
+    )
+
+
+def test_read_structure_string_preserves_conect_for_first_model_serials() -> None:
+    """CONECT serials should be lowered onto the canonical first model only."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                "MODEL        1",
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C1 ",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="OBS",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    element="O",
+                ),
+                "ENDMDL",
+                "MODEL        2",
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C1 ",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=9.0,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" O1 ",
+                    residue_name="OBS",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=8.0,
+                    element="O",
+                ),
+                "ENDMDL",
+                "CONECT    1    2",
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    conect_bonds = tuple(
+        bond
+        for bond in structure.topology.bonds
+        if bond.source_metadata is not None
+        and bond.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
+    )
+    assert len(conect_bonds) == 1
+    assert _bond_display_token(structure, conect_bonds[0]) == "A:1.C1-L:1.O1"
 
 
 def test_apply_structure_normalization_policy_drops_links_with_missing_endpoints() -> (
@@ -983,6 +2664,42 @@ def test_write_pdb_preserves_link_metadata_via_topology_connections() -> None:
         assert bond.source_metadata.record_type is SourceBondRecordType.PDB_LINK
 
 
+@pytest.mark.parametrize(
+    ("file_format", "record_type"),
+    (
+        (FileFormat.PDB, SourceBondRecordType.PDB_LINK),
+        (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
+    ),
+)
+def test_write_structure_string_preserves_source_connection_altloc(
+    file_format: FileFormat,
+    record_type: SourceBondRecordType,
+) -> None:
+    """Connection egress must preserve source endpoint altloc identity."""
+
+    structure = read_structure_string(
+        build_source_connection_text(FileFormat.PDB, linked_altloc="A"),
+        FileFormat.PDB,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+
+    structure_text = write_structure_string(structure, file_format)
+    roundtripped = read_structure_string(
+        structure_text,
+        file_format,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+    source_bonds = tuple(
+        bond
+        for bond in roundtripped.topology.bonds
+        if bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+    )
+
+    assert len(source_bonds) == 1
+    assert _bond_display_token(roundtripped, source_bonds[0]) == "A:1.C1-L:1.O1"
+
+
 def test_write_pdb_does_not_emit_non_covalent_source_bonds_as_conect() -> None:
     """Non-covalent source topology should not become PDB CONECT bonds."""
 
@@ -1064,9 +2781,9 @@ def test_write_mmcif_emits_struct_conn_from_source_explicit_topology_bonds() -> 
         for bond in roundtripped.topology.bonds
         if bond.provenance is BondProvenance.SOURCE_EXPLICIT
     )
-    assert {
-        bond.endpoint_pair() for bond in source_bonds
-    } <= {bond.endpoint_pair() for bond in roundtripped_source_bonds}
+    assert {bond.endpoint_pair() for bond in source_bonds} <= {
+        bond.endpoint_pair() for bond in roundtripped_source_bonds
+    }
     for bond in roundtripped_source_bonds:
         assert bond.source_metadata is not None
         assert (
@@ -1787,6 +3504,121 @@ def infer_element(atom_name: str) -> str:
         raise ValueError(f"atom_name must contain at least one letter: {atom_name}")
 
     return letters[0]
+
+
+def build_raw_source_connection_structure(
+    *,
+    selected_component_id: str = "MOV",
+    source_component_id: str = "MOV",
+    selected_altloc: str = "A",
+    discarded_altloc: str = "B",
+    linked_altloc: str = "A",
+) -> gemmi.Structure:
+    """Build a raw gemmi structure with one source-declared connection."""
+
+    structure = gemmi.Structure()
+    model = gemmi.Model(1)
+
+    moving_chain = gemmi.Chain("A")
+    moving_residue = gemmi.Residue()
+    moving_residue.name = selected_component_id
+    moving_residue.seqid = gemmi.SeqId(1, " ")
+    moving_residue.entity_type = gemmi.EntityType.Polymer
+    moving_residue.add_atom(
+        build_raw_atom(
+            "C1",
+            "C",
+            x=0.0,
+            altloc=selected_altloc,
+            occupancy=0.80,
+        )
+    )
+    moving_residue.add_atom(
+        build_raw_atom(
+            "C1",
+            "C",
+            x=1.0,
+            altloc=discarded_altloc,
+            occupancy=0.20,
+        )
+    )
+    moving_chain.add_residue(moving_residue)
+
+    observer_chain = gemmi.Chain("L")
+    observer_residue = gemmi.Residue()
+    observer_residue.name = "OBS"
+    observer_residue.seqid = gemmi.SeqId(1, " ")
+    observer_residue.het_flag = "H"
+    observer_residue.entity_type = gemmi.EntityType.NonPolymer
+    observer_residue.add_atom(build_raw_atom("O1", "O", x=2.0))
+    observer_chain.add_residue(observer_residue)
+
+    model.add_chain(moving_chain)
+    model.add_chain(observer_chain)
+    structure.add_model(model)
+
+    source_residue_identity = gemmi.Residue()
+    source_residue_identity.name = source_component_id
+    source_residue_identity.seqid = gemmi.SeqId(1, " ")
+
+    connection = gemmi.Connection()
+    connection.partner1.chain_name = "A"
+    connection.partner1.res_id = source_residue_identity
+    connection.partner1.atom_name = "C1"
+    connection.partner1.altloc = linked_altloc
+    connection.partner2.chain_name = "L"
+    connection.partner2.res_id = observer_residue
+    connection.partner2.atom_name = "O1"
+    connection.type = gemmi.ConnectionType.Covale
+    connection.link_id = "source-conn"
+    connection.reported_distance = 1.44
+    structure.connections.append(connection)
+    return structure
+
+
+def build_source_connection_text(
+    file_format: FileFormat,
+    *,
+    selected_component_id: str = "MOV",
+    source_component_id: str = "MOV",
+    selected_altloc: str = "A",
+    discarded_altloc: str = "B",
+    linked_altloc: str = "A",
+) -> str:
+    """Build source-connection coordinate text for public ingress tests."""
+
+    raw_structure = build_raw_source_connection_structure(
+        selected_component_id=selected_component_id,
+        source_component_id=source_component_id,
+        selected_altloc=selected_altloc,
+        discarded_altloc=discarded_altloc,
+        linked_altloc=linked_altloc,
+    )
+    if file_format is FileFormat.PDB:
+        return raw_structure.make_pdb_string()
+    if file_format is FileFormat.MMCIF:
+        return raw_structure.make_mmcif_document().as_string()
+    raise AssertionError(f"unsupported test format: {file_format}")
+
+
+def build_raw_atom(
+    atom_name: str,
+    element: str,
+    *,
+    x: float,
+    altloc: str | None = None,
+    occupancy: float = 1.0,
+) -> gemmi.Atom:
+    """Build one raw gemmi atom for ingress-normalization tests."""
+
+    atom = gemmi.Atom()
+    atom.name = atom_name
+    atom.element = gemmi.Element(element)
+    atom.pos = gemmi.Position(x, 0.0, 0.0)
+    atom.altloc = "\0" if altloc is None else altloc
+    atom.occ = occupancy
+    atom.b_iso = 20.0
+    return atom
 
 
 def _bond_display_token(structure: ProteinStructure, bond: TopologyBond) -> str:

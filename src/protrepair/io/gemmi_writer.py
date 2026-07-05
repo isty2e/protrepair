@@ -2,8 +2,10 @@
 
 import os
 import secrets
+from os import PathLike
 from pathlib import Path
 
+from protrepair.errors import UnsupportedFileFormatError
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
@@ -26,17 +28,18 @@ from protrepair.structure.topology import (
 
 def write_structure(
     structure: ProteinStructure,
-    output_path: Path,
+    output_path: Path | str | PathLike[str],
     *,
     file_format: FileFormat | None = None,
 ) -> None:
-    """Serialize a canonical structure to a coordinate file."""
+    """Serialize a canonical structure to a path-like coordinate file."""
 
+    target_path = Path(output_path)
     resolved_format = (
-        infer_file_format(output_path) if file_format is None else file_format
+        infer_file_format(target_path) if file_format is None else file_format
     )
     serialized_structure = write_structure_string(structure, resolved_format)
-    _atomic_write_text(output_path, serialized_structure)
+    _atomic_write_text(target_path, serialized_structure)
 
 
 def _atomic_write_text(output_path: Path, text: str) -> None:
@@ -89,8 +92,7 @@ def _open_same_directory_temp_file(output_path: Path) -> tuple[Path, int]:
         return temp_path, file_descriptor
 
     raise FileExistsError(
-        "could not allocate an unused temporary output path for "
-        f"{output_path}"
+        f"could not allocate an unused temporary output path for {output_path}"
     )
 
 
@@ -140,7 +142,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         )
         return raw_structure.make_mmcif_document().as_string()
 
-    raise ValueError(f"unsupported file format: {file_format}")
+    raise UnsupportedFileFormatError(f"unsupported file format: {file_format}")
 
 
 def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> str:
@@ -336,6 +338,8 @@ def populate_gemmi_connection_partner(
         atom_ref.residue_id.insertion_code or " ",
     )
     raw_partner.atom_name = atom_ref.atom_name
+    atom_geometry = structure.geometry.atom_geometry(atom_index)
+    raw_partner.altloc = "\0" if atom_geometry.altloc is None else atom_geometry.altloc
 
 
 def gemmi_connection_type(relationship_type: BondRelationshipType):

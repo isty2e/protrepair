@@ -88,12 +88,12 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
                 TopologyExpectation(
                     residue_id=ResidueId("A", 1),
                     aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
-                    state=TopologyAvailabilityState.ABSENT,
+                    state=TopologyAvailabilityState.UNSUPPORTED,
                 ),
                 TopologyExpectation(
                     residue_id=ResidueId("A", 1),
                     aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
-                    state=TopologyAvailabilityState.ABSENT,
+                    state=TopologyAvailabilityState.UNSUPPORTED,
                 ),
             ),
         ),

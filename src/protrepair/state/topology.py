@@ -23,7 +23,16 @@ class TopologyAvailabilityState(str, Enum):
 
     NOT_APPLICABLE = "not_applicable"
     ABSENT = "absent"
+    UNSUPPORTED = "unsupported"
     PRESENT = "present"
+
+    def is_unavailable(self) -> bool:
+        """Return whether expected topology is unavailable for this aspect."""
+
+        return self in {
+            TopologyAvailabilityState.ABSENT,
+            TopologyAvailabilityState.UNSUPPORTED,
+        }
 
 
 class TopologyAvailabilityAspect(str, Enum):
@@ -122,12 +131,17 @@ class TopologyAvailabilityFacts:
 
             template = library.get(residue.component_id)
             if template is None:
+                state = (
+                    TopologyAvailabilityState.ABSENT
+                    if residue.is_hetero
+                    else TopologyAvailabilityState.UNSUPPORTED
+                )
                 for aspect in TopologyAvailabilityAspect:
                     residue_facts_by_key[(residue.residue_id, aspect)] = (
                         ResidueTopologyAvailabilityFact(
                             residue_id=residue.residue_id,
                             aspect=aspect,
-                            state=TopologyAvailabilityState.ABSENT,
+                            state=state,
                         )
                     )
                 continue

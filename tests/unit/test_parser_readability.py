@@ -7,6 +7,7 @@ from tests.support.canonical_builders import (
 
 from protrepair.chemistry import build_default_component_library
 from protrepair.diagnostics.parser_readability import (
+    _atom_ref_from_pdb_atom_line,
     prepare_rdkit_no_conect_known_bond_lookup,
 )
 from protrepair.geometry import Vec3
@@ -25,6 +26,17 @@ from protrepair.structure.topology import (
     SourceBondRecordType,
     TopologyBond,
 )
+
+
+def test_pdb_atom_line_parser_normalizes_blank_chain_id() -> None:
+    """Diagnostics PDB parsing should share ingress blank-chain normalization."""
+
+    atom_ref = _atom_ref_from_pdb_atom_line(
+        "ATOM      1  N   GLY     1       1.000   2.000   3.000  "
+        "1.00 20.00           N  "
+    )
+
+    assert atom_ref == AtomRef(ResidueId("_", 1), "N")
 
 
 def test_known_bond_lookup_compiles_intra_residue_template_pairs() -> None:

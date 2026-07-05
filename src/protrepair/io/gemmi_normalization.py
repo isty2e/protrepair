@@ -7,9 +7,9 @@ import gemmi
 from protrepair.errors import UnsupportedFileFormatError
 from protrepair.structure.provenance import FileFormat
 
-DEFAULT_CHAIN_ID = "_"
 PDB_SUFFIXES = {".ent", ".pdb"}
 MMCIF_SUFFIXES = {".cif", ".mmcif"}
+
 
 def infer_file_format(path: Path) -> FileFormat:
     """Infer the canonical structure format from a filesystem path."""
@@ -36,27 +36,6 @@ def to_gemmi_coor_format(file_format: FileFormat):
         return gemmi.CoorFormat.Mmcif
 
     raise UnsupportedFileFormatError(f"unsupported file format: {file_format}")
-
-
-def normalize_chain_id(raw_chain_id: str) -> str:
-    """Normalize a possibly blank chain identifier."""
-
-    normalized_chain_id = raw_chain_id.strip()
-    return normalized_chain_id or DEFAULT_CHAIN_ID
-
-
-def normalize_insertion_code(raw_insertion_code: str) -> str | None:
-    """Normalize a possibly blank insertion code."""
-
-    normalized_insertion_code = raw_insertion_code.strip()
-    return normalized_insertion_code or None
-
-
-def normalize_altloc(raw_altloc: str) -> str | None:
-    """Normalize a possibly blank alternative-location code."""
-
-    normalized_altloc = raw_altloc.strip("\x00 ").strip()
-    return normalized_altloc or None
 
 
 def normalize_formal_charge(charge: int) -> int | None:

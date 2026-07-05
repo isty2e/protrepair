@@ -1,5 +1,8 @@
 """Contract tests for the canonical topology bond graph."""
 
+import pickle
+from typing import cast
+
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
@@ -95,9 +98,7 @@ def _bonded_rewrite_structure():
             residue_payload(
                 component_id="LIG",
                 residue_id=_residue_id("L", 9),
-                atoms=(
-                    atom_payload("O", "O", Vec3(3, 0, 0)),
-                ),
+                atoms=(atom_payload("O", "O", Vec3(3, 0, 0)),),
                 is_hetero=True,
             ),
         ),
@@ -239,6 +240,22 @@ class TestSourceBondMetadata:
             SourceBondMetadata(
                 record_type=SourceBondRecordType.PDB_LINK,
                 reported_distance_angstrom=0.0,
+            )
+
+    @pytest.mark.parametrize("reported_distance", (float("nan"), float("inf")))
+    def test_non_finite_distance_rejected(self, reported_distance: float):
+        with pytest.raises(ValueError, match="finite"):
+            SourceBondMetadata(
+                record_type=SourceBondRecordType.PDB_LINK,
+                reported_distance_angstrom=reported_distance,
+            )
+
+    @pytest.mark.parametrize("reported_distance", (True, "2.0", "2.0 A"))
+    def test_non_numeric_distance_rejected(self, reported_distance: object):
+        with pytest.raises(ValueError, match="finite"):
+            SourceBondMetadata(
+                record_type=SourceBondRecordType.PDB_LINK,
+                reported_distance_angstrom=cast(float, reported_distance),
             )
 
 
@@ -619,6 +636,16 @@ class TestStructureTopologyBonds:
         assert topology.bond_between(AtomIndex(2), AtomIndex(0)) == bond
         assert topology.bond_between(AtomIndex(0), AtomIndex(0)) is None
         assert topology.bond_between(AtomIndex(1), AtomIndex(3)) is None
+
+    def test_topology_with_bonds_is_pickleable(self):
+        structure = _bonded_rewrite_structure()
+
+        reloaded_topology = pickle.loads(pickle.dumps(structure.topology))
+
+        assert reloaded_topology == structure.topology
+        assert reloaded_topology.bond_between(
+            AtomIndex(2), AtomIndex(0)
+        ) == structure.topology.bond_between(AtomIndex(2), AtomIndex(0))
 
     def test_covalent_like_endpoint_pairs_exclude_non_covalent_bonds(self):
         structure = _two_residue_constitution()
