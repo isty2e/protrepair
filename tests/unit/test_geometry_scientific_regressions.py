@@ -107,8 +107,19 @@ def test_scientific_regression_backbone_oxygen_uses_current_context() -> None:
     )
 
     actual_position = repaired_residue.position("O")
-    expected_position = _oxygen_position(residue, next_nitrogen, current_psi)
-    stale_position = _oxygen_position(residue, next_nitrogen, stale_psi)
+    assert current_psi == pytest.approx(96.70756579005402)
+    assert stale_psi == pytest.approx(180.0)
+
+    expected_position = Vec3(
+        3.4240205679990066,
+        1.1855360556074688,
+        -0.6812287946260066,
+    )
+    stale_position = Vec3(
+        2.0678769411724334,
+        2.2591497601785058,
+        -0.5299019336715382,
+    )
 
     np.testing.assert_allclose(
         _vec_array(actual_position),
@@ -120,8 +131,8 @@ def test_scientific_regression_backbone_oxygen_uses_current_context() -> None:
     ) > 1.0
 
 
-def test_scientific_regression_ramachandran_rejects_sequence_gap() -> None:
-    """Ramachandran torsions must not cross a numbering gap without peptide proof."""
+def test_scientific_regression_ramachandran_accepts_sane_numbering_gap() -> None:
+    """Residue numbering gaps are allowed when chain order and C-N geometry agree."""
 
     structure = _analysis_structure(seq_nums=(1, 3, 4))
     bundle = build_analysis_bundle(
@@ -131,10 +142,27 @@ def test_scientific_regression_ramachandran_rejects_sequence_gap() -> None:
 
     assert bundle.ramachandran is not None
     first_point, middle_point, last_point = bundle.ramachandran.points
-    assert first_point.psi_degrees is None
-    assert middle_point.phi_degrees is None
+    assert first_point.psi_degrees is not None
+    assert middle_point.phi_degrees is not None
     assert middle_point.psi_degrees is not None
     assert last_point.phi_degrees is not None
+
+
+def test_scientific_regression_torsion_preserves_iupac_sign() -> None:
+    """Internal-coordinate torsions must distinguish mirrored signed angles."""
+
+    assert InternalCoordinateFrame.torsion(
+        Vec3(1.0, 0.0, 0.0),
+        Vec3(0.0, 0.0, 0.0),
+        Vec3(0.0, 1.0, 0.0),
+        Vec3(0.0, 1.0, 1.0),
+    ) == pytest.approx(-90.0)
+    assert InternalCoordinateFrame.torsion(
+        Vec3(1.0, 0.0, 0.0),
+        Vec3(0.0, 0.0, 0.0),
+        Vec3(0.0, 1.0, 0.0),
+        Vec3(0.0, 1.0, -1.0),
+    ) == pytest.approx(90.0)
 
 
 def test_scientific_regression_radii_cover_selenium_and_common_metals() -> None:

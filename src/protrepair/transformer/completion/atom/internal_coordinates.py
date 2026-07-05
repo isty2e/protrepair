@@ -230,7 +230,7 @@ class InternalCoordinatePlacementTransformer(
 
         semantics = self.site.template.heavy_atom_semantics
         residue = self.site.payload(context.source_snapshot)
-        _previous_residue, next_residue = self.site.neighbor_payloads(
+        _, next_residue = self.site.neighbor_payloads(
             context.source_snapshot
         )
         missing_atom_names = self.site.missing_atom_names(context.source_snapshot)

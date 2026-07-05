@@ -491,6 +491,53 @@ def test_detect_clashes_ignores_adjacent_peptide_bond_pairs() -> None:
     assert report.is_empty()
 
 
+def test_detect_clashes_reports_slot_neighbor_without_peptide_geometry() -> None:
+    """Chain-slot neighbors are not ignored when C-N geometry is implausible."""
+
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    build_residue(
+                        "GLY",
+                        "A",
+                        1,
+                        (
+                            atom("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom("CA", "C", Vec3(1.0, 0.0, 0.0)),
+                            atom("C", "C", Vec3(10.0, 0.0, 0.0)),
+                        ),
+                    ),
+                    build_residue(
+                        "GLY",
+                        "A",
+                        2,
+                        (
+                            atom("N", "N", Vec3(20.0, 0.0, 0.0)),
+                            atom("CA", "C", Vec3(10.2, 0.0, 0.0)),
+                            atom("C", "C", Vec3(21.0, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="implausible-peptide-slot-neighbor-clash",
+    )
+
+    report = detect_clashes(
+        structure,
+        component_library=build_standard_component_library(),
+    )
+
+    assert any(
+        clash.left_residue_id != clash.right_residue_id
+        and {clash.left_atom_name, clash.right_atom_name} == {"C", "CA"}
+        for clash in report.clashes
+    )
+
+
 def test_detect_clashes_projects_inter_residue_pairs_as_pair_scope() -> None:
     """Inter-residue clashes should carry residue-pair provenance."""
 

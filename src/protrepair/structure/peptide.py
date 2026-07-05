@@ -1,5 +1,6 @@
 """Peptide-adjacency predicates over canonical structures."""
 
+from protrepair.errors import ResidueNotFoundError
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import AtomRef
@@ -18,14 +19,22 @@ def are_peptide_adjacent(
 
     if not left_residue.has_atom_site("C") or not right_residue.has_atom_site("N"):
         return False
-    if _peptide_cn_distance(left_residue, right_residue, structure=structure) > (
-        PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
+
+    peptide_cn_distance = _peptide_cn_distance(
+        left_residue,
+        right_residue,
+        structure=structure,
+    )
+    if (
+        peptide_cn_distance is None
+        or peptide_cn_distance > PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
     ):
         return False
 
-    return _is_immediate_sequence_neighbor(
+    return _are_consecutive_polymer_residue_slots(
         left_residue,
         right_residue,
+        structure=structure,
     ) or _has_topology_peptide_bond(
         left_residue,
         right_residue,
@@ -38,16 +47,21 @@ def _peptide_cn_distance(
     right_residue: ResidueSite,
     *,
     structure: ProteinStructure,
-) -> float:
+) -> float | None:
     """Return the C-N distance for a candidate peptide neighbor pair."""
 
-    left_geometry = structure.residue_geometry(
-        structure.constitution.residue_index(left_residue.residue_id)
+    left_carbon = structure.constitution.resolve_atom_index(
+        AtomRef(left_residue.residue_id, "C")
     )
-    right_geometry = structure.residue_geometry(
-        structure.constitution.residue_index(right_residue.residue_id)
+    right_nitrogen = structure.constitution.resolve_atom_index(
+        AtomRef(right_residue.residue_id, "N")
     )
-    return left_geometry.position("C").distance_to(right_geometry.position("N"))
+    if left_carbon is None or right_nitrogen is None:
+        return None
+
+    return structure.geometry.position(left_carbon).distance_to(
+        structure.geometry.position(right_nitrogen)
+    )
 
 
 def _has_topology_peptide_bond(
@@ -71,17 +85,25 @@ def _has_topology_peptide_bond(
     return bond is not None and is_covalent_like_relationship(bond)
 
 
-def _is_immediate_sequence_neighbor(
+def _are_consecutive_polymer_residue_slots(
     left_residue: ResidueSite,
     right_residue: ResidueSite,
+    *,
+    structure: ProteinStructure,
 ) -> bool:
-    """Return whether residue ids describe an unambiguous next sequence slot."""
+    """Return whether residues are consecutive in their canonical chain order."""
 
     left_id = left_residue.residue_id
     right_id = right_residue.residue_id
-    return (
-        left_id.chain_id == right_id.chain_id
-        and left_id.insertion_code is None
-        and right_id.insertion_code is None
-        and right_id.seq_num == left_id.seq_num + 1
-    )
+    if left_id.chain_id != right_id.chain_id:
+        return False
+    if not structure.constitution.has_chain(left_id.chain_id):
+        return False
+
+    try:
+        left_position = structure.constitution.residue_index(left_id).value
+        right_position = structure.constitution.residue_index(right_id).value
+    except ResidueNotFoundError:
+        return False
+
+    return right_position == left_position + 1

@@ -29,6 +29,7 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
 from protrepair.structure.labels import ResidueId
+from protrepair.structure.peptide import are_peptide_adjacent
 from protrepair.structure.slots import ResidueIndex
 
 HYDROGEN_ANCHOR_DISTANCE_CUTOFF_ANGSTROM = 1.45
@@ -87,6 +88,7 @@ class ResidueContext:
     domain: ContactDomain
     chain_index: int | None
     residue_index: int | None
+    peptide_neighbor_residue_ids: frozenset[ResidueId] = frozenset()
     _hydrogen_anchor_by_name: Mapping[str, str] | None = field(
         default=None,
         repr=False,
@@ -140,11 +142,7 @@ class ResidueContext:
         return (
             self.domain is ContactDomain.POLYMER
             and other.domain is ContactDomain.POLYMER
-            and self.chain_index is not None
-            and self.chain_index == other.chain_index
-            and self.residue_index is not None
-            and other.residue_index is not None
-            and abs(self.residue_index - other.residue_index) == 1
+            and other.residue_id in self.peptide_neighbor_residue_ids
         )
 
 
@@ -1004,8 +1002,12 @@ def bind_residue_contexts(
 ) -> tuple[ResidueContext, ...]:
     """Bind coordinate-independent residue context bases to current geometry."""
 
+    peptide_neighbor_ids_by_basis_index = _peptide_neighbor_ids_by_basis_index(
+        structure,
+        residue_context_bases,
+    )
     contexts: list[ResidueContext] = []
-    for basis in residue_context_bases:
+    for basis_index, basis in enumerate(residue_context_bases):
         residue_geometry = structure.geometry.residue_geometry(
             constitution=structure.constitution,
             residue_index=ResidueIndex(basis.residue_slot_index),
@@ -1018,10 +1020,60 @@ def bind_residue_contexts(
                 domain=basis.domain,
                 chain_index=basis.chain_index,
                 residue_index=basis.residue_index,
+                peptide_neighbor_residue_ids=peptide_neighbor_ids_by_basis_index[
+                    basis_index
+                ],
             )
         )
 
     return tuple(contexts)
+
+
+def _peptide_neighbor_ids_by_basis_index(
+    structure: ProteinStructure,
+    residue_context_bases: tuple[_ResidueContextBasis, ...],
+) -> tuple[frozenset[ResidueId], ...]:
+    """Return canonical peptide-neighbor ids for each residue context basis."""
+
+    neighbor_ids_by_basis_index: list[set[ResidueId]] = [
+        set() for _basis in residue_context_bases
+    ]
+    basis_index_by_chain_residue: dict[tuple[int, int], int] = {}
+    for basis_index, basis in enumerate(residue_context_bases):
+        if basis.domain is not ContactDomain.POLYMER:
+            continue
+        if basis.chain_index is None or basis.residue_index is None:
+            continue
+
+        basis_index_by_chain_residue[
+            (basis.chain_index, basis.residue_index)
+        ] = basis_index
+
+    for (
+        chain_index,
+        left_residue_index,
+    ), left_basis_index in basis_index_by_chain_residue.items():
+        right_basis_index = basis_index_by_chain_residue.get(
+            (chain_index, left_residue_index + 1)
+        )
+        if right_basis_index is None:
+            continue
+
+        left_basis = residue_context_bases[left_basis_index]
+        right_basis = residue_context_bases[right_basis_index]
+        if not are_peptide_adjacent(
+            left_basis.residue_site,
+            right_basis.residue_site,
+            structure=structure,
+        ):
+            continue
+
+        neighbor_ids_by_basis_index[left_basis_index].add(right_basis.residue_id)
+        neighbor_ids_by_basis_index[right_basis_index].add(left_basis.residue_id)
+
+    return tuple(
+        frozenset(neighbor_ids) for neighbor_ids in neighbor_ids_by_basis_index
+    )
 
 
 def build_projected_residue_contexts(
@@ -1034,52 +1086,18 @@ def build_projected_residue_contexts(
     """Return diagnostic residue contexts for one residue-id projection."""
 
     selected_residue_ids = frozenset(residue_ids)
-    contexts: list[ResidueContext] = []
-    for chain_index, chain_site in enumerate(structure.constitution.chains):
-        for residue_index, residue_site in enumerate(chain_site.residues):
-            if residue_site.residue_id not in selected_residue_ids:
-                continue
-
-            residue_geometry = structure.geometry.residue_geometry(
-                constitution=structure.constitution,
-                residue_index=structure.constitution.residue_index(
-                    residue_site.residue_id
-                ),
+    return bind_residue_contexts(
+        structure,
+        tuple(
+            basis
+            for basis in build_residue_context_bases(
+                structure,
+                component_library=component_library,
+                include_ligands=include_ligands,
             )
-            contexts.append(
-                ResidueContext(
-                    residue_site=residue_site,
-                    residue_geometry=residue_geometry,
-                    template=component_library.get(residue_site.component_id),
-                    domain=ContactDomain.POLYMER,
-                    chain_index=chain_index,
-                    residue_index=residue_index,
-                )
-            )
-
-    if include_ligands:
-        for ligand_site in structure.constitution.ligands:
-            if ligand_site.residue_id not in selected_residue_ids:
-                continue
-
-            ligand_geometry = structure.geometry.residue_geometry(
-                constitution=structure.constitution,
-                residue_index=structure.constitution.residue_index(
-                    ligand_site.residue_id
-                ),
-            )
-            contexts.append(
-                ResidueContext(
-                    residue_site=ligand_site,
-                    residue_geometry=ligand_geometry,
-                    template=component_library.get(ligand_site.component_id),
-                    domain=ContactDomain.RETAINED_NON_POLYMER,
-                    chain_index=None,
-                    residue_index=None,
-                )
-            )
-
-    return tuple(contexts)
+            if basis.residue_id in selected_residue_ids
+        ),
+    )
 
 
 def infer_hydrogen_anchors(

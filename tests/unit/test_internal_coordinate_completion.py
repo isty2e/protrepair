@@ -382,8 +382,8 @@ def test_backbone_oxygen_topology_covalent_gap_uses_next_peptide_context() -> No
     )
 
 
-def test_backbone_oxygen_non_covalent_topology_gap_uses_local_fallback() -> None:
-    """Non-covalent topology edges do not authorize peptide-next context."""
+def test_backbone_oxygen_non_covalent_topology_bad_geometry_falls_back() -> None:
+    """Non-covalent topology cannot authorize implausible peptide geometry."""
 
     residue = _ala_payload(
         seq_num=1,
@@ -394,9 +394,9 @@ def test_backbone_oxygen_non_covalent_topology_gap_uses_local_fallback() -> None
     )
     gapped_next_residue = _ala_payload(
         seq_num=3,
-        n=Vec3(2.9, 1.0, 1.2),
-        ca=Vec3(3.8, 1.8, 1.6),
-        c=Vec3(4.9, 1.2, 0.9),
+        n=Vec3(20.0, 20.0, 20.0),
+        ca=Vec3(21.0, 20.5, 20.0),
+        c=Vec3(22.0, 20.0, 20.5),
     )
     structure = _structure_with_peptide_topology_bond(
         _structure_from_residues((residue, gapped_next_residue)),
@@ -499,20 +499,20 @@ def test_terminal_sidechain_completion_does_not_need_next_peptide_context() -> N
     assert transformed_residue.has_atom_site("CB")
 
 
-def test_backbone_oxygen_insertion_code_adjacency_uses_local_fallback() -> None:
-    """Insertion-code adjacency is not silently treated as peptide-next context."""
+def test_backbone_oxygen_insertion_code_adjacency_uses_next_peptide_context() -> None:
+    """Insertion-code residue ids can still be chain-slot peptide neighbors."""
 
     residue = _ala_payload(
-        seq_num=1,
+        seq_num=100,
         n=Vec3(0.0, 0.0, 0.0),
         ca=Vec3(1.45, 0.0, 0.0),
         c=Vec3(2.40, 1.20, 0.0),
         o=None,
     )
     insertion_residue = _ala_payload(
-        seq_num=2,
+        seq_num=100,
         insertion_code="A",
-        n=Vec3(1.5, 0.0, 1.0),
+        n=Vec3(1.6, 0.0, 1.0),
         ca=Vec3(2.6, 0.4, 1.4),
         c=Vec3(3.4, 1.4, 1.2),
     )
@@ -532,9 +532,24 @@ def test_backbone_oxygen_insertion_code_adjacency_uses_local_fallback() -> None:
     transformed_residue = site.payload(transformer.transform(context))
     assert transformed_residue is not None
     assert transformed_residue.has_atom_site("O")
+
+    insertion_psi = backbone_psi_degrees(
+        (
+            residue.position("N"),
+            residue.position("CA"),
+            residue.position("C"),
+            insertion_residue.position("N"),
+        )
+    )
     np.testing.assert_allclose(
         _vec_array(transformed_residue.position("O")),
-        _vec_array(_oxygen_position(residue, residue.position("N"), 0.0)),
+        _vec_array(
+            _oxygen_position(
+                residue,
+                insertion_residue.position("N"),
+                insertion_psi,
+            )
+        ),
         atol=1e-12,
     )
 
