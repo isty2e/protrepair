@@ -129,6 +129,17 @@ analysis_result = process_structure(
 assert analysis_result.analyses is not None
 ```
 
+Analysis categories are intentionally coarse. Ramachandran points report
+`helix` for phi in `[-160, -20]` and psi in `[-90, 45]`, `beta` for phi in
+`[-180, -40]` with psi at least `90` or at most `-120`, `left_handed` for phi
+in `[20, 120]` and psi in `[-20, 120]`, and `other` outside those broad
+regions when both torsions are available. Coarse secondary-structure output
+projects those categories to `H` for helix, `E` for beta, and `C` for
+everything else, including left-handed, other, missing-torsion, and
+gap-disconnected residues. This analysis is not a DSSP replacement: it does
+not infer hydrogen-bond patterns, turns, bends, strand registration, or a
+separate PPII assignment.
+
 If you want to write the repaired structure back out:
 
 ```python
