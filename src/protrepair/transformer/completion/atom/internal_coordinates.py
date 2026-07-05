@@ -8,7 +8,7 @@ from protrepair.chemistry.internal_coordinates import (
     InternalCoordinateExecutionContext,
     InternalCoordinatePlacement,
 )
-from protrepair.geometry import InternalCoordinateFrame
+from protrepair.geometry import InternalCoordinateFrame, Vec3
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.base import DeterministicContextOperation
 from protrepair.transformer.completion.atom.backbone import (
@@ -23,14 +23,15 @@ from protrepair.transformer.completion.shared.domain import (
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 from protrepair.transformer.context import ProteinTransformationContext
 
+LOCAL_BACKBONE_OXYGEN_FALLBACK_PSI_DEGREES = 0.0
+
 
 @dataclass(slots=True)
 class InternalCoordinateEnvironment(InternalCoordinateExecutionContext):
     """Mutable execution environment for one residue-local program."""
 
     residue: CompletionResiduePayload
-    previous_residue: CompletionResiduePayload
-    next_residue: CompletionResiduePayload
+    next_residue: CompletionResiduePayload | None
     missing_atom_names: frozenset[str]
     geometry: AtomGeometryState
 
@@ -39,15 +40,13 @@ class InternalCoordinateEnvironment(InternalCoordinateExecutionContext):
         cls,
         *,
         residue: CompletionResiduePayload,
-        previous_residue: CompletionResiduePayload,
-        next_residue: CompletionResiduePayload,
+        next_residue: CompletionResiduePayload | None,
         missing_atom_names: tuple[str, ...],
     ) -> "InternalCoordinateEnvironment":
         """Build one environment from neighboring residues and ingress targets."""
 
         return cls(
             residue=residue,
-            previous_residue=previous_residue,
             next_residue=next_residue,
             missing_atom_names=frozenset(
                 atom_name.strip().upper() for atom_name in missing_atom_names
@@ -80,16 +79,28 @@ class InternalCoordinateEnvironment(InternalCoordinateExecutionContext):
 
         if self.has_atom("O"):
             return
+        if not all(self.has_atom(atom_name) for atom_name in ("N", "CA", "C")):
+            return
+
+        next_nitrogen = self._next_peptide_nitrogen_position()
+        psi_degrees = (
+            LOCAL_BACKBONE_OXYGEN_FALLBACK_PSI_DEGREES
+            if next_nitrogen is None
+            else self._psi_degrees(next_nitrogen)
+        )
+        clash_reference = (
+            self.geometry.position("N")
+            if next_nitrogen is None
+            else next_nitrogen
+        )
 
         position = PeptideCarbonylFrame(
             nitrogen=self.geometry.position("N"),
             alpha_carbon=self.geometry.position("CA"),
             carbonyl_carbon=self.geometry.position("C"),
         ).backbone_oxygen(
-            psi_degrees=self._psi_degrees(),
-            clash_reference=self.next_residue.residue_geometry.position(
-                self.next_residue.atom_sites[0].name
-            ),
+            psi_degrees=psi_degrees,
+            clash_reference=clash_reference,
         )
         self.geometry.assign("O", position)
 
@@ -130,17 +141,30 @@ class InternalCoordinateEnvironment(InternalCoordinateExecutionContext):
 
         return self.geometry.to_patch(atom_order)
 
-    def _psi_degrees(self) -> float:
+    def _next_peptide_nitrogen_position(self) -> Vec3 | None:
+        """Return the next peptide nitrogen position when available."""
+
+        if (
+            self.next_residue is None
+            or not self.next_residue.has_atom_site("N")
+            or not _is_probable_next_peptide_neighbor(
+                self.residue,
+                self.next_residue,
+            )
+        ):
+            return None
+
+        return self.next_residue.position("N")
+
+    def _psi_degrees(self, next_nitrogen: Vec3) -> float:
         """Return the backbone psi torsion used by oxygen placement."""
 
-        previous_geometry = self.previous_residue.residue_geometry
-        residue_geometry = self.residue.residue_geometry
         return backbone_psi_degrees(
             (
-                previous_geometry.position("N"),
-                previous_geometry.position("CA"),
-                previous_geometry.position("C"),
-                residue_geometry.position("N"),
+                self.geometry.position("N"),
+                self.geometry.position("CA"),
+                self.geometry.position("C"),
+                next_nitrogen,
             )
         )
 
@@ -170,14 +194,17 @@ class InternalCoordinatePlacementTransformer(
             return False
 
         residue = self.site.payload(context.source_snapshot)
-        previous_residue, next_residue = self.site.neighbor_payloads(
+        _previous_residue, next_residue = self.site.neighbor_payloads(
             context.source_snapshot
         )
+        missing_atom_names = self.site.missing_atom_names(context.source_snapshot)
         return (
             residue is not None
-            and previous_residue is not None
-            and next_residue is not None
-            and bool(self.site.missing_atom_names(context.source_snapshot))
+            and _has_required_backbone_oxygen_context(
+                residue,
+                missing_atom_names=missing_atom_names,
+            )
+            and bool(missing_atom_names)
             and bool(semantics.atom_order)
         )
 
@@ -189,23 +216,58 @@ class InternalCoordinatePlacementTransformer(
 
         semantics = self.site.template.heavy_atom_semantics
         residue = self.site.payload(context.source_snapshot)
-        previous_residue, next_residue = self.site.neighbor_payloads(
+        _previous_residue, next_residue = self.site.neighbor_payloads(
             context.source_snapshot
         )
+        missing_atom_names = self.site.missing_atom_names(context.source_snapshot)
         if (
             not isinstance(semantics, HeavyAtomSemantics)
             or residue is None
-            or previous_residue is None
-            or next_residue is None
+            or not _has_required_backbone_oxygen_context(
+                residue,
+                missing_atom_names=missing_atom_names,
+            )
         ):
             return context.source_snapshot
 
         environment = InternalCoordinateEnvironment.from_payloads(
             residue=residue,
-            previous_residue=previous_residue,
             next_residue=next_residue,
-            missing_atom_names=self.site.missing_atom_names(context.source_snapshot),
+            missing_atom_names=missing_atom_names,
         )
         semantics.program.apply(environment)
         patch = environment.build_patch(semantics.atom_order)
         return self.site.apply_patch(context.source_snapshot, patch)
+
+
+def _has_required_backbone_oxygen_context(
+    residue: CompletionResiduePayload,
+    *,
+    missing_atom_names: tuple[str, ...],
+) -> bool:
+    """Return whether missing O can be placed without inventing peptide context."""
+
+    if "O" not in {atom_name.strip().upper() for atom_name in missing_atom_names}:
+        return True
+
+    return (
+        residue.has_atom_site("N")
+        and residue.has_atom_site("CA")
+        and residue.has_atom_site("C")
+    )
+
+
+def _is_probable_next_peptide_neighbor(
+    residue: CompletionResiduePayload,
+    next_residue: CompletionResiduePayload,
+) -> bool:
+    """Return whether two residue ids support a conservative peptide-next claim."""
+
+    residue_id = residue.residue_id
+    next_residue_id = next_residue.residue_id
+    return (
+        residue_id.chain_id == next_residue_id.chain_id
+        and residue_id.insertion_code is None
+        and next_residue_id.insertion_code is None
+        and next_residue_id.seq_num == residue_id.seq_num + 1
+    )

@@ -242,8 +242,37 @@ class CompletionResiduePayload:
 class ResidueBackboneNeighborhood:
     """One residue-local backbone neighborhood for coordinate completion."""
 
-    previous_residue_index: ResidueIndex
-    next_residue_index: ResidueIndex
+    previous_residue_index: ResidueIndex | None
+    next_residue_index: ResidueIndex | None
+
+    @classmethod
+    def from_linear_residue_slots(
+        cls,
+        residue_index: ResidueIndex,
+        *,
+        residue_count: int,
+    ) -> "ResidueBackboneNeighborhood":
+        """Build a non-wrapping neighborhood for one linear residue sequence."""
+
+        if residue_count < 0:
+            raise ValueError("residue_count must be non-negative")
+        if residue_index.value >= residue_count:
+            raise ValueError("residue_index must be within residue_count")
+
+        previous_residue_index = (
+            ResidueIndex(residue_index.value - 1)
+            if residue_index.value > 0
+            else None
+        )
+        next_residue_index = (
+            ResidueIndex(residue_index.value + 1)
+            if residue_index.value + 1 < residue_count
+            else None
+        )
+        return cls(
+            previous_residue_index=previous_residue_index,
+            next_residue_index=next_residue_index,
+        )
 
     def resolve(
         self,
@@ -252,8 +281,22 @@ class ResidueBackboneNeighborhood:
         """Resolve the previous and next residues from one snapshot."""
 
         return (
-            resolve_completion_residue_payload(snapshot, self.previous_residue_index),
-            resolve_completion_residue_payload(snapshot, self.next_residue_index),
+            (
+                None
+                if self.previous_residue_index is None
+                else resolve_completion_residue_payload(
+                    snapshot,
+                    self.previous_residue_index,
+                )
+            ),
+            (
+                None
+                if self.next_residue_index is None
+                else resolve_completion_residue_payload(
+                    snapshot,
+                    self.next_residue_index,
+                )
+            ),
         )
 
 

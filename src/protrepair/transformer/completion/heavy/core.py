@@ -617,11 +617,9 @@ def _repair_standard_residue(
         template=template,
         original_payload=original_residue,
         reference_payload=reference_payload,
-        neighborhood=ResidueBackboneNeighborhood(
-            previous_residue_index=ResidueIndex(
-                (residue_index.value - 1) % chain_length
-            ),
-            next_residue_index=ResidueIndex((residue_index.value + 1) % chain_length),
+        neighborhood=ResidueBackboneNeighborhood.from_linear_residue_slots(
+            residue_index,
+            residue_count=chain_length,
         ),
     )
     current_residue = site.payload(snapshot)
