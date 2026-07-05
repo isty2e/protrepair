@@ -1,5 +1,7 @@
 """Contract tests for the canonical topology bond graph."""
 
+from typing import cast
+
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
@@ -247,6 +249,14 @@ class TestSourceBondMetadata:
             SourceBondMetadata(
                 record_type=SourceBondRecordType.PDB_LINK,
                 reported_distance_angstrom=reported_distance,
+            )
+
+    @pytest.mark.parametrize("reported_distance", (True, "2.0 A"))
+    def test_non_numeric_distance_rejected(self, reported_distance: object):
+        with pytest.raises(ValueError, match="finite"):
+            SourceBondMetadata(
+                record_type=SourceBondRecordType.PDB_LINK,
+                reported_distance_angstrom=cast(float, reported_distance),
             )
 
 

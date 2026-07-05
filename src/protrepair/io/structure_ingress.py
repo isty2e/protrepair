@@ -69,12 +69,16 @@ class _NormalizedResiduePayload:
         return self.constitution.component_id
 
     def occupancy_score(self) -> float:
-        """Aggregate atom occupancies for residue-variant comparison."""
+        """Return mean atom occupancy for residue-variant comparison."""
 
-        return sum(
+        occupancies = tuple(
             atom_geometry.occupancy
             for atom_geometry in self.geometry.atoms_by_name.values()
         )
+        if not occupancies:
+            return 0.0
+
+        return sum(occupancies) / len(occupancies)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +117,21 @@ class _SourceExplicitInterResidueConnection:
         object.__setattr__(self, "atom_ref_2", atom_ref_2)
         object.__setattr__(self, "source_id", source_id)
         object.__setattr__(self, "reported_distance_angstrom", reported_distance)
+
+
+@dataclass(frozen=True, slots=True)
+class _RawAtomPayload:
+    """Validated raw atom projection before residue-level variant selection."""
+
+    atom_site: AtomSite
+    geometry: AtomGeometry
+    formal_charge: int | None
+
+    @property
+    def atom_name_key(self) -> str:
+        """Return the canonical atom-name key used for duplicate resolution."""
+
+        return self.atom_site.name.strip().upper()
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,10 +515,15 @@ def _normalize_reported_connection_distance(
 ) -> float | None:
     """Return a positive source-reported connection distance when available."""
 
-    if reported_distance <= 0.0:
+    try:
+        normalized_distance = float(reported_distance)
+    except (TypeError, ValueError):
         return None
 
-    return float(reported_distance)
+    if not isfinite(normalized_distance) or normalized_distance <= 0.0:
+        return None
+
+    return normalized_distance
 
 
 def _normalize_polymer_residues(
@@ -574,41 +598,53 @@ def _normalize_ligands(
     ]
 
 
-def _residue_altloc_score_by_label(raw_residue) -> tuple[tuple[str, float], ...]:
-    """Return first-seen nonblank altloc labels and residue-level scores."""
+def _residue_altloc_score_by_label(
+    raw_atom_payloads: tuple[_RawAtomPayload, ...],
+) -> tuple[tuple[str, float], ...]:
+    """Return nonblank altloc labels and mean residue-level occupancy scores."""
 
     score_by_altloc: dict[str, float] = {}
+    count_by_altloc: dict[str, int] = {}
     altloc_order: list[str] = []
-    for raw_atom in raw_residue:
-        altloc = normalize_altloc(raw_atom.altloc)
+    for atom_payload in raw_atom_payloads:
+        altloc = atom_payload.geometry.altloc
         if altloc is None:
             continue
         if altloc not in score_by_altloc:
             score_by_altloc[altloc] = 0.0
+            count_by_altloc[altloc] = 0
             altloc_order.append(altloc)
 
-        score_by_altloc[altloc] += float(raw_atom.occ)
+        score_by_altloc[altloc] += atom_payload.geometry.occupancy
+        count_by_altloc[altloc] += 1
 
-    return tuple((altloc, score_by_altloc[altloc]) for altloc in altloc_order)
+    return tuple(
+        (altloc, score_by_altloc[altloc] / count_by_altloc[altloc])
+        for altloc in altloc_order
+    )
 
 
 def _select_residue_altloc(
-    raw_residue,
+    raw_atom_payloads: tuple[_RawAtomPayload, ...],
     occupancy_policy: OccupancyPolicy,
 ) -> str | None:
     """Select one residue-level altloc cohort or None for non-altloc residues."""
 
-    altloc_scores = _residue_altloc_score_by_label(raw_residue)
+    altloc_scores = _residue_altloc_score_by_label(raw_atom_payloads)
     if not altloc_scores:
         return None
 
     selected_altloc, selected_score = altloc_scores[0]
     for candidate_altloc, candidate_score in altloc_scores[1:]:
-        if _should_replace_occupancy_score(
-            selected_score,
-            candidate_score,
-            occupancy_policy,
-        ):
+        if candidate_score == selected_score:
+            should_replace = candidate_altloc < selected_altloc
+        else:
+            should_replace = _should_replace_occupancy_score(
+                selected_score,
+                candidate_score,
+                occupancy_policy,
+            )
+        if should_replace:
             selected_altloc = candidate_altloc
             selected_score = candidate_score
 
@@ -616,50 +652,50 @@ def _select_residue_altloc(
 
 
 def _raw_atoms_for_selected_altloc(
-    raw_residue,
+    raw_atom_payloads: tuple[_RawAtomPayload, ...],
     selected_altloc: str | None,
 ):
-    """Yield raw atoms belonging to the selected residue-level altloc cohort."""
+    """Yield atom payloads belonging to the selected residue-level altloc cohort."""
 
-    for raw_atom in raw_residue:
-        atom_altloc = normalize_altloc(raw_atom.altloc)
+    for atom_payload in raw_atom_payloads:
+        atom_altloc = atom_payload.geometry.altloc
         if (
             selected_altloc is None
             or atom_altloc is None
             or atom_altloc == selected_altloc
         ):
-            yield raw_atom
+            yield atom_payload
 
 
 def _select_atom_name_variants(
-    raw_atoms,
+    raw_atom_payloads,
     *,
     selected_altloc: str | None,
     occupancy_policy: OccupancyPolicy,
-) -> list:
+) -> list[_RawAtomPayload]:
     """Resolve duplicate atom names within one selected residue altloc cohort."""
 
     selected_atoms = {}
     atom_order: list[str] = []
 
-    for raw_atom in raw_atoms:
-        atom_name = raw_atom.name.strip().upper()
+    for atom_payload in raw_atom_payloads:
+        atom_name = atom_payload.atom_name_key
         if atom_name not in selected_atoms:
-            selected_atoms[atom_name] = raw_atom
+            selected_atoms[atom_name] = atom_payload
             atom_order.append(atom_name)
             continue
 
         current_atom = selected_atoms[atom_name]
         current_priority = _selected_altloc_priority(current_atom, selected_altloc)
-        candidate_priority = _selected_altloc_priority(raw_atom, selected_altloc)
+        candidate_priority = _selected_altloc_priority(atom_payload, selected_altloc)
         if candidate_priority < current_priority:
             continue
         if candidate_priority > current_priority or _should_replace_occupancy_score(
-            current_score=float(current_atom.occ),
-            candidate_score=float(raw_atom.occ),
+            current_score=current_atom.geometry.occupancy,
+            candidate_score=atom_payload.geometry.occupancy,
             occupancy_policy=occupancy_policy,
         ):
-            selected_atoms[atom_name] = raw_atom
+            selected_atoms[atom_name] = atom_payload
 
     return [
         selected_atoms[atom_name]
@@ -668,7 +704,7 @@ def _select_atom_name_variants(
 
 
 def _selected_altloc_priority(
-    raw_atom,
+    atom_payload: _RawAtomPayload,
     selected_altloc: str | None,
 ) -> int:
     """Return whether one raw atom is explicit member of the selected cohort."""
@@ -676,7 +712,7 @@ def _selected_altloc_priority(
     if selected_altloc is None:
         return 0
 
-    return int(normalize_altloc(raw_atom.altloc) == selected_altloc)
+    return int(atom_payload.geometry.altloc == selected_altloc)
 
 
 def _normalize_residue(
@@ -691,7 +727,11 @@ def _normalize_residue(
         seq_num=int(raw_residue.seqid.num),
         insertion_code=normalize_insertion_code(raw_residue.seqid.icode),
     )
-    selected_atom_payloads = _select_atom_variants(raw_residue, occupancy_policy)
+    selected_atom_payloads = _select_atom_variants(
+        raw_residue,
+        residue_id=residue_id,
+        occupancy_policy=occupancy_policy,
+    )
     return _NormalizedResiduePayload(
         constitution=ResidueSite(
             component_id=raw_residue.name,
@@ -715,19 +755,29 @@ def _normalize_residue(
 
 def _select_atom_variants(
     raw_residue,
+    *,
+    residue_id: ResidueId,
     occupancy_policy: OccupancyPolicy,
 ) -> list[tuple[AtomSite, AtomGeometry, int | None]]:
     """Resolve atom sites by residue altloc cohort, then by atom name."""
 
-    selected_altloc = _select_residue_altloc(raw_residue, occupancy_policy)
+    raw_atom_payloads = tuple(
+        _atom_payload_from_raw_site(raw_atom, residue_id=residue_id)
+        for raw_atom in raw_residue
+    )
+    selected_altloc = _select_residue_altloc(raw_atom_payloads, occupancy_policy)
     selected_atoms = _select_atom_name_variants(
-        _raw_atoms_for_selected_altloc(raw_residue, selected_altloc),
+        _raw_atoms_for_selected_altloc(raw_atom_payloads, selected_altloc),
         selected_altloc=selected_altloc,
         occupancy_policy=occupancy_policy,
     )
     return [
-        _atom_payload_from_raw_site(raw_atom)
-        for raw_atom in selected_atoms
+        (
+            atom_payload.atom_site,
+            atom_payload.geometry,
+            atom_payload.formal_charge,
+        )
+        for atom_payload in selected_atoms
     ]
 
 
@@ -746,16 +796,33 @@ def _should_replace_occupancy_score(
 
 def _atom_payload_from_raw_site(
     raw_atom,
-) -> tuple[AtomSite, AtomGeometry, int | None]:
+    *,
+    residue_id: ResidueId,
+) -> _RawAtomPayload:
     """Project one selected gemmi atom site into constitution and geometry payload."""
 
     altloc = normalize_altloc(raw_atom.altloc)
-    x = _validated_raw_atom_float(raw_atom.pos.x, "x coordinate", raw_atom.name)
-    y = _validated_raw_atom_float(raw_atom.pos.y, "y coordinate", raw_atom.name)
-    z = _validated_raw_atom_float(raw_atom.pos.z, "z coordinate", raw_atom.name)
-    occupancy = _validated_raw_atom_occupancy(raw_atom)
-    b_factor = _validated_raw_atom_b_factor(raw_atom)
-    return (
+    x = _validated_raw_atom_float(
+        raw_atom.pos.x,
+        "x coordinate",
+        raw_atom.name,
+        residue_id,
+    )
+    y = _validated_raw_atom_float(
+        raw_atom.pos.y,
+        "y coordinate",
+        raw_atom.name,
+        residue_id,
+    )
+    z = _validated_raw_atom_float(
+        raw_atom.pos.z,
+        "z coordinate",
+        raw_atom.name,
+        residue_id,
+    )
+    occupancy = _validated_raw_atom_occupancy(raw_atom, residue_id)
+    b_factor = _validated_raw_atom_b_factor(raw_atom, residue_id)
+    return _RawAtomPayload(
         AtomSite(
             name=raw_atom.name,
             element=raw_atom.element.name,
@@ -770,7 +837,7 @@ def _atom_payload_from_raw_site(
             b_factor=b_factor,
             altloc=altloc,
         ),
-        normalize_formal_charge(int(raw_atom.charge)),
+        formal_charge=normalize_formal_charge(int(raw_atom.charge)),
     )
 
 
@@ -778,6 +845,7 @@ def _validated_raw_atom_float(
     value: float,
     field_name: str,
     atom_name: str,
+    residue_id: ResidueId,
 ) -> float:
     """Return one finite raw atom float or raise a normalization error."""
 
@@ -785,41 +853,46 @@ def _validated_raw_atom_float(
     if not isfinite(normalized_value):
         raise StructureNormalizationError(
             "structure normalization rejected non-finite "
-            f"{field_name} for atom {atom_name.strip()!r}"
+            f"{field_name} for atom {atom_name.strip()!r} "
+            f"at {residue_id.display_token()}"
         )
 
     return normalized_value
 
 
-def _validated_raw_atom_occupancy(raw_atom) -> float:
+def _validated_raw_atom_occupancy(raw_atom, residue_id: ResidueId) -> float:
     """Return a finite PDB/mmCIF occupancy in the accepted [0, 1] range."""
 
     occupancy = _validated_raw_atom_float(
         raw_atom.occ,
         "occupancy",
         raw_atom.name,
+        residue_id,
     )
     if occupancy < 0.0 or occupancy > 1.0:
         raise StructureNormalizationError(
             "structure normalization rejected occupancy outside [0.0, 1.0] "
-            f"for atom {raw_atom.name.strip()!r}: {occupancy}"
+            f"for atom {raw_atom.name.strip()!r} "
+            f"at {residue_id.display_token()}: {occupancy}"
         )
 
     return occupancy
 
 
-def _validated_raw_atom_b_factor(raw_atom) -> float:
-    """Return a finite non-negative source B factor."""
+def _validated_raw_atom_b_factor(raw_atom, residue_id: ResidueId) -> float:
+    """Return a finite non-negative source B factor with no upper bound."""
 
     b_factor = _validated_raw_atom_float(
         raw_atom.b_iso,
         "B factor",
         raw_atom.name,
+        residue_id,
     )
     if b_factor < 0.0:
         raise StructureNormalizationError(
             "structure normalization rejected negative B factor "
-            f"for atom {raw_atom.name.strip()!r}: {b_factor}"
+            f"for atom {raw_atom.name.strip()!r} "
+            f"at {residue_id.display_token()}: {b_factor}"
         )
 
     return b_factor

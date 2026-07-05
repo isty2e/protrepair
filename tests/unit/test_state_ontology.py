@@ -76,6 +76,7 @@ from protrepair.state.domain import (
     HydrogenAttachmentResolutionObservation,
     HydrogenAttachmentResolutionState,
 )
+from protrepair.state.structure_readiness import _aggregate_topology_availability_state
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.polymer_blueprint import (
@@ -489,6 +490,10 @@ def test_structure_readiness_preserves_unsupported_polymer_topology() -> None:
     assert chemistry_readiness_facts.heavy_atom_topology_availability_state is (
         TopologyAvailabilityState.UNSUPPORTED
     )
+    # Hydrogen topology is aggregated only over hydrogen-applicable residues.
+    # Unsupported component chemistry makes the top-level hydrogen axis
+    # NOT_APPLICABLE, while the residue-local fact below still records
+    # UNSUPPORTED so the unsupported topology evidence is not lost.
     assert chemistry_readiness_facts.hydrogen_topology_availability_state is (
         TopologyAvailabilityState.NOT_APPLICABLE
     )
@@ -502,6 +507,20 @@ def test_structure_readiness_preserves_unsupported_polymer_topology() -> None:
     assert (
         chemistry_readiness_facts.residue_facts[0].hydrogen_topology_availability_state
         is TopologyAvailabilityState.UNSUPPORTED
+    )
+
+
+def test_topology_availability_aggregate_preserves_all_not_applicable() -> None:
+    """All non-applicable topology inputs should aggregate to NOT_APPLICABLE."""
+
+    assert (
+        _aggregate_topology_availability_state(
+            (
+                TopologyAvailabilityState.NOT_APPLICABLE,
+                TopologyAvailabilityState.NOT_APPLICABLE,
+            )
+        )
+        is TopologyAvailabilityState.NOT_APPLICABLE
     )
 
 

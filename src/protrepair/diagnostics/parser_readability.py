@@ -10,6 +10,10 @@ from typing import Protocol
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
+from protrepair.io.gemmi_normalization import (
+    normalize_chain_id,
+    normalize_insertion_code,
+)
 from protrepair.io.pdb_projection import (
     RDKitNoConectPDBBlockProjector,
     pdb_without_conect,
@@ -697,9 +701,9 @@ def _atom_ref_from_pdb_atom_line(line: str) -> AtomRef | None:
     try:
         return AtomRef(
             residue_id=ResidueId(
-                chain_id=line[21].strip(),
+                chain_id=normalize_chain_id(line[21:22]),
                 seq_num=int(line[22:26]),
-                insertion_code=line[26].strip() or None,
+                insertion_code=normalize_insertion_code(line[26:27]),
             ),
             atom_name=line[12:16].strip(),
         )

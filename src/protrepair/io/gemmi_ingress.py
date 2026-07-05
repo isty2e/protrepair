@@ -96,7 +96,11 @@ def read_structure_string_with_policy(
     policy: StructureNormalizationPolicy,
     source_name: str | None = None,
 ) -> ProteinStructure:
-    """Read one first-model payload using one canonical normalization policy."""
+    """Read one first-model payload using one canonical normalization policy.
+
+    Parser and normalization failures are exposed as project-owned
+    StructureNormalizationError values.
+    """
 
     try:
         _assert_structure_text_size(contents, source_name=source_name)
@@ -126,7 +130,9 @@ def read_raw_structure(path: Path, file_format: FileFormat):
     """Read one coordinate file with a format-specific gemmi ingress path.
 
     The size guard is repeated here so direct raw-parser callers cannot bypass
-    the public ingress limit enforced by read_structure().
+    the public ingress limit enforced by read_structure(). The returned gemmi
+    object can contain multiple source models; canonical normalization consumes
+    the first model only.
     """
 
     _assert_structure_file_size(path)
@@ -140,7 +146,11 @@ def read_raw_structure(path: Path, file_format: FileFormat):
 
 
 def read_raw_structure_string(contents: str, file_format: FileFormat):
-    """Read one coordinate payload with a format-specific gemmi ingress path."""
+    """Read one coordinate payload with a format-specific gemmi ingress path.
+
+    The returned gemmi object can contain multiple source models; canonical
+    normalization consumes the first model only.
+    """
 
     _assert_structure_text_size(contents, source_name=None)
     if file_format is FileFormat.PDB:
@@ -224,18 +234,31 @@ def _pdb_conect_atom_identity_pairs(
 def _first_model_unambiguous_pdb_atom_identities(
     contents: str,
 ) -> dict[int, PdbConectAtomIdentity]:
-    """Return source atom identities that unambiguously belong to model one."""
+    """Return source atom identities that unambiguously belong to model one.
 
-    records_by_serial: dict[int, list[tuple[int, PdbConectAtomIdentity]]] = {}
+    CONECT is lowered onto the canonical first-model structure, so serial reuse
+    in later MODEL sections does not make a first-model serial ambiguous. After
+    first-model ENDMDL, atom records are treated as outside model one even when
+    malformed trailing atoms appear without another MODEL record.
+    """
+
+    records_by_serial: dict[int, list[PdbConectAtomIdentity]] = {}
     current_model_index = 1
     explicit_model_count = 0
+    first_model_closed = False
     for line in contents.splitlines():
         if line.startswith("MODEL"):
             explicit_model_count += 1
             current_model_index = explicit_model_count
+            if current_model_index > 1:
+                first_model_closed = True
             continue
         if line.startswith("ENDMDL"):
+            if current_model_index == 1:
+                first_model_closed = True
             current_model_index = explicit_model_count + 1
+            continue
+        if first_model_closed or current_model_index != 1:
             continue
 
         atom_serial_and_identity = _pdb_atom_serial_and_identity(line)
@@ -243,12 +266,12 @@ def _first_model_unambiguous_pdb_atom_identities(
             continue
 
         serial, identity = atom_serial_and_identity
-        records_by_serial.setdefault(serial, []).append((current_model_index, identity))
+        records_by_serial.setdefault(serial, []).append(identity)
 
     return {
-        serial: records[0][1]
+        serial: records[0]
         for serial, records in records_by_serial.items()
-        if len(records) == 1 and records[0][0] == 1
+        if len(records) == 1
     }
 
 

@@ -301,10 +301,17 @@ def _aggregate_topology_availability_state(
     """Aggregate residue-local topology availability without hiding unsupported."""
 
     topology_states = tuple(states)
-    if all(state is TopologyAvailabilityState.PRESENT for state in topology_states):
-        return TopologyAvailabilityState.PRESENT
     if any(state is TopologyAvailabilityState.UNSUPPORTED for state in topology_states):
         return TopologyAvailabilityState.UNSUPPORTED
+    applicable_states = tuple(
+        state
+        for state in topology_states
+        if state is not TopologyAvailabilityState.NOT_APPLICABLE
+    )
+    if not applicable_states:
+        return TopologyAvailabilityState.NOT_APPLICABLE
+    if all(state is TopologyAvailabilityState.PRESENT for state in applicable_states):
+        return TopologyAvailabilityState.PRESENT
     return TopologyAvailabilityState.ABSENT
 
 

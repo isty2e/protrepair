@@ -23,3 +23,12 @@ Initial public release candidate of the rewritten `protrepair` package.
 - include representative workflow regressions, fixture-backed refinement
   benchmarks, public API smoke tests, release-facing README examples, typed
   package metadata, and third-party licensing notices
+- harden ingress normalization by selecting coherent residue-level altloc
+  cohorts, validating non-finite atom coordinates/occupancy/B-factors at the
+  boundary, preserving first-model PDB CONECT records safely, and dropping source
+  connectivity that refers to discarded altloc or ligand variants
+- expose unsupported topology as an explicit readiness state for polymer
+  components whose expected topology cannot be resolved from supported chemistry
+  evidence, including separate absent-vs-unsupported workflow deficit fields
+- wrap public structure parsing and unsupported-format failures in project-owned
+  errors so callers can catch `ProtrepairError` subclasses consistently

@@ -79,7 +79,12 @@ class StructureCoverageDeficit:
 
 @dataclass(frozen=True, slots=True)
 class StructureChemistryReadinessDeficit:
-    """Chemistry-readiness burdens over support, topology, and hydrogens."""
+    """Chemistry-readiness burdens over support, topology, and hydrogens.
+
+    Topology ``absent`` fields mean expected topology is known but missing;
+    ``unsupported`` fields mean the expected topology cannot be resolved from
+    the currently supported chemistry basis.
+    """
 
     unsupported_component_residue_ids: tuple[ResidueId, ...] = ()
     heavy_atom_topology_absent_residue_ids: tuple[ResidueId, ...] = ()
