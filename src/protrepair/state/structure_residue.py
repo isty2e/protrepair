@@ -248,16 +248,18 @@ def _polymer_heavy_topology_availability_state(
 ) -> TopologyAvailabilityState:
     """Return polymer heavy topology availability from expected template bonds."""
 
+    if not support_state.is_fully_supported():
+        return TopologyAvailabilityState.UNSUPPORTED
+
     if (
-        not support_state.is_fully_supported()
-        or coverage_facts.requires_backbone_completion()
+        coverage_facts.requires_backbone_completion()
         or coverage_facts.requires_sidechain_completion()
     ):
         return TopologyAvailabilityState.ABSENT
 
     template = component_library.get(residue.component_id)
     if template is None:
-        return TopologyAvailabilityState.ABSENT
+        return TopologyAvailabilityState.UNSUPPORTED
 
     return residue_bond_topology_availability_state(
         structure,
@@ -282,7 +284,10 @@ def _polymer_hydrogen_topology_availability_state(
     """Return polymer hydrogen topology availability from expected H anchors."""
 
     template = component_library.get(residue.component_id)
-    if template is None or not expected_hydrogen_atom_names:
+    if template is None:
+        return TopologyAvailabilityState.UNSUPPORTED
+
+    if not expected_hydrogen_atom_names:
         return TopologyAvailabilityState.ABSENT
 
     return residue_bond_topology_availability_state(
@@ -569,8 +574,10 @@ class ResidueProjectionFactRuntime:
                 covalent_like_endpoint_pairs=self.covalent_like_endpoint_pairs,
             )
         )
-        if heavy_atom_topology_availability_state is TopologyAvailabilityState.ABSENT:
-            hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
+        if heavy_atom_topology_availability_state.is_unavailable():
+            hydrogen_topology_availability_state = (
+                heavy_atom_topology_availability_state
+            )
         elif h_applicability_state is HydrogenApplicabilityState.NOT_APPLICABLE:
             hydrogen_topology_availability_state = (
                 TopologyAvailabilityState.NOT_APPLICABLE
