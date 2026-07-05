@@ -1,6 +1,7 @@
 """Canonical raw-structure ingress normalization transformations."""
 
 from dataclasses import dataclass
+from math import isfinite
 
 from protrepair.chemistry.component.defaults import build_default_component_library
 from protrepair.chemistry.component.topology import template_resolved_topology_bonds
@@ -749,6 +750,11 @@ def _atom_payload_from_raw_site(
     """Project one selected gemmi atom site into constitution and geometry payload."""
 
     altloc = normalize_altloc(raw_atom.altloc)
+    x = _validated_raw_atom_float(raw_atom.pos.x, "x coordinate", raw_atom.name)
+    y = _validated_raw_atom_float(raw_atom.pos.y, "y coordinate", raw_atom.name)
+    z = _validated_raw_atom_float(raw_atom.pos.z, "z coordinate", raw_atom.name)
+    occupancy = _validated_raw_atom_occupancy(raw_atom)
+    b_factor = _validated_raw_atom_b_factor(raw_atom)
     return (
         AtomSite(
             name=raw_atom.name,
@@ -756,16 +762,67 @@ def _atom_payload_from_raw_site(
         ),
         AtomGeometry(
             position=Vec3(
-                x=float(raw_atom.pos.x),
-                y=float(raw_atom.pos.y),
-                z=float(raw_atom.pos.z),
+                x=x,
+                y=y,
+                z=z,
             ),
-            occupancy=float(raw_atom.occ),
-            b_factor=float(raw_atom.b_iso),
+            occupancy=occupancy,
+            b_factor=b_factor,
             altloc=altloc,
         ),
         normalize_formal_charge(int(raw_atom.charge)),
     )
+
+
+def _validated_raw_atom_float(
+    value: float,
+    field_name: str,
+    atom_name: str,
+) -> float:
+    """Return one finite raw atom float or raise a normalization error."""
+
+    normalized_value = float(value)
+    if not isfinite(normalized_value):
+        raise StructureNormalizationError(
+            "structure normalization rejected non-finite "
+            f"{field_name} for atom {atom_name.strip()!r}"
+        )
+
+    return normalized_value
+
+
+def _validated_raw_atom_occupancy(raw_atom) -> float:
+    """Return a finite PDB/mmCIF occupancy in the accepted [0, 1] range."""
+
+    occupancy = _validated_raw_atom_float(
+        raw_atom.occ,
+        "occupancy",
+        raw_atom.name,
+    )
+    if occupancy < 0.0 or occupancy > 1.0:
+        raise StructureNormalizationError(
+            "structure normalization rejected occupancy outside [0.0, 1.0] "
+            f"for atom {raw_atom.name.strip()!r}: {occupancy}"
+        )
+
+    return occupancy
+
+
+def _validated_raw_atom_b_factor(raw_atom) -> float:
+    """Return a finite non-negative source B factor."""
+
+    b_factor = _validated_raw_atom_float(
+        raw_atom.b_iso,
+        "B factor",
+        raw_atom.name,
+    )
+    if b_factor < 0.0:
+        raise StructureNormalizationError(
+            "structure normalization rejected negative B factor "
+            f"for atom {raw_atom.name.strip()!r}: {b_factor}"
+        )
+
+    return b_factor
 
 
 def _select_residue_variant(

@@ -18,7 +18,7 @@ from tests.support.structure_summary import summarize_structure
 import protrepair.io.gemmi_ingress as gemmi_ingress
 import protrepair.io.gemmi_writer as gemmi_writer
 from protrepair.diagnostics.topology import detect_disulfide_topology
-from protrepair.errors import StructureInputTooLargeError
+from protrepair.errors import StructureInputTooLargeError, StructureNormalizationError
 from protrepair.geometry import Vec3
 from protrepair.io import (
     read_structure,
@@ -77,6 +77,199 @@ def test_read_structure_rejects_oversized_file_before_parser(
 
     with pytest.raises(StructureInputTooLargeError, match="exceeds 4 bytes"):
         read_structure(pdb_path)
+
+
+def test_read_structure_string_rejects_nonfinite_pdb_coordinate() -> None:
+    """PDB ingress should reject non-finite coordinates before canonical geometry."""
+
+    with pytest.raises(StructureNormalizationError, match="non-finite x coordinate"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        residue_name="GLY",
+                        chain_id="A",
+                        residue_seq=1,
+                        x=float("nan"),
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_read_structure_string_rejects_nonfinite_mmcif_coordinate() -> None:
+    """mmCIF ingress should share the same finite-coordinate contract as PDB."""
+
+    with pytest.raises(StructureNormalizationError, match="non-finite x coordinate"):
+        read_structure_string(
+            """data_numeric
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N . GLY A 1 1 ? nan 2.000 3.000 1.00 20.00 1 A 1
+#
+""",
+            FileFormat.MMCIF,
+        )
+
+
+@pytest.mark.parametrize("occupancy", [-0.01, 1.01])
+def test_read_structure_string_rejects_out_of_range_occupancy(
+    occupancy: float,
+) -> None:
+    """Ingress occupancy must stay within the accepted PDB/mmCIF range."""
+
+    with pytest.raises(StructureNormalizationError, match="occupancy"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        residue_name="GLY",
+                        chain_id="A",
+                        residue_seq=1,
+                        occupancy=occupancy,
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_read_structure_string_rejects_negative_b_factor() -> None:
+    """Ingress B factors must be finite and non-negative."""
+
+    with pytest.raises(StructureNormalizationError, match="B factor"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        residue_name="GLY",
+                        chain_id="A",
+                        residue_seq=1,
+                        b_factor=-0.01,
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_read_structure_string_rejects_nonfinite_occupancy_and_b_factor() -> None:
+    """Ingress should reject non-finite scalar atom geometry values."""
+
+    with pytest.raises(StructureNormalizationError, match="non-finite occupancy"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        residue_name="GLY",
+                        chain_id="A",
+                        residue_seq=1,
+                        occupancy=float("nan"),
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+    with pytest.raises(StructureNormalizationError, match="non-finite B factor"):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        atom_name=" N  ",
+                        residue_name="GLY",
+                        chain_id="A",
+                        residue_seq=1,
+                        b_factor=float("inf"),
+                        element="N",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_read_structure_string_accepts_numeric_boundary_values() -> None:
+    """Ingress validation should not reject valid occupancy and B-factor limits."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    occupancy=0.00,
+                    b_factor=0.00,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    atom_name=" CA ",
+                    residue_name="GLY",
+                    chain_id="A",
+                    residue_seq=1,
+                    x=2.0,
+                    occupancy=1.00,
+                    b_factor=999.99,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    residue_id = ResidueId("A", 1)
+    n_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    )
+    ca_geometry = structure.geometry.atom_geometry(
+        structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    )
+
+    assert (n_geometry.occupancy, n_geometry.b_factor) == (0.0, 0.0)
+    assert ca_geometry.occupancy == 1.0
+    assert ca_geometry.b_factor == pytest.approx(999.99)
 
 
 def test_read_structure_string_uses_first_model_for_multimodel_pdb() -> None:
