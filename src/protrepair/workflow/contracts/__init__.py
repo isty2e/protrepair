@@ -8,6 +8,12 @@ from protrepair.analysis.results import (
     SecondaryStructureAssignment,
 )
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
+from protrepair.transformer.completion.hydrogen.protonation import (
+    DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO,
+    DisabledHistidineProtonationRequest,
+    HistidineProtonationRequest,
+    PrasRatioHistidineProtonationRequest,
+)
 from protrepair.workflow.contracts.external_reference import (
     ExternalSpanReconstructionSpec,
     build_alphafold_span_reconstruction_specs,
@@ -52,14 +58,18 @@ from protrepair.workflow.contracts.span_policy import ExternalSpanGapSelectionPo
 __all__ = [
     "AnalysisBundle",
     "CTerminalOxtPolicy",
+    "DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO",
+    "DisabledHistidineProtonationRequest",
     "ExternalSpanGapSelectionPolicy",
     "ExternalSpanReconstructionSpec",
+    "HistidineProtonationRequest",
     "HydrogenPolicy",
     "LigandPolicy",
     "MutationPolicy",
     "OccupancyPolicy",
     "OrphanFragmentPolicy",
     "ProcessResult",
+    "PrasRatioHistidineProtonationRequest",
     "RamachandranAnalysis",
     "RamachandranPoint",
     "RequestedGoalCompletionVerdict",

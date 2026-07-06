@@ -158,6 +158,37 @@ When strict policy blocks an otherwise required RDKit fallback, the result emits
 a `RETAINED_NON_POLYMER_FALLBACK_BLOCKED` warning issue and leaves the retained
 ligand unchanged.
 
+Histidine delta protonation is available as an explicit workflow request, not as
+an automatic pKa or hydrogen-bond-network inference. The legacy PRAS behavior
+assumes roughly pH 7 and protonates the first `floor(total_chain_HIS * 0.2)`
+histidines in chain order. That ratio is exposed as
+`PrasRatioHistidineProtonationRequest` so callers can opt in, choose a different
+ratio in `[0.0, 1.0]`, or keep the default disabled behavior. The older
+`protonate_histidines=True` flag remains a shorthand for the default PRAS-ratio
+request at the workflow boundary.
+
+```python
+from protrepair.workflow.contracts import PrasRatioHistidineProtonationRequest
+
+his_result = process_structure(
+    Path("tests/fixtures/pdb/1aho.pdb"),
+    requested_goals=(
+        requested_process_goal(
+            scope=WholeStructureScope(),
+            value=HydrogenCoverageState.COMPLETE,
+        ),
+    ),
+    transform_requests=WorkflowTransformRequests(
+        histidine_protonation=PrasRatioHistidineProtonationRequest(ratio=0.2),
+    ),
+)
+```
+
+The request resolves to explicit histidine assignments before hydrogen
+directives are built. Future explicit-residue, tautomer, pKa-backed, or
+environment-aware methods should produce the same assignment contract instead of
+changing the PRAS-ratio request into a general protonation policy.
+
 If you want structured analyses in the result:
 
 ```python

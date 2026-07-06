@@ -93,6 +93,9 @@ from protrepair.workflow.actions.context import TransformerExecutionContext
 from protrepair.workflow.actions.heavy_completion import (
     HeavyAtomCompletionTransformer,
 )
+from protrepair.workflow.actions.hydrogen_completion import (
+    HydrogenCompletionTransformer,
+)
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.actions.packing import CommittedPackingTransformer
 from protrepair.workflow.actions.retained_non_polymer_hydrogen_completion import (
@@ -105,8 +108,10 @@ from protrepair.workflow.actions.terminal_augmentation import (
     TerminalAugmentationTransformer,
 )
 from protrepair.workflow.contracts import (
+    DisabledHistidineProtonationRequest,
     LigandPolicy,
     OrphanFragmentPolicy,
+    PrasRatioHistidineProtonationRequest,
     ProcessResult,
     RequestedGoalCompletionVerdict,
     RequestedGoalReport,
@@ -610,10 +615,106 @@ def test_execute_iterative_workflow_threads_retained_non_polymer_fallback_policy
         planning_context=WorkflowPlanningContext(),
         reference_structure=None,
         orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
-        protonate_histidines=False,
+        histidine_protonation=DisabledHistidineProtonationRequest(),
     )
 
     assert captured_policy_values == [False]
+
+
+def test_process_structure_threads_typed_histidine_request_to_hydrogen_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Process workflow should carry typed histidine policy to hydrogen actions."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_workflow_structure(
+        chains=(
+            build_chain(
+                "A",
+                (build_residue("ALA", "A", 1, ("N", "CA", "C", "O", "CB")),),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="workflow-typed-histidine-request-threading",
+    )
+    histidine_request = PrasRatioHistidineProtonationRequest(ratio=0.0)
+    transformer = HydrogenCompletionTransformer(
+        scope=ResidueSetScope(residue_ids=(residue_id,))
+    )
+    captured_requests: list[PrasRatioHistidineProtonationRequest] = []
+    planner_call_count = 0
+
+    def fake_plan_workflow_actions(
+        current_structure: ProteinStructure,
+        *,
+        requested_goals: RequestedGoalSet,
+        transform_requests: WorkflowTransformRequests,
+        component_library=None,
+        planner_memory: WorkflowPlannerMemory | None = None,
+        planning_context=None,
+        retained_non_polymer_chemistry_evidence=(),
+    ) -> WorkflowPlanningOutcome:
+        del (
+            requested_goals,
+            transform_requests,
+            component_library,
+            planner_memory,
+            planning_context,
+            retained_non_polymer_chemistry_evidence,
+        )
+        nonlocal planner_call_count
+        planner_call_count += 1
+        return WorkflowPlanningOutcome(
+            structure_planning_signature=StructurePlanningSignature.from_facts(
+                StructureProjectionStateFacts.from_structure(current_structure)
+            ),
+            transformers=(transformer,) if planner_call_count == 1 else (),
+        )
+
+    def fake_add_hydrogens(
+        structure: ProteinStructure,
+        component_library=None,
+        reference_structure=None,
+        *,
+        prepare_heavy_atoms: bool,
+        target_residue_ids=None,
+        orphan_fragment_policy: OrphanFragmentPolicy,
+        histidine_protonation: PrasRatioHistidineProtonationRequest,
+        local_refinement: RepairLocalRefinementDirective | None = None,
+    ) -> ProcessResult:
+        assert component_library is not None
+        assert reference_structure is None
+        assert prepare_heavy_atoms is False
+        assert target_residue_ids == frozenset({residue_id})
+        assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD
+        assert local_refinement is None
+        captured_requests.append(histidine_protonation)
+        return ProcessResult(structure=structure, repairs=(), issues=(), analyses=None)
+
+    monkeypatch.setattr(
+        "protrepair.workflow.engine.runtime.plan_workflow_actions",
+        fake_plan_workflow_actions,
+    )
+    monkeypatch.setattr(
+        "protrepair.workflow.actions.hydrogen_completion.add_hydrogens",
+        fake_add_hydrogens,
+    )
+
+    result = process_structure(
+        structure,
+        requested_goals=whole_structure_requested_goals(
+            HydrogenCoverageState.COMPLETE,
+            include_default_heavy_completion=False,
+        ),
+        transform_requests=WorkflowTransformRequests(
+            histidine_protonation=histidine_request,
+        ),
+        planning_context=WorkflowPlanningContext(max_speculative_nodes=3),
+    )
+
+    assert result.structure is structure
+    assert captured_requests == [histidine_request]
 
 
 def test_local_refinement_transformer_threads_retained_non_polymer_fallback_policy(
@@ -1565,7 +1666,7 @@ def test_process_structure_applies_local_refinement_after_heavy_repair(
         prepare_heavy_atoms: bool,
         target_residue_ids=None,
         orphan_fragment_policy: OrphanFragmentPolicy,
-        protonate_histidines: bool,
+        histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
     ) -> ProcessResult:
         assert component_library is not None
@@ -1574,7 +1675,7 @@ def test_process_structure_applies_local_refinement_after_heavy_repair(
         assert not prepare_heavy_atoms
         assert target_residue_ids == frozenset({residue_id})
         assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD
-        assert not protonate_histidines
+        assert isinstance(histidine_protonation, DisabledHistidineProtonationRequest)
         assert local_refinement is None
         calls.append("hydrogen")
         return ProcessResult(
@@ -2124,7 +2225,7 @@ def test_execute_iterative_workflow_caps_runaway_frontier(
             planning_context=WorkflowPlanningContext(max_speculative_nodes=2),
             reference_structure=None,
             orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
-            protonate_histidines=False,
+            histidine_protonation=DisabledHistidineProtonationRequest(),
         )
 
     assert planner_call_count == 2
@@ -2216,7 +2317,7 @@ def test_execute_iterative_workflow_caps_current_proposal_batch(
             planning_context=WorkflowPlanningContext(max_speculative_nodes=2),
             reference_structure=None,
             orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
-            protonate_histidines=False,
+            histidine_protonation=DisabledHistidineProtonationRequest(),
         )
 
     assert planner_call_count == 2
@@ -3355,7 +3456,7 @@ def test_process_structure_applies_local_refinement_after_hydrogenation(
         prepare_heavy_atoms: bool,
         target_residue_ids=None,
         orphan_fragment_policy: OrphanFragmentPolicy,
-        protonate_histidines: bool,
+        histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
     ) -> ProcessResult:
         assert component_library is not None
@@ -3363,7 +3464,7 @@ def test_process_structure_applies_local_refinement_after_hydrogenation(
         assert not prepare_heavy_atoms
         assert target_residue_ids == frozenset({ResidueId(chain_id="A", seq_num=1)})
         assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD
-        assert not protonate_histidines
+        assert isinstance(histidine_protonation, DisabledHistidineProtonationRequest)
         assert local_refinement is None
         calls.append("hydrogen")
         return ProcessResult(
@@ -3514,7 +3615,7 @@ def test_process_structure_applies_local_prerequisites_before_explicit_refinemen
         prepare_heavy_atoms: bool,
         target_residue_ids=None,
         orphan_fragment_policy: OrphanFragmentPolicy,
-        protonate_histidines: bool,
+        histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
     ) -> ProcessResult:
         assert component_library is not None
@@ -3523,7 +3624,7 @@ def test_process_structure_applies_local_prerequisites_before_explicit_refinemen
         assert not prepare_heavy_atoms
         assert target_residue_ids == frozenset({residue_id})
         assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD
-        assert not protonate_histidines
+        assert isinstance(histidine_protonation, DisabledHistidineProtonationRequest)
         assert local_refinement is None
         calls.append("hydrogen")
         return ProcessResult(
@@ -3611,7 +3712,7 @@ def test_process_structure_recommended_policy_defers_binding_until_hydrogens_exi
         prepare_heavy_atoms: bool,
         target_residue_ids=None,
         orphan_fragment_policy: OrphanFragmentPolicy,
-        protonate_histidines: bool,
+        histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
     ) -> ProcessResult:
         assert component_library is not None
@@ -3619,7 +3720,7 @@ def test_process_structure_recommended_policy_defers_binding_until_hydrogens_exi
         assert not prepare_heavy_atoms
         assert target_residue_ids == frozenset({ResidueId(chain_id="A", seq_num=1)})
         assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD
-        assert not protonate_histidines
+        assert isinstance(histidine_protonation, DisabledHistidineProtonationRequest)
         assert local_refinement is None
         calls.append("hydrogen")
         return ProcessResult(
@@ -3734,7 +3835,7 @@ def test_process_structure_uses_composite_hydrogen_workflow_for_heavy_incomplete
         prepare_heavy_atoms: bool,
         target_residue_ids=None,
         orphan_fragment_policy: OrphanFragmentPolicy,
-        protonate_histidines: bool,
+        histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
     ) -> ProcessResult:
         assert component_library is not None
@@ -3742,7 +3843,7 @@ def test_process_structure_uses_composite_hydrogen_workflow_for_heavy_incomplete
         assert not prepare_heavy_atoms
         assert target_residue_ids == frozenset({ResidueId(chain_id="A", seq_num=1)})
         assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD
-        assert not protonate_histidines
+        assert isinstance(histidine_protonation, DisabledHistidineProtonationRequest)
         assert local_refinement is None
         assert target_residue_ids is not None
         calls.append(("hydrogen", target_residue_ids, prepare_heavy_atoms))
@@ -3804,7 +3905,7 @@ def test_process_structure_uses_partitioned_hydrogen_route_for_heterogeneous_inp
         prepare_heavy_atoms: bool,
         target_residue_ids=None,
         orphan_fragment_policy: OrphanFragmentPolicy,
-        protonate_histidines: bool,
+        histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
     ) -> ProcessResult:
         assert component_library is not None
@@ -3812,7 +3913,7 @@ def test_process_structure_uses_partitioned_hydrogen_route_for_heterogeneous_inp
         assert not prepare_heavy_atoms
         assert target_residue_ids == frozenset({ResidueId(chain_id="A", seq_num=1)})
         assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD
-        assert not protonate_histidines
+        assert isinstance(histidine_protonation, DisabledHistidineProtonationRequest)
         assert local_refinement is None
         return ProcessResult(
             structure=structure,
@@ -3979,7 +4080,7 @@ def test_process_structure_recommended_policy_defers_binding_for_heavy_only_refi
         prepare_heavy_atoms: bool,
         target_residue_ids=None,
         orphan_fragment_policy: OrphanFragmentPolicy,
-        protonate_histidines: bool,
+        histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
     ) -> ProcessResult:
         assert component_library is not None
@@ -3988,7 +4089,7 @@ def test_process_structure_recommended_policy_defers_binding_for_heavy_only_refi
         assert not prepare_heavy_atoms
         assert target_residue_ids == frozenset({residue_id})
         assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD
-        assert not protonate_histidines
+        assert isinstance(histidine_protonation, DisabledHistidineProtonationRequest)
         assert local_refinement is None
         calls.append("hydrogen")
         return ProcessResult(

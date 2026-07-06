@@ -10,6 +10,9 @@ from protrepair.chemistry import (
 )
 from protrepair.structure.constitution import ChainSite
 from protrepair.structure.slots import ResidueIndex
+from protrepair.transformer.completion.hydrogen.protonation import (
+    HistidineDeltaProtonationAssignment,
+)
 
 
 class HydrogenCompletionDirective:
@@ -97,7 +100,9 @@ def derive_hydrogen_directives(
     chain: ChainSite,
     *,
     templates: Sequence[ResidueTemplate | None],
-    protonate_histidines: bool,
+    histidine_protonation_assignments: Sequence[
+        HistidineDeltaProtonationAssignment
+    ] = (),
 ) -> tuple[HydrogenCompletionDirective, ...]:
     """Derive the ordered primitive directives for one chain hydrogenation run."""
 
@@ -143,23 +148,13 @@ def derive_hydrogen_directives(
         placement_directives_by_index[residue_index] = placement_directive
         directives.append(placement_directive)
 
-    if protonate_histidines:
-        histidine_indices = tuple(
-            ResidueIndex(residue_offset)
-            for residue_offset, residue in enumerate(chain.residues)
-            if residue.component_id == "HIS"
+    directives.extend(
+        _histidine_delta_protonation_directives(
+            chain,
+            templates=templates,
+            assignments=histidine_protonation_assignments,
         )
-        if len(histidine_indices) > 4:
-            for residue_index in histidine_indices[: len(histidine_indices) // 5]:
-                template = templates[residue_index.value]
-                if template is None:
-                    continue
-                directives.append(
-                    HistidineDeltaProtonationDirective(
-                        residue_index=residue_index,
-                        template=template,
-                    )
-                )
+    )
 
     for residue_index, placement_directive in placement_directives_by_index.items():
         if residue_index.value >= len(chain.residues) - 1:
@@ -194,6 +189,50 @@ def derive_hydrogen_directives(
                 backbone_family_component_id=(
                     first_placement_directive.template.backbone_family_component_id
                 ),
+            )
+        )
+
+    return tuple(directives)
+
+
+def _histidine_delta_protonation_directives(
+    chain: ChainSite,
+    *,
+    templates: Sequence[ResidueTemplate | None],
+    assignments: Sequence[HistidineDeltaProtonationAssignment],
+) -> tuple[HistidineDeltaProtonationDirective, ...]:
+    """Lower resolved histidine assignments into primitive directives."""
+
+    directives: list[HistidineDeltaProtonationDirective] = []
+    seen_residue_indices: set[ResidueIndex] = set()
+    for assignment in assignments:
+        if not isinstance(assignment, HistidineDeltaProtonationAssignment):
+            raise TypeError(
+                "histidine protonation assignments must contain "
+                "HistidineDeltaProtonationAssignment values"
+            )
+        residue_index = assignment.residue_index
+        if residue_index in seen_residue_indices:
+            raise ValueError(
+                "histidine protonation assignments must not repeat residue indices"
+            )
+        seen_residue_indices.add(residue_index)
+        if residue_index.value >= len(chain.residues):
+            raise ValueError(
+                "histidine protonation assignment residue index is outside the chain"
+            )
+        if chain.residues[residue_index.value].component_id != "HIS":
+            raise ValueError(
+                "histidine protonation assignments must target HIS residues"
+            )
+
+        template = templates[residue_index.value]
+        if template is None:
+            continue
+        directives.append(
+            HistidineDeltaProtonationDirective(
+                residue_index=residue_index,
+                template=template,
             )
         )
 

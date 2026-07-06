@@ -104,16 +104,16 @@ def process_canonical_structure(
             None if packing_reference is None else packing_reference.reference_structure
         ),
         orphan_fragment_policy=active_transform_requests.orphan_fragment_policy,
-        protonate_histidines=active_transform_requests.protonate_histidines,
+        histidine_protonation=(
+            active_transform_requests.histidine_protonation_request()
+        ),
         retained_non_polymer_chemistry_evidence=(
             validated_retained_non_polymer_chemistry_evidence
         ),
         initial_issues=initial_microstate_issues,
     )
     packing_reference_issues = (
-        ()
-        if packing_reference is None
-        else packing_reference.packing_result.issues
+        () if packing_reference is None else packing_reference.packing_result.issues
     )
     return finalize_workflow_result(
         terminal_branches=runtime_result.terminal_branches,
