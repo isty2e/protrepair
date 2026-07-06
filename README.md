@@ -117,6 +117,47 @@ if result.has_errors():
     raise RuntimeError(result.issues)
 ```
 
+Retained non-polymer hydrogen completion uses supported bundled templates or
+explicit chemistry overrides when available. For otherwise unknown retained
+ligands, the default RDKit coordinate/proximity fallback is permissive and
+emits a `RETAINED_NON_POLYMER_FALLBACK_USED` warning issue when used. To require
+templates or explicit chemistry evidence, keep retained ligands, request hydrogen
+completion, and disable that fallback:
+
+The fallback is still conservative: existing retained-ligand hydrogens are reused
+only when local H-anchor geometry and any source topology agree, and unsupported
+hetero multiple-bond or stereochemistry-changing fallback inferences leave the
+retained ligand unchanged with a warning instead of guessing chemistry.
+
+Explicit retained-ligand chemistry overrides are validated at ingress. Invalid
+SMILES/evidence mappings, overrides that do not match the kept heavy-atom set,
+or explicit overrides used without optional RDKit support raise `ValueError`
+before workflow execution rather than falling back silently.
+
+```python
+from protrepair import WorkflowTransformRequests
+
+strict_result = process_structure(
+    Path("tests/fixtures/pdb/1aho.pdb"),
+    ingress=StructureIngressOptions(
+        ligand_policy=LigandPolicy.KEEP,
+    ),
+    requested_goals=(
+        requested_process_goal(
+            scope=WholeStructureScope(),
+            value=HydrogenCoverageState.COMPLETE,
+        ),
+    ),
+    transform_requests=WorkflowTransformRequests(
+        allow_retained_non_polymer_rdkit_fallback=False,
+    ),
+)
+```
+
+When strict policy blocks an otherwise required RDKit fallback, the result emits
+a `RETAINED_NON_POLYMER_FALLBACK_BLOCKED` warning issue and leaves the retained
+ligand unchanged.
+
 If you want structured analyses in the result:
 
 ```python
