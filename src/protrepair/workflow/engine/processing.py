@@ -12,6 +12,7 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
+from protrepair.errors import RdkitUnavailableError
 from protrepair.io import read_structure
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
@@ -250,9 +251,22 @@ def _validated_retained_non_polymer_chemistry_evidence(
                 f"{override.residue_id.display_token()}"
             )
 
-        expected_heavy_atom_elements = (
-            retained_non_polymer_evidence_heavy_atom_elements(evidence)
-        )
+        try:
+            expected_heavy_atom_elements = (
+                retained_non_polymer_evidence_heavy_atom_elements(evidence)
+            )
+        except RdkitUnavailableError as error:
+            raise ValueError(
+                "retained non-polymer chemistry override validation requires "
+                "optional RDKit support for "
+                f"{override.residue_id.display_token()}"
+            ) from error
+        except (RuntimeError, ValueError) as error:
+            raise ValueError(
+                "invalid retained non-polymer chemistry override for "
+                f"{override.residue_id.display_token()}: SMILES evidence could "
+                "not be parsed or projected"
+            ) from error
         for atom_name, expected_element in zip(
             evidence.heavy_atom_names,
             expected_heavy_atom_elements,

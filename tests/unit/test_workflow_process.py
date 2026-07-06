@@ -74,6 +74,7 @@ from protrepair.transformer.continuous.settings import (
 from protrepair.transformer.local import LocalScopeSpec
 from protrepair.transformer.packing import (
     PackingMode,
+    PackingPlan,
     PackingResult,
     PackingScope,
     PackingSpec,
@@ -325,6 +326,7 @@ def test_retained_non_polymer_hydrogen_transformer_uses_context_override() -> No
             component_library=build_default_component_library(),
             original_structure=structure,
             orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
+            allow_retained_non_polymer_rdkit_fallback=False,
             retained_non_polymer_chemistry_evidence=(
                 RetainedNonPolymerChemistryOverride(
                     residue_id=ResidueId("L", 1),
@@ -340,6 +342,341 @@ def test_retained_non_polymer_hydrogen_transformer_uses_context_override() -> No
         atom_site.name for atom_site in ligand.atom_sites if atom_site.element == "H"
     )
     assert hydrogen_atom_names == ("H001", "H002", "H003", "H004")
+
+
+@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
+def test_process_structure_reports_strict_retained_non_polymer_fallback_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Strict public workflow should report fallback-blocked retained ligands."""
+
+    ligand_residue_id = ResidueId("A", 99)
+    structure = build_workflow_structure(
+        chains=(
+            build_chain(
+                "A",
+                (build_residue("GLY", "A", 1, ("N", "CA", "C", "O")),),
+            ),
+        ),
+        ligands=(
+            build_residue(
+                "UNK",
+                "A",
+                99,
+                ("C1", "O1"),
+                is_hetero=True,
+                positions_by_name={
+                    "C1": Vec3(4.0, 0.0, 0.0),
+                    "O1": Vec3(5.4, 0.0, 0.0),
+                },
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="workflow-strict-retained-non-polymer-fallback-blocked",
+    )
+
+    class FakePackingBackend:
+        def pack(self, plan: PackingPlan) -> PackingResult:
+            return PackingResult(
+                packed_structure=plan.structure,
+                changed_residue_ids=(),
+                issues=(),
+                backend_name=plan.spec.backend_name,
+            )
+
+    monkeypatch.setattr(
+        "protrepair.transformer.packing.runtime.resolve_sidechain_packing_backend",
+        lambda _backend_name: FakePackingBackend(),
+    )
+
+    result = process_structure(
+        structure,
+        ingress=StructureIngressOptions(ligand_policy=LigandPolicy.KEEP),
+        requested_goals=(
+            requested_process_goal(
+                scope=WholeStructureScope(),
+                value=HydrogenCoverageState.COMPLETE,
+            ),
+        ),
+        transform_requests=WorkflowTransformRequests(
+            allow_retained_non_polymer_rdkit_fallback=False,
+        ),
+    )
+    ligand = result.structure.constitution.residue_or_ligand(ligand_residue_id)
+    assert ligand is not None
+
+    assert all(atom_site.element != "H" for atom_site in ligand.atom_sites)
+    assert any(
+        issue.kind is ValidationIssueKind.RETAINED_NON_POLYMER_FALLBACK_BLOCKED
+        for issue in result.issues
+    )
+    assert not any(
+        issue.kind is ValidationIssueKind.RETAINED_NON_POLYMER_FALLBACK_USED
+        for issue in result.issues
+    )
+
+
+@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit evidence chemistry")
+def test_process_structure_rejects_invalid_retained_non_polymer_override_smiles() -> (
+    None
+):
+    """Invalid public retained-ligand override SMILES should be an input error."""
+
+    ligand_residue_id = ResidueId("A", 99)
+    structure = build_workflow_structure(
+        chains=(
+            build_chain(
+                "A",
+                (build_residue("GLY", "A", 1, ("N", "CA", "C", "O")),),
+            ),
+        ),
+        ligands=(
+            build_residue(
+                "UNK",
+                "A",
+                99,
+                ("C1", "O1"),
+                is_hetero=True,
+                positions_by_name={
+                    "C1": Vec3(4.0, 0.0, 0.0),
+                    "O1": Vec3(5.4, 0.0, 0.0),
+                },
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="workflow-invalid-retained-non-polymer-override",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "invalid retained non-polymer chemistry override for A:99: "
+            "SMILES evidence could not be parsed or projected"
+        ),
+    ):
+        process_structure(
+            structure,
+            ingress=StructureIngressOptions(
+                ligand_policy=LigandPolicy.KEEP,
+                retained_non_polymer_chemistry_overrides=(
+                    RetainedNonPolymerChemistryOverride(
+                        residue_id=ligand_residue_id,
+                        smiles="not_a_smiles",
+                        heavy_atom_names=("C1", "O1"),
+                    ),
+                ),
+            ),
+        )
+
+
+def test_process_structure_rejects_no_rdkit_retained_non_polymer_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit override validation should report stable no-RDKit input wording."""
+
+    monkeypatch.setattr(
+        "protrepair.chemistry.inference.retained_non_polymer_evidence.Chem",
+        None,
+    )
+    ligand_residue_id = ResidueId("A", 99)
+    structure = build_workflow_structure(
+        chains=(
+            build_chain(
+                "A",
+                (build_residue("GLY", "A", 1, ("N", "CA", "C", "O")),),
+            ),
+        ),
+        ligands=(
+            build_residue(
+                "UNK",
+                "A",
+                99,
+                ("C1", "O1"),
+                is_hetero=True,
+                positions_by_name={
+                    "C1": Vec3(4.0, 0.0, 0.0),
+                    "O1": Vec3(5.4, 0.0, 0.0),
+                },
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="workflow-no-rdkit-retained-non-polymer-override",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "retained non-polymer chemistry override validation requires "
+            "optional RDKit support for A:99"
+        ),
+    ):
+        process_structure(
+            structure,
+            ingress=StructureIngressOptions(
+                ligand_policy=LigandPolicy.KEEP,
+                retained_non_polymer_chemistry_overrides=(
+                    RetainedNonPolymerChemistryOverride(
+                        residue_id=ligand_residue_id,
+                        smiles="CO",
+                        heavy_atom_names=("C1", "O1"),
+                    ),
+                ),
+            ),
+        )
+
+
+def test_execute_iterative_workflow_threads_retained_non_polymer_fallback_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workflow runtime should carry strict retained-ligand policy to actions."""
+
+    structure = build_workflow_structure(
+        chains=(
+            build_chain(
+                "A",
+                (build_residue("ALA", "A", 1, ("N", "CA", "C", "O", "CB")),),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="workflow-retained-non-polymer-fallback-policy-threading",
+    )
+    transformer = TerminalAugmentationTransformer(
+        scope=ResidueSetScope(residue_ids=(ResidueId("A", 1),)),
+    )
+    captured_policy_values: list[bool] = []
+    planner_call_count = 0
+
+    def fake_plan_workflow_actions(
+        current_structure: ProteinStructure,
+        *,
+        requested_goals: RequestedGoalSet,
+        transform_requests: WorkflowTransformRequests,
+        component_library=None,
+        planner_memory: WorkflowPlannerMemory | None = None,
+        planning_context=None,
+        retained_non_polymer_chemistry_evidence=(),
+    ) -> WorkflowPlanningOutcome:
+        del (
+            current_structure,
+            requested_goals,
+            transform_requests,
+            component_library,
+            planner_memory,
+            planning_context,
+            retained_non_polymer_chemistry_evidence,
+        )
+        nonlocal planner_call_count
+        planner_call_count += 1
+        return WorkflowPlanningOutcome(
+            structure_planning_signature=StructurePlanningSignature.from_facts(
+                StructureProjectionStateFacts.from_structure(structure)
+            ),
+            transformers=(transformer,) if planner_call_count == 1 else (),
+        )
+
+    def fake_execute_workflow_transformer(
+        result: ProcessResult,
+        *,
+        transformer: WorkflowStateAction,
+        execution_context,
+    ) -> ProcessResult:
+        del transformer
+        captured_policy_values.append(
+            execution_context.allow_retained_non_polymer_rdkit_fallback
+        )
+        return result
+
+    monkeypatch.setattr(
+        "protrepair.workflow.engine.runtime.plan_workflow_actions",
+        fake_plan_workflow_actions,
+    )
+    monkeypatch.setattr(
+        "protrepair.workflow.engine.runtime.execute_workflow_transformer",
+        fake_execute_workflow_transformer,
+    )
+
+    execute_iterative_workflow(
+        structure,
+        requested_goals=RequestedGoalSet(),
+        transform_requests=WorkflowTransformRequests(
+            repair_refinement=RepairRefinementSpec(
+                scope_spec=LocalScopeSpec.from_residues((ResidueId("A", 1),)),
+                binding=RecommendedContinuousRelaxationBinding(),
+            ),
+            allow_retained_non_polymer_rdkit_fallback=False,
+        ),
+        component_library=build_default_component_library(),
+        planning_context=WorkflowPlanningContext(),
+        reference_structure=None,
+        orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
+        protonate_histidines=False,
+    )
+
+    assert captured_policy_values == [False]
+
+
+def test_local_refinement_transformer_threads_retained_non_polymer_fallback_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local refinement should pass retained-ligand fallback policy to repair stage."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_workflow_structure(
+        chains=(
+            build_chain(
+                "A",
+                (build_residue("ALA", "A", 1, ("N", "CA", "C", "O", "CB")),),
+            ),
+        ),
+        ligands=(),
+        source_format=FileFormat.PDB,
+        source_name="workflow-local-refinement-fallback-policy-threading",
+    )
+    repair_refinement = RepairRefinementSpec(
+        scope_spec=LocalScopeSpec.from_residues((residue_id,)),
+        binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.UFF),
+    )
+    transformer = LocalRefinementTransformer.from_repair_refinement(repair_refinement)
+    captured_policy_values: list[bool] = []
+
+    def fake_apply_repair_stage_local_refinement(
+        result: ProcessResult,
+        *,
+        local_refinement: RepairLocalRefinementDirective,
+        component_library=None,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence=(),
+    ) -> ProcessResult:
+        assert component_library is not None
+        assert retained_non_polymer_chemistry_evidence == ()
+        assert local_refinement.scope_spec == repair_refinement.scope_spec
+        captured_policy_values.append(allow_retained_non_polymer_rdkit_fallback)
+        return result
+
+    monkeypatch.setattr(
+        "protrepair.workflow.actions.local_refinement.apply_repair_stage_local_refinement",
+        fake_apply_repair_stage_local_refinement,
+    )
+
+    result = transformer.execute(
+        ProcessResult(
+            structure=structure,
+            repairs=(),
+            issues=(),
+            analyses=None,
+        ),
+        context=TransformerExecutionContext(
+            component_library=build_default_component_library(),
+            original_structure=structure,
+            orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
+            allow_retained_non_polymer_rdkit_fallback=False,
+            retained_non_polymer_chemistry_evidence=(),
+        ),
+    )
+
+    assert result.structure is structure
+    assert captured_policy_values == [False]
 
 
 def test_stereochemistry_correction_transformer_repairs_inverted_threonine() -> None:
@@ -1252,10 +1589,14 @@ def test_process_structure_applies_local_refinement_after_heavy_repair(
         *,
         local_refinement: RepairLocalRefinementDirective,
         component_library=None,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence=(),
     ) -> ProcessResult:
         assert component_library is not None
+        assert retained_non_polymer_chemistry_evidence == ()
         assert result.structure is hydrogenated_structure
         assert local_refinement == local_refinement_spec
+        assert allow_retained_non_polymer_rdkit_fallback
         calls.append("refine")
         return result
 
@@ -3037,9 +3378,13 @@ def test_process_structure_applies_local_refinement_after_hydrogenation(
         *,
         local_refinement: RepairLocalRefinementDirective,
         component_library=None,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence=(),
     ) -> ProcessResult:
         assert component_library is not None
+        assert retained_non_polymer_chemistry_evidence == ()
         assert local_refinement == local_refinement_spec
+        assert allow_retained_non_polymer_rdkit_fallback
         calls.append("refine")
         return result
 
@@ -3193,10 +3538,14 @@ def test_process_structure_applies_local_prerequisites_before_explicit_refinemen
         *,
         local_refinement: RepairLocalRefinementDirective,
         component_library=None,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence=(),
     ) -> ProcessResult:
         assert component_library is not None
+        assert retained_non_polymer_chemistry_evidence == ()
         assert result.structure is hydrogenated_structure
         assert local_refinement == local_refinement_spec
+        assert allow_retained_non_polymer_rdkit_fallback
         calls.append("refine")
         return result
 
@@ -3285,9 +3634,13 @@ def test_process_structure_recommended_policy_defers_binding_until_hydrogens_exi
         *,
         local_refinement: RepairLocalRefinementDirective,
         component_library=None,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence=(),
     ) -> ProcessResult:
         assert component_library is not None
+        assert retained_non_polymer_chemistry_evidence == ()
         assert local_refinement is not local_refinement_spec
+        assert allow_retained_non_polymer_rdkit_fallback
         assert isinstance(local_refinement.selected_scope, ResidueSetScope)
         assert local_refinement.selected_scope.residue_ids == (
             ResidueId(chain_id="A", seq_num=1),
@@ -3650,10 +4003,14 @@ def test_process_structure_recommended_policy_defers_binding_for_heavy_only_refi
         *,
         local_refinement: RepairLocalRefinementDirective,
         component_library=None,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence=(),
     ) -> ProcessResult:
         assert component_library is not None
+        assert retained_non_polymer_chemistry_evidence == ()
         assert result.structure is hydrogenated_structure
         assert local_refinement is not local_refinement_spec
+        assert allow_retained_non_polymer_rdkit_fallback
         assert isinstance(local_refinement.selected_scope, ResidueSetScope)
         assert local_refinement.selected_scope.residue_ids == (residue_id,)
         assert isinstance(

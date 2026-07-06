@@ -57,6 +57,9 @@ class RetainedNonPolymerHydrogenCompletionTransformer(
             chemistry_evidence=(
                 context.retained_non_polymer_chemistry_evidence
             ),
+            allow_retained_non_polymer_rdkit_fallback=(
+                context.allow_retained_non_polymer_rdkit_fallback
+            ),
         )
         return ProjectedCodomainState(
             scope=self.scope,

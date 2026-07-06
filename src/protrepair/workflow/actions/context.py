@@ -19,6 +19,7 @@ class TransformerExecutionContext:
     orphan_fragment_policy: OrphanFragmentPolicy
     reference_structure: ProteinStructure | None = None
     protonate_histidines: bool = False
+    allow_retained_non_polymer_rdkit_fallback: bool = True
     retained_non_polymer_chemistry_evidence: tuple[
         RetainedNonPolymerChemistryEvidence,
         ...,

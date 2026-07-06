@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from time import perf_counter
 
 from protrepair.chemistry import ComponentLibrary, RestraintLibrary
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
 from protrepair.transformer.artifacts import RegionTransformationResult
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.settings import ContinuousRelaxationSettings
@@ -45,6 +48,11 @@ def execute_local_transformation(
     spec: ContinuousRelaxationSettings,
     component_library: ComponentLibrary | None = None,
     restraint_library: RestraintLibrary | None = None,
+    allow_retained_non_polymer_rdkit_fallback: bool = True,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence,
+        ...,
+    ] = (),
 ) -> RegionTransformationResult:
     """Run one canonical selected-region local-refinement transformation."""
 
@@ -53,6 +61,12 @@ def execute_local_transformation(
         spec=spec,
         component_library=component_library,
         restraint_library=restraint_library,
+        allow_retained_non_polymer_rdkit_fallback=(
+            allow_retained_non_polymer_rdkit_fallback
+        ),
+        retained_non_polymer_chemistry_evidence=(
+            retained_non_polymer_chemistry_evidence
+        ),
     )
     return result
 
@@ -63,6 +77,11 @@ def execute_local_transformation_profiled(
     spec: ContinuousRelaxationSettings,
     component_library: ComponentLibrary | None = None,
     restraint_library: RestraintLibrary | None = None,
+    allow_retained_non_polymer_rdkit_fallback: bool = True,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence,
+        ...,
+    ] = (),
 ) -> tuple[RegionTransformationResult, LocalRefinementRuntimeProfile]:
     """Run one canonical local-refinement transformation with stage timings."""
 
@@ -72,6 +91,12 @@ def execute_local_transformation_profiled(
         spec=spec,
         component_library=component_library,
         restraint_library=restraint_library,
+        allow_retained_non_polymer_rdkit_fallback=(
+            allow_retained_non_polymer_rdkit_fallback
+        ),
+        retained_non_polymer_chemistry_evidence=(
+            retained_non_polymer_chemistry_evidence
+        ),
     )
     request_normalization_runtime_ms = (perf_counter() - start) * 1000.0
 

@@ -9,6 +9,10 @@ from tests.support.canonical_builders import (
 from tests.support.canonical_builders import (
     build_structure as build_canonical_structure,
 )
+from tests.support.correction_state_fixtures import (
+    residue_bond_specs,
+    with_topology_bonds,
+)
 from tests.support.refinement_benchmarks import load_case_structure
 from tests.support.refinement_cases import REFINEMENT_BENCHMARK_CASES
 from tests.support.refinement_contract import (
@@ -274,6 +278,118 @@ def test_rdkit_backend_discards_catastrophic_bond_distortion(
     assert result.delta.moved_atoms == ()
     assert any(
         issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
+        for issue in result.issues
+    )
+
+
+@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
+def test_rdkit_backend_discards_chirality_inversion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RDKit outputs that invert assigned 3D chirality should not materialize."""
+
+    structure = build_chiral_structure()
+    residue_id = ResidueId("L", 1)
+    fluorine_atom_ref = AtomRef(residue_id, "F1")
+    chlorine_atom_ref = AtomRef(residue_id, "CL1")
+    fluorine_atom_index = structure.constitution.atom_index(fluorine_atom_ref)
+    chlorine_atom_index = structure.constitution.atom_index(chlorine_atom_ref)
+    problem = build_continuous_relaxation_problem(
+        structure,
+        LocalScopeSpec.from_atoms((fluorine_atom_ref, chlorine_atom_ref)),
+        force_field=ContinuousRelaxationForceField.UFF,
+        context_radius_angstrom=0.0,
+        max_iterations=1,
+        component_library=build_chiral_component_library(),
+    )
+    rdkit_fluorine_atom_index = problem.region.included_atom_indices().index(
+        fluorine_atom_index
+    )
+    rdkit_chlorine_atom_index = problem.region.included_atom_indices().index(
+        chlorine_atom_index
+    )
+    original_conformer_position = continuous_rdkit.conformer_position
+    fluorine_position = structure.geometry.atom_geometry(fluorine_atom_index).position
+    chlorine_position = structure.geometry.atom_geometry(chlorine_atom_index).position
+
+    def swapped_substituent_position(conformer, atom_index: int) -> Vec3:
+        if atom_index == rdkit_fluorine_atom_index:
+            return chlorine_position
+        if atom_index == rdkit_chlorine_atom_index:
+            return fluorine_position
+
+        return original_conformer_position(conformer, atom_index)
+
+    monkeypatch.setattr(
+        continuous_rdkit,
+        "conformer_position",
+        swapped_substituent_position,
+    )
+
+    result = continuous_rdkit.RdkitContinuousRelaxationBackend().relax(
+        problem,
+        restraint_library=RestraintLibrary(),
+    )
+
+    assert result.refined_structure == structure
+    assert result.delta.moved_atoms == ()
+    assert any(
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
+        and "stereochemistry" in issue.message
+        and "C0" in issue.message
+        for issue in result.issues
+    )
+
+
+@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
+def test_rdkit_backend_discards_assigned_chirality_loss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RDKit outputs that lose assigned 3D chirality should not materialize."""
+
+    structure = build_chiral_structure()
+    residue_id = ResidueId("L", 1)
+    fluorine_atom_ref = AtomRef(residue_id, "F1")
+    chlorine_atom_index = structure.constitution.atom_index(
+        AtomRef(residue_id, "CL1")
+    )
+    fluorine_atom_index = structure.constitution.atom_index(fluorine_atom_ref)
+    problem = build_continuous_relaxation_problem(
+        structure,
+        LocalScopeSpec.from_atoms((fluorine_atom_ref,)),
+        force_field=ContinuousRelaxationForceField.UFF,
+        context_radius_angstrom=0.0,
+        max_iterations=1,
+        component_library=build_chiral_component_library(),
+    )
+    rdkit_fluorine_atom_index = problem.region.included_atom_indices().index(
+        fluorine_atom_index
+    )
+    original_conformer_position = continuous_rdkit.conformer_position
+    chlorine_position = structure.geometry.atom_geometry(chlorine_atom_index).position
+
+    def coincident_substituent_position(conformer, atom_index: int) -> Vec3:
+        if atom_index == rdkit_fluorine_atom_index:
+            return chlorine_position
+
+        return original_conformer_position(conformer, atom_index)
+
+    monkeypatch.setattr(
+        continuous_rdkit,
+        "conformer_position",
+        coincident_substituent_position,
+    )
+
+    result = continuous_rdkit.RdkitContinuousRelaxationBackend().relax(
+        problem,
+        restraint_library=RestraintLibrary(),
+    )
+
+    assert result.refined_structure == structure
+    assert result.delta.moved_atoms == ()
+    assert any(
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
+        and "R->unassigned" in issue.message
         for issue in result.issues
     )
 
@@ -1361,10 +1477,31 @@ def build_small_angle_component_library() -> ComponentLibrary:
     )
 
 
+def build_chiral_component_library() -> ComponentLibrary:
+    """Return one component library for tetrahedral chirality checks."""
+
+    return ComponentLibrary(
+        templates={
+            "CHI": ResidueTemplate(
+                definition=ChemicalComponentDefinition(
+                    component_id="CHI",
+                    atom_names=("C0", "F1", "CL1", "BR1", "H1"),
+                    bonds=(
+                        BondDefinition("C0", "F1"),
+                        BondDefinition("C0", "CL1"),
+                        BondDefinition("C0", "BR1"),
+                        BondDefinition("C0", "H1"),
+                    ),
+                )
+            )
+        }
+    )
+
+
 def build_toy_structure() -> ProteinStructure:
     """Return one tiny local environment with one hydrogen clash."""
 
-    return build_canonical_structure(
+    structure = build_canonical_structure(
         chains=(
             chain_payload(
                 "A",
@@ -1388,6 +1525,34 @@ def build_toy_structure() -> ProteinStructure:
                     atom_payload("O1", "O", Vec3(1.9, 0.0, 0.0)),
                     atom_payload("H2", "H", Vec3(2.5, 0.75, 0.0)),
                     atom_payload("H3", "H", Vec3(2.5, -0.75, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    return with_topology_bonds(
+        structure,
+        *residue_bond_specs(ResidueId("A", 1), (("C1", "H1"),)),
+        *residue_bond_specs(ResidueId("L", 1), (("O1", "H2"), ("O1", "H3"))),
+    )
+
+
+def build_chiral_structure() -> ProteinStructure:
+    """Return one retained ligand with an assigned tetrahedral center."""
+
+    return build_canonical_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="CHI",
+                residue_id=ResidueId(chain_id="L", seq_num=1),
+                atoms=(
+                    atom_payload("C0", "C", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("F1", "F", Vec3(1.0, 0.0, 0.0)),
+                    atom_payload("CL1", "CL", Vec3(0.0, 1.0, 0.0)),
+                    atom_payload("BR1", "BR", Vec3(0.0, 0.0, 1.0)),
+                    atom_payload("H1", "H", Vec3(-1.0, -1.0, -1.0)),
                 ),
                 is_hetero=True,
             ),
@@ -1446,7 +1611,7 @@ def build_isolated_structure() -> ProteinStructure:
 def build_toy_structure_with_metadata() -> ProteinStructure:
     """Return one local environment whose atom metadata should survive refinement."""
 
-    return build_canonical_structure(
+    structure = build_canonical_structure(
         chains=(
             chain_payload(
                 "A",
@@ -1497,6 +1662,11 @@ def build_toy_structure_with_metadata() -> ProteinStructure:
         ),
         source_format=FileFormat.PDB,
         source_name="toy-local-environment",
+    )
+    return with_topology_bonds(
+        structure,
+        *residue_bond_specs(ResidueId("A", 1), (("C1", "H1"),)),
+        *residue_bond_specs(ResidueId("L", 1), (("O1", "H2"), ("O1", "H3"))),
     )
 
 
@@ -1599,7 +1769,7 @@ def build_multi_atom_context_component_library() -> ComponentLibrary:
 def build_multi_atom_context_structure() -> ProteinStructure:
     """Return one local environment with one promoted multi-atom context residue."""
 
-    return build_canonical_structure(
+    structure = build_canonical_structure(
         chains=(
             chain_payload(
                 "A",
@@ -1631,4 +1801,18 @@ def build_multi_atom_context_structure() -> ProteinStructure:
             ),
         ),
         source_format=FileFormat.PDB,
+    )
+    return with_topology_bonds(
+        structure,
+        *residue_bond_specs(ResidueId("A", 1), (("C1", "H1"),)),
+        *residue_bond_specs(
+            ResidueId("L", 1),
+            (
+                ("O1", "C2"),
+                ("O1", "HO1"),
+                ("C2", "H21"),
+                ("C2", "H22"),
+                ("C2", "H23"),
+            ),
+        ),
     )

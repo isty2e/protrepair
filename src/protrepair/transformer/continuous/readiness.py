@@ -12,6 +12,9 @@ bond graph can be represented before a force-field backend is bound.
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
 from protrepair.diagnostics import ClashPolicy, has_clashes_in_residue_projection
 from protrepair.errors import RefinementError
 from protrepair.scope import AtomSetScope
@@ -32,6 +35,10 @@ from protrepair.state.domain import (
     SelectedAtomScopeFacts,
     TopologyAvailabilityFacts,
     TopologyAvailabilityState,
+)
+from protrepair.state.hydrogen_expectation import (
+    StructureHydrogenExpectationModel,
+    derive_structure_hydrogen_expectation_model,
 )
 from protrepair.state.scoped import CarrierScopedState
 from protrepair.structure.constitution import ResidueSite
@@ -222,6 +229,20 @@ class ContinuousRelaxationReadinessPolicy:
                 "can be bound"
             )
 
+        if any(
+            retained_fact.is_supported()
+            and retained_fact.hydrogen_applicability_state.is_applicable()
+            and not self.topology_availability_supports_execution(
+                retained_fact.hydrogen_topology_availability_state
+            )
+            for retained_fact in retained_non_polymer_facts
+        ):
+            return (
+                "continuous relaxation requires retained non-polymer hydrogen "
+                "topology to be present in the included local region before any "
+                "force field can be bound"
+            )
+
         return None
 
 
@@ -236,6 +257,12 @@ def derive_atom_scope_continuous_relaxation_facts(
     *,
     component_library: ComponentLibrary | None = None,
     context_radius_angstrom: float = 6.0,
+    allow_retained_non_polymer_rdkit_fallback: bool = True,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence,
+        ...,
+    ] = (),
+    hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
 ) -> AtomScopeStateFacts:
     """Derive atom-scope facts needed for continuous-relaxation readiness."""
 
@@ -246,6 +273,20 @@ def derive_atom_scope_continuous_relaxation_facts(
         build_default_component_library()
         if component_library is None
         else component_library
+    )
+    active_hydrogen_expectation_model = (
+        derive_structure_hydrogen_expectation_model(
+            snapshot.structure,
+            component_library=active_component_library,
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
+        )
+        if hydrogen_expectation_model is None
+        else hydrogen_expectation_model
     )
     atom_input = AtomInput(
         atom_indices=tuple(
@@ -272,6 +313,10 @@ def derive_atom_scope_continuous_relaxation_facts(
         residues=projected_residues,
         ligands=tuple(projected_ligands),
         component_library=active_component_library,
+        retained_non_polymer_chemistry_evidence=(
+            retained_non_polymer_chemistry_evidence
+        ),
+        hydrogen_expectation_model=active_hydrogen_expectation_model,
     )
     (
         continuous_region_readiness_facts,
@@ -282,6 +327,13 @@ def derive_atom_scope_continuous_relaxation_facts(
         atom_scope=atom_scope,
         component_library=active_component_library,
         context_radius_angstrom=context_radius_angstrom,
+        allow_retained_non_polymer_rdkit_fallback=(
+            allow_retained_non_polymer_rdkit_fallback
+        ),
+        retained_non_polymer_chemistry_evidence=(
+            retained_non_polymer_chemistry_evidence
+        ),
+        hydrogen_expectation_model=active_hydrogen_expectation_model,
     )
     hydrogen_atom_count = sum(
         1
@@ -349,6 +401,12 @@ def _derive_execution_region_readiness_facts(
     atom_scope: AtomSetScope,
     component_library: ComponentLibrary,
     context_radius_angstrom: float = 6.0,
+    allow_retained_non_polymer_rdkit_fallback: bool = True,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence,
+        ...,
+    ] = (),
+    hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
 ) -> tuple[ContinuousRegionReadinessFacts, ContinuousBondRealizabilityFacts]:
     """Derive facts by projecting through the continuous execution-region model."""
 
@@ -375,11 +433,29 @@ def _derive_execution_region_readiness_facts(
         residues=continuous_region_residues,
         ligands=continuous_region_ligands,
         component_library=component_library,
+        retained_non_polymer_chemistry_evidence=(
+            retained_non_polymer_chemistry_evidence
+        ),
+        hydrogen_expectation_model=hydrogen_expectation_model,
     )
     continuous_bond_realizability_blocker = (
         continuous_region_bond_realizability_error(
             continuous_region,
             component_library=component_library,
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
+            retained_non_polymer_chemistry_resolution_by_residue_id=(
+                None
+                if hydrogen_expectation_model is None
+                else (
+                    hydrogen_expectation_model
+                    .retained_non_polymer_resolution_by_residue_id
+                )
+            ),
         )
     )
     return (

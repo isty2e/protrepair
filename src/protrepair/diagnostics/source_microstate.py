@@ -12,6 +12,7 @@ from protrepair.chemistry.inference.retained_non_polymer_fallback import (
 from protrepair.chemistry.single_atom_inorganic import is_single_atom_inorganic_residue
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
+from protrepair.errors import RdkitUnavailableError
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
 
@@ -710,8 +711,13 @@ def _unknown_charge_geometry_contradiction_descriptors(
             residue_geometry,
             formal_charge_by_atom_name=None,
         )
-    except Exception:
+    except RdkitUnavailableError:
         return ()
+    except Exception:
+        return (
+            "geometry-backed RDKit inference fails for charged atoms "
+            + ", ".join(sorted(source_nonzero_formal_charges)),
+        )
 
     charged_atom_names = frozenset(source_nonzero_formal_charges)
     try:
@@ -722,6 +728,8 @@ def _unknown_charge_geometry_contradiction_descriptors(
                 formal_charge_by_atom_name=source_nonzero_formal_charges,
             )
         )
+    except RdkitUnavailableError:
+        return ()
     except Exception:
         return (
             "source-charge-aware RDKit sanitization fails for charged atoms "

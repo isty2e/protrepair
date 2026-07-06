@@ -89,9 +89,13 @@ def test_add_hydrogens_unlocks_sep_hydrogenation_after_refinement_gated_heavy_re
         *,
         spec,
         component_library=None,
+        allow_retained_non_polymer_rdkit_fallback=True,
+        retained_non_polymer_chemistry_evidence=(),
     ):
         nonlocal execute_call_count
         execute_call_count += 1
+        assert allow_retained_non_polymer_rdkit_fallback is True
+        assert retained_non_polymer_chemistry_evidence == ()
         snapshot = context.source_snapshot
         atom_input = context.atom_input
         repaired_residue = snapshot.structure.constitution.chain("A").residues[0]

@@ -2,60 +2,23 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
 from types import MappingProxyType
 
 from protrepair.chemistry.component.library import ComponentLibrary
-from protrepair.chemistry.component.template import ResidueTemplate
-from protrepair.chemistry.inference.retained_non_polymer_evidence import (
-    retained_non_polymer_evidence_expected_hydrogen_atom_names,
-)
-from protrepair.chemistry.inference.retained_non_polymer_fallback import (
-    preferred_retained_non_polymer_expected_hydrogen_atom_names,
-    retained_non_polymer_rdkit_fallback_expected_hydrogen_atom_names,
-)
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
     evidence_by_residue_id,
 )
-from protrepair.errors import RdkitUnavailableError
+from protrepair.state.retained_non_polymer_chemistry import (
+    RetainedNonPolymerChemistryEvidenceSource,
+    RetainedNonPolymerChemistryResolution,
+    resolve_retained_non_polymer_chemistry,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ChainSite, ResidueSite
 from protrepair.structure.labels import AtomRef, ResidueId
 
 DISULFIDE_HYDROGEN_SUPPRESSION_DISTANCE_ANGSTROM = 3.0
-
-
-class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
-    """Evidence source for one retained non-polymer hydrogen expectation axis."""
-
-    TEMPLATE = "template"
-    EXTERNAL_OVERRIDE = "external_override"
-    RDKIT_FALLBACK = "rdkit_fallback"
-    UNRESOLVED = "unresolved"
-
-    def is_resolved(self) -> bool:
-        """Return whether this axis has concrete chemistry evidence."""
-
-        return self is not RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
-
-
-@dataclass(frozen=True, slots=True)
-class RetainedNonPolymerHydrogenExpectationResolution:
-    """Resolved hydrogen expectation policy for one retained non-polymer residue."""
-
-    source: RetainedNonPolymerChemistryEvidenceSource
-    expected_hydrogen_atom_names: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if (
-            self.source is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
-            and self.expected_hydrogen_atom_names
-        ):
-            raise ValueError(
-                "unresolved retained non-polymer hydrogen expectation must not "
-                "carry expected hydrogen names"
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,18 +28,18 @@ class StructureHydrogenExpectationModel:
     expected_hydrogen_atom_names_by_residue: Mapping[ResidueId, tuple[str, ...]]
     retained_non_polymer_resolution_by_residue_id: Mapping[
         ResidueId,
-        RetainedNonPolymerHydrogenExpectationResolution,
+        RetainedNonPolymerChemistryResolution,
     ]
 
     def resolution_for_retained_non_polymer(
         self,
         residue_id: ResidueId,
-    ) -> RetainedNonPolymerHydrogenExpectationResolution:
+    ) -> RetainedNonPolymerChemistryResolution:
         """Return retained-non-polymer expectation resolution for one residue."""
 
         return self.retained_non_polymer_resolution_by_residue_id.get(
             residue_id,
-            RetainedNonPolymerHydrogenExpectationResolution(
+            RetainedNonPolymerChemistryResolution(
                 source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
             ),
         )
@@ -86,6 +49,7 @@ def derive_structure_hydrogen_expectation_model(
     structure: ProteinStructure,
     *,
     component_library: ComponentLibrary,
+    allow_retained_non_polymer_rdkit_fallback: bool = True,
     retained_non_polymer_chemistry_evidence: tuple[
         RetainedNonPolymerChemistryEvidence,
         ...,
@@ -100,14 +64,15 @@ def derive_structure_hydrogen_expectation_model(
     evidence_map = evidence_by_residue_id(retained_non_polymer_chemistry_evidence)
     retained_non_polymer_resolution_by_residue_id: dict[
         ResidueId,
-        RetainedNonPolymerHydrogenExpectationResolution,
+        RetainedNonPolymerChemistryResolution,
     ] = {}
     for ligand in structure.constitution.ligands:
-        resolution = resolve_retained_non_polymer_hydrogen_expectation(
+        resolution = resolve_retained_non_polymer_chemistry(
             structure,
             ligand,
             component_library=component_library,
             evidence=evidence_map.get(ligand.residue_id),
+            allow_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
         )
         retained_non_polymer_resolution_by_residue_id[ligand.residue_id] = resolution
         if resolution.expected_hydrogen_atom_names:
@@ -122,68 +87,6 @@ def derive_structure_hydrogen_expectation_model(
         retained_non_polymer_resolution_by_residue_id=MappingProxyType(
             retained_non_polymer_resolution_by_residue_id
         ),
-    )
-
-
-def resolve_retained_non_polymer_hydrogen_expectation(
-    structure: ProteinStructure,
-    residue: ResidueSite,
-    *,
-    component_library: ComponentLibrary,
-    evidence: RetainedNonPolymerChemistryEvidence | None = None,
-) -> RetainedNonPolymerHydrogenExpectationResolution:
-    """Resolve hydrogen expectation policy for one retained non-polymer residue."""
-
-    residue_index = structure.constitution.residue_index(residue.residue_id)
-    residue_geometry = structure.residue_geometry(residue_index)
-    present_hydrogen_atom_names = tuple(
-        atom_site.name for atom_site in residue.atom_sites if atom_site.element == "H"
-    )
-    if evidence is not None:
-        evidence_expected_hydrogen_atom_names = (
-            retained_non_polymer_evidence_expected_hydrogen_atom_names(evidence)
-        )
-        return RetainedNonPolymerHydrogenExpectationResolution(
-            source=RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE,
-            expected_hydrogen_atom_names=_preferred_expected_hydrogen_atom_names(
-                expected_hydrogen_atom_names=evidence_expected_hydrogen_atom_names,
-                present_hydrogen_atom_names=present_hydrogen_atom_names,
-            ),
-        )
-
-    template = component_library.get(residue.component_id)
-    if template is not None and template.can_add_hydrogens():
-        return RetainedNonPolymerHydrogenExpectationResolution(
-            source=RetainedNonPolymerChemistryEvidenceSource.TEMPLATE,
-            expected_hydrogen_atom_names=_preferred_expected_hydrogen_atom_names(
-                expected_hydrogen_atom_names=(
-                    _materializable_retained_non_polymer_template_hydrogen_atom_names(
-                        residue,
-                        template=template,
-                    )
-                ),
-                present_hydrogen_atom_names=present_hydrogen_atom_names,
-            ),
-        )
-
-    try:
-        fallback_expected_hydrogen_atom_names = (
-            retained_non_polymer_rdkit_fallback_expected_hydrogen_atom_names(
-                residue,
-                residue_geometry,
-                formal_charge_by_atom_name=dict(
-                    structure.residue_formal_charge_by_atom_name(residue_index)
-                ),
-            )
-        )
-    except (RdkitUnavailableError, RuntimeError, ValueError):
-        return RetainedNonPolymerHydrogenExpectationResolution(
-            source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
-        )
-
-    return RetainedNonPolymerHydrogenExpectationResolution(
-        source=RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK,
-        expected_hydrogen_atom_names=fallback_expected_hydrogen_atom_names,
     )
 
 
@@ -283,41 +186,6 @@ def _extend_chain_expected_hydrogens(
             chain.residues[residue_index + 1].residue_id,
             ("H",),
         )
-
-
-def _preferred_expected_hydrogen_atom_names(
-    *,
-    expected_hydrogen_atom_names: tuple[str, ...],
-    present_hydrogen_atom_names: tuple[str, ...],
-) -> tuple[str, ...]:
-    """Normalize expected hydrogen names while preserving present names when sane."""
-
-    if not expected_hydrogen_atom_names:
-        return ()
-
-    return preferred_retained_non_polymer_expected_hydrogen_atom_names(
-        inferred_hydrogen_count=len(expected_hydrogen_atom_names),
-        present_hydrogen_atom_names=present_hydrogen_atom_names,
-    )
-
-
-def _materializable_retained_non_polymer_template_hydrogen_atom_names(
-    residue: ResidueSite,
-    *,
-    template: ResidueTemplate,
-) -> tuple[str, ...]:
-    """Return template hydrogens whose heavy anchors exist in the retained surface."""
-
-    expected_hydrogen_atom_names = tuple(template.expected_hydrogen_atom_names())
-    anchor_by_hydrogen_name = template.template_hydrogen_anchor_by_name(
-        expected_hydrogen_atom_names
-    )
-    present_atom_names = residue.atom_site_names()
-    return tuple(
-        hydrogen_atom_name
-        for hydrogen_atom_name in expected_hydrogen_atom_names
-        if anchor_by_hydrogen_name.get(hydrogen_atom_name) in present_atom_names
-    )
 
 
 def _append_expected_hydrogen_atom_names(

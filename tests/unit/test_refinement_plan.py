@@ -605,7 +605,7 @@ def test_plan_allows_template_less_connected_retained_non_polymer_context() -> N
                 residue_id=ResidueId(chain_id="L", seq_num=1),
                 atoms=(
                     atom_payload("C1", "C", Vec3(2.0, 0.0, 0.0)),
-                    atom_payload("O1", "O", Vec3(3.2, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(3.4, 0.0, 0.0)),
                     atom_payload("H1", "H", Vec3(1.5, 0.9, 0.0)),
                     atom_payload("H2", "H", Vec3(1.5, -0.9, 0.0)),
                 ),

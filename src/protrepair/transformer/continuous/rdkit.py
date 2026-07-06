@@ -68,6 +68,15 @@ class _CatastrophicBondDistortion:
 
         return abs(self.observed_distance_angstrom - self.target_distance_angstrom)
 
+
+@dataclass(frozen=True, slots=True)
+class _ChiralityChange:
+    """One assigned chiral center changed by an RDKit output."""
+
+    atom_index: AtomIndex
+    before_code: str
+    after_code: str | None
+
 RDKIT_SANITIZE_FLAGS = 0
 if Chem is not None:  # pragma: no branch
     RDKIT_SANITIZE_FLAGS = (
@@ -122,6 +131,21 @@ class RdkitContinuousRelaxationBackend:
             problem.region.snapshot.structure,
             moved_positions=moved_positions,
         )
+        chirality_changes = _rdkit_chirality_changes(
+            problem,
+            molecule=molecule,
+            rdkit_atom_index_by_structure_atom_index=(
+                rdkit_atom_index_by_structure_atom_index
+            ),
+            refined_structure=refined_structure,
+        )
+        if chirality_changes:
+            return _rejected_chirality_change_result(
+                problem,
+                chirality_changes=chirality_changes,
+                backend_version=rdBase.rdkitVersion,
+            )
+
         catastrophic_distortions = catastrophic_bond_distortions(
             problem,
             refined_structure=refined_structure,
@@ -221,6 +245,92 @@ def catastrophic_bond_distortions(
     )
 
 
+def _rdkit_chirality_changes(
+    problem: ContinuousRelaxationProblem,
+    *,
+    molecule,
+    rdkit_atom_index_by_structure_atom_index: dict[AtomIndex, int],
+    refined_structure: ProteinStructure,
+) -> tuple[_ChiralityChange, ...]:
+    """Return assigned 3D chiral centers changed by an RDKit output."""
+
+    before_assignments = _rdkit_chiral_center_assignments_for_structure(
+        molecule,
+        rdkit_atom_index_by_structure_atom_index=(
+            rdkit_atom_index_by_structure_atom_index
+        ),
+        structure=problem.region.snapshot.structure,
+    )
+    if not before_assignments:
+        return ()
+
+    after_assignments = _rdkit_chiral_center_assignments_for_structure(
+        molecule,
+        rdkit_atom_index_by_structure_atom_index=(
+            rdkit_atom_index_by_structure_atom_index
+        ),
+        structure=refined_structure,
+    )
+    changes = [
+        _ChiralityChange(
+            atom_index=atom_index,
+            before_code=before_code,
+            after_code=after_assignments.get(atom_index),
+        )
+        for atom_index, before_code in before_assignments.items()
+        if after_assignments.get(atom_index) != before_code
+    ]
+    return tuple(
+        sorted(
+            changes,
+            key=lambda change: change.atom_index.value,
+        )
+    )
+
+
+def _rdkit_chiral_center_assignments_for_structure(
+    molecule,
+    *,
+    rdkit_atom_index_by_structure_atom_index: dict[AtomIndex, int],
+    structure: ProteinStructure,
+) -> dict[AtomIndex, str]:
+    """Return assigned R/S centers for one structure on an RDKit topology."""
+
+    assert Chem is not None
+
+    working_molecule = Chem.Mol(molecule)
+    conformer = working_molecule.GetConformer()
+    conformer.Set3D(True)
+    for (
+        structure_atom_index,
+        rdkit_atom_index,
+    ) in rdkit_atom_index_by_structure_atom_index.items():
+        atom_geometry = structure.geometry.atom_geometry(structure_atom_index)
+        conformer.SetAtomPosition(rdkit_atom_index, tuple(atom_geometry.position))
+
+    Chem.AssignStereochemistryFrom3D(
+        working_molecule,
+        confId=conformer.GetId(),
+        replaceExistingTags=True,
+    )
+    structure_atom_index_by_rdkit_atom_index = {
+        rdkit_atom_index: structure_atom_index
+        for structure_atom_index, rdkit_atom_index in (
+            rdkit_atom_index_by_structure_atom_index.items()
+        )
+    }
+    return {
+        structure_atom_index_by_rdkit_atom_index[rdkit_atom_index]: str(cip_code)
+        for rdkit_atom_index, cip_code in Chem.FindMolChiralCenters(
+            working_molecule,
+            force=True,
+            includeUnassigned=False,
+            includeCIP=True,
+        )
+        if cip_code in {"R", "S"}
+    }
+
+
 def rejected_original_structure_result(
     problem: ContinuousRelaxationProblem,
     *,
@@ -261,6 +371,47 @@ def rejected_original_structure_result(
     )
 
 
+def _rejected_chirality_change_result(
+    problem: ContinuousRelaxationProblem,
+    *,
+    chirality_changes: tuple[_ChiralityChange, ...],
+    backend_version: str,
+) -> RegionTransformationResult:
+    """Return an explicit no-op result when RDKit changes assigned chirality."""
+
+    original_structure = problem.region.snapshot.structure
+    worst_change = chirality_changes[0]
+    constitution = original_structure.constitution
+    residue_site = constitution.residue_site_at(
+        constitution.residue_index_for_atom_index(worst_change.atom_index)
+    )
+    atom_site = constitution.atom_site_at(worst_change.atom_index)
+    after_code = worst_change.after_code or "unassigned"
+    issue = ValidationIssue.for_residue(
+        kind=ValidationIssueKind.REFINEMENT_REJECTED,
+        severity=IssueSeverity.WARNING,
+        residue_id=residue_site.residue_id,
+        message=(
+            "RDKit local refinement output was discarded because it changed "
+            "assigned stereochemistry: "
+            f"{residue_site.residue_id.display_token()} "
+            f"{residue_site.component_id} {atom_site.name} "
+            f"{worst_change.before_code}->{after_code} "
+            f"({len(chirality_changes)} changed chiral center(s))"
+        ),
+    )
+    return RegionTransformationResult(
+        refined_structure=original_structure,
+        delta=StructureDelta(
+            before_constitution=original_structure.constitution,
+            after_constitution=original_structure.constitution,
+        ),
+        issues=(issue,),
+        backend_name="rdkit",
+        backend_version=backend_version,
+    )
+
+
 def build_rdkit_molecule(
     problem: ContinuousRelaxationProblem,
 ):
@@ -271,6 +422,7 @@ def build_rdkit_molecule(
     molecule = Chem.RWMol()
     rdkit_atom_index_by_structure_atom_index: dict[AtomIndex, int] = {}
     conformer = Chem.Conformer(len(problem.region.included_atom_indices()))
+    conformer.Set3D(True)
     for atom_index in problem.region.included_atom_indices():
         atom_site = problem.region.atom_site(atom_index)
         atom_geometry = problem.region.atom_geometry(atom_index)

@@ -88,6 +88,12 @@ class LocalRefinementTransformer(WorkflowStructureTransformer):
             carrier,
             local_refinement=local_refinement,
             component_library=context.component_library,
+            allow_retained_non_polymer_rdkit_fallback=(
+                context.allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                context.retained_non_polymer_chemistry_evidence
+            ),
         )
         return ProjectedCodomainState(
             scope=self.scope,

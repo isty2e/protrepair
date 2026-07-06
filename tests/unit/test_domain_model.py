@@ -516,6 +516,20 @@ def test_transform_requests_validate_refinement_type() -> None:
         )
 
 
+def test_transform_requests_validate_retained_non_polymer_fallback_policy() -> None:
+    """Retained non-polymer fallback policy should stay explicit and typed."""
+
+    assert WorkflowTransformRequests().allow_retained_non_polymer_rdkit_fallback
+    assert not WorkflowTransformRequests(
+        allow_retained_non_polymer_rdkit_fallback=False
+    ).allow_retained_non_polymer_rdkit_fallback
+
+    with pytest.raises(TypeError, match="retained_non_polymer_rdkit_fallback"):
+        WorkflowTransformRequests(
+            allow_retained_non_polymer_rdkit_fallback=cast(bool, "false")
+        )
+
+
 def test_repair_refinement_spec_validate_binding_type() -> None:
     """RepairRefinementSpec should reject invalid canonical binding variants."""
 
