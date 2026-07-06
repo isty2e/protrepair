@@ -11,6 +11,7 @@ from protrepair.relation.blueprint import (
     StructureBlueprintCoverage,
     StructureBlueprintCoverageGap,
 )
+from protrepair.state.hydrogen_expectation import StructureHydrogenExpectationModel
 from protrepair.state.structure_axes import (
     BackboneHeavyAtomCompletenessState,
     ComponentSupportState,
@@ -127,6 +128,7 @@ def derive_structure_coverage_and_chemistry_readiness_facts(
         retained_non_polymer_chemistry_evidence=(
             retained_non_polymer_chemistry_evidence
         ),
+        hydrogen_expectation_model=None,
         blueprint_coverages=blueprint_coverages,
     )
 
@@ -141,6 +143,7 @@ def derive_projection_coverage_and_chemistry_readiness_facts(
         RetainedNonPolymerChemistryEvidence,
         ...,
     ] = (),
+    hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
 ) -> tuple[StructureCoverageFacts, StructureChemistryReadinessFacts]:
     """Derive coverage and chemistry-readiness facts over one explicit projection."""
 
@@ -152,6 +155,7 @@ def derive_projection_coverage_and_chemistry_readiness_facts(
         retained_non_polymer_chemistry_evidence=(
             retained_non_polymer_chemistry_evidence
         ),
+        hydrogen_expectation_model=hydrogen_expectation_model,
         blueprint_coverages=(),
     )
 
@@ -166,6 +170,7 @@ def _derive_projection_coverage_and_chemistry_readiness_facts(
         RetainedNonPolymerChemistryEvidence,
         ...,
     ],
+    hydrogen_expectation_model: StructureHydrogenExpectationModel | None,
     blueprint_coverages: tuple[StructureBlueprintCoverage, ...],
 ) -> tuple[StructureCoverageFacts, StructureChemistryReadinessFacts]:
     """Derive split workflow facts over one explicit residue and ligand projection."""
@@ -176,6 +181,7 @@ def _derive_projection_coverage_and_chemistry_readiness_facts(
         retained_non_polymer_chemistry_evidence=(
             retained_non_polymer_chemistry_evidence
         ),
+        hydrogen_expectation_model=hydrogen_expectation_model,
     )
     residue_coverage_facts: list[ResidueCoverageFacts] = []
     residue_chemistry_readiness_facts: list[ResidueChemistryReadinessFacts] = []

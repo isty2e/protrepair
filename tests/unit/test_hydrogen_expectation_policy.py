@@ -11,15 +11,24 @@ from tests.support.retained_non_polymer_components import (
     build_retained_non_polymer_component_library,
 )
 
+import protrepair.state.retained_non_polymer_chemistry as retained_non_polymer_chemistry
 from protrepair.chemistry import (
     build_default_component_library,
+)
+from protrepair.chemistry.inference import (
+    retained_non_polymer_evidence as evidence_inference,
 )
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
+from protrepair.state import (
+    derive_structure_coverage_and_chemistry_readiness_facts,
+)
 from protrepair.state.hydrogen_expectation import (
-    RetainedNonPolymerChemistryEvidenceSource,
     derive_structure_hydrogen_expectation_model,
+)
+from protrepair.state.retained_non_polymer_chemistry import (
+    RetainedNonPolymerChemistryEvidenceSource,
 )
 from protrepair.structure.labels import ResidueId
 
@@ -174,6 +183,100 @@ def test_hydrogen_expectation_model_uses_override_for_unknown_ligand() -> None:
         RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
     )
     assert len(resolution.expected_hydrogen_atom_names) > 0
+    assert resolution.heavy_atom_elements == ("C", "O")
+    assert {
+        frozenset((bond.atom_name_1, bond.atom_name_2))
+        for bond in resolution.heavy_bond_definitions
+    } == {frozenset(("C1", "O1"))}
+    assert resolution.hydrogen_bond_definitions
+    assert not resolution.failure_reason
+
+
+def test_hydrogen_expectation_model_degrades_no_rdkit_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No-RDKit evidence expectation should become unresolved, not leak."""
+
+    monkeypatch.setattr(evidence_inference, "Chem", None)
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(1.4, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="no-rdkit-override-hydrogen-expectation",
+    )
+
+    model = derive_structure_hydrogen_expectation_model(
+        structure,
+        component_library=build_default_component_library(),
+        retained_non_polymer_chemistry_evidence=(
+            RetainedNonPolymerChemistryOverride(
+                residue_id=ResidueId("L", 1),
+                smiles="CO",
+                heavy_atom_names=("C1", "O1"),
+            ).to_evidence(),
+        ),
+    )
+    resolution = model.resolution_for_retained_non_polymer(ResidueId("L", 1))
+
+    assert resolution.source is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
+    assert resolution.expected_hydrogen_atom_names == ()
+    assert not resolution.heavy_bond_definitions
+    assert not resolution.hydrogen_bond_definitions
+    assert resolution.failure_reason
+
+
+def test_hydrogen_expectation_model_respects_disabled_rdkit_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Strict retained-ligand policy should not precompute RDKit fallback facts."""
+
+    def fail_infer_fallback(*args, **kwargs):
+        raise AssertionError("RDKit fallback should not be called")
+
+    monkeypatch.setattr(
+        retained_non_polymer_chemistry,
+        "infer_retained_non_polymer_rdkit_fallback",
+        fail_infer_fallback,
+    )
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(1.4, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="fallback-disabled-hydrogen-expectation",
+    )
+
+    model = derive_structure_hydrogen_expectation_model(
+        structure,
+        component_library=build_default_component_library(),
+        allow_retained_non_polymer_rdkit_fallback=False,
+    )
+    resolution = model.resolution_for_retained_non_polymer(ResidueId("L", 1))
+
+    assert resolution.source is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
+    assert resolution.expected_hydrogen_atom_names == ()
+    assert not resolution.heavy_bond_definitions
+    assert not resolution.hydrogen_bond_definitions
+    assert resolution.failure_reason == "RDKit fallback is disabled"
 
 
 @pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
@@ -207,3 +310,110 @@ def test_hydrogen_expectation_model_marks_metal_context_not_applicable() -> None
         RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
     )
     assert resolution.expected_hydrogen_atom_names == ()
+
+
+@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
+def test_retained_fallback_resolution_owns_topology_and_projection_facts() -> None:
+    """Fallback resolution should own coordinate-free topology facts."""
+
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(1.4, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="fallback-resolution-topology-facts",
+    )
+
+    model = derive_structure_hydrogen_expectation_model(
+        structure,
+        component_library=build_default_component_library(),
+    )
+    resolution = model.resolution_for_retained_non_polymer(ResidueId("L", 1))
+
+    assert resolution.source is (
+        RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
+    )
+    assert resolution.expected_hydrogen_atom_names == (
+        "H001",
+        "H002",
+        "H003",
+        "H004",
+    )
+    assert {
+        frozenset((bond.atom_name_1, bond.atom_name_2))
+        for bond in resolution.heavy_bond_definitions
+    } == {frozenset(("C1", "O1"))}
+    assert {
+        frozenset((bond.atom_name_1, bond.atom_name_2))
+        for bond in resolution.hydrogen_bond_definitions
+    } == {
+        frozenset(("C1", "H001")),
+        frozenset(("C1", "H002")),
+        frozenset(("C1", "H003")),
+        frozenset(("O1", "H004")),
+    }
+    assert resolution.hydrogen_name_projection_candidate_count > 0
+    assert resolution.hydrogen_name_projection_candidate_limit > 0
+    assert not resolution.failure_reason
+
+
+@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
+def test_retained_readiness_reuses_single_fallback_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Readiness should not replay fallback inference after resolution."""
+
+    calls = 0
+    original_infer_fallback = (
+        retained_non_polymer_chemistry.infer_retained_non_polymer_rdkit_fallback
+    )
+
+    def counting_infer_fallback(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_infer_fallback(*args, **kwargs)
+
+    monkeypatch.setattr(
+        retained_non_polymer_chemistry,
+        "infer_retained_non_polymer_rdkit_fallback",
+        counting_infer_fallback,
+    )
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(1.4, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="fallback-resolution-readiness-reuse",
+    )
+
+    _, chemistry_readiness = derive_structure_coverage_and_chemistry_readiness_facts(
+        structure,
+        component_library=build_default_component_library(),
+    )
+
+    retained_fact = chemistry_readiness.retained_non_polymer_facts[0]
+    assert retained_fact.heavy_topology_source is (
+        RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
+    )
+    assert retained_fact.hydrogen_expectation_source is (
+        RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
+    )
+    assert calls == 1

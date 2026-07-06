@@ -1,11 +1,20 @@
 """Canonical region/problem models for continuous local-relaxation execution."""
+
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from protrepair.chemistry.component.library import ComponentLibrary
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
 from protrepair.errors import RefinementError
+from protrepair.state.retained_non_polymer_chemistry import (
+    RetainedNonPolymerChemistryResolution,
+)
 from protrepair.structure.constitution import AtomSite as ConstitutionAtomSite
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
+from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.atom_input import AtomInput
@@ -142,11 +151,31 @@ class ContinuousRelaxationRegion:
     def require_local_bond_planning_support(
         self,
         component_library: ComponentLibrary,
+        *,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence: tuple[
+            RetainedNonPolymerChemistryEvidence,
+            ...,
+        ] = (),
+        retained_non_polymer_chemistry_resolution_by_residue_id: Mapping[
+            ResidueId,
+            RetainedNonPolymerChemistryResolution,
+        ]
+        | None = None,
     ) -> dict[ResidueIndex, LocalBondPlanningSupportResolution]:
         """Raise when any included residue lacks editable or passive bond support."""
 
         support_by_residue_index = self.local_bond_planning_support_by_residue_index(
-            component_library
+            component_library,
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
+            retained_non_polymer_chemistry_resolution_by_residue_id=(
+                retained_non_polymer_chemistry_resolution_by_residue_id
+            ),
         )
 
         blocker_messages = sorted(
@@ -183,6 +212,17 @@ class ContinuousRelaxationRegion:
     def local_bond_planning_support_by_residue_index(
         self,
         component_library: ComponentLibrary,
+        *,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence: tuple[
+            RetainedNonPolymerChemistryEvidence,
+            ...,
+        ] = (),
+        retained_non_polymer_chemistry_resolution_by_residue_id: Mapping[
+            ResidueId,
+            RetainedNonPolymerChemistryResolution,
+        ]
+        | None = None,
     ) -> dict[ResidueIndex, LocalBondPlanningSupportResolution]:
         """Resolve local bond-planning support for each included residue."""
 
@@ -193,6 +233,15 @@ class ContinuousRelaxationRegion:
                 self.residue_site(residue_index),
                 movable_atom_indices=self.movable_atom_indices,
                 component_library=component_library,
+                allow_retained_non_polymer_rdkit_fallback=(
+                    allow_retained_non_polymer_rdkit_fallback
+                ),
+                retained_non_polymer_chemistry_evidence=(
+                    retained_non_polymer_chemistry_evidence
+                ),
+                retained_non_polymer_chemistry_resolution_by_residue_id=(
+                    retained_non_polymer_chemistry_resolution_by_residue_id
+                ),
             )
             for residue_index in self.included_residue_indices
         }
@@ -214,6 +263,16 @@ class ContinuousRelaxationProblem:
         *,
         spec: ContinuousRelaxationSettings,
         component_library: ComponentLibrary,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence: tuple[
+            RetainedNonPolymerChemistryEvidence,
+            ...,
+        ] = (),
+        retained_non_polymer_chemistry_resolution_by_residue_id: Mapping[
+            ResidueId,
+            RetainedNonPolymerChemistryResolution,
+        ]
+        | None = None,
     ) -> "ContinuousRelaxationProblem":
         """Build one continuous-relaxation problem from canonical inputs."""
 
@@ -223,7 +282,16 @@ class ContinuousRelaxationProblem:
             context_radius_angstrom=spec.context_radius_angstrom,
         )
         support_by_residue_index = region.require_local_bond_planning_support(
-            component_library
+            component_library,
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
+            retained_non_polymer_chemistry_resolution_by_residue_id=(
+                retained_non_polymer_chemistry_resolution_by_residue_id
+            ),
         )
         return cls(
             region=region,

@@ -10,7 +10,7 @@ from protrepair.state.domain import (
     ContinuousRegionReadinessFacts,
     SelectedAtomScopeFacts,
 )
-from protrepair.state.hydrogen_expectation import (
+from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
 )
 from protrepair.state.scoped import CarrierScopedState, ScopedState

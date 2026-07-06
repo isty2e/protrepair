@@ -412,16 +412,14 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
                 )
             ),
             clash_state=ClashState.NONE,
-            continuous_relaxation_ready=True,
+            continuous_relaxation_ready=False,
             discrete_preparation_applicable=True,
             validate_discrete_preparation_detector=True,
             legal_families=(
                 LocalTransformationFamily.DISCRETE_PRE_REFINEMENT_CORRECTION,
-                LocalTransformationFamily.CONTINUOUS_LOCAL_RELAXATION,
             ),
             legal_strata=(
                 LocalTransformationStratum.PREPARATION,
-                LocalTransformationStratum.RELAXATION,
             ),
         ),
     ),

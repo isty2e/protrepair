@@ -214,7 +214,13 @@ def plan_continuous_region_bonds(
                     residue_index,
                     residue_site,
                     residue_geometry=residue_geometry,
-                    explicit_hydrogen_atom_names=set(),
+                    explicit_hydrogen_atom_names=(
+                        _explicit_hydrogen_atom_names_in_bonds(
+                            region.snapshot.structure.constitution,
+                            residue_index,
+                            bond_set,
+                        )
+                    ),
                 )
             )
             continue
@@ -451,6 +457,26 @@ def _inferred_hydrogen_bonds(
         )
 
     return tuple(inferred_bonds)
+
+
+def _explicit_hydrogen_atom_names_in_bonds(
+    constitution: StructureConstitution,
+    residue_index: ResidueIndex,
+    bonds: Iterable[PlannedBond],
+) -> set[str]:
+    """Return residue-local hydrogen names already represented by planned bonds."""
+
+    hydrogen_atom_names: set[str] = set()
+    for bond in bonds:
+        for atom_index in (bond.atom_index_1, bond.atom_index_2):
+            if constitution.residue_index_for_atom_index(atom_index) != residue_index:
+                continue
+
+            atom_site = constitution.atom_site_at(atom_index)
+            if atom_site.element == "H":
+                hydrogen_atom_names.add(atom_site.name)
+
+    return hydrogen_atom_names
 
 
 def _template_hydrogen_bonds(

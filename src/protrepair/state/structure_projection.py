@@ -4,7 +4,11 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
 from protrepair.scope import ResidueSetScope, WholeStructureScope
+from protrepair.state.hydrogen_expectation import StructureHydrogenExpectationModel
 from protrepair.state.scoped import CarrierScopedState
 from protrepair.state.structure_axes import (
     BackboneHeavyAtomCompletenessState,
@@ -237,6 +241,11 @@ class StructureProjectionStateFacts:
         structure: ProteinStructure,
         *,
         component_library: ComponentLibrary | None = None,
+        retained_non_polymer_chemistry_evidence: tuple[
+            RetainedNonPolymerChemistryEvidence,
+            ...,
+        ] = (),
+        hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
     ) -> "StructureProjectionStateFacts":
         """Derive primitive scoped facts over one whole structure."""
 
@@ -246,6 +255,10 @@ class StructureProjectionStateFacts:
             residues=tuple(structure.constitution.iter_residues(include_ligands=False)),
             ligands=structure.constitution.ligands,
             component_library=component_library,
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
+            hydrogen_expectation_model=hydrogen_expectation_model,
         )
 
     @classmethod
@@ -256,6 +269,11 @@ class StructureProjectionStateFacts:
         residues: tuple[ResidueSite, ...],
         ligands: tuple[ResidueSite, ...] = (),
         component_library: ComponentLibrary | None = None,
+        retained_non_polymer_chemistry_evidence: tuple[
+            RetainedNonPolymerChemistryEvidence,
+            ...,
+        ] = (),
+        hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
     ) -> "StructureProjectionStateFacts":
         """Derive primitive scoped facts over one residue/ligand projection."""
 
@@ -273,6 +291,10 @@ class StructureProjectionStateFacts:
             residues=residues,
             ligands=ligands,
             component_library=component_library,
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
+            hydrogen_expectation_model=hydrogen_expectation_model,
         )
 
     @classmethod
@@ -284,12 +306,21 @@ class StructureProjectionStateFacts:
         residues: tuple[ResidueSite, ...],
         ligands: tuple[ResidueSite, ...],
         component_library: ComponentLibrary | None,
+        retained_non_polymer_chemistry_evidence: tuple[
+            RetainedNonPolymerChemistryEvidence,
+            ...,
+        ],
+        hydrogen_expectation_model: StructureHydrogenExpectationModel | None,
     ) -> "StructureProjectionStateFacts":
         """Derive scoped facts over one explicit projection and semantic scope."""
 
         runtime = ResidueProjectionFactRuntime.from_context(
             context_structure,
             component_library=component_library,
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
+            hydrogen_expectation_model=hydrogen_expectation_model,
         )
         residue_facts = tuple(
             runtime.derive_residue_facts(residue) for residue in residues

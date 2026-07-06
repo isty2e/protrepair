@@ -17,7 +17,6 @@ from tests.support.retained_non_polymer_components import (
 )
 
 from protrepair.chemistry import (
-    BondDefinition,
     ChemicalComponentDefinition,
     ComponentLibrary,
     ResidueTemplate,
@@ -831,17 +830,12 @@ def test_structure_chemistry_readiness_splits_template_heavy_from_fallback_hydro
         source_format=FileFormat.PDB,
         source_name="retained-non-polymer-mixed-source",
     )
-    structure = with_topology_bonds(
-        structure,
-        topology_bond_spec(residue_id, "C1", "O1"),
-    )
     component_library = ComponentLibrary(
         templates={
             "MIX": ResidueTemplate(
                 definition=ChemicalComponentDefinition(
                     component_id="MIX",
                     atom_names=("C1", "O1"),
-                    bonds=(BondDefinition("C1", "O1"),),
                 ),
             ),
         }
@@ -2400,6 +2394,14 @@ def test_atom_scope_relaxation_allows_hydrogenated_retained_non_polymer_context(
         source_format=FileFormat.PDB,
         source_name="included-retained-non-polymer-hydrogen-ready",
     )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            ResidueId("L", 1),
+            (("C1", "H1"),),
+            provenance=BondProvenance.REPAIR_INFERRED,
+        ),
+    )
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     atom_scope = OBSERVED_ATOM_SCOPE_LOWERING.lower(
         ResidueSetScope(residue_ids=(ResidueId("A", 1),)),
@@ -2496,6 +2498,19 @@ def test_atom_scope_relaxation_keeps_single_center_template_less_context_passive
             atom_payload("H4", "H", Vec3(2.1, 1.9, 0.0)),
         ),
         source_name="single-center-template-less-passive-only",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            ResidueId("L", 1),
+            (
+                ("C1", "H1"),
+                ("C1", "H2"),
+                ("C1", "H3"),
+                ("C1", "H4"),
+            ),
+            provenance=BondProvenance.REPAIR_INFERRED,
+        ),
     )
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     passive_scope = OBSERVED_ATOM_SCOPE_LOWERING.lower(
@@ -2628,6 +2643,20 @@ def test_atom_scope_relaxation_blocks_selected_template_less_ligand() -> None:
             atom_payload("H4", "H", Vec3(2.1, -0.7, 0.0)),
         ),
         source_name="selected-template-less-ligand-blocker",
+    )
+    structure = with_topology_bonds(
+        structure,
+        *residue_bond_specs(
+            ResidueId("L", 1),
+            (
+                ("C1", "O1"),
+                ("C1", "H1"),
+                ("C1", "H2"),
+                ("C1", "H3"),
+                ("O1", "H4"),
+            ),
+            provenance=BondProvenance.REPAIR_INFERRED,
+        ),
     )
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     atom_scope = OBSERVED_ATOM_SCOPE_LOWERING.lower(
