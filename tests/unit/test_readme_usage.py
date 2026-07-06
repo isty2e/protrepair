@@ -2,12 +2,8 @@
 
 from pathlib import Path
 
-from protrepair import (
-    AnalysisKind,
-    StructureIngressOptions,
-    process_structure,
-    requested_process_goal,
-)
+from protrepair import process_structure
+from protrepair.analysis import AnalysisKind
 from protrepair.io import write_structure
 from protrepair.scope import WholeStructureScope
 from protrepair.state import (
@@ -15,7 +11,11 @@ from protrepair.state import (
     HydrogenCoverageState,
     SidechainHeavyAtomCompletenessState,
 )
-from protrepair.workflow.contracts import LigandPolicy
+from protrepair.workflow.contracts import (
+    LigandPolicy,
+    StructureIngressOptions,
+    requested_process_goal,
+)
 
 
 def test_readme_basic_repair_usage_runs(tmp_path: Path) -> None:

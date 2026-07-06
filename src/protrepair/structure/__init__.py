@@ -23,6 +23,7 @@ from protrepair.structure.geometry import (
     ResidueGeometry,
     StructureGeometry,
 )
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.polymer_blueprint import (
     PolymerBlueprint,
     PolymerChainBlueprint,
@@ -46,6 +47,7 @@ from protrepair.structure.topology import (
 
 __all__ = [
     "AtomGeometry",
+    "AtomRef",
     "AtomSite",
     "AtomTopology",
     "BondProvenance",
@@ -58,6 +60,7 @@ __all__ = [
     "ProteinStructure",
     "ResidueFacetPayload",
     "ResidueGeometry",
+    "ResidueId",
     "ResidueSite",
     "SourceBondMetadata",
     "SourceBondRecordType",

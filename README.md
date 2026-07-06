@@ -70,26 +70,28 @@ pip install ".[refinement]"
 The release-facing import surface is intentionally small:
 
 - `protrepair` exposes the workflow entrypoint and top-level request helpers.
+- `protrepair.structure` exposes canonical structure and label types.
 - `protrepair.scope` exposes semantic scopes used by requested goals.
 - `protrepair.state` exposes closed state axes used by requested goals.
 - `protrepair.workflow.contracts` exposes ingress policies and request/result contracts.
+- `protrepair.analysis` exposes structured analysis request and result types.
 - `protrepair.io` exposes coordinate-format read/write boundaries.
 
 ```python
 from pathlib import Path
 
-from protrepair import (
-    StructureIngressOptions,
-    process_structure,
-    requested_process_goal,
-)
+from protrepair import process_structure
 from protrepair.scope import WholeStructureScope
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
     HydrogenCoverageState,
     SidechainHeavyAtomCompletenessState,
 )
-from protrepair.workflow.contracts import LigandPolicy
+from protrepair.workflow.contracts import (
+    LigandPolicy,
+    StructureIngressOptions,
+    requested_process_goal,
+)
 
 result = process_structure(
     Path("tests/fixtures/pdb/1aho.pdb"),
@@ -138,7 +140,7 @@ or explicit overrides used without optional RDKit support raise `ValueError`
 before workflow execution rather than falling back silently.
 
 ```python
-from protrepair import WorkflowTransformRequests
+from protrepair.workflow.contracts import WorkflowTransformRequests
 
 strict_result = process_structure(
     Path("tests/fixtures/pdb/1aho.pdb"),
@@ -171,7 +173,10 @@ ratio in `[0.0, 1.0]`, or keep the default disabled behavior. The older
 request at the workflow boundary.
 
 ```python
-from protrepair.workflow.contracts import PrasRatioHistidineProtonationRequest
+from protrepair.workflow.contracts import (
+    PrasRatioHistidineProtonationRequest,
+    WorkflowTransformRequests,
+)
 
 his_result = process_structure(
     Path("tests/fixtures/pdb/1aho.pdb"),
@@ -195,7 +200,7 @@ changing the PRAS-ratio request into a general protonation policy.
 If you want structured analyses in the result:
 
 ```python
-from protrepair import AnalysisKind
+from protrepair.analysis import AnalysisKind
 
 analysis_result = process_structure(
     Path("tests/fixtures/pdb/1aho.pdb"),
