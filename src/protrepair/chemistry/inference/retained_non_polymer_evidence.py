@@ -1,6 +1,6 @@
 """RDKit-backed inference for retained non-polymer chemistry evidence."""
 
-from functools import cache
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 try:
@@ -16,6 +16,8 @@ from protrepair.errors import RdkitUnavailableError
 
 if TYPE_CHECKING:
     from rdkit.Chem.rdchem import Mol
+
+_EVIDENCE_TEMPLATE_CACHE_MAXSIZE = 256
 
 
 def retained_non_polymer_evidence_heavy_atom_elements(
@@ -94,9 +96,33 @@ def retained_non_polymer_evidence_hydrogen_bond_definitions(
     )
 
 
-@cache
 def template_without_hydrogens(smiles: str) -> "Mol":
-    """Return one sanitized heavy-atom template for an evidence smiles string."""
+    """Return a sanitized heavy-atom template for an evidence smiles string."""
+
+    if Chem is None:
+        raise RdkitUnavailableError(
+            "retained non-polymer chemistry evidence requires the optional "
+            "rdkit dependency"
+        )
+
+    return Chem.Mol(_cached_template_without_hydrogens(smiles))
+
+
+def template_with_hydrogens(smiles: str) -> "Mol":
+    """Return a hydrogenated template for an evidence smiles string."""
+
+    if Chem is None:
+        raise RdkitUnavailableError(
+            "retained non-polymer chemistry evidence requires the optional "
+            "rdkit dependency"
+        )
+
+    return Chem.Mol(_cached_template_with_hydrogens(smiles))
+
+
+@lru_cache(maxsize=_EVIDENCE_TEMPLATE_CACHE_MAXSIZE)
+def _cached_template_without_hydrogens(smiles: str) -> "Mol":
+    """Return the cached sanitized heavy-atom template for evidence smiles."""
 
     if Chem is None:
         raise RdkitUnavailableError(
@@ -114,9 +140,9 @@ def template_without_hydrogens(smiles: str) -> "Mol":
     return Chem.RemoveHs(template)
 
 
-@cache
-def template_with_hydrogens(smiles: str) -> "Mol":
-    """Return one hydrogenated template for an evidence smiles string."""
+@lru_cache(maxsize=_EVIDENCE_TEMPLATE_CACHE_MAXSIZE)
+def _cached_template_with_hydrogens(smiles: str) -> "Mol":
+    """Return the cached hydrogenated template for evidence smiles."""
 
     if Chem is None:
         raise RdkitUnavailableError(
@@ -124,7 +150,7 @@ def template_with_hydrogens(smiles: str) -> "Mol":
             "rdkit dependency"
         )
 
-    return Chem.AddHs(template_without_hydrogens(smiles))
+    return Chem.AddHs(Chem.Mol(_cached_template_without_hydrogens(smiles)))
 
 
 def _evidence_heavy_atom_names_by_index(
