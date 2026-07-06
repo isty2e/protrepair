@@ -279,6 +279,81 @@ def test_faspr_backend_wraps_missing_sibling_rotamer_library(
     assert "dun2010bbdep.bin" in str(exc_info.value)
 
 
+def test_faspr_backend_caches_runtime_asset_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated calls on one backend should not repeat asset discovery."""
+
+    executable_path = copy_input_faspr_executable(tmp_path)
+    rotamer_library_path = tmp_path / "dun2010bbdep.bin"
+    rotamer_library_path.write_text("stub", encoding="utf-8")
+    resolve_calls = 0
+    validate_calls = 0
+
+    def fake_resolve_faspr_executable_path(
+        executable_path_override: Path | None,
+    ) -> Path:
+        nonlocal resolve_calls
+        resolve_calls += 1
+        assert executable_path_override == executable_path
+        return executable_path.absolute()
+
+    def fake_validate_rotamer_library_near(resolved_path: Path) -> Path:
+        nonlocal validate_calls
+        validate_calls += 1
+        assert resolved_path == executable_path.absolute()
+        return rotamer_library_path
+
+    monkeypatch.setattr(
+        faspr_backend,
+        "resolve_faspr_executable_path",
+        fake_resolve_faspr_executable_path,
+    )
+    monkeypatch.setattr(
+        faspr_backend,
+        "validate_rotamer_library_near",
+        fake_validate_rotamer_library_near,
+    )
+    backend = FasprPackingBackend(executable_path=executable_path)
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    first_result = backend.pack(plan)
+    second_result = backend.pack(plan)
+
+    assert first_result.backend_name == "faspr"
+    assert second_result.backend_name == "faspr"
+    assert resolve_calls == 1
+    assert validate_calls == 1
+
+
+def test_faspr_backend_cached_runtime_assets_still_detect_missing_rotamer(
+    tmp_path: Path,
+) -> None:
+    """Cached paths should not hide assets removed after first use."""
+
+    executable_path = copy_input_faspr_executable(tmp_path)
+    rotamer_library_path = tmp_path / "dun2010bbdep.bin"
+    rotamer_library_path.write_text("stub", encoding="utf-8")
+    backend = FasprPackingBackend(executable_path=executable_path)
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    backend.pack(plan)
+    rotamer_library_path.unlink()
+
+    with pytest.raises(PackingBackendExecutionError) as exc_info:
+        backend.pack(plan)
+
+    assert "runtime assets are unavailable" in str(exc_info.value)
+    assert "dun2010bbdep.bin" in str(exc_info.value)
+
+
 def test_faspr_backend_converts_subprocess_timeout(
     tmp_path: Path,
 ) -> None:

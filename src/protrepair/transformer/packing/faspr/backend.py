@@ -1,7 +1,7 @@
 """FASPR specialization of the generic side-chain packing backend seam."""
 
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -98,6 +98,12 @@ class FasprPackingBackend:
 
     executable_path: Path | None = None
     timeout_seconds: float = DEFAULT_FASPR_EXECUTION_TIMEOUT_SECONDS
+    _runtime_assets: "FasprRuntimeAssets | None" = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         """Normalize backend-local subprocess execution settings."""
@@ -119,8 +125,7 @@ class FasprPackingBackend:
         plan.assert_supported_by(self.capabilities())
         execution_input = FasprExecutionInput.from_plan(plan)
         try:
-            executable_path = resolve_faspr_executable_path(self.executable_path)
-            validate_rotamer_library_near(executable_path)
+            runtime_assets = self.runtime_assets()
         except (OSError, PackingBackendError) as error:
             raise PackingBackendExecutionError(
                 f"FASPR runtime assets are unavailable: {error}"
@@ -128,7 +133,7 @@ class FasprPackingBackend:
 
         packed_structure = run_faspr(
             execution_input,
-            executable_path=executable_path,
+            executable_path=runtime_assets.executable_path,
             timeout_seconds=self.timeout_seconds,
         )
         validate_faspr_output_shape(plan, packed_structure)
@@ -141,6 +146,57 @@ class FasprPackingBackend:
             backend_name="faspr",
             backend_version=None,
         )
+
+    def runtime_assets(self) -> "FasprRuntimeAssets":
+        """Return cached FASPR runtime assets after validating availability."""
+
+        runtime_assets = self._runtime_assets
+        if runtime_assets is None:
+            runtime_assets = FasprRuntimeAssets.from_executable_path(
+                self.executable_path
+            )
+            object.__setattr__(self, "_runtime_assets", runtime_assets)
+
+        runtime_assets.assert_available()
+        return runtime_assets
+
+
+@dataclass(frozen=True, slots=True)
+class FasprRuntimeAssets:
+    """Resolved FASPR executable and rotamer-library paths."""
+
+    executable_path: Path
+    rotamer_library_path: Path
+
+    @classmethod
+    def from_executable_path(cls, executable_path: Path | None) -> "FasprRuntimeAssets":
+        """Resolve and validate runtime assets for one backend instance."""
+
+        resolved_executable_path = resolve_faspr_executable_path(executable_path)
+        return cls(
+            executable_path=resolved_executable_path,
+            rotamer_library_path=validate_rotamer_library_near(
+                resolved_executable_path
+            ),
+        )
+
+    def assert_available(self) -> None:
+        """Raise when cached runtime assets are no longer available."""
+
+        if not self.executable_path.exists():
+            raise FileNotFoundError(
+                f"FASPR executable does not exist: {self.executable_path}"
+            )
+
+        if not self.executable_path.is_file():
+            raise PackingBackendError(
+                f"FASPR executable path is not a file: {self.executable_path}"
+            )
+
+        if not self.rotamer_library_path.exists():
+            raise PackingBackendError(
+                "FASPR requires dun2010bbdep.bin to exist beside the executable"
+            )
 
 
 @dataclass(frozen=True, slots=True)
