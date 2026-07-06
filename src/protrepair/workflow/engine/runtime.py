@@ -8,6 +8,9 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 )
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.transformer.completion.hydrogen.protonation import (
+    HistidineProtonationRequest,
+)
 from protrepair.transformer.refinement.speculative_planning import (
     EvaluatedSpeculativeProposal,
     SpeculativeAdoptedChild,
@@ -81,7 +84,7 @@ def execute_iterative_workflow(
     planning_context: WorkflowPlanningContext,
     reference_structure: ProteinStructure | None,
     orphan_fragment_policy: OrphanFragmentPolicy,
-    protonate_histidines: bool,
+    histidine_protonation: HistidineProtonationRequest,
     retained_non_polymer_chemistry_evidence: tuple[
         RetainedNonPolymerChemistryEvidence, ...
     ] = (),
@@ -141,13 +144,11 @@ def execute_iterative_workflow(
                 adopted_children=(),
             )
             continue
-        remaining_child_budget = (
-            planning_context.max_speculative_nodes - len(trace.nodes)
+        remaining_child_budget = planning_context.max_speculative_nodes - len(
+            trace.nodes
         )
         if remaining_child_budget <= 0:
-            trace = trace.stop(
-                reason=SpeculativeStopReason.ITERATION_LIMIT_REACHED
-            )
+            trace = trace.stop(reason=SpeculativeStopReason.ITERATION_LIMIT_REACHED)
             break
         proposal_batch = planning_outcome.current_proposal_batch()[
             :remaining_child_budget
@@ -166,7 +167,7 @@ def execute_iterative_workflow(
             original_structure=structure,
             orphan_fragment_policy=orphan_fragment_policy,
             reference_structure=reference_structure,
-            protonate_histidines=protonate_histidines,
+            histidine_protonation=histidine_protonation,
             allow_retained_non_polymer_rdkit_fallback=(
                 transform_requests.allow_retained_non_polymer_rdkit_fallback
             ),

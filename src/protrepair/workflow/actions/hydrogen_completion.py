@@ -15,9 +15,7 @@ from protrepair.workflow.actions.context import TransformerExecutionContext
 
 
 @dataclass(frozen=True, slots=True)
-class HydrogenCompletionTransformer(
-    ResidueSetWorkflowStructureTransformer
-):
+class HydrogenCompletionTransformer(ResidueSetWorkflowStructureTransformer):
     """Workflow-visible hydrogen completion transformer."""
 
     scope: ResidueSetScope
@@ -59,7 +57,7 @@ class HydrogenCompletionTransformer(
             prepare_heavy_atoms=False,
             target_residue_ids=self.covered_residue_ids(),
             orphan_fragment_policy=context.orphan_fragment_policy,
-            protonate_histidines=context.protonate_histidines,
+            histidine_protonation=context.histidine_protonation,
             local_refinement=None,
         )
         return ProjectedCodomainState(

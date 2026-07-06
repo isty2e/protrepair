@@ -20,6 +20,10 @@ from protrepair.state import (
     ScopedState,
     SidechainHeavyAtomCompletenessState,
 )
+from protrepair.transformer.completion.hydrogen.protonation import (
+    HistidineProtonationRequest,
+    normalize_histidine_protonation_request,
+)
 from protrepair.transformer.packing.spec import PackingSpec
 from protrepair.transformer.refinement.spec import (
     BackboneWindowRefinementSpec,
@@ -97,10 +101,7 @@ class RequestedGoalSet(Sequence[WorkflowGoal]):
     def __getitem__(
         self,
         index: int | slice,
-    ) -> (
-        WorkflowGoal
-        | tuple[WorkflowGoal, ...]
-    ):
+    ) -> WorkflowGoal | tuple[WorkflowGoal, ...]:
         """Return one requested goal or slice of requested goals."""
 
         return self.goals[index]
@@ -268,6 +269,7 @@ class WorkflowTransformRequests:
     committed_sidechain_packing: PackingSpec | None = None
     backbone_window_refinements: tuple[BackboneWindowRefinementSpec, ...] = ()
     repair_refinement: RepairRefinementSpec | None = None
+    histidine_protonation: HistidineProtonationRequest | None = None
     protonate_histidines: bool = False
     allow_retained_non_polymer_rdkit_fallback: bool = True
 
@@ -291,6 +293,10 @@ class WorkflowTransformRequests:
         reference_sidechain_packing = self.reference_sidechain_packing
         committed_sidechain_packing = self.committed_sidechain_packing
         repair_refinement = self.repair_refinement
+        histidine_protonation = normalize_histidine_protonation_request(
+            self.histidine_protonation,
+            protonate_histidines=self.protonate_histidines,
+        )
         for reconstruction in external_span_reconstructions:
             if not isinstance(
                 reconstruction,
@@ -318,9 +324,7 @@ class WorkflowTransformRequests:
                 "orphan_fragment_policy must be an OrphanFragmentPolicy value"
             )
         if not isinstance(self.allow_retained_non_polymer_rdkit_fallback, bool):
-            raise TypeError(
-                "allow_retained_non_polymer_rdkit_fallback must be a bool"
-            )
+            raise TypeError("allow_retained_non_polymer_rdkit_fallback must be a bool")
         if (
             reference_sidechain_packing is not None
             and committed_sidechain_packing is not None
@@ -340,6 +344,8 @@ class WorkflowTransformRequests:
             "backbone_window_refinements",
             tuple(backbone_window_refinements),
         )
+        object.__setattr__(self, "histidine_protonation", histidine_protonation)
+        object.__setattr__(self, "protonate_histidines", False)
 
     def requests_reference_sidechain_packing(self) -> bool:
         """Return whether workflow-reference side-chain packing was requested."""
@@ -360,6 +366,13 @@ class WorkflowTransformRequests:
         """Return whether explicit absent-span reconstruction was requested."""
 
         return bool(self.external_span_reconstructions)
+
+    def histidine_protonation_request(self) -> HistidineProtonationRequest:
+        """Return the normalized histidine protonation request."""
+
+        histidine_protonation = self.histidine_protonation
+        assert histidine_protonation is not None
+        return histidine_protonation
 
 
 def _normalize_requested_goals(
@@ -422,9 +435,7 @@ def _validate_workflow_goal_scope(goal: WorkflowGoal) -> None:
         goal.scope,
         WholeStructureScope,
     ):
-        raise ValueError(
-            "whole-structure clash goals must use ClashPresenceState"
-        )
+        raise ValueError("whole-structure clash goals must use ClashPresenceState")
     if isinstance(goal.value, ClashPresenceState) and not isinstance(
         goal.scope,
         WholeStructureScope,

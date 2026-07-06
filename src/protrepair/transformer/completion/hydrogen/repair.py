@@ -9,6 +9,10 @@ from protrepair.transformer.completion.hydrogen.cleanup import (
     cleanup_residual_hydrogen_clashes,
 )
 from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
+from protrepair.transformer.completion.hydrogen.protonation import (
+    HistidineProtonationRequest,
+    normalize_histidine_protonation_request,
+)
 from protrepair.transformer.completion.policies import OrphanFragmentPolicy
 from protrepair.transformer.refinement.directive import RepairLocalRefinementDirective
 from protrepair.transformer.refinement.repair_stage import (
@@ -25,6 +29,7 @@ def add_hydrogens(
     prepare_heavy_atoms: bool = True,
     target_residue_ids: frozenset[ResidueId] | None = None,
     orphan_fragment_policy: OrphanFragmentPolicy = OrphanFragmentPolicy.REBUILD,
+    histidine_protonation: HistidineProtonationRequest | None = None,
     protonate_histidines: bool = False,
     local_refinement: RepairLocalRefinementDirective | None = None,
 ) -> TransformationResult:
@@ -34,6 +39,10 @@ def add_hydrogens(
         build_default_component_library()
         if component_library is None
         else component_library
+    )
+    histidine_protonation_request = normalize_histidine_protonation_request(
+        histidine_protonation,
+        protonate_histidines=protonate_histidines,
     )
     prepared_structure = structure
     repairs: tuple[RepairEvent, ...] = ()
@@ -55,7 +64,7 @@ def add_hydrogens(
         prepared_structure,
         component_library=library,
         target_residue_ids=target_residue_ids,
-        protonate_histidines=protonate_histidines,
+        histidine_protonation=histidine_protonation_request,
     )
     staged_result = TransformationResult(
         structure=placement_result.structure,

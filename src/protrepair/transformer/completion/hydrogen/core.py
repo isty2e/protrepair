@@ -48,6 +48,11 @@ from protrepair.transformer.completion.hydrogen.domain import (
     HydrogenResidueSite,
 )
 from protrepair.transformer.completion.hydrogen.geometry import backbone_hydrogen
+from protrepair.transformer.completion.hydrogen.protonation import (
+    HistidineProtonationRequest,
+    normalize_histidine_protonation_request,
+    resolve_histidine_protonation_assignments,
+)
 from protrepair.transformer.completion.hydrogen.static_patch import (
     generate_hydrogen_patch,
     histidine_delta_hydrogen,
@@ -73,6 +78,7 @@ def materialize_hydrogens_core(
     component_library: ComponentLibrary | None = None,
     *,
     target_residue_ids: frozenset[ResidueId] | None = None,
+    histidine_protonation: HistidineProtonationRequest | None = None,
     protonate_histidines: bool = False,
 ) -> TransformationResult:
     """Materialize hydrogens on the current heavy-atom structure."""
@@ -82,13 +88,17 @@ def materialize_hydrogens_core(
         if component_library is None
         else component_library
     )
+    histidine_protonation_request = normalize_histidine_protonation_request(
+        histidine_protonation,
+        protonate_histidines=protonate_histidines,
+    )
     return _execute_hydrogen_placement_stage(
         TransformationResult(
             structure=structure,
             repairs=(),
             issues=(),
         ),
-        protonate_histidines=protonate_histidines,
+        histidine_protonation=histidine_protonation_request,
         component_library=library,
         target_residue_ids=target_residue_ids,
         original_structure=structure,
@@ -99,7 +109,7 @@ def _hydrogenate_chain_stage(
     *,
     chain_id: str,
     chain_residues: tuple[CompletionResiduePayload, ...],
-    protonate_histidines: bool,
+    histidine_protonation: HistidineProtonationRequest,
     component_library: ComponentLibrary,
     source_structure: ProteinStructure,
     target_residue_ids: frozenset[ResidueId] | None = None,
@@ -161,10 +171,16 @@ def _hydrogenate_chain_stage(
                     diagnosis=diagnosis,
                 )
             )
+    chain = source_structure.constitution.chain(chain_id)
     directives = derive_hydrogen_directives(
-        source_structure.constitution.chain(chain_id),
+        chain,
         templates=tuple(templates),
-        protonate_histidines=protonate_histidines,
+        histidine_protonation_assignments=(
+            resolve_histidine_protonation_assignments(
+                chain,
+                histidine_protonation,
+            )
+        ),
     )
     protonated_histidines = {
         _directive_residue_index(directive)
@@ -249,7 +265,7 @@ def _hydrogenate_chain_stage(
 def _execute_hydrogen_placement_stage(
     prepared_result: TransformationResult,
     *,
-    protonate_histidines: bool,
+    histidine_protonation: HistidineProtonationRequest,
     component_library: ComponentLibrary,
     target_residue_ids: frozenset[ResidueId] | None,
     original_structure: ProteinStructure,
@@ -259,7 +275,7 @@ def _execute_hydrogen_placement_stage(
     if target_residue_ids is not None:
         return _execute_targeted_polymer_hydrogen_placement_stage(
             prepared_result,
-            protonate_histidines=protonate_histidines,
+            histidine_protonation=histidine_protonation,
             component_library=component_library,
             target_residue_ids=target_residue_ids,
         )
@@ -276,7 +292,7 @@ def _execute_hydrogen_placement_stage(
                 placement_input,
                 chain_index=ChainIndex(chain_offset),
             ),
-            protonate_histidines=protonate_histidines,
+            histidine_protonation=histidine_protonation,
             component_library=component_library,
             source_structure=placement_input,
             target_residue_ids=target_residue_ids,
@@ -302,7 +318,7 @@ def _execute_hydrogen_placement_stage(
 def _execute_targeted_polymer_hydrogen_placement_stage(
     prepared_result: TransformationResult,
     *,
-    protonate_histidines: bool,
+    histidine_protonation: HistidineProtonationRequest,
     component_library: ComponentLibrary,
     target_residue_ids: frozenset[ResidueId],
 ) -> TransformationResult:
@@ -331,7 +347,7 @@ def _execute_targeted_polymer_hydrogen_placement_stage(
                 chain_index=ChainIndex(chain_offset),
                 hydrogen_stripped_residue_ids=target_residue_ids,
             ),
-            protonate_histidines=protonate_histidines,
+            histidine_protonation=histidine_protonation,
             component_library=component_library,
             source_structure=source_structure,
             target_residue_ids=target_residue_ids,
@@ -648,9 +664,7 @@ def _topology_bonds_with_polymer_hydrogen_anchors(
             target_constitution=target_constitution,
         ),
     )
-    occupied_endpoint_pairs = {
-        bond.endpoint_pair() for bond in remapped_bonds
-    }
+    occupied_endpoint_pairs = {bond.endpoint_pair() for bond in remapped_bonds}
     return (
         *remapped_bonds,
         *(
