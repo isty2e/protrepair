@@ -1,5 +1,6 @@
 """Release artifact sanity tests for packaged resources and metadata."""
 
+import hashlib
 from importlib.resources import files
 from pathlib import Path
 
@@ -22,6 +23,8 @@ def test_release_metadata_declares_dependency_boundary() -> None:
         maxsplit=1,
     )
 
+    assert '"scikit-build-core>=0.12,<0.13",' in pyproject
+    assert 'license = { text = "MIT AND CC-BY-4.0" }' in pyproject
     assert '"gemmi>=0.7.5",' in project_dependencies
     assert '"rdkit",' not in project_dependencies
     assert "[project.optional-dependencies]" in pyproject
@@ -91,20 +94,32 @@ def test_faspr_provenance_and_notices_are_release_artifacts() -> None:
     """FASPR vendoring metadata should ship with release artifacts."""
 
     pyproject = Path("pyproject.toml").read_text()
-    third_party_notices = Path("THIRD_PARTY_NOTICES.md").read_text()
+    third_party_notices = " ".join(Path("THIRD_PARTY_NOTICES.md").read_text().split())
     provenance = Path("vendor/faspr/PROVENANCE.md").read_text()
+    dunbrack_notice = Path(
+        "vendor/faspr/DUNBRACK_ROTAMER_LIBRARY_NOTICE.md"
+    ).read_text()
 
     assert '"THIRD_PARTY_NOTICES.md"' in pyproject
     assert '"vendor/faspr/LICENSE"' in pyproject
+    assert '"vendor/faspr/DUNBRACK_ROTAMER_LIBRARY_NOTICE.md"' in pyproject
     assert '"vendor/faspr/PROVENANCE.md"' in pyproject
     assert '"vendor/faspr/README.upstream.md"' in pyproject
     assert "vendor/faspr" in pyproject
+    assert "DUNBRACK_ROTAMER_LIBRARY_NOTICE.md" in third_party_notices
     assert "vendor/faspr/PROVENANCE.md" in third_party_notices
     assert "vendor/faspr/README.upstream.md" in third_party_notices
     assert "upstream README includes academic-user wording" in third_party_notices
+    assert "Creative Commons Attribution 4.0 International" in third_party_notices
     assert "0d55732fd6307f373018c6bddd842291c355c5f7" in provenance
+    assert "DUNBRACK_ROTAMER_LIBRARY_NOTICE.md" in provenance
     assert "No local source patches are applied" in provenance
     assert "The vendored code is treated under the supplied MIT license" in provenance
+    assert "Dunbrack Lab Smooth Backbone-Dependent Rotamer Library 2010" in (
+        dunbrack_notice
+    )
+    assert "CC BY 4.0" in dunbrack_notice
+    assert "Shapovalov" in dunbrack_notice
 
 
 def test_faspr_fast_math_requires_explicit_build_option() -> None:
@@ -140,6 +155,35 @@ def test_faspr_build_config_declares_packaged_runtime_assets() -> None:
     assert '"vendor/faspr",' in pyproject
 
 
+def test_faspr_provenance_checksums_match_vendored_files() -> None:
+    """FASPR provenance checksums should match the vendored snapshot."""
+
+    provenance = Path("vendor/faspr/PROVENANCE.md").read_text()
+
+    expected_file_digests = {
+        "vendor/faspr/LICENSE": (
+            "de1d50743d73db2567b0688e7d5e156f17055234c3d6b15fea13453ccb2a9300"
+        ),
+        "vendor/faspr/README.upstream.md": (
+            "20ebfbe9e6227abb29a0d4bd09ff0e2fbb70c275294758b8399a02caad27e1be"
+        ),
+        "vendor/faspr/dun2010bbdep.bin": (
+            "ed3f7be5f33b5fa947ac5e83cb024c6a6af6440bb50a1c8073aacabe6d792d0e"
+        ),
+    }
+    for path_text, expected_digest in expected_file_digests.items():
+        assert expected_digest in provenance
+        assert sha256_file(Path(path_text)) == expected_digest
+
+    expected_src_manifest_digest = (
+        "cc2ca78f30069e0e9308a0b68674da00864fa1ca09386128b96b36148a3c09d7"
+    )
+    assert expected_src_manifest_digest in provenance
+    assert sha256_sorted_file_manifest(Path("vendor/faspr/src")) == (
+        expected_src_manifest_digest
+    )
+
+
 def test_readme_documents_retained_ligand_fallback_contract() -> None:
     """README should document the retained-ligand optional-backend contract."""
 
@@ -151,3 +195,23 @@ def test_readme_documents_retained_ligand_fallback_contract() -> None:
         "explicit overrides used without optional RDKit support raise `ValueError`"
         in readme
     )
+
+
+def sha256_file(path: Path) -> str:
+    """Return the SHA-256 digest for one file."""
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def sha256_sorted_file_manifest(root: Path) -> str:
+    """Return a stable SHA-256 digest over per-file SHA-256 manifest lines."""
+
+    payload = bytearray()
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+
+        relative_path = f"./{path.relative_to(root).as_posix()}"
+        payload.extend(f"{sha256_file(path)}  {relative_path}\n".encode())
+
+    return hashlib.sha256(payload).hexdigest()

@@ -30,6 +30,14 @@ The upstream README contains academic-user wording. ProtRepair preserves that
 wording in [`vendor/faspr/README.upstream.md`](README.upstream.md) as provenance
 and notice text. The vendored code is treated under the supplied MIT license.
 
+The bundled `dun2010bbdep.bin` rotamer-library asset is data from the Dunbrack
+Lab Smooth Backbone-Dependent Rotamer Library 2010. The source page states that
+the 2010 backbone-dependent rotamer library is distributed under Creative
+Commons Attribution 4.0 International (CC BY 4.0), is free for academia and
+industry, and requires source acknowledgement. ProtRepair records that
+attribution in
+[`vendor/faspr/DUNBRACK_ROTAMER_LIBRARY_NOTICE.md`](DUNBRACK_ROTAMER_LIBRARY_NOTICE.md).
+
 ## Local Build
 
 ProtRepair builds the vendored C++ sources with the repository root
@@ -59,6 +67,8 @@ SHA-256 checksums recorded on 2026-07-06:
   `20ebfbe9e6227abb29a0d4bd09ff0e2fbb70c275294758b8399a02caad27e1be`
 - `vendor/faspr/dun2010bbdep.bin`:
   `ed3f7be5f33b5fa947ac5e83cb024c6a6af6440bb50a1c8073aacabe6d792d0e`
+- `vendor/faspr/DUNBRACK_ROTAMER_LIBRARY_NOTICE.md`: tracked notice file for
+  the CC BY 4.0 rotamer-library asset
 - `vendor/faspr/src/` sorted file manifest:
   `cc2ca78f30069e0e9308a0b68674da00864fa1ca09386128b96b36148a3c09d7`
 - `vendor/faspr/` shipped upstream core manifest
