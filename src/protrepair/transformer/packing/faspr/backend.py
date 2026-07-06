@@ -118,14 +118,20 @@ class FasprPackingBackend:
 
         plan.assert_supported_by(self.capabilities())
         execution_input = FasprExecutionInput.from_plan(plan)
-        executable_path = resolve_faspr_executable_path(self.executable_path)
-        validate_rotamer_library_near(executable_path)
+        try:
+            executable_path = resolve_faspr_executable_path(self.executable_path)
+            validate_rotamer_library_near(executable_path)
+        except (OSError, PackingBackendError) as error:
+            raise PackingBackendExecutionError(
+                f"FASPR runtime assets are unavailable: {error}"
+            ) from error
 
         packed_structure = run_faspr(
             execution_input,
             executable_path=executable_path,
             timeout_seconds=self.timeout_seconds,
         )
+        validate_faspr_output_shape(plan, packed_structure)
         changed_residue_ids = plan.changed_residue_ids_after(packed_structure)
         issues = infer_packing_issues(plan, packed_structure)
         return PackingResult(
@@ -172,7 +178,7 @@ def resolve_faspr_executable_path(executable_path: Path | None) -> Path:
             f"FASPR executable path is not a file: {resolved_path}"
         )
 
-    return resolved_path.resolve()
+    return resolved_path.absolute()
 
 
 def normalize_faspr_timeout_seconds(timeout_seconds: float) -> float:
@@ -276,6 +282,34 @@ def validate_faspr_residue_site(residue_site: ResidueSite) -> None:
             f"{residue_site.residue_id.display_token()}: "
             f"{', '.join(missing_backbone_atoms)}"
         )
+
+
+def validate_faspr_output_shape(
+    plan: PackingPlan,
+    packed_structure: ProteinStructure,
+) -> None:
+    """Raise when FASPR output no longer matches the input polymer sequence."""
+
+    packed_residue_sites = tuple(
+        residue
+        for chain in packed_structure.constitution.chains
+        for residue in chain.residues
+    )
+    original_residue_sites = plan.polymer_residue_sites()
+    if len(packed_residue_sites) != len(original_residue_sites):
+        raise PackingBackendExecutionError(
+            "FASPR changed the number of polymer residues unexpectedly"
+        )
+
+    for original_residue_site, packed_residue_site in zip(
+        original_residue_sites,
+        packed_residue_sites,
+        strict=True,
+    ):
+        if original_residue_site.residue_id != packed_residue_site.residue_id:
+            raise PackingBackendExecutionError(
+                "FASPR changed residue identifiers or order unexpectedly"
+            )
 
 
 def strip_hydrogens_from_residue_site(residue_site: ResidueSite) -> ResidueSite:
@@ -424,10 +458,15 @@ def run_faspr(
                 "FASPR output did not normalize as a polymer-only structure"
             ) from error
 
-    return _merge_packed_polymer_with_original_ligands(
-        packed_core=packed_core,
-        original_structure=execution_input.original_structure,
-    )
+    try:
+        return _merge_packed_polymer_with_original_ligands(
+            packed_core=packed_core,
+            original_structure=execution_input.original_structure,
+        )
+    except ResidueNotFoundError as error:
+        raise PackingBackendExecutionError(
+            "FASPR produced an unknown residue identifier"
+        ) from error
 
 
 def _os_error_reason(error: OSError) -> str:
@@ -697,6 +736,15 @@ def _should_preserve_hydrogens(
     ):
         return False
 
+    if _heavy_atom_formal_charge_by_name(
+        structure=original_structure,
+        residue_site=original_residue_site,
+    ) != _heavy_atom_formal_charge_by_name(
+        structure=packed_core,
+        residue_site=packed_residue_site,
+    ):
+        return False
+
     original_geometry = original_structure.geometry.residue_geometry(
         constitution=original_structure.constitution,
         residue_index=original_structure.constitution.residue_index(
@@ -744,13 +792,42 @@ def _hydrogen_atom_sites(residue_site: ResidueSite) -> tuple[AtomSite, ...]:
 
 def _heavy_atom_site_signature(
     residue_site: ResidueSite,
-) -> tuple[tuple[str, str], ...]:
+) -> tuple[str, bool, tuple[tuple[str, str], ...]]:
     """Return heavy atom names and elements in residue order."""
 
-    return tuple(
-        (atom_site.name, atom_site.element)
+    return (
+        residue_site.component_id,
+        residue_site.is_hetero,
+        tuple(
+            (atom_site.name, atom_site.element)
+            for atom_site in residue_site.atom_sites
+            if atom_site.element != "H"
+        ),
+    )
+
+
+def _heavy_atom_formal_charge_by_name(
+    *,
+    structure: ProteinStructure,
+    residue_site: ResidueSite,
+) -> tuple[tuple[str, int | None], ...]:
+    """Return formal charges for one residue's heavy atoms."""
+
+    residue_index = structure.constitution.residue_index(residue_site.residue_id)
+    heavy_atom_names = {
+        atom_site.name
         for atom_site in residue_site.atom_sites
         if atom_site.element != "H"
+    }
+    return tuple(
+        (atom_name, formal_charge)
+        for atom_name, formal_charge in (
+            structure.topology.residue_formal_charge_by_atom_name(
+                constitution=structure.constitution,
+                residue_index=residue_index,
+            )
+        )
+        if atom_name in heavy_atom_names
     )
 
 

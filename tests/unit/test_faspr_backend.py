@@ -28,6 +28,7 @@ from protrepair.structure.labels import (
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
+    AtomTopology,
     BondProvenance,
     SourceBondMetadata,
     SourceBondRecordType,
@@ -209,6 +210,73 @@ def test_faspr_backend_launches_relative_executable_path_with_sibling_assets(
 
     assert result.backend_name == "faspr"
     assert result.packed_structure.chain_ids() == ("A",)
+
+
+def test_faspr_backend_uses_symlink_path_for_sibling_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Symlink executable overrides should validate assets beside the symlink."""
+
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    target_executable_path = copy_input_faspr_executable(target_dir)
+    asset_dir = tmp_path / "assets"
+    asset_dir.mkdir()
+    symlink_path = asset_dir / "FASPR"
+    try:
+        symlink_path.symlink_to(target_executable_path)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {error}")
+
+    (asset_dir / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    result = FasprPackingBackend(executable_path=Path("assets") / "FASPR").pack(plan)
+
+    assert result.backend_name == "faspr"
+    assert result.packed_structure.chain_ids() == ("A",)
+
+
+def test_faspr_backend_wraps_missing_executable_override(
+    tmp_path: Path,
+) -> None:
+    """Missing executable overrides should not leak raw FileNotFoundError."""
+
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    with pytest.raises(PackingBackendExecutionError) as exc_info:
+        FasprPackingBackend(executable_path=tmp_path / "missing-FASPR").pack(plan)
+
+    assert isinstance(exc_info.value.__cause__, FileNotFoundError)
+    assert "runtime assets are unavailable" in str(exc_info.value)
+    assert "missing-FASPR" in str(exc_info.value)
+
+
+def test_faspr_backend_wraps_missing_sibling_rotamer_library(
+    tmp_path: Path,
+) -> None:
+    """Missing sibling rotamer assets should not leak raw FileNotFoundError."""
+
+    executable_path = copy_input_faspr_executable(tmp_path)
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    with pytest.raises(PackingBackendExecutionError) as exc_info:
+        FasprPackingBackend(executable_path=executable_path).pack(plan)
+
+    assert isinstance(exc_info.value.__cause__, faspr_backend.PackingBackendError)
+    assert "runtime assets are unavailable" in str(exc_info.value)
+    assert "dun2010bbdep.bin" in str(exc_info.value)
 
 
 def test_faspr_backend_converts_subprocess_timeout(
@@ -547,6 +615,38 @@ def test_faspr_backend_preserves_and_drops_hydrogens_per_residue(
     assert not result.issues[0].scope.targets_residue(first_residue_id)
 
 
+def test_faspr_backend_drops_hydrogens_when_heavy_atom_charges_change(
+    tmp_path: Path,
+) -> None:
+    """Heavy-atom charge changes should invalidate preserved hydrogens."""
+
+    executable_path = copy_template_faspr_executable(tmp_path)
+    output_template_path = tmp_path / "packed-output.pdb"
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    structure = build_charged_hydrogenated_test_structure()
+    residue_id = structure.constitution.chain("A").residues[0].residue_id
+    output_template_path.write_text(
+        write_structure_string(build_heavy_only_packed_structure(), FileFormat.PDB),
+        encoding="utf-8",
+    )
+    plan = PackingPlan.from_inputs(
+        structure,
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    result = FasprPackingBackend(executable_path=executable_path).pack(plan)
+
+    assert (
+        result.packed_structure.constitution.resolve_atom_index(
+            AtomRef(residue_id=residue_id, atom_name="H")
+        )
+        is None
+    )
+    assert result.changed_residue_ids == (residue_id,)
+    assert len(result.issues) == 1
+    assert result.issues[0].kind is ValidationIssueKind.PACKING_INVALIDATED_HYDROGENS
+
+
 def test_faspr_backend_smoke_runs_packaged_binary() -> None:
     """The packaged FASPR executable should pack a representative fixture."""
 
@@ -666,6 +766,143 @@ def test_faspr_backend_rejects_unexpected_ligand_output(
         FasprPackingBackend(executable_path=executable_path).pack(plan)
 
 
+def test_faspr_backend_wraps_unknown_polymer_output_residue_id(
+    tmp_path: Path,
+) -> None:
+    """Unexpected FASPR polymer residue ids should remain backend errors."""
+
+    executable_path = copy_template_faspr_executable(tmp_path)
+    output_template_path = tmp_path / "packed-output.pdb"
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    output_template_path.write_text(
+        write_structure_string(
+            build_structure(
+                chains=(
+                    chain_payload(
+                        "A",
+                        (
+                            build_residue(
+                                "ALA",
+                                "A",
+                                999,
+                                ("N", "CA", "C", "O", "CB"),
+                            ),
+                        ),
+                    ),
+                ),
+                source_format=FileFormat.PDB,
+                source_name="faspr-unknown-polymer-output",
+            ),
+            FileFormat.PDB,
+        ),
+        encoding="utf-8",
+    )
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    with pytest.raises(
+        PackingBackendExecutionError,
+        match="unknown residue identifier",
+    ):
+        FasprPackingBackend(executable_path=executable_path).pack(plan)
+
+
+def test_faspr_backend_rejects_dropped_polymer_output_residue(
+    tmp_path: Path,
+) -> None:
+    """Dropped FASPR output residues should be backend output-shape errors."""
+
+    executable_path = copy_template_faspr_executable(tmp_path)
+    output_template_path = tmp_path / "packed-output.pdb"
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    output_template_path.write_text(
+        write_structure_string(
+            build_structure(
+                chains=(
+                    chain_payload(
+                        "A",
+                        (
+                            build_residue("ALA", "A", 1, ("N", "CA", "C", "O", "CB")),
+                            build_residue(
+                                "LEU",
+                                "A",
+                                2,
+                                ("N", "CA", "C", "O", "CB", "CG"),
+                            ),
+                        ),
+                    ),
+                ),
+                source_format=FileFormat.PDB,
+                source_name="faspr-dropped-polymer-output",
+            ),
+            FileFormat.PDB,
+        ),
+        encoding="utf-8",
+    )
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    with pytest.raises(
+        PackingBackendExecutionError,
+        match="changed the number of polymer residues",
+    ):
+        FasprPackingBackend(executable_path=executable_path).pack(plan)
+
+
+def test_faspr_backend_rejects_reordered_polymer_output_residues(
+    tmp_path: Path,
+) -> None:
+    """Reordered FASPR output residues should be backend output-shape errors."""
+
+    executable_path = copy_template_faspr_executable(tmp_path)
+    output_template_path = tmp_path / "packed-output.pdb"
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    output_template_path.write_text(
+        write_structure_string(
+            build_structure(
+                chains=(
+                    chain_payload(
+                        "A",
+                        (
+                            build_residue(
+                                "LEU",
+                                "A",
+                                2,
+                                ("N", "CA", "C", "O", "CB", "CG"),
+                            ),
+                            build_residue("ALA", "A", 1, ("N", "CA", "C", "O", "CB")),
+                            build_residue(
+                                "TYR",
+                                "A",
+                                3,
+                                ("N", "CA", "C", "O", "CB", "CG"),
+                            ),
+                        ),
+                    ),
+                ),
+                source_format=FileFormat.PDB,
+                source_name="faspr-reordered-polymer-output",
+            ),
+            FileFormat.PDB,
+        ),
+        encoding="utf-8",
+    )
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    with pytest.raises(
+        PackingBackendExecutionError,
+        match="changed residue identifiers or order",
+    ):
+        FasprPackingBackend(executable_path=executable_path).pack(plan)
+
+
 def build_test_structure() -> ProteinStructure:
     """Build one small canonical structure for backend tests."""
 
@@ -739,6 +976,30 @@ def build_hydrogenated_test_structure(*, residue_count: int = 1) -> ProteinStruc
             constitution=structure.constitution,
             atom_topologies=structure.topology.atom_topologies,
             bonds=tuple(h_bonds),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
+
+
+def build_charged_hydrogenated_test_structure() -> ProteinStructure:
+    """Build one hydrogenated structure with a heavy-atom formal charge."""
+
+    structure = build_hydrogenated_test_structure()
+    residue_id = structure.constitution.chain("A").residues[0].residue_id
+    charged_atom_index = structure.constitution.resolve_atom_index(
+        AtomRef(residue_id=residue_id, atom_name="CA")
+    )
+    assert charged_atom_index is not None
+    atom_topologies = list(structure.topology.atom_topologies)
+    atom_topologies[charged_atom_index.value] = AtomTopology(formal_charge=1)
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=tuple(atom_topologies),
+            bonds=structure.topology.bonds,
         ),
         polymer_blueprint=structure.polymer_blueprint,
         provenance=structure.provenance,
