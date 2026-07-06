@@ -123,6 +123,23 @@ def test_faspr_fast_math_requires_explicit_build_option() -> None:
     assert "explicitly overridden at CMake configuration time" in provenance
 
 
+def test_faspr_build_config_declares_packaged_runtime_assets() -> None:
+    """Build config should install packaged FASPR runtime assets."""
+
+    cmake = Path("CMakeLists.txt").read_text()
+    pyproject = Path("pyproject.toml").read_text()
+    faspr_asset_destination = (
+        'DESTINATION "${SKBUILD_PLATLIB_DIR}/protrepair/packing/faspr/bin"'
+    )
+
+    assert "install(\n  TARGETS FASPR" in cmake
+    assert f"RUNTIME {faspr_asset_destination}" in cmake
+    assert "FILES vendor/faspr/dun2010bbdep.bin" in cmake
+    assert faspr_asset_destination in cmake
+    assert '"CMakeLists.txt"' in pyproject
+    assert '"vendor/faspr",' in pyproject
+
+
 def test_readme_documents_retained_ligand_fallback_contract() -> None:
     """README should document the retained-ligand optional-backend contract."""
 
