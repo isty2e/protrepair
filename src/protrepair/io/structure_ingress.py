@@ -338,15 +338,24 @@ def apply_structure_normalization_policy(
             structure.constitution.chain(chain_id) for chain_id in selected_chain_ids
         )
 
-    if policy.drops_ligands():
+    selected_chain_id_set = frozenset(selected_chain_ids)
+    selected_ligand_candidates = tuple(
+        ligand
+        for ligand in structure.constitution.ligands
+        if ligand.residue_id.chain_id in selected_chain_id_set
+    )
+    if policy.rejects_ligands() and selected_ligand_candidates:
+        rejected_ligand = selected_ligand_candidates[0]
+        raise StructureNormalizationError(
+            "structure normalization rejected unexpected ligand "
+            f"{rejected_ligand.component_id} at "
+            f"{rejected_ligand.residue_id.display_token()}"
+        )
+
+    if policy.drops_ligands() or policy.rejects_ligands():
         selected_ligands = ()
     else:
-        selected_chain_id_set = frozenset(selected_chain_ids)
-        selected_ligands = tuple(
-            ligand
-            for ligand in structure.constitution.ligands
-            if ligand.residue_id.chain_id in selected_chain_id_set
-        )
+        selected_ligands = selected_ligand_candidates
 
     if (
         selected_constitution == structure.constitution

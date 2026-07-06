@@ -1572,6 +1572,36 @@ def test_read_structure_string_selects_duplicate_ligand_residue_variant() -> Non
     assert ligand_geometry.atom_geometry("N1").position.x == 4.0
 
 
+def test_read_structure_string_rejects_ligands_via_public_ligand_policy() -> None:
+    """Public ligand rejection should reach raw ingress normalization."""
+
+    with pytest.raises(
+        StructureNormalizationError,
+        match="rejected unexpected ligand FAD at L:1",
+    ):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    build_pdb_atom_line(
+                        serial=1,
+                        record_name="HETATM",
+                        atom_name=" C1 ",
+                        residue_name="FAD",
+                        chain_id="L",
+                        residue_seq=1,
+                        x=1.0,
+                        element="C",
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+            policy=ingress_options(
+                ligand_policy=LigandPolicy.REJECT
+            ).structure_normalization_policy(),
+        )
+
+
 def test_read_structure_string_selects_ligand_altloc_cohort_without_mixing() -> None:
     """Retained ligand altloc normalization should also use one coherent cohort."""
 

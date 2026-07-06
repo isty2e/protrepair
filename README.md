@@ -117,6 +117,9 @@ if result.has_errors():
     raise RuntimeError(result.issues)
 ```
 
+`StructureIngressOptions(ligand_policy=LigandPolicy.REJECT)` rejects selected
+ligand-bearing inputs during ingress instead of silently dropping ligands.
+
 Retained non-polymer hydrogen completion uses supported bundled templates or
 explicit chemistry overrides when available. For otherwise unknown retained
 ligands, the default RDKit coordinate/proximity fallback is permissive and

@@ -247,11 +247,12 @@ class StructureIngressOptions:
             StructureNormalizationPolicy,
         )
 
-        ligand_handling = (
-            LigandHandling.KEEP
-            if self.ligand_policy is LigandPolicy.KEEP
-            else LigandHandling.DROP
-        )
+        if self.ligand_policy is LigandPolicy.KEEP:
+            ligand_handling = LigandHandling.KEEP
+        elif self.ligand_policy is LigandPolicy.REJECT:
+            ligand_handling = LigandHandling.REJECT
+        else:
+            ligand_handling = LigandHandling.DROP
         return StructureNormalizationPolicy(
             occupancy_policy=self.occupancy_policy,
             mutation_policy=self.mutation_policy,

@@ -32,9 +32,9 @@ from protrepair.diagnostics import (
     ValidationIssue,
     ValidationIssueKind,
 )
-from protrepair.errors import ModelInvariantError
+from protrepair.errors import ModelInvariantError, StructureNormalizationError
 from protrepair.geometry import Vec3
-from protrepair.io.ingress_policy import StructureNormalizationPolicy
+from protrepair.io.ingress_policy import LigandHandling, StructureNormalizationPolicy
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
 from protrepair.scope import ResidueSetScope, WholeStructureScope
 from protrepair.state import (
@@ -483,6 +483,89 @@ def test_request_contracts_normalize_requested_states_and_transforms() -> None:
         )
         is SidechainHeavyAtomCompletenessState.COMPLETE
     )
+
+
+def test_public_ligand_reject_policy_projects_to_normalization_reject() -> None:
+    ingress = ingress_options(ligand_policy=LigandPolicy.REJECT)
+
+    normalization_policy = ingress.structure_normalization_policy()
+
+    assert normalization_policy.rejects_ligands()
+
+
+def test_canonical_normalization_rejects_selected_ligands() -> None:
+    ligand_residue_id = ResidueId(chain_id="A", seq_num=10)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=ResidueId(chain_id="A", seq_num=1),
+                        atoms=(atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        ligands=(
+            residue_payload(
+                component_id="LIG",
+                residue_id=ligand_residue_id,
+                atoms=(atom_payload("C1", "C", Vec3(1.0, 0.0, 0.0)),),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+
+    with pytest.raises(
+        StructureNormalizationError,
+        match="rejected unexpected ligand LIG at A:10",
+    ):
+        apply_structure_normalization_policy(
+            structure,
+            policy=StructureNormalizationPolicy(
+                ligand_handling=LigandHandling.REJECT,
+            ),
+        )
+
+
+def test_canonical_ligand_reject_policy_respects_selected_chains() -> None:
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=ResidueId(chain_id="A", seq_num=1),
+                        atoms=(atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        ligands=(
+            residue_payload(
+                component_id="LIG",
+                residue_id=ResidueId(chain_id="B", seq_num=10),
+                atoms=(atom_payload("C1", "C", Vec3(1.0, 0.0, 0.0)),),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+
+    normalized = apply_structure_normalization_policy(
+        structure,
+        policy=StructureNormalizationPolicy(
+            ligand_handling=LigandHandling.REJECT,
+            selected_chain_ids=("A",),
+        ),
+    )
+
+    assert normalized.constitution.chain_ids() == ("A",)
+    assert normalized.constitution.ligands == ()
 
 
 def test_requested_goal_set_separates_clash_scope_axes() -> None:

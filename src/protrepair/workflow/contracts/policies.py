@@ -18,3 +18,4 @@ class LigandPolicy(str, Enum):
 
     DROP = "drop"
     KEEP = "keep"
+    REJECT = "reject"
