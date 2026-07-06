@@ -49,6 +49,7 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
     assert "Lean optional dependency boundary" in workflow
     assert "Verify RDKit is outside the lean environment" in lean_job
     assert "rdkit_blocker" in lean_job
+    assert "tests/unit/test_retained_non_polymer_no_rdkit_release.py" in lean_job
     assert "tests/unit/test_parser_repair_performance_support.py" in lean_job
     assert "test_process_structure_preserves_rdkit_coordinate_digest" in workflow
     assert "tests/workflow/test_process_representatives.py" in workflow
@@ -66,3 +67,16 @@ def test_release_docs_state_faspr_installed_asset_contract() -> None:
     )
     assert "Direct source-tree imports are not guaranteed" in normalized_readme
     assert "explicit FASPR `executable_path`" in normalized_readme
+
+
+def test_readme_documents_retained_ligand_fallback_contract() -> None:
+    """README should document the retained-ligand optional-backend contract."""
+
+    readme = Path("README.md").read_text()
+
+    assert "RETAINED_NON_POLYMER_FALLBACK_USED" in readme
+    assert "RETAINED_NON_POLYMER_FALLBACK_BLOCKED" in readme
+    assert (
+        "explicit overrides used without optional RDKit support raise `ValueError`"
+        in readme
+    )
