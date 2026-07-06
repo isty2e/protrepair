@@ -1,5 +1,7 @@
 """Analysis runtime tests over the canonical structure model."""
 
+from typing import cast
+
 import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
@@ -11,8 +13,12 @@ from tests.support.canonical_builders import (
 
 from protrepair.analysis.kinds import AnalysisKind
 from protrepair.analysis.ramachandran import _ramachandran_category
+from protrepair.analysis.results import (
+    RamachandranAnalysis,
+    RamachandranCategory,
+    RamachandranPoint,
+)
 from protrepair.analysis.runtime import build_analysis_bundle
-from protrepair.analysis.secondary_structure import _secondary_structure_label
 from protrepair.geometry import Vec3
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
@@ -66,7 +72,7 @@ def test_build_analysis_bundle_computes_backbone_torsions() -> None:
     assert first_point.psi_degrees is not None
     assert middle_point.phi_degrees is not None
     assert middle_point.psi_degrees is not None
-    assert middle_point.category in {"helix", "beta", "left_handed", "other"}
+    assert middle_point.category in set(RamachandranCategory)
     assert last_point.phi_degrees is not None
     assert last_point.psi_degrees is None
 
@@ -104,7 +110,7 @@ def test_ramachandran_torsions_accept_sane_chain_slot_numbering_gap() -> None:
     assert first_point.psi_degrees is not None
     assert middle_point.phi_degrees is not None
     assert middle_point.psi_degrees is not None
-    assert middle_point.category in {"helix", "beta", "left_handed", "other"}
+    assert middle_point.category in set(RamachandranCategory)
     assert last_point.phi_degrees is not None
 
 
@@ -126,7 +132,7 @@ def test_ramachandran_torsions_accept_insertion_code_peptide_neighbor() -> None:
     assert first_point.psi_degrees is not None
     assert middle_point.phi_degrees is not None
     assert middle_point.psi_degrees is not None
-    assert middle_point.category in {"helix", "beta", "left_handed", "other"}
+    assert middle_point.category in set(RamachandranCategory)
     assert last_point.phi_degrees is not None
 
 
@@ -166,7 +172,7 @@ def test_ramachandran_torsions_accept_sane_topology_covalent_gap() -> None:
     assert first_point.psi_degrees is not None
     assert middle_point.phi_degrees is not None
     assert middle_point.psi_degrees is not None
-    assert middle_point.category in {"helix", "beta", "left_handed", "other"}
+    assert middle_point.category in set(RamachandranCategory)
 
 
 def test_ramachandran_torsions_reject_implausible_non_covalent_topology_gap() -> None:
@@ -198,19 +204,19 @@ def test_ramachandran_torsions_reject_implausible_non_covalent_topology_gap() ->
 @pytest.mark.parametrize(
     ("phi_degrees", "psi_degrees", "expected_category"),
     (
-        (-60.0, -45.0, "helix"),
-        (-120.0, 120.0, "beta"),
-        (-120.0, -130.0, "beta"),
-        (60.0, 60.0, "left_handed"),
-        (-90.0, -90.0, "helix"),
-        (-20.0, 45.0, "helix"),
-        (-180.0, 90.0, "beta"),
-        (-40.0, 180.0, "beta"),
-        (-180.0, -120.0, "beta"),
-        (-40.0, -180.0, "beta"),
-        (20.0, -20.0, "left_handed"),
-        (120.0, 120.0, "left_handed"),
-        (0.0, 0.0, "other"),
+        (-60.0, -45.0, RamachandranCategory.HELIX),
+        (-120.0, 120.0, RamachandranCategory.BETA),
+        (-120.0, -130.0, RamachandranCategory.BETA),
+        (60.0, 60.0, RamachandranCategory.LEFT_HANDED),
+        (-90.0, -90.0, RamachandranCategory.HELIX),
+        (-20.0, 45.0, RamachandranCategory.HELIX),
+        (-180.0, 90.0, RamachandranCategory.BETA),
+        (-40.0, 180.0, RamachandranCategory.BETA),
+        (-180.0, -120.0, RamachandranCategory.BETA),
+        (-40.0, -180.0, RamachandranCategory.BETA),
+        (20.0, -20.0, RamachandranCategory.LEFT_HANDED),
+        (120.0, 120.0, RamachandranCategory.LEFT_HANDED),
+        (0.0, 0.0, RamachandranCategory.OTHER),
         (None, -45.0, None),
         (-60.0, None, None),
     ),
@@ -218,7 +224,7 @@ def test_ramachandran_torsions_reject_implausible_non_covalent_topology_gap() ->
 def test_ramachandran_category_projection_is_exact(
     phi_degrees: float | None,
     psi_degrees: float | None,
-    expected_category: str | None,
+    expected_category: RamachandranCategory | None,
 ) -> None:
     """Documented coarse Ramachandran bins should stay exact."""
 
@@ -234,20 +240,51 @@ def test_ramachandran_category_projection_is_exact(
 @pytest.mark.parametrize(
     ("category", "expected_label"),
     (
-        ("helix", "H"),
-        ("beta", "E"),
-        ("left_handed", "C"),
-        ("other", "C"),
+        (RamachandranCategory.HELIX, "H"),
+        (RamachandranCategory.BETA, "E"),
+        (RamachandranCategory.LEFT_HANDED, "C"),
+        (RamachandranCategory.OTHER, "C"),
         (None, "C"),
     ),
 )
 def test_secondary_structure_label_projection_is_exact(
-    category: str | None,
+    category: RamachandranCategory | None,
     expected_label: str,
 ) -> None:
     """Secondary structure should project only documented coarse labels."""
 
-    assert _secondary_structure_label(category) == expected_label
+    label = "C" if category is None else category.secondary_structure_label()
+
+    assert label == expected_label
+
+
+@pytest.mark.parametrize(
+    "category",
+    (
+        cast(RamachandranCategory, RamachandranCategory.HELIX.value),
+        cast(RamachandranCategory, "helx"),
+        cast(RamachandranCategory, ""),
+    ),
+)
+def test_ramachandran_point_rejects_raw_category_strings(
+    category: RamachandranCategory,
+) -> None:
+    """Ramachandran categories are closed enum values, not raw strings."""
+
+    with pytest.raises(TypeError, match="RamachandranCategory"):
+        RamachandranPoint(
+            residue_id=ResidueId("A", 1),
+            phi_degrees=-60.0,
+            psi_degrees=-45.0,
+            category=category,
+        )
+
+
+def test_ramachandran_analysis_rejects_non_point_members() -> None:
+    """Analysis containers should reject malformed point members early."""
+
+    with pytest.raises(TypeError, match="RamachandranPoint values"):
+        RamachandranAnalysis(points=(cast(RamachandranPoint, "helix"),))
 
 
 def analysis_fixture_structure(

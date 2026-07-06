@@ -10,6 +10,7 @@ from typing_extensions import Self
 from protrepair.analysis.results import (
     AnalysisBundle,
     RamachandranAnalysis,
+    RamachandranCategory,
     RamachandranPoint,
     SecondaryStructureAnalysis,
     SecondaryStructureAssignment,
@@ -41,6 +42,7 @@ __all__ = [
     "AnalysisBundle",
     "ProcessResult",
     "RamachandranAnalysis",
+    "RamachandranCategory",
     "RamachandranPoint",
     "RequestedGoalCompletionVerdict",
     "RequestedGoalOutcome",

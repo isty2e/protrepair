@@ -1,6 +1,10 @@
 """Ramachandran analysis over canonical protein structures."""
 
-from protrepair.analysis.results import RamachandranAnalysis, RamachandranPoint
+from protrepair.analysis.results import (
+    RamachandranAnalysis,
+    RamachandranCategory,
+    RamachandranPoint,
+)
 from protrepair.geometry.internal_coordinates import InternalCoordinateFrame
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
@@ -125,19 +129,19 @@ def _ramachandran_category(
     *,
     phi_degrees: float | None,
     psi_degrees: float | None,
-) -> str | None:
+) -> RamachandranCategory | None:
     """Return one coarse Ramachandran region label."""
 
     if phi_degrees is None or psi_degrees is None:
         return None
 
     if -160.0 <= phi_degrees <= -20.0 and -90.0 <= psi_degrees <= 45.0:
-        return "helix"
+        return RamachandranCategory.HELIX
     if -180.0 <= phi_degrees <= -40.0 and (
         psi_degrees >= 90.0 or psi_degrees <= -120.0
     ):
-        return "beta"
+        return RamachandranCategory.BETA
     if 20.0 <= phi_degrees <= 120.0 and -20.0 <= psi_degrees <= 120.0:
-        return "left_handed"
+        return RamachandranCategory.LEFT_HANDED
 
-    return "other"
+    return RamachandranCategory.OTHER

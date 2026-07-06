@@ -1,9 +1,28 @@
 """Structured analysis result contracts."""
 
 from dataclasses import dataclass
+from enum import Enum
 
 from protrepair.analysis.kinds import AnalysisKind
 from protrepair.structure.labels import ResidueId
+
+
+class RamachandranCategory(str, Enum):
+    """Closed coarse Ramachandran category labels."""
+
+    HELIX = "helix"
+    BETA = "beta"
+    LEFT_HANDED = "left_handed"
+    OTHER = "other"
+
+    def secondary_structure_label(self) -> str:
+        """Project this category to one coarse secondary-structure label."""
+
+        if self is RamachandranCategory.HELIX:
+            return "H"
+        if self is RamachandranCategory.BETA:
+            return "E"
+        return "C"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,13 +65,16 @@ class RamachandranPoint:
     residue_id: ResidueId
     phi_degrees: float | None
     psi_degrees: float | None
-    category: str | None = None
+    category: RamachandranCategory | None = None
 
     def __post_init__(self) -> None:
-        category = self.category
-        if category is not None:
-            category = category.strip() or None
-        object.__setattr__(self, "category", category)
+        if self.category is not None and not isinstance(
+            self.category,
+            RamachandranCategory,
+        ):
+            raise TypeError(
+                "Ramachandran point category must be a RamachandranCategory or None"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +84,14 @@ class RamachandranAnalysis:
     points: tuple[RamachandranPoint, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "points", tuple(self.points))
+        points = tuple(self.points)
+        for point in points:
+            if not isinstance(point, RamachandranPoint):
+                raise TypeError(
+                    "Ramachandran analyses require RamachandranPoint values"
+                )
+
+        object.__setattr__(self, "points", points)
 
     def point_for(self, residue_id: ResidueId) -> RamachandranPoint | None:
         """Return the point for a residue if available."""

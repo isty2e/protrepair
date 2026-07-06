@@ -43,6 +43,7 @@ from protrepair.workflow.contracts.request import (
 )
 from protrepair.workflow.contracts.result import (
     ProcessResult,
+    RamachandranCategory,
     RequestedGoalCompletionVerdict,
     RequestedGoalOutcome,
     RequestedGoalReport,
@@ -71,6 +72,7 @@ __all__ = [
     "ProcessResult",
     "PrasRatioHistidineProtonationRequest",
     "RamachandranAnalysis",
+    "RamachandranCategory",
     "RamachandranPoint",
     "RequestedGoalCompletionVerdict",
     "RetainedNonPolymerChemistryOverride",
