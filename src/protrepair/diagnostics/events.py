@@ -30,6 +30,9 @@ class EventScope:
     residue_ids: tuple[ResidueId, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.kind, EventScopeKind):
+            raise TypeError("event scope kind must be an EventScopeKind value")
+
         residue_ids = tuple(dict.fromkeys(self.residue_ids))
         if self.kind is EventScopeKind.STRUCTURE:
             if residue_ids:
@@ -56,8 +59,6 @@ class EventScope:
                 raise ValueError(
                     "residue-set event scope requires at least one residue id"
                 )
-        else:
-            raise TypeError("event scope kind must be an EventScopeKind value")
 
         object.__setattr__(self, "residue_ids", residue_ids)
 
@@ -147,6 +148,8 @@ class RepairEvent:
     details: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.kind, RepairEventKind):
+            raise TypeError("repair events require a RepairEventKind value")
         if not isinstance(self.scope, EventScope):
             raise TypeError("repair events require an EventScope value")
 
@@ -271,6 +274,12 @@ class ValidationIssue:
     provenance_origins: tuple[StructureProvenanceOrigin, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.kind, ValidationIssueKind):
+            raise TypeError(
+                "validation issues require a ValidationIssueKind value"
+            )
+        if not isinstance(self.severity, IssueSeverity):
+            raise TypeError("validation issues require an IssueSeverity value")
         if not isinstance(self.scope, EventScope):
             raise TypeError("validation issues require an EventScope value")
         provenance_origins = tuple(dict.fromkeys(self.provenance_origins))

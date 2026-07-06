@@ -64,6 +64,9 @@ def requested_process_goal(
 ) -> WorkflowGoal:
     """Return one canonical requested goal for the workflow boundary."""
 
+    if not is_workflow_goal_state_value(value):
+        raise TypeError("requested goal contained an unsupported requested-goal value")
+
     return ScopedState(scope=scope, value=value)
 
 
@@ -387,7 +390,7 @@ def _normalize_requested_goals(
     for goal in requested_goals:
         if not isinstance(goal, ScopedState):
             raise TypeError("requested_goals must contain ScopedState values")
-        if not _is_workflow_goal_state_value(goal.value):
+        if not is_workflow_goal_state_value(goal.value):
             raise TypeError(
                 "requested_goals contained an unsupported requested-goal value"
             )
@@ -409,7 +412,7 @@ def _normalize_requested_goals(
     return tuple(normalized_goals)
 
 
-def _is_workflow_goal_state_value(
+def is_workflow_goal_state_value(
     value: object,
 ) -> bool:
     """Return whether one value belongs to the current workflow goal surface."""

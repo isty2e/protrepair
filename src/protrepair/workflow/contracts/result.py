@@ -16,6 +16,7 @@ from protrepair.analysis.results import (
 )
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.scope import Scope
+from protrepair.state.scoped import ScopedState
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.result import TransformationResult
 from protrepair.workflow.contracts.planning import (
@@ -23,7 +24,11 @@ from protrepair.workflow.contracts.planning import (
     WorkflowBranchQualityAxis,
     WorkflowPlanningPhase,
 )
-from protrepair.workflow.contracts.request import WorkflowGoal, WorkflowGoalStateValue
+from protrepair.workflow.contracts.request import (
+    WorkflowGoal,
+    WorkflowGoalStateValue,
+    is_workflow_goal_state_value,
+)
 
 if TYPE_CHECKING:
     from protrepair.transformer.refinement.speculative_planning import (
@@ -94,6 +99,37 @@ class RequestedGoalOutcome:
     details: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.requested_goal, ScopedState):
+            raise TypeError(
+                "requested goal outcomes require a WorkflowGoal value"
+            )
+        if not is_workflow_goal_state_value(self.requested_goal.value):
+            raise TypeError(
+                "requested goal outcomes require a supported requested-goal value"
+            )
+        if not isinstance(self.status, RequestedGoalStatus):
+            raise TypeError(
+                "requested goal outcomes require a RequestedGoalStatus value"
+            )
+        if self.observed_state is not None and not is_workflow_goal_state_value(
+            self.observed_state
+        ):
+            raise TypeError(
+                "requested goal outcome observed_state must be a supported "
+                "requested-goal value or None"
+            )
+        for scope in self.blocking_scopes:
+            if not isinstance(scope, Scope):
+                raise TypeError(
+                    "requested goal outcome blocking_scopes must contain Scope values"
+                )
+        for phase in self.blocking_phases:
+            if not isinstance(phase, WorkflowPlanningPhase):
+                raise TypeError(
+                    "requested goal outcome blocking_phases must contain "
+                    "WorkflowPlanningPhase values"
+                )
+
         object.__setattr__(self, "blocking_scopes", tuple(self.blocking_scopes))
         object.__setattr__(self, "blocking_phases", tuple(self.blocking_phases))
 
@@ -116,6 +152,20 @@ class WorkflowPhaseOutcome:
     details: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.phase, WorkflowPlanningPhase):
+            raise TypeError(
+                "workflow phase outcomes require a WorkflowPlanningPhase value"
+            )
+        if not isinstance(self.status, WorkflowPhaseStatus):
+            raise TypeError(
+                "workflow phase outcomes require a WorkflowPhaseStatus value"
+            )
+        for scope in self.blocking_scopes:
+            if not isinstance(scope, Scope):
+                raise TypeError(
+                    "workflow phase outcome blocking_scopes must contain Scope values"
+                )
+
         object.__setattr__(self, "blocking_scopes", tuple(self.blocking_scopes))
 
 
@@ -126,7 +176,14 @@ class WorkflowPhaseReport:
     _outcomes: tuple[WorkflowPhaseOutcome, ...] = field(repr=False)
 
     def __init__(self, outcomes: tuple[WorkflowPhaseOutcome, ...]) -> None:
-        object.__setattr__(self, "_outcomes", tuple(outcomes))
+        normalized_outcomes = tuple(outcomes)
+        for outcome in normalized_outcomes:
+            if not isinstance(outcome, WorkflowPhaseOutcome):
+                raise TypeError(
+                    "workflow phase reports require WorkflowPhaseOutcome values"
+                )
+
+        object.__setattr__(self, "_outcomes", normalized_outcomes)
 
     @property
     def outcomes(self) -> tuple[WorkflowPhaseOutcome, ...]:
@@ -139,6 +196,9 @@ class WorkflowPhaseReport:
         phase: WorkflowPlanningPhase,
     ) -> WorkflowPhaseOutcome | None:
         """Return the outcome for one specific workflow phase."""
+
+        if not isinstance(phase, WorkflowPlanningPhase):
+            raise TypeError("phase must be a WorkflowPlanningPhase value")
 
         for outcome in self.outcomes:
             if outcome.phase is phase:
@@ -154,7 +214,14 @@ class RequestedGoalReport:
     outcomes: tuple[RequestedGoalOutcome, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "outcomes", tuple(self.outcomes))
+        outcomes = tuple(self.outcomes)
+        for outcome in outcomes:
+            if not isinstance(outcome, RequestedGoalOutcome):
+                raise TypeError(
+                    "requested goal reports require RequestedGoalOutcome values"
+                )
+
+        object.__setattr__(self, "outcomes", outcomes)
 
     def outcome_for(
         self,
@@ -173,6 +240,9 @@ class RequestedGoalReport:
         status: RequestedGoalStatus,
     ) -> int:
         """Return the number of outcomes with one specific status."""
+
+        if not isinstance(status, RequestedGoalStatus):
+            raise TypeError("status must be a RequestedGoalStatus value")
 
         return sum(1 for outcome in self.outcomes if outcome.status is status)
 
