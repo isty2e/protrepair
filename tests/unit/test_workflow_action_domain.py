@@ -1,5 +1,6 @@
 """Unit tests for workflow action domain admissibility."""
 
+import pytest
 from tests.support.canonical_builders import (
     atom_payload,
     build_structure,
@@ -157,9 +158,104 @@ def test_retained_non_polymer_hydrogen_completion_domain_is_admissible() -> None
         ),
         component_library=build_retained_non_polymer_component_library(),
     )
+    strict_domain = _workflow_action_domain(
+        _retained_non_polymer_hydrogen_structure(),
+        requested_goals=RequestedGoalSet(
+            (
+                requested_process_goal(
+                    scope=WholeStructureScope(),
+                    value=HydrogenCoverageState.COMPLETE,
+                ),
+            )
+        ),
+        transform_requests=WorkflowTransformRequests(
+            allow_retained_non_polymer_rdkit_fallback=False,
+        ),
+        component_library=build_retained_non_polymer_component_library(),
+    )
 
     assert not _is_admissible(HydrogenCompletionTransformer, domain)
     assert _is_admissible(RetainedNonPolymerHydrogenCompletionTransformer, domain)
+    assert _is_admissible(
+        RetainedNonPolymerHydrogenCompletionTransformer,
+        strict_domain,
+    )
+
+
+def test_retained_non_polymer_domain_admits_strict_fallback_diagnostic() -> None:
+    """Strict workflow policy should admit the action that reports fallback blocking."""
+
+    pytest.importorskip("rdkit")
+    structure = _template_less_retained_non_polymer_hydrogen_structure()
+    requested_goals = RequestedGoalSet(
+        (
+            requested_process_goal(
+                scope=WholeStructureScope(),
+                value=HydrogenCoverageState.COMPLETE,
+            ),
+        )
+    )
+    permissive_domain = _workflow_action_domain(
+        structure,
+        requested_goals=requested_goals,
+    )
+    strict_domain = _workflow_action_domain(
+        structure,
+        requested_goals=requested_goals,
+        transform_requests=WorkflowTransformRequests(
+            allow_retained_non_polymer_rdkit_fallback=False,
+        ),
+    )
+
+    assert any(
+        fact.requires_hydrogen_completion()
+        and fact.depends_on_rdkit_fallback_support()
+        for fact in (
+            permissive_domain.chemistry_readiness_facts.retained_non_polymer_facts
+        )
+    )
+    assert _is_admissible(
+        RetainedNonPolymerHydrogenCompletionTransformer,
+        permissive_domain,
+    )
+    assert _is_admissible(
+        RetainedNonPolymerHydrogenCompletionTransformer,
+        strict_domain,
+    )
+
+
+def test_retained_non_polymer_hydrogen_domain_blocks_complete_strict_fallback() -> (
+    None
+):
+    """Strict mode should not loop on an already-complete RDKit fallback surface."""
+
+    pytest.importorskip("rdkit")
+    structure = _template_less_retained_non_polymer_complete_hydrogen_structure()
+    requested_goals = RequestedGoalSet(
+        (
+            requested_process_goal(
+                scope=WholeStructureScope(),
+                value=HydrogenCoverageState.COMPLETE,
+            ),
+        )
+    )
+    domain = _workflow_action_domain(
+        structure,
+        requested_goals=requested_goals,
+        transform_requests=WorkflowTransformRequests(
+            allow_retained_non_polymer_rdkit_fallback=False,
+        ),
+    )
+
+    assert any(
+        fact.depends_on_rdkit_fallback_support()
+        and not fact.requires_hydrogen_completion()
+        for fact in domain.chemistry_readiness_facts.retained_non_polymer_facts
+    )
+    assert not _is_admissible(
+        RetainedNonPolymerHydrogenCompletionTransformer,
+        domain,
+    )
 
 
 def test_retained_non_polymer_hydrogen_domain_accepts_partial_template_surface() -> (
@@ -477,6 +573,50 @@ def _retained_non_polymer_hydrogen_structure():
         ),
         source_format=FileFormat.PDB,
         source_name="workflow-action-domain-retained-non-polymer-hydrogen",
+    )
+
+
+def _template_less_retained_non_polymer_hydrogen_structure():
+    return build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom_payload("C1", "C", Vec3(4.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(5.4, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="workflow-action-domain-template-less-retained-non-polymer",
+    )
+
+
+def _template_less_retained_non_polymer_complete_hydrogen_structure():
+    return build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom_payload("C1", "C", Vec3(4.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(5.4, 0.0, 0.0)),
+                    atom_payload("H001", "H", Vec3(3.6, 0.9, 0.0)),
+                    atom_payload("H002", "H", Vec3(3.6, -0.9, 0.0)),
+                    atom_payload("H003", "H", Vec3(3.8, 0.0, 0.9)),
+                    atom_payload("H004", "H", Vec3(5.7, 0.8, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name=(
+            "workflow-action-domain-template-less-retained-non-polymer-complete-h"
+        ),
     )
 
 

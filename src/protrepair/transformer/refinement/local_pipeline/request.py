@@ -9,9 +9,16 @@ from protrepair.chemistry import (
     build_default_component_library,
     build_default_restraint_library,
 )
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
 from protrepair.diagnostics.clashes import (
     ClashDetectionBasis,
     prepare_clash_detection_basis,
+)
+from protrepair.state.hydrogen_expectation import (
+    StructureHydrogenExpectationModel,
+    derive_structure_hydrogen_expectation_model,
 )
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.backend import ContinuousRelaxationBackend
@@ -32,6 +39,12 @@ class LocalRefinementRequest:
     restraint_library: RestraintLibrary
     backend: ContinuousRelaxationBackend
     clash_basis: ClashDetectionBasis
+    allow_retained_non_polymer_rdkit_fallback: bool = True
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence,
+        ...,
+    ] = ()
+    hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None
 
     @classmethod
     def from_context(
@@ -41,6 +54,11 @@ class LocalRefinementRequest:
         spec: ContinuousRelaxationSettings,
         component_library: ComponentLibrary | None,
         restraint_library: RestraintLibrary | None,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence: tuple[
+            RetainedNonPolymerChemistryEvidence,
+            ...,
+        ] = (),
     ) -> "LocalRefinementRequest":
         """Normalize boundary inputs into one canonical refinement request."""
 
@@ -55,12 +73,29 @@ class LocalRefinementRequest:
             else restraint_library
         )
         atom_scope = context.atom_input.observed_atom_scope(context.source_snapshot)
+        hydrogen_expectation_model = derive_structure_hydrogen_expectation_model(
+            context.source_snapshot.structure,
+            component_library=active_component_library,
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
+        )
         require_atom_scope_continuous_relaxation_execution(
             derive_atom_scope_continuous_relaxation_facts(
                 context.source_snapshot,
                 atom_scope,
                 component_library=active_component_library,
                 context_radius_angstrom=spec.context_radius_angstrom,
+                allow_retained_non_polymer_rdkit_fallback=(
+                    allow_retained_non_polymer_rdkit_fallback
+                ),
+                retained_non_polymer_chemistry_evidence=(
+                    retained_non_polymer_chemistry_evidence
+                ),
+                hydrogen_expectation_model=hydrogen_expectation_model,
             )
         )
 
@@ -76,6 +111,13 @@ class LocalRefinementRequest:
                 context.source_snapshot.structure,
                 component_library=active_component_library,
             ),
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
+            hydrogen_expectation_model=hydrogen_expectation_model,
         )
 
 def normalize_local_refinement_request(
@@ -84,6 +126,11 @@ def normalize_local_refinement_request(
     spec: ContinuousRelaxationSettings,
     component_library: ComponentLibrary | None,
     restraint_library: RestraintLibrary | None,
+    allow_retained_non_polymer_rdkit_fallback: bool = True,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence,
+        ...,
+    ] = (),
 ) -> LocalRefinementRequest:
     """Normalize boundary inputs into one canonical internal refinement request."""
 
@@ -92,4 +139,10 @@ def normalize_local_refinement_request(
         spec=spec,
         component_library=component_library,
         restraint_library=restraint_library,
+        allow_retained_non_polymer_rdkit_fallback=(
+            allow_retained_non_polymer_rdkit_fallback
+        ),
+        retained_non_polymer_chemistry_evidence=(
+            retained_non_polymer_chemistry_evidence
+        ),
     )

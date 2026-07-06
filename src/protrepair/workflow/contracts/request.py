@@ -269,6 +269,7 @@ class WorkflowTransformRequests:
     backbone_window_refinements: tuple[BackboneWindowRefinementSpec, ...] = ()
     repair_refinement: RepairRefinementSpec | None = None
     protonate_histidines: bool = False
+    allow_retained_non_polymer_rdkit_fallback: bool = True
 
     def __post_init__(self) -> None:
         external_span_reconstructions_list: list[ExternalSpanReconstructionSpec] = []
@@ -315,6 +316,10 @@ class WorkflowTransformRequests:
         if not isinstance(self.orphan_fragment_policy, OrphanFragmentPolicy):
             raise TypeError(
                 "orphan_fragment_policy must be an OrphanFragmentPolicy value"
+            )
+        if not isinstance(self.allow_retained_non_polymer_rdkit_fallback, bool):
+            raise TypeError(
+                "allow_retained_non_polymer_rdkit_fallback must be a bool"
             )
         if (
             reference_sidechain_packing is not None

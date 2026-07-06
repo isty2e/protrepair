@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
 from protrepair.scope import AtomSetScope, ResidueSetScope
 from protrepair.state.domain import AtomScopeStateFacts
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -203,6 +206,11 @@ class RepairLocalRefinementDirective:
         snapshot: ProteinStructureSnapshot,
         *,
         component_library: ComponentLibrary | None = None,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence: tuple[
+            RetainedNonPolymerChemistryEvidence,
+            ...,
+        ] = (),
     ) -> BoundRepairLocalRefinementExecution:
         """Bind one legal current-state execution from this directive."""
 
@@ -218,6 +226,12 @@ class RepairLocalRefinementDirective:
             atom_scope,
             component_library=active_component_library,
             context_radius_angstrom=self.config.context_radius_angstrom,
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
         )
 
         require_atom_scope_continuous_relaxation_execution(atom_scope_facts)

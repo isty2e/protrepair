@@ -106,6 +106,7 @@ def transform_requests(
     committed_sidechain_packing: PackingSpec | None = None,
     repair_refinement: RepairRefinementSpec | None = None,
     protonate_histidines: bool = False,
+    allow_retained_non_polymer_rdkit_fallback: bool = True,
 ) -> WorkflowTransformRequests:
     """Return one transform-requests value for tests."""
 
@@ -116,6 +117,9 @@ def transform_requests(
             committed_sidechain_packing=committed_sidechain_packing,
             repair_refinement=repair_refinement,
             protonate_histidines=protonate_histidines,
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
         )
 
     return WorkflowTransformRequests(
@@ -125,4 +129,7 @@ def transform_requests(
         committed_sidechain_packing=committed_sidechain_packing,
         repair_refinement=repair_refinement,
         protonate_histidines=protonate_histidines,
+        allow_retained_non_polymer_rdkit_fallback=(
+            allow_retained_non_polymer_rdkit_fallback
+        ),
     )

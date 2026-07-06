@@ -87,6 +87,13 @@ class RefinementExecutionCandidate:
                 atom_scope,
                 component_library=request.component_library,
                 context_radius_angstrom=request.spec.context_radius_angstrom,
+                allow_retained_non_polymer_rdkit_fallback=(
+                    request.allow_retained_non_polymer_rdkit_fallback
+                ),
+                retained_non_polymer_chemistry_evidence=(
+                    request.retained_non_polymer_chemistry_evidence
+                ),
+                hydrogen_expectation_model=request.hydrogen_expectation_model,
             )
         )
 
@@ -95,6 +102,20 @@ class RefinementExecutionCandidate:
             self.context.atom_input,
             spec=request.spec,
             component_library=request.component_library,
+            allow_retained_non_polymer_rdkit_fallback=(
+                request.allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                request.retained_non_polymer_chemistry_evidence
+            ),
+            retained_non_polymer_chemistry_resolution_by_residue_id=(
+                None
+                if request.hydrogen_expectation_model is None
+                else (
+                    request.hydrogen_expectation_model
+                    .retained_non_polymer_resolution_by_residue_id
+                )
+            ),
         )
         return SpeculativeExecution(
             proposal=self,

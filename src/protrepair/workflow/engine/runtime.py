@@ -167,6 +167,9 @@ def execute_iterative_workflow(
             orphan_fragment_policy=orphan_fragment_policy,
             reference_structure=reference_structure,
             protonate_histidines=protonate_histidines,
+            allow_retained_non_polymer_rdkit_fallback=(
+                transform_requests.allow_retained_non_polymer_rdkit_fallback
+            ),
             retained_non_polymer_chemistry_evidence=(
                 retained_non_polymer_chemistry_evidence
             ),

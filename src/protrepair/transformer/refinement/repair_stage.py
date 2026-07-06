@@ -1,10 +1,22 @@
 """Repair-stage local refinement orchestration."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+    evidence_by_residue_id,
+)
+from protrepair.diagnostics import ValidationIssueKind
 from protrepair.errors import RefinementError
+from protrepair.state.retained_non_polymer_chemistry import (
+    RetainedNonPolymerChemistryEvidenceSource,
+)
+from protrepair.state.structure_residue import (
+    RetainedNonPolymerChemistryReadinessFact,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
@@ -56,6 +68,11 @@ def apply_repair_stage_local_refinement(
     *,
     local_refinement: RepairLocalRefinementDirective | None,
     component_library: ComponentLibrary,
+    allow_retained_non_polymer_rdkit_fallback: bool = True,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence,
+        ...,
+    ] = (),
     prerequisite_policy: RepairStageRefinementPrerequisitePolicy = (
         RepairStageRefinementPrerequisitePolicy.STAGE_MISSING_PREREQUISITES
     ),
@@ -83,12 +100,26 @@ def apply_repair_stage_local_refinement(
             result,
             local_refinement=local_refinement,
             component_library=component_library,
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
         )
+        if _has_new_retained_non_polymer_fallback_blocker(result, staged_result):
+            return staged_result
     snapshot = ProteinStructureSnapshot.from_structure(staged_result.structure)
     try:
         bound_execution = local_refinement.bind_execution(
             snapshot,
             component_library=component_library,
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
         )
     except (RefinementError, ValueError) as error:
         return _merge_rejected_refinement_outcome(
@@ -106,6 +137,12 @@ def apply_repair_stage_local_refinement(
                 ),
                 spec=bound_execution.binding_decision.settings,
                 component_library=component_library,
+                allow_retained_non_polymer_rdkit_fallback=(
+                    allow_retained_non_polymer_rdkit_fallback
+                ),
+                retained_non_polymer_chemistry_evidence=(
+                    retained_non_polymer_chemistry_evidence
+                ),
             )
         except RefinementError as error:
             if not _is_mmff_parameterization_failure(error):
@@ -132,6 +169,12 @@ def apply_repair_stage_local_refinement(
                         ),
                     ),
                     component_library=component_library,
+                    allow_retained_non_polymer_rdkit_fallback=(
+                        allow_retained_non_polymer_rdkit_fallback
+                    ),
+                    retained_non_polymer_chemistry_evidence=(
+                        retained_non_polymer_chemistry_evidence
+                    ),
                 )
             except RefinementError as fallback_error:
                 return _merge_rejected_refinement_outcome(
@@ -148,6 +191,12 @@ def apply_repair_stage_local_refinement(
                 ),
                 spec=bound_execution.binding_decision.settings,
                 component_library=component_library,
+                allow_retained_non_polymer_rdkit_fallback=(
+                    allow_retained_non_polymer_rdkit_fallback
+                ),
+                retained_non_polymer_chemistry_evidence=(
+                    retained_non_polymer_chemistry_evidence
+                ),
             )
         except RefinementError as error:
             return _merge_rejected_refinement_outcome(
@@ -183,11 +232,28 @@ def _merge_rejected_refinement_outcome(
     )
 
 
+def _has_new_retained_non_polymer_fallback_blocker(
+    before: TransformationResult,
+    after: TransformationResult,
+) -> bool:
+    """Return whether prerequisite staging added a strict fallback blocker."""
+
+    return any(
+        issue.kind is ValidationIssueKind.RETAINED_NON_POLYMER_FALLBACK_BLOCKED
+        for issue in after.issues[len(before.issues) :]
+    )
+
+
 def _apply_local_refinement_prerequisites(
     result: TransformationResult,
     *,
     local_refinement: RepairLocalRefinementDirective,
     component_library: ComponentLibrary,
+    allow_retained_non_polymer_rdkit_fallback: bool,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence,
+        ...,
+    ],
 ) -> TransformationResult:
     """Stage proposal-local completion prerequisites before one FF execution."""
 
@@ -197,6 +263,12 @@ def _apply_local_refinement_prerequisites(
             staged_result.structure,
             local_refinement=local_refinement,
             component_library=component_library,
+            allow_retained_non_polymer_rdkit_fallback=(
+                allow_retained_non_polymer_rdkit_fallback
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                retained_non_polymer_chemistry_evidence
+            ),
         )
         if prerequisite_targets.is_empty():
             return staged_result
@@ -252,12 +324,22 @@ def _apply_local_refinement_prerequisites(
                     target_residue_ids=frozenset(
                         prerequisite_targets.retained_non_polymer_hydrogen_residue_ids
                     ),
+                    allow_retained_non_polymer_rdkit_fallback=(
+                        allow_retained_non_polymer_rdkit_fallback
+                    ),
+                    chemistry_evidence=retained_non_polymer_chemistry_evidence,
                 )
             )
+            previous_staged_result = staged_result
             staged_result = _merge_completion_stage_result(
                 staged_result,
                 stage_result=retained_non_polymer_result,
             )
+            if _has_new_retained_non_polymer_fallback_blocker(
+                previous_staged_result,
+                staged_result,
+            ):
+                return staged_result
             continue
 
     return staged_result
@@ -268,6 +350,11 @@ def _local_refinement_prerequisite_targets(
     *,
     local_refinement: RepairLocalRefinementDirective,
     component_library: ComponentLibrary,
+    allow_retained_non_polymer_rdkit_fallback: bool,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence,
+        ...,
+    ],
 ) -> _LocalRefinementPrerequisiteTargets:
     """Return local completion prerequisite targets for one local directive."""
 
@@ -279,6 +366,12 @@ def _local_refinement_prerequisite_targets(
         atom_scope,
         component_library=component_library,
         context_radius_angstrom=local_refinement.config.context_radius_angstrom,
+        allow_retained_non_polymer_rdkit_fallback=(
+            allow_retained_non_polymer_rdkit_fallback
+        ),
+        retained_non_polymer_chemistry_evidence=(
+            retained_non_polymer_chemistry_evidence
+        ),
     )
     continuous_region_readiness_facts = (
         atom_scope_facts.continuous_region_readiness_facts
@@ -292,6 +385,9 @@ def _local_refinement_prerequisite_targets(
     heavy_residue_ids: list[ResidueId] = []
     hydrogen_residue_ids: list[ResidueId] = []
     retained_non_polymer_hydrogen_residue_ids: list[ResidueId] = []
+    explicit_evidence_by_residue_id = evidence_by_residue_id(
+        retained_non_polymer_chemistry_evidence
+    )
     for coverage_facts in (
         continuous_region_readiness_facts.coverage_facts.residue_facts
     ):
@@ -312,7 +408,18 @@ def _local_refinement_prerequisite_targets(
     for retained_fact in (
         continuous_region_readiness_facts.chemistry_readiness_facts.retained_non_polymer_facts
     ):
-        if not retained_fact.requires_hydrogen_completion():
+        if not (
+            retained_fact.requires_hydrogen_completion()
+            or _strict_policy_blocks_retained_non_polymer_hydrogen_prerequisite(
+                structure,
+                retained_fact,
+                component_library=component_library,
+                explicit_evidence_by_residue_id=explicit_evidence_by_residue_id,
+                allow_retained_non_polymer_rdkit_fallback=(
+                    allow_retained_non_polymer_rdkit_fallback
+                ),
+            )
+        ):
             continue
         retained_non_polymer_hydrogen_residue_ids.append(retained_fact.residue_id)
 
@@ -323,6 +430,41 @@ def _local_refinement_prerequisite_targets(
             retained_non_polymer_hydrogen_residue_ids
         ),
     )
+
+
+def _strict_policy_blocks_retained_non_polymer_hydrogen_prerequisite(
+    structure: ProteinStructure,
+    retained_fact: RetainedNonPolymerChemistryReadinessFact,
+    *,
+    component_library: ComponentLibrary,
+    explicit_evidence_by_residue_id: Mapping[
+        ResidueId,
+        RetainedNonPolymerChemistryEvidence,
+    ],
+    allow_retained_non_polymer_rdkit_fallback: bool,
+) -> bool:
+    """Return whether strict policy should emit the retained fallback blocker."""
+
+    if allow_retained_non_polymer_rdkit_fallback:
+        return False
+    if component_library.get(retained_fact.component_id) is not None:
+        return False
+    if retained_fact.residue_id in explicit_evidence_by_residue_id:
+        return False
+    if (
+        retained_fact.hydrogen_expectation_source
+        is not RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
+    ):
+        return False
+
+    residue_site = structure.constitution.residue_or_ligand(retained_fact.residue_id)
+    if residue_site is None or not residue_site.is_hetero:
+        return False
+
+    heavy_atom_count = sum(
+        1 for atom_site in residue_site.atom_sites if atom_site.element != "H"
+    )
+    return heavy_atom_count > 1
 
 
 def _merge_completion_stage_result(
