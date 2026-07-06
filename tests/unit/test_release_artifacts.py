@@ -10,9 +10,7 @@ def test_bundled_chemistry_resources_are_package_visible() -> None:
     resource_root = files("protrepair.chemistry.resources")
 
     assert resource_root.joinpath("nonstandard_components.json.gz").is_file()
-    assert resource_root.joinpath(
-        "retained_non_polymer_components.json.gz"
-    ).is_file()
+    assert resource_root.joinpath("retained_non_polymer_components.json.gz").is_file()
 
 
 def test_release_metadata_declares_dependency_boundary() -> None:
@@ -87,6 +85,26 @@ def test_faspr_runtime_policy_documents_hydrogen_merge_contract() -> None:
         normalized_policy
     )
     assert "must not place replacement hydrogens itself" in normalized_policy
+
+
+def test_faspr_provenance_and_notices_are_release_artifacts() -> None:
+    """FASPR vendoring metadata should ship with release artifacts."""
+
+    pyproject = Path("pyproject.toml").read_text()
+    third_party_notices = Path("THIRD_PARTY_NOTICES.md").read_text()
+    provenance = Path("vendor/faspr/PROVENANCE.md").read_text()
+
+    assert '"THIRD_PARTY_NOTICES.md"' in pyproject
+    assert '"vendor/faspr/LICENSE"' in pyproject
+    assert '"vendor/faspr/PROVENANCE.md"' in pyproject
+    assert '"vendor/faspr/README.upstream.md"' in pyproject
+    assert "vendor/faspr" in pyproject
+    assert "vendor/faspr/PROVENANCE.md" in third_party_notices
+    assert "vendor/faspr/README.upstream.md" in third_party_notices
+    assert "upstream README includes academic-user wording" in third_party_notices
+    assert "0d55732fd6307f373018c6bddd842291c355c5f7" in provenance
+    assert "No local source patches are applied" in provenance
+    assert "The vendored code is treated under the supplied MIT license" in provenance
 
 
 def test_readme_documents_retained_ligand_fallback_contract() -> None:

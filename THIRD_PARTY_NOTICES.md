@@ -20,9 +20,13 @@ in git history and the upstream project.
 - Local vendored path: `vendor/faspr/`
 - License: MIT
 - Source notice: [vendor/faspr/LICENSE](vendor/faspr/LICENSE)
+- Provenance record: [vendor/faspr/PROVENANCE.md](vendor/faspr/PROVENANCE.md)
+- Upstream README snapshot: [vendor/faspr/README.upstream.md](vendor/faspr/README.upstream.md)
 
 This repository vendors the FASPR source code and rotamer library asset for the
-optional packaged side-chain packing backend.
+optional packaged side-chain packing backend. The upstream LICENSE is MIT; the
+upstream README includes academic-user wording, which this repository preserves
+as provenance and notice text.
 
 ## Structure-data fixtures
 

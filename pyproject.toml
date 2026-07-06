@@ -13,7 +13,13 @@ description = "Typed Python package for repairing protein structure files."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-license-files = ["LICENSE", "vendor/faspr/LICENSE"]
+license-files = [
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+  "vendor/faspr/LICENSE",
+  "vendor/faspr/PROVENANCE.md",
+  "vendor/faspr/README.upstream.md",
+]
 classifiers = [
   "Development Status :: 4 - Beta",
   "License :: OSI Approved :: MIT License",
