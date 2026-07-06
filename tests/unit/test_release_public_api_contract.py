@@ -50,6 +50,34 @@ def test_release_public_imports_resolve() -> None:
             assert hasattr(module, public_name), f"{module_name}.{public_name}"
 
 
+def test_inactive_workflow_policy_enums_are_not_public_contracts() -> None:
+    """Public policy enums must either affect execution or stay unexported."""
+
+    contracts = importlib.import_module("protrepair.workflow.contracts")
+    policies = importlib.import_module("protrepair.workflow.contracts.policies")
+
+    for inactive_policy_name in ("HydrogenPolicy", "CTerminalOxtPolicy"):
+        assert not hasattr(contracts, inactive_policy_name)
+        assert not hasattr(policies, inactive_policy_name)
+        assert inactive_policy_name not in contracts.__all__
+        assert inactive_policy_name not in policies.__all__
+
+
+def test_workflow_policy_module_exports_only_runtime_bound_policies() -> None:
+    """Policy module exports should be request-bound or execution-bound."""
+
+    policies = importlib.import_module("protrepair.workflow.contracts.policies")
+
+    assert set(policies.__all__) == {
+        "LigandPolicy",
+        "MutationPolicy",
+        "OccupancyPolicy",
+        "OrphanFragmentPolicy",
+    }
+    for policy_name in policies.__all__:
+        assert hasattr(policies, policy_name), policy_name
+
+
 def test_readme_uses_current_state_axis_names() -> None:
     """README should not advertise stale pre-ontology state names."""
 

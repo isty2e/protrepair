@@ -26,8 +26,6 @@ from protrepair.workflow.contracts.planning import (
     WorkflowTargetIntent,
 )
 from protrepair.workflow.contracts.policies import (
-    CTerminalOxtPolicy,
-    HydrogenPolicy,
     LigandPolicy,
     MutationPolicy,
     OccupancyPolicy,
@@ -58,13 +56,11 @@ from protrepair.workflow.contracts.span_policy import ExternalSpanGapSelectionPo
 
 __all__ = [
     "AnalysisBundle",
-    "CTerminalOxtPolicy",
     "DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO",
     "DisabledHistidineProtonationRequest",
     "ExternalSpanGapSelectionPolicy",
     "ExternalSpanReconstructionSpec",
     "HistidineProtonationRequest",
-    "HydrogenPolicy",
     "LigandPolicy",
     "MutationPolicy",
     "OccupancyPolicy",
