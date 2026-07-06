@@ -1,7 +1,7 @@
 """FASPR specialization of the generic side-chain packing backend seam."""
 
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -26,9 +26,14 @@ from protrepair.io.ingress_policy import (
     StructureNormalizationPolicy,
 )
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ChainSite, ResidueSite
+from protrepair.structure.constitution import (
+    AtomSite,
+    ChainSite,
+    ResidueSite,
+    StructureConstitution,
+)
 from protrepair.structure.geometry import StructureGeometry
-from protrepair.structure.labels import AtomRef
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.topology import AtomTopology, StructureTopology
 from protrepair.transformer.packing.alphabet import PackingAlphabet
@@ -42,6 +47,7 @@ from protrepair.transformer.packing.faspr.paths import (
 )
 
 BACKBONE_ATOM_NAMES: frozenset[str] = frozenset({"N", "CA", "C", "O"})
+FASPR_HYDROGEN_PRESERVATION_HEAVY_ATOM_TOLERANCE_ANGSTROM = 0.05
 FASPR_CAPABILITIES = PackingCapabilities(
     supports_full_structure_packing=True,
     supports_local_packing=True,
@@ -92,6 +98,12 @@ class FasprPackingBackend:
 
     executable_path: Path | None = None
     timeout_seconds: float = DEFAULT_FASPR_EXECUTION_TIMEOUT_SECONDS
+    _runtime_assets: "FasprRuntimeAssets | None" = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         """Normalize backend-local subprocess execution settings."""
@@ -112,14 +124,19 @@ class FasprPackingBackend:
 
         plan.assert_supported_by(self.capabilities())
         execution_input = FasprExecutionInput.from_plan(plan)
-        executable_path = resolve_faspr_executable_path(self.executable_path)
-        validate_rotamer_library_near(executable_path)
+        try:
+            runtime_assets = self.runtime_assets()
+        except (OSError, PackingBackendError) as error:
+            raise PackingBackendExecutionError(
+                f"FASPR runtime assets are unavailable: {error}"
+            ) from error
 
         packed_structure = run_faspr(
             execution_input,
-            executable_path=executable_path,
+            executable_path=runtime_assets.executable_path,
             timeout_seconds=self.timeout_seconds,
         )
+        validate_faspr_output_shape(plan, packed_structure)
         changed_residue_ids = plan.changed_residue_ids_after(packed_structure)
         issues = infer_packing_issues(plan, packed_structure)
         return PackingResult(
@@ -130,12 +147,64 @@ class FasprPackingBackend:
             backend_version=None,
         )
 
+    def runtime_assets(self) -> "FasprRuntimeAssets":
+        """Return cached FASPR runtime assets after validating availability."""
+
+        runtime_assets = self._runtime_assets
+        if runtime_assets is None:
+            runtime_assets = FasprRuntimeAssets.from_executable_path(
+                self.executable_path
+            )
+            object.__setattr__(self, "_runtime_assets", runtime_assets)
+
+        runtime_assets.assert_available()
+        return runtime_assets
+
+
+@dataclass(frozen=True, slots=True)
+class FasprRuntimeAssets:
+    """Resolved FASPR executable and rotamer-library paths."""
+
+    executable_path: Path
+    rotamer_library_path: Path
+
+    @classmethod
+    def from_executable_path(cls, executable_path: Path | None) -> "FasprRuntimeAssets":
+        """Resolve and validate runtime assets for one backend instance."""
+
+        resolved_executable_path = resolve_faspr_executable_path(executable_path)
+        return cls(
+            executable_path=resolved_executable_path,
+            rotamer_library_path=validate_rotamer_library_near(
+                resolved_executable_path
+            ),
+        )
+
+    def assert_available(self) -> None:
+        """Raise when cached runtime assets are no longer available."""
+
+        if not self.executable_path.exists():
+            raise FileNotFoundError(
+                f"FASPR executable does not exist: {self.executable_path}"
+            )
+
+        if not self.executable_path.is_file():
+            raise PackingBackendError(
+                f"FASPR executable path is not a file: {self.executable_path}"
+            )
+
+        if not self.rotamer_library_path.exists():
+            raise PackingBackendError(
+                "FASPR requires dun2010bbdep.bin to exist beside the executable"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class FasprExecutionInput:
     """Backend-specific execution input derived from a generic packing plan."""
 
     structure: ProteinStructure
+    original_structure: ProteinStructure
     sequence_override: str | None = None
 
     @classmethod
@@ -146,6 +215,7 @@ class FasprExecutionInput:
         sequence_override = build_faspr_sequence_override(plan)
         return cls(
             structure=prepared_structure,
+            original_structure=plan.structure,
             sequence_override=sequence_override,
         )
 
@@ -164,7 +234,7 @@ def resolve_faspr_executable_path(executable_path: Path | None) -> Path:
             f"FASPR executable path is not a file: {resolved_path}"
         )
 
-    return resolved_path
+    return resolved_path.absolute()
 
 
 def normalize_faspr_timeout_seconds(timeout_seconds: float) -> float:
@@ -268,6 +338,34 @@ def validate_faspr_residue_site(residue_site: ResidueSite) -> None:
             f"{residue_site.residue_id.display_token()}: "
             f"{', '.join(missing_backbone_atoms)}"
         )
+
+
+def validate_faspr_output_shape(
+    plan: PackingPlan,
+    packed_structure: ProteinStructure,
+) -> None:
+    """Raise when FASPR output no longer matches the input polymer sequence."""
+
+    packed_residue_sites = tuple(
+        residue
+        for chain in packed_structure.constitution.chains
+        for residue in chain.residues
+    )
+    original_residue_sites = plan.polymer_residue_sites()
+    if len(packed_residue_sites) != len(original_residue_sites):
+        raise PackingBackendExecutionError(
+            "FASPR changed the number of polymer residues unexpectedly"
+        )
+
+    for original_residue_site, packed_residue_site in zip(
+        original_residue_sites,
+        packed_residue_sites,
+        strict=True,
+    ):
+        if original_residue_site.residue_id != packed_residue_site.residue_id:
+            raise PackingBackendExecutionError(
+                "FASPR changed residue identifiers or order unexpectedly"
+            )
 
 
 def strip_hydrogens_from_residue_site(residue_site: ResidueSite) -> ResidueSite:
@@ -382,6 +480,11 @@ def run_faspr(
                 "FASPR execution timed out after "
                 f"{timeout_seconds:g} seconds: {executable_path}"
             ) from error
+        except OSError as error:
+            raise PackingBackendExecutionError(
+                "FASPR execution could not start: "
+                f"{executable_path} ({_os_error_reason(error)})"
+            ) from error
         if completed.returncode != 0:
             error_message = _bounded_output_excerpt(
                 stderr_path,
@@ -411,10 +514,21 @@ def run_faspr(
                 "FASPR output did not normalize as a polymer-only structure"
             ) from error
 
-    return _merge_packed_polymer_with_original_ligands(
-        packed_core=packed_core,
-        original_structure=execution_input.structure,
-    )
+    try:
+        return _merge_packed_polymer_with_original_ligands(
+            packed_core=packed_core,
+            original_structure=execution_input.original_structure,
+        )
+    except ResidueNotFoundError as error:
+        raise PackingBackendExecutionError(
+            "FASPR produced an unknown residue identifier"
+        ) from error
+
+
+def _os_error_reason(error: OSError) -> str:
+    """Return one concise launch-error reason for diagnostics."""
+
+    return error.strerror or str(error)
 
 
 def _bounded_output_excerpt(path: Path) -> str:
@@ -431,10 +545,7 @@ def _bounded_output_excerpt(path: Path) -> str:
     if not excerpt:
         return ""
     if truncated:
-        return (
-            f"{excerpt}... [truncated after "
-            f"{MAX_FASPR_CAPTURED_OUTPUT_BYTES} bytes]"
-        )
+        return f"{excerpt}... [truncated after {MAX_FASPR_CAPTURED_OUTPUT_BYTES} bytes]"
 
     return excerpt
 
@@ -445,8 +556,7 @@ def _assert_faspr_output_size(path: Path) -> None:
     output_size = path.stat().st_size
     if output_size > MAX_STRUCTURE_INPUT_BYTES:
         raise PackingBackendExecutionError(
-            "FASPR output exceeded "
-            f"{MAX_STRUCTURE_INPUT_BYTES} bytes: {path.name}"
+            f"FASPR output exceeded {MAX_STRUCTURE_INPUT_BYTES} bytes: {path.name}"
         )
 
 
@@ -511,9 +621,10 @@ def _merge_packed_polymer_with_original_ligands(
 ) -> ProteinStructure:
     """Return one packed polymer structure with original ligands restored."""
 
-    updated_constitution = packed_core.constitution.with_ligands(
-        original_structure.constitution.ligands
-    )
+    updated_constitution = _packed_constitution_with_preserved_hydrogens(
+        packed_core=packed_core,
+        original_structure=original_structure,
+    ).with_ligands(original_structure.constitution.ligands)
     ligand_residue_id_set = frozenset(
         ligand.residue_id for ligand in original_structure.constitution.ligands
     )
@@ -527,7 +638,10 @@ def _merge_packed_polymer_with_original_ligands(
                         residue_site.residue_id
                     ),
                 )
-                if residue_site.residue_id in ligand_residue_id_set
+                if (
+                    residue_site.residue_id in ligand_residue_id_set
+                    or atom_site.element == "H"
+                )
                 else packed_core.geometry.residue_geometry(
                     constitution=packed_core.constitution,
                     residue_index=packed_core.constitution.residue_index(
@@ -541,34 +655,11 @@ def _merge_packed_polymer_with_original_ligands(
     )
     updated_topology = StructureTopology(
         constitution=updated_constitution,
-        atom_topologies=tuple(
-            (
-                None
-                if formal_charge is None
-                else AtomTopology(formal_charge=formal_charge)
-            )
-            for residue_site in updated_constitution.residue_slots
-            for formal_charge_by_name in (
-                dict(
-                    original_structure.topology.residue_formal_charge_by_atom_name(
-                        constitution=original_structure.constitution,
-                        residue_index=original_structure.constitution.residue_index(
-                            residue_site.residue_id
-                        ),
-                    )
-                )
-                if residue_site.residue_id in ligand_residue_id_set
-                else dict(
-                    packed_core.topology.residue_formal_charge_by_atom_name(
-                        constitution=packed_core.constitution,
-                        residue_index=packed_core.constitution.residue_index(
-                            residue_site.residue_id
-                        ),
-                    )
-                ),
-            )
-            for atom_site in residue_site.atom_sites
-            for formal_charge in (formal_charge_by_name.get(atom_site.name),)
+        atom_topologies=_merged_atom_topologies(
+            updated_constitution=updated_constitution,
+            packed_core=packed_core,
+            original_structure=original_structure,
+            ligand_residue_id_set=ligand_residue_id_set,
         ),
         bonds=original_structure.topology.bonds_for_constitution(
             source_constitution=original_structure.constitution,
@@ -584,6 +675,218 @@ def _merge_packed_polymer_with_original_ligands(
     )
 
 
+def _merged_atom_topologies(
+    *,
+    updated_constitution: StructureConstitution,
+    packed_core: ProteinStructure,
+    original_structure: ProteinStructure,
+    ligand_residue_id_set: frozenset[ResidueId],
+) -> tuple[AtomTopology | None, ...]:
+    """Return atom topologies aligned to one FASPR merged constitution."""
+
+    atom_topologies: list[AtomTopology | None] = []
+    for residue_site in updated_constitution.residue_slots:
+        original_formal_charge_by_name = dict(
+            original_structure.topology.residue_formal_charge_by_atom_name(
+                constitution=original_structure.constitution,
+                residue_index=original_structure.constitution.residue_index(
+                    residue_site.residue_id
+                ),
+            )
+        )
+        packed_formal_charge_by_name = (
+            {}
+            if (
+                residue_site.residue_id in ligand_residue_id_set
+                or packed_core.constitution.residue_or_ligand(residue_site.residue_id)
+                is None
+            )
+            else dict(
+                packed_core.topology.residue_formal_charge_by_atom_name(
+                    constitution=packed_core.constitution,
+                    residue_index=packed_core.constitution.residue_index(
+                        residue_site.residue_id
+                    ),
+                )
+            )
+        )
+        for atom_site in residue_site.atom_sites:
+            formal_charge = (
+                original_formal_charge_by_name.get(atom_site.name)
+                if (
+                    residue_site.residue_id in ligand_residue_id_set
+                    or atom_site.element == "H"
+                )
+                else packed_formal_charge_by_name.get(atom_site.name)
+            )
+            atom_topologies.append(
+                None
+                if formal_charge is None
+                else AtomTopology(formal_charge=formal_charge)
+            )
+
+    return tuple(atom_topologies)
+
+
+def _packed_constitution_with_preserved_hydrogens(
+    *,
+    packed_core: ProteinStructure,
+    original_structure: ProteinStructure,
+) -> StructureConstitution:
+    """Return packed polymer constitution with still-valid original H restored."""
+
+    original_chains_by_id = {
+        chain_site.chain_id: chain_site
+        for chain_site in original_structure.constitution.chains
+    }
+    merged_chains: list[ChainSite] = []
+    for packed_chain_site in packed_core.constitution.chains:
+        original_chain_site = original_chains_by_id.get(packed_chain_site.chain_id)
+        if original_chain_site is None:
+            merged_chains.append(packed_chain_site)
+            continue
+
+        original_residues_by_id = {
+            residue_site.residue_id: residue_site
+            for residue_site in original_chain_site.residues
+        }
+        merged_residues: list[ResidueSite] = []
+        for packed_residue_site in packed_chain_site.residues:
+            original_residue_site = original_residues_by_id.get(
+                packed_residue_site.residue_id
+            )
+            if original_residue_site is not None and _should_preserve_hydrogens(
+                original_structure=original_structure,
+                packed_core=packed_core,
+                original_residue_site=original_residue_site,
+                packed_residue_site=packed_residue_site,
+            ):
+                merged_residues.append(
+                    _packed_residue_with_original_hydrogens(
+                        packed_residue_site=packed_residue_site,
+                        original_residue_site=original_residue_site,
+                    )
+                )
+            else:
+                merged_residues.append(packed_residue_site)
+
+        merged_chains.append(packed_chain_site.with_residues(merged_residues))
+
+    return packed_core.constitution.with_chains(merged_chains)
+
+
+def _should_preserve_hydrogens(
+    *,
+    original_structure: ProteinStructure,
+    packed_core: ProteinStructure,
+    original_residue_site: ResidueSite,
+    packed_residue_site: ResidueSite,
+) -> bool:
+    """Return whether original residue hydrogens remain valid after packing."""
+
+    if not _hydrogen_atom_sites(original_residue_site):
+        return False
+
+    if _heavy_atom_site_signature(original_residue_site) != _heavy_atom_site_signature(
+        packed_residue_site
+    ):
+        return False
+
+    if _heavy_atom_formal_charge_by_name(
+        structure=original_structure,
+        residue_site=original_residue_site,
+    ) != _heavy_atom_formal_charge_by_name(
+        structure=packed_core,
+        residue_site=packed_residue_site,
+    ):
+        return False
+
+    original_geometry = original_structure.geometry.residue_geometry(
+        constitution=original_structure.constitution,
+        residue_index=original_structure.constitution.residue_index(
+            original_residue_site.residue_id
+        ),
+    )
+    packed_geometry = packed_core.geometry.residue_geometry(
+        constitution=packed_core.constitution,
+        residue_index=packed_core.constitution.residue_index(
+            packed_residue_site.residue_id
+        ),
+    )
+    for atom_site in original_residue_site.atom_sites:
+        if atom_site.element == "H":
+            continue
+
+        distance = original_geometry.atom_geometry(atom_site.name).distance_to(
+            packed_geometry.atom_geometry(atom_site.name)
+        )
+        if distance > FASPR_HYDROGEN_PRESERVATION_HEAVY_ATOM_TOLERANCE_ANGSTROM:
+            return False
+
+    return True
+
+
+def _packed_residue_with_original_hydrogens(
+    *,
+    packed_residue_site: ResidueSite,
+    original_residue_site: ResidueSite,
+) -> ResidueSite:
+    """Return a packed residue with original H sites restored in source order."""
+
+    return packed_residue_site.with_atom_sites(
+        _hydrogen_atom_sites(original_residue_site)
+    ).reordered_atom_sites(original_residue_site.atom_site_names())
+
+
+def _hydrogen_atom_sites(residue_site: ResidueSite) -> tuple[AtomSite, ...]:
+    """Return polymer hydrogen atom sites in residue order."""
+
+    return tuple(
+        atom_site for atom_site in residue_site.atom_sites if atom_site.element == "H"
+    )
+
+
+def _heavy_atom_site_signature(
+    residue_site: ResidueSite,
+) -> tuple[str, bool, tuple[tuple[str, str], ...]]:
+    """Return heavy atom names and elements in residue order."""
+
+    return (
+        residue_site.component_id,
+        residue_site.is_hetero,
+        tuple(
+            (atom_site.name, atom_site.element)
+            for atom_site in residue_site.atom_sites
+            if atom_site.element != "H"
+        ),
+    )
+
+
+def _heavy_atom_formal_charge_by_name(
+    *,
+    structure: ProteinStructure,
+    residue_site: ResidueSite,
+) -> tuple[tuple[str, int | None], ...]:
+    """Return formal charges for one residue's heavy atoms."""
+
+    residue_index = structure.constitution.residue_index(residue_site.residue_id)
+    heavy_atom_names = {
+        atom_site.name
+        for atom_site in residue_site.atom_sites
+        if atom_site.element != "H"
+    }
+    return tuple(
+        (atom_name, formal_charge)
+        for atom_name, formal_charge in (
+            structure.topology.residue_formal_charge_by_atom_name(
+                constitution=structure.constitution,
+                residue_index=residue_index,
+            )
+        )
+        if atom_name in heavy_atom_names
+    )
+
+
 def infer_packing_issues(
     plan: PackingPlan,
     packed: ProteinStructure,
@@ -593,11 +896,29 @@ def infer_packing_issues(
     issues: list[ValidationIssue] = []
     for residue_site in packed.constitution.iter_residues():
         try:
-            plan.residue_site(residue_site.residue_id)
+            original_residue_site = plan.residue_site(residue_site.residue_id)
         except ResidueNotFoundError as error:
             raise PackingBackendExecutionError(
                 "FASPR produced an unknown residue identifier"
             ) from error
+
+        missing_hydrogen_names = _missing_original_polymer_hydrogen_names(
+            original_residue_site=original_residue_site,
+            packed_residue_site=residue_site,
+        )
+        if missing_hydrogen_names:
+            issues.append(
+                ValidationIssue.for_residue(
+                    kind=ValidationIssueKind.PACKING_INVALIDATED_HYDROGENS,
+                    severity=IssueSeverity.WARNING,
+                    message=(
+                        "FASPR invalidated polymer hydrogens "
+                        f"{', '.join(missing_hydrogen_names)}; run polymer "
+                        "hydrogen completion to restore hydrogen coverage"
+                    ),
+                    residue_id=residue_site.residue_id,
+                )
+            )
 
         if residue_site.is_hetero:
             issues.append(
@@ -613,3 +934,18 @@ def infer_packing_issues(
             )
 
     return tuple(issues)
+
+
+def _missing_original_polymer_hydrogen_names(
+    *,
+    original_residue_site: ResidueSite,
+    packed_residue_site: ResidueSite,
+) -> tuple[str, ...]:
+    """Return original polymer hydrogens absent from packed output."""
+
+    packed_atom_names = set(packed_residue_site.atom_site_names())
+    return tuple(
+        atom_site.name
+        for atom_site in original_residue_site.atom_sites
+        if atom_site.element == "H" and atom_site.name not in packed_atom_names
+    )

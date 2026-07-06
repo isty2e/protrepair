@@ -18,11 +18,22 @@ in git history and the upstream project.
 
 - Upstream project: `tommyhuangthu/FASPR`
 - Local vendored path: `vendor/faspr/`
-- License: MIT
+- Source code license: MIT
 - Source notice: [vendor/faspr/LICENSE](vendor/faspr/LICENSE)
+- Provenance record: [vendor/faspr/PROVENANCE.md](vendor/faspr/PROVENANCE.md)
+- Upstream README snapshot: [vendor/faspr/README.upstream.md](vendor/faspr/README.upstream.md)
+- Bundled rotamer-library notice:
+  [vendor/faspr/DUNBRACK_ROTAMER_LIBRARY_NOTICE.md](vendor/faspr/DUNBRACK_ROTAMER_LIBRARY_NOTICE.md)
 
 This repository vendors the FASPR source code and rotamer library asset for the
-optional packaged side-chain packing backend.
+optional packaged side-chain packing backend. The upstream LICENSE is MIT; the
+upstream README includes academic-user wording, which this repository preserves
+as provenance and notice text.
+
+The bundled `dun2010bbdep.bin` rotamer-library asset is data from the Dunbrack
+Lab Smooth Backbone-Dependent Rotamer Library 2010. The Dunbrack source page
+states that the library is distributed under Creative Commons Attribution 4.0
+International (CC BY 4.0) and requires source acknowledgement.
 
 ## Structure-data fixtures
 
