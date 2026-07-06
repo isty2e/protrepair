@@ -279,6 +279,44 @@ def test_protein_structure_requires_blueprint_chain_ids_to_match_constitution() 
         )
 
 
+def test_protein_structure_rejects_unassigned_reference_blueprint() -> None:
+    """Structure-attached blueprints require concrete constitution chain ids."""
+
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="GLY",
+                        residue_id=ResidueId(chain_id="A", seq_num=1),
+                        atoms=(atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+
+    with pytest.raises(ModelInvariantError, match="structure-attached"):
+        ProteinStructure.from_payload(
+            constitution=structure.constitution,
+            geometry=structure.geometry,
+            topology=structure.topology,
+            polymer_blueprint=PolymerBlueprint(
+                chains=(
+                    PolymerChainBlueprint(
+                        chain_id=None,
+                        residue_slots=(
+                            PolymerResidueSlot(sequence_position=1, token="G"),
+                        ),
+                    ),
+                ),
+            ),
+            provenance=structure.provenance,
+        )
+
+
 def test_protein_structure_chain_selection_subsets_polymer_blueprint() -> None:
     """Selecting chains should subset the attached polymer blueprint."""
 
