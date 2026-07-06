@@ -1,10 +1,12 @@
 """Direct regression tests for internal-coordinate torsion primitives."""
 
 from math import acos, degrees
+from typing import cast
 
 import numpy as np
 import pytest
 
+from protrepair import ProtrepairError
 from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
 
 
@@ -71,6 +73,39 @@ def test_place_raises_structured_error_for_coincident_b_c_anchors() -> None:
             Vec3(0.0, 0.0, 0.0),
             Vec3(1.0, 0.0, 0.0),
             Vec3(1.0, 0.0, 0.0),
+        ).place(
+            bond_length=1.25,
+            bond_angle_degrees=122.5,
+            dihedral_degrees=180.0,
+        )
+
+
+def test_geometry_placement_error_is_package_domain_error() -> None:
+    """Undefined placement geometry should be catchable as a package error."""
+
+    assert issubclass(GeometryPlacementError, ProtrepairError)
+    assert issubclass(GeometryPlacementError, ValueError)
+
+    with pytest.raises(ProtrepairError, match="distinct B/C anchors"):
+        InternalCoordinateFrame(
+            Vec3(0.0, 0.0, 0.0),
+            Vec3(1.0, 0.0, 0.0),
+            Vec3(1.0, 0.0, 0.0),
+        ).place(
+            bond_length=1.25,
+            bond_angle_degrees=122.5,
+            dihedral_degrees=180.0,
+        )
+
+
+def test_invalid_coordinate_payload_is_not_geometry_placement_error() -> None:
+    """Malformed coordinate inputs should stay distinct from degenerate geometry."""
+
+    with pytest.raises(TypeError):
+        InternalCoordinateFrame(
+            cast(Vec3, object()),
+            Vec3(1.0, 0.0, 0.0),
+            Vec3(2.0, 0.0, 0.0),
         ).place(
             bond_length=1.25,
             bond_angle_degrees=122.5,

@@ -35,6 +35,9 @@ RELEASE_PUBLIC_IMPORTS: dict[str, tuple[str, ...]] = {
         "write_structure",
         "write_structure_string",
     ),
+    "protrepair.geometry": (
+        "GeometryPlacementError",
+    ),
 }
 
 
