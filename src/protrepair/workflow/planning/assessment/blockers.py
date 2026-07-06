@@ -9,7 +9,7 @@ from protrepair.diagnostics.component_support import (
     missing_component_definition_issue,
 )
 from protrepair.diagnostics.events import ValidationIssue
-from protrepair.scope import ResidueSetScope, Scope
+from protrepair.scope import ResidueSetScope
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 from protrepair.workflow.contracts.planning import WorkflowPlanningPhase
@@ -29,7 +29,7 @@ class WorkflowBlocker:
     phase: WorkflowPlanningPhase
     deficit_family: WorkflowCapabilityDeficitFamily
     kind: WorkflowBlockerKind
-    scope: Scope
+    scope: ResidueSetScope
 
     def __post_init__(self) -> None:
         if not isinstance(self.phase, WorkflowPlanningPhase):
@@ -45,10 +45,16 @@ class WorkflowBlocker:
             )
         if not isinstance(self.kind, WorkflowBlockerKind):
             raise TypeError("workflow blockers require a WorkflowBlockerKind value")
-        if not isinstance(self.scope, Scope):
-            raise TypeError("workflow blockers require a Scope value")
         if not isinstance(self.scope, ResidueSetScope):
             raise TypeError("workflow blockers currently require a residue-set scope")
+        if (
+            self.kind is WorkflowBlockerKind.UNSUPPORTED_COMPONENT
+            and len(self.scope.residue_ids) != 1
+        ):
+            raise ValueError(
+                "unsupported-component blockers currently require exactly one "
+                "blocked residue"
+            )
 
     @classmethod
     def unsupported_component(
@@ -69,11 +75,6 @@ class WorkflowBlocker:
     def residue_ids(self) -> frozenset[ResidueId]:
         """Return residue ids directly covered by this blocker scope."""
 
-        if not isinstance(self.scope, ResidueSetScope):
-            raise NotImplementedError(
-                "workflow blocker does not provide residue-set semantics"
-            )
-
         return frozenset(self.scope.residue_ids)
 
     def issue_for(
@@ -88,15 +89,9 @@ class WorkflowBlocker:
             raise NotImplementedError(
                 "workflow blocker issue projection currently supports only "
                 "unsupported-component blockers"
-            )
+        )
 
         residue_ids = self.residue_ids()
-        if len(residue_ids) != 1:
-            raise NotImplementedError(
-                "unsupported-component blockers currently require exactly one "
-                "blocked residue"
-            )
-
         residue_id = next(iter(residue_ids))
         residue = structure.constitution.residue_site_at(
             structure.constitution.residue_index(residue_id)

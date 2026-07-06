@@ -14,9 +14,11 @@ from tests.support.canonical_builders import (
 )
 from tests.support.refinement_benchmarks import load_case_structure
 from tests.support.refinement_cases import REFINEMENT_BENCHMARK_CASES
+from typing_extensions import assert_type
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.diagnostics import ClashPolicy, ClashReport, detect_clashes
+from protrepair.diagnostics.clash_topology_rules import ClashTopologyAtomSite
 from protrepair.diagnostics.parser_readability import (
     RDKitNoConectSanitizeReadabilityMetrics,
 )
@@ -103,6 +105,15 @@ def test_intrinsic_geometry_facts_detect_synthetic_protein_self_clash() -> None:
         facts.orientation_correction_eligibility_state
         is OrientationCorrectionEligibilityState.NOT_ELIGIBLE
     )
+
+
+def test_clash_topology_atom_site_protocol_exposes_canonical_residue_id() -> None:
+    """Topology clash rules should require canonical residue identity."""
+
+    def assert_protocol_contract(site: ClashTopologyAtomSite) -> None:
+        assert_type(site.residue_id, ResidueId)
+
+    assert callable(assert_protocol_contract)
 
 
 def test_parser_compatibility_facts_preserve_rdkit_profile_observation(

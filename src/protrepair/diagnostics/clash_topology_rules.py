@@ -8,6 +8,7 @@ from typing_extensions import Protocol
 from protrepair.chemistry import ResidueTemplate
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
+from protrepair.structure.labels import ResidueId
 
 DISULFIDE_BOND_DISTANCE_CUTOFF_ANGSTROM = 3.0
 HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
@@ -112,7 +113,7 @@ class ClashTopologyAtomSite(Protocol):
     """Atom-site surface required by bonded/topological exclusion rules."""
 
     @property
-    def residue_id(self) -> object:
+    def residue_id(self) -> ResidueId:
         """Return residue id."""
 
         ...

@@ -48,7 +48,11 @@ from protrepair.structure.aggregate import ProteinStructure
 
 
 class ClashState(str, Enum):
-    """Observed steric clash state over one selected atom scope."""
+    """Observed steric clash state over one selected local atom scope.
+
+    This is the local/scope-specific clash axis used by transformation
+    legality. Whole-structure clash goals use `ClashPresenceState` instead.
+    """
 
     NONE = "none"
     PRESENT = "present"

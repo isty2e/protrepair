@@ -1,5 +1,8 @@
 """Unit tests for capability- and deficit-driven workflow goal support."""
 
+from typing import cast
+
+import pytest
 from tests.support.canonical_builders import (
     atom_payload,
     build_structure,
@@ -9,6 +12,7 @@ from tests.support.canonical_builders import (
 from tests.support.retained_non_polymer_components import (
     build_retained_non_polymer_component_library,
 )
+from typing_extensions import assert_type
 
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
@@ -23,7 +27,12 @@ from protrepair.structure.labels import ResidueId
 from protrepair.workflow.contracts import (
     RequestedGoalSet,
     WorkflowPlanningContext,
+    WorkflowPlanningPhase,
     requested_process_goal,
+)
+from protrepair.workflow.planning.assessment.blockers import (
+    WorkflowBlocker,
+    WorkflowBlockerKind,
 )
 from protrepair.workflow.planning.assessment.deficits import WorkflowStateDeficit
 from protrepair.workflow.planning.assessment.goal_support import (
@@ -123,6 +132,41 @@ def test_blocked_goal_projection_marks_heavy_support_blockers() -> None:
         blocker.deficit_family
         is WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS
     )
+
+
+def test_workflow_blocker_scope_contract_is_residue_set_only() -> None:
+    """Workflow blockers should not advertise unsupported non-residue scopes."""
+
+    residue_id = ResidueId("A", 1)
+    blocker = WorkflowBlocker.unsupported_component(
+        deficit_family=WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,
+        scope=ResidueSetScope(residue_ids=(residue_id,)),
+    )
+
+    assert_type(blocker.scope, ResidueSetScope)
+    assert blocker.scope == ResidueSetScope(residue_ids=(residue_id,))
+    assert blocker.residue_ids() == frozenset({residue_id})
+
+    with pytest.raises(TypeError, match="residue-set scope"):
+        WorkflowBlocker(
+            phase=WorkflowPlanningPhase.CHEMISTRY_AUGMENTATION,
+            deficit_family=WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,
+            kind=WorkflowBlockerKind.UNSUPPORTED_COMPONENT,
+            scope=cast(ResidueSetScope, WholeStructureScope()),
+        )
+
+
+def test_unsupported_component_blocker_requires_single_residue_scope() -> None:
+    """Unsupported-component blockers should not defer cardinality errors."""
+
+    residue_a = ResidueId("A", 1)
+    residue_b = ResidueId("A", 2)
+
+    with pytest.raises(ValueError, match="exactly one blocked residue"):
+        WorkflowBlocker.unsupported_component(
+            deficit_family=WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,
+            scope=ResidueSetScope(residue_ids=(residue_a, residue_b)),
+        )
 
 
 def test_blocked_goal_projection_marks_chemistry_blockers() -> None:
