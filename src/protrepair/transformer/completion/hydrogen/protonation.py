@@ -56,7 +56,7 @@ _HISTIDINE_PROTONATION_REQUEST_TYPES = (
 
 @dataclass(frozen=True, slots=True)
 class HistidineDeltaProtonationAssignment:
-    """Resolved assignment to append the histidine delta HD1 atom."""
+    """Resolver-independent assignment to append one histidine delta HD1 atom."""
 
     residue_index: ResidueIndex
 
