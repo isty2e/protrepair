@@ -221,6 +221,57 @@ def test_faspr_backend_converts_subprocess_timeout(
     assert str(executable_path) in error_message
 
 
+def test_faspr_backend_wraps_launch_permission_error(
+    tmp_path: Path,
+) -> None:
+    """Launch permission failures should stay inside backend error taxonomy."""
+
+    executable_path = tmp_path / "FASPR"
+    executable_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable_path.chmod(0o644)
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    with pytest.raises(PackingBackendExecutionError) as exc_info:
+        FasprPackingBackend(executable_path=executable_path).pack(plan)
+
+    assert isinstance(exc_info.value.__cause__, PermissionError)
+    error_message = str(exc_info.value)
+    assert "could not start" in error_message
+    assert str(executable_path) in error_message
+
+
+def test_faspr_backend_wraps_launch_os_error_race(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Executable races such as ENOEXEC/ENOENT should not leak raw OSError."""
+
+    executable_path = copy_input_faspr_executable(tmp_path)
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    def raise_launch_error(*args: object, **kwargs: object) -> object:
+        raise OSError(8, "Exec format error")
+
+    monkeypatch.setattr(faspr_backend.subprocess, "run", raise_launch_error)
+
+    with pytest.raises(PackingBackendExecutionError) as exc_info:
+        FasprPackingBackend(executable_path=executable_path).pack(plan)
+
+    assert isinstance(exc_info.value.__cause__, OSError)
+    error_message = str(exc_info.value)
+    assert "could not start" in error_message
+    assert "Exec format error" in error_message
+    assert str(executable_path) in error_message
+
+
 def test_faspr_backend_bounds_subprocess_failure_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

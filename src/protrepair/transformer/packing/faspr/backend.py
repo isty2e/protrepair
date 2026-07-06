@@ -390,6 +390,11 @@ def run_faspr(
                 "FASPR execution timed out after "
                 f"{timeout_seconds:g} seconds: {executable_path}"
             ) from error
+        except OSError as error:
+            raise PackingBackendExecutionError(
+                "FASPR execution could not start: "
+                f"{executable_path} ({_os_error_reason(error)})"
+            ) from error
         if completed.returncode != 0:
             error_message = _bounded_output_excerpt(
                 stderr_path,
@@ -423,6 +428,12 @@ def run_faspr(
         packed_core=packed_core,
         original_structure=execution_input.original_structure,
     )
+
+
+def _os_error_reason(error: OSError) -> str:
+    """Return one concise launch-error reason for diagnostics."""
+
+    return error.strerror or str(error)
 
 
 def _bounded_output_excerpt(path: Path) -> str:
