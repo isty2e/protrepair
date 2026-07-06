@@ -1,5 +1,6 @@
 """Refinement transformer request specifications."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -22,7 +23,7 @@ class RefinementOperatorFamily(str, Enum):
     BACKBONE_WINDOW_REFINEMENT = "backbone_window_refinement"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class BackboneWindowRefinementSpec:
     """Contract for correction operators that may move an ordered backbone window.
 
@@ -33,6 +34,15 @@ class BackboneWindowRefinementSpec:
 
     residue_ids: tuple[ResidueId, ...]
     movable_atom_names: tuple[str, ...] = BACKBONE_WINDOW_MOVABLE_ATOM_NAMES
+
+    def __init__(
+        self,
+        residue_ids: Iterable[ResidueId],
+        movable_atom_names: Iterable[str] = BACKBONE_WINDOW_MOVABLE_ATOM_NAMES,
+    ) -> None:
+        object.__setattr__(self, "residue_ids", tuple(residue_ids))
+        object.__setattr__(self, "movable_atom_names", tuple(movable_atom_names))
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         residue_ids = tuple(dict.fromkeys(self.residue_ids))
@@ -70,7 +80,7 @@ class BackboneWindowRefinementSpec:
 
 
 def _normalize_backbone_window_atom_names(
-    atom_names: tuple[str, ...],
+    atom_names: Iterable[str],
 ) -> tuple[str, ...]:
     """Return validated backbone-window atom names in first-seen order."""
 
@@ -78,6 +88,8 @@ def _normalize_backbone_window_atom_names(
     seen_atom_names: set[str] = set()
     allowed_atom_names = set(BACKBONE_WINDOW_MOVABLE_ATOM_NAMES)
     for atom_name in atom_names:
+        if not isinstance(atom_name, str):
+            raise TypeError("backbone-window movable atom names must be strings")
         normalized_atom_name = atom_name.strip().upper()
         if not normalized_atom_name:
             raise ValueError(

@@ -65,7 +65,10 @@ from protrepair.transformer.continuous.binding_policy import (
 )
 from protrepair.transformer.local import LocalScopeSpec
 from protrepair.transformer.packing import PackingScope, PackingSpec
-from protrepair.transformer.refinement.spec import RepairRefinementSpec
+from protrepair.transformer.refinement.spec import (
+    BackboneWindowRefinementSpec,
+    RepairRefinementSpec,
+)
 from protrepair.workflow.contracts import (
     AnalysisBundle,
     LigandPolicy,
@@ -78,6 +81,7 @@ from protrepair.workflow.contracts import (
     RequestedGoalReport,
     RequestedGoalSet,
     RequestedGoalStatus,
+    StructureIngressOptions,
     WorkflowTransformRequests,
     requested_process_goal,
 )
@@ -566,6 +570,66 @@ def test_canonical_ligand_reject_policy_respects_selected_chains() -> None:
 
     assert normalized.constitution.chain_ids() == ("A",)
     assert normalized.constitution.ligands == ()
+
+
+def test_public_workflow_request_collection_inputs_accept_common_iterables() -> None:
+    residue_a = ResidueId(chain_id="A", seq_num=1)
+    residue_b = ResidueId(chain_id="A", seq_num=2)
+    hydrogen_goal = requested_process_goal(
+        scope=WholeStructureScope(),
+        value=HydrogenCoverageState.COMPLETE,
+    )
+    backbone_window_refinement = BackboneWindowRefinementSpec(
+        residue_ids=[residue_a, residue_b, residue_a],
+        movable_atom_names=[" n ", "CA", "CA"],
+    )
+
+    requested_goals = RequestedGoalSet([hydrogen_goal, hydrogen_goal])
+    ingress = StructureIngressOptions(retained_non_polymer_chemistry_overrides=[])
+    transform_requests = WorkflowTransformRequests(
+        external_span_reconstructions=[],
+        backbone_window_refinements=[
+            backbone_window_refinement,
+            backbone_window_refinement,
+        ],
+    )
+
+    assert requested_goals.goals == (hydrogen_goal,)
+    assert ingress.retained_non_polymer_chemistry_overrides == ()
+    assert backbone_window_refinement.residue_ids == (residue_a, residue_b)
+    assert backbone_window_refinement.movable_atom_names == ("N", "CA")
+    assert transform_requests.external_span_reconstructions == ()
+    assert transform_requests.backbone_window_refinements == (
+        backbone_window_refinement,
+    )
+
+
+def test_public_workflow_request_collection_inputs_accept_generators() -> None:
+    residue_a = ResidueId(chain_id="A", seq_num=1)
+    residue_b = ResidueId(chain_id="A", seq_num=2)
+    hydrogen_goal = requested_process_goal(
+        scope=WholeStructureScope(),
+        value=HydrogenCoverageState.COMPLETE,
+    )
+    backbone_window_refinement = BackboneWindowRefinementSpec(
+        residue_ids=(residue_id for residue_id in (residue_a, residue_b, residue_a)),
+        movable_atom_names=(atom_name for atom_name in (" n ", "CA", "CA")),
+    )
+
+    requested_goals = RequestedGoalSet(goal for goal in (hydrogen_goal, hydrogen_goal))
+    transform_requests = WorkflowTransformRequests(
+        backbone_window_refinements=(
+            refinement
+            for refinement in (backbone_window_refinement, backbone_window_refinement)
+        ),
+    )
+
+    assert requested_goals.goals == (hydrogen_goal,)
+    assert backbone_window_refinement.residue_ids == (residue_a, residue_b)
+    assert backbone_window_refinement.movable_atom_names == ("N", "CA")
+    assert transform_requests.backbone_window_refinements == (
+        backbone_window_refinement,
+    )
 
 
 def test_requested_goal_set_separates_clash_scope_axes() -> None:

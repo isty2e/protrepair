@@ -1,10 +1,14 @@
 """Shared semantic scope domain for state and transformer contracts."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
+from typing import TypeVar
 
 from protrepair.structure.labels import AtomRef, ResidueId
+
+_PublicIterableValueT = TypeVar("_PublicIterableValueT")
 
 
 class ScopeKind(str, Enum):
@@ -74,6 +78,19 @@ def _require_atom_ref(atom_ref: object, field_name: str) -> None:
         raise TypeError(f"{field_name} must be an AtomRef")
 
 
+def _tuple_from_public_iterable(
+    values: Iterable[_PublicIterableValueT],
+    field_name: str,
+    *,
+    reject_string: bool = False,
+) -> tuple[_PublicIterableValueT, ...]:
+    """Materialize one public iterable input without weakening stored fields."""
+
+    if reject_string and isinstance(values, str):
+        raise TypeError(f"{field_name} must be an iterable, not a string")
+    return tuple(values)
+
+
 @dataclass(frozen=True, slots=True)
 class WholeStructureScope(Scope):
     """Semantic scope over the whole active structure."""
@@ -90,16 +107,30 @@ class WholeStructureScope(Scope):
         return ("whole-structure",)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ChainSetScope(Scope):
     """Semantic scope over one explicit set of chains."""
 
     chain_ids: tuple[str, ...]
 
+    def __init__(self, chain_ids: Iterable[str]) -> None:
+        object.__setattr__(
+            self,
+            "chain_ids",
+            _tuple_from_public_iterable(
+                chain_ids,
+                "chain_ids",
+                reject_string=True,
+            ),
+        )
+        self.__post_init__()
+
     def __post_init__(self) -> None:
         ordered_chain_ids: list[str] = []
         seen_chain_ids: set[str] = set()
         for chain_id in self.chain_ids:
+            if not isinstance(chain_id, str):
+                raise TypeError("chain_ids must contain string values")
             normalized_chain_id = chain_id.strip()
             if not normalized_chain_id:
                 raise ValueError("chain-set scopes must not contain blank chain ids")
@@ -126,11 +157,19 @@ class ChainSetScope(Scope):
         return self.chain_ids
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ResidueSetScope(Scope):
     """Semantic scope over one explicit residue subset."""
 
     residue_ids: tuple[ResidueId, ...]
+
+    def __init__(self, residue_ids: Iterable[ResidueId]) -> None:
+        object.__setattr__(
+            self,
+            "residue_ids",
+            _tuple_from_public_iterable(residue_ids, "residue_ids"),
+        )
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         residue_ids = _deduplicated_residue_ids(self.residue_ids)
@@ -187,11 +226,19 @@ class ResidueBoundaryScope(Scope):
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class AtomSetScope(Scope):
     """Semantic scope over one explicit atom subset."""
 
     atom_refs: tuple[AtomRef, ...]
+
+    def __init__(self, atom_refs: Iterable[AtomRef]) -> None:
+        object.__setattr__(
+            self,
+            "atom_refs",
+            _tuple_from_public_iterable(atom_refs, "atom_refs"),
+        )
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         atom_refs = AtomRef.deduplicated(self.atom_refs)
@@ -212,13 +259,31 @@ class AtomSetScope(Scope):
         return tuple(atom_ref.display_token() for atom_ref in self.atom_refs)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class AbsentResidueSpanScope(Scope):
     """Semantic scope over an absent span anchored by present residues."""
 
     preceding_residue_id: ResidueId | None = None
     following_residue_id: ResidueId | None = None
     absent_residue_ids: tuple[ResidueId, ...] = ()
+
+    def __init__(
+        self,
+        preceding_residue_id: ResidueId | None = None,
+        following_residue_id: ResidueId | None = None,
+        absent_residue_ids: Iterable[ResidueId] = (),
+    ) -> None:
+        object.__setattr__(self, "preceding_residue_id", preceding_residue_id)
+        object.__setattr__(self, "following_residue_id", following_residue_id)
+        object.__setattr__(
+            self,
+            "absent_residue_ids",
+            _tuple_from_public_iterable(
+                absent_residue_ids,
+                "absent_residue_ids",
+            ),
+        )
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         _require_residue_id(
@@ -353,11 +418,19 @@ class AnchorAtomPairScope(Scope):
         return (left_residue_id, right_residue_id)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class CompositeScope(Scope):
     """Flat composite of multiple non-composite semantic scopes."""
 
     scopes: tuple[Scope, ...]
+
+    def __init__(self, scopes: Iterable[Scope]) -> None:
+        object.__setattr__(
+            self,
+            "scopes",
+            _tuple_from_public_iterable(scopes, "scopes"),
+        )
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         ordered_scopes: list[Scope] = []

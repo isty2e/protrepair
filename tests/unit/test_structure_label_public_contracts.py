@@ -8,9 +8,12 @@ from protrepair.scope import (
     AbsentResidueSpanScope,
     AnchorAtomPairScope,
     AtomSetScope,
+    ChainSetScope,
+    CompositeScope,
     ResidueBoundaryScope,
     ResidueBoundarySide,
     ResidueSetScope,
+    WholeStructureScope,
 )
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -150,6 +153,54 @@ def test_public_scopes_reject_json_like_atom_payloads() -> None:
 
     with pytest.raises(TypeError, match="atom_refs must contain AtomRef values"):
         LocalScopeSpec.from_atoms((malformed_atom,))
+
+
+def test_public_scope_collection_inputs_accept_common_iterables() -> None:
+    """Public scope constructors should accept common collection inputs."""
+
+    residue_a = ResidueId(chain_id="A", seq_num=1)
+    residue_b = ResidueId(chain_id="A", seq_num=2)
+    atom_a = AtomRef(residue_a, "CA")
+    atom_b = AtomRef(residue_b, "N")
+
+    chain_scope = ChainSetScope(chain_ids=[" B ", "A", "A"])
+    residue_scope = ResidueSetScope(residue_ids=[residue_a, residue_b, residue_a])
+    atom_scope = AtomSetScope(atom_refs=[atom_a, atom_b, atom_a])
+    absent_span_scope = AbsentResidueSpanScope(
+        preceding_residue_id=residue_a,
+        absent_residue_ids=[residue_b, residue_b],
+    )
+    composite_scope = CompositeScope(scopes=[WholeStructureScope(), residue_scope])
+
+    assert chain_scope.chain_ids == ("B", "A")
+    assert residue_scope.residue_ids == (residue_a, residue_b)
+    assert atom_scope.atom_refs == (atom_a, atom_b)
+    assert absent_span_scope.absent_residue_ids == (residue_b,)
+    assert composite_scope.scopes == (WholeStructureScope(), residue_scope)
+
+
+def test_chain_set_scope_rejects_string_as_collection_input() -> None:
+    """A chain-id string is one chain id, not a collection of chain ids."""
+
+    with pytest.raises(TypeError, match="chain_ids"):
+        ChainSetScope(chain_ids="AB")
+
+
+def test_public_scope_collection_inputs_accept_one_shot_generators() -> None:
+    """Public scope constructors should canonicalize generator inputs once."""
+
+    residue_a = ResidueId(chain_id="A", seq_num=1)
+    residue_b = ResidueId(chain_id="A", seq_num=2)
+    atom_a = AtomRef(residue_a, "CA")
+    atom_b = AtomRef(residue_b, "N")
+
+    residue_scope = ResidueSetScope(
+        residue_ids=(residue_id for residue_id in (residue_a, residue_b, residue_a))
+    )
+    atom_scope = AtomSetScope(atom_refs=(atom_ref for atom_ref in (atom_a, atom_b)))
+
+    assert residue_scope.residue_ids == (residue_a, residue_b)
+    assert atom_scope.atom_refs == (atom_a, atom_b)
 
 
 def test_retained_non_polymer_override_rejects_json_like_residue_payload() -> None:
