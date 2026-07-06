@@ -6,6 +6,12 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(
+  PROTREPAIR_FASPR_ENABLE_FAST_MATH
+  "Build the vendored FASPR executable with -ffast-math on non-MSVC compilers"
+  OFF
+)
+
 add_executable(
   FASPR
   vendor/faspr/src/AAName.cpp
@@ -20,7 +26,7 @@ add_executable(
 
 target_include_directories(FASPR PRIVATE vendor/faspr/src)
 
-if(NOT MSVC)
+if(PROTREPAIR_FASPR_ENABLE_FAST_MATH AND NOT MSVC)
   target_compile_options(FASPR PRIVATE -ffast-math)
 endif()
 

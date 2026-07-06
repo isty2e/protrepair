@@ -107,6 +107,22 @@ def test_faspr_provenance_and_notices_are_release_artifacts() -> None:
     assert "The vendored code is treated under the supplied MIT license" in provenance
 
 
+def test_faspr_fast_math_requires_explicit_build_option() -> None:
+    """FASPR unsafe math optimization should be an explicit build choice."""
+
+    cmake = Path("CMakeLists.txt").read_text()
+    provenance = Path("vendor/faspr/PROVENANCE.md").read_text()
+
+    assert "option(\n  PROTREPAIR_FASPR_ENABLE_FAST_MATH" in cmake
+    assert '  "Build the vendored FASPR executable with -ffast-math' in cmake
+    assert "  OFF\n)" in cmake
+    assert "if(PROTREPAIR_FASPR_ENABLE_FAST_MATH AND NOT MSVC)" in cmake
+    assert "target_compile_options(FASPR PRIVATE -ffast-math)" in cmake
+    assert "PROTREPAIR_FASPR_ENABLE_FAST_MATH=OFF" in provenance
+    assert "floating-point reproducibility" in provenance
+    assert "explicitly overridden at CMake configuration time" in provenance
+
+
 def test_readme_documents_retained_ligand_fallback_contract() -> None:
     """README should document the retained-ligand optional-backend contract."""
 

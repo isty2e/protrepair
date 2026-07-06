@@ -36,10 +36,16 @@ ProtRepair builds the vendored C++ sources with the repository root
 `CMakeLists.txt` and installs the resulting executable alongside
 `dun2010bbdep.bin` in the package FASPR asset directory.
 
-Current local build flags:
+Current local build configuration:
 
 - Release build type from `tool.scikit-build.cmake.build-type = "Release"`
-- `-ffast-math` for non-MSVC C++ compilers
+- `PROTREPAIR_FASPR_ENABLE_FAST_MATH=OFF` by default
+- If `PROTREPAIR_FASPR_ENABLE_FAST_MATH=ON`, non-MSVC C++ builds add
+  `-ffast-math`
+
+Fast-math may improve native FASPR speed or match upstream build suggestions,
+but it can weaken floating-point reproducibility. Packaged builds therefore use
+the safer default unless explicitly overridden at CMake configuration time.
 
 No local source patches are applied to the vendored FASPR source files.
 
