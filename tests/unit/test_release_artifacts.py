@@ -69,6 +69,26 @@ def test_release_docs_state_faspr_installed_asset_contract() -> None:
     assert "explicit FASPR `executable_path`" in normalized_readme
 
 
+def test_faspr_runtime_policy_documents_hydrogen_merge_contract() -> None:
+    """FASPR runtime policy should pin hydrogen ownership boundaries."""
+
+    policy = Path("docs/faspr-runtime-policy.md").read_text()
+    normalized_policy = " ".join(policy.split())
+
+    assert "heavy-atom side-chain packing backend" in normalized_policy
+    assert "Preserve original polymer hydrogens only when" in normalized_policy
+    assert "heavy-atom state is equivalent" in normalized_policy
+    assert "fixed-vs-packed labels as hints, not proof" in normalized_policy
+    assert (
+        "Preserve atom sites, coordinates, and topology bonds together"
+        in normalized_policy
+    )
+    assert "Drop hydrogen atom sites and hydrogen topology bonds together" in (
+        normalized_policy
+    )
+    assert "must not place replacement hydrogens itself" in normalized_policy
+
+
 def test_readme_documents_retained_ligand_fallback_contract() -> None:
     """README should document the retained-ligand optional-backend contract."""
 
