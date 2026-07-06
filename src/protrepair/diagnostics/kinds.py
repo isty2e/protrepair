@@ -31,6 +31,8 @@ class ValidationIssueKind(str, Enum):
     REFINEMENT_REJECTED = "refinement_rejected"
     UNSUPPORTED_TEMPLATE_REPAIR = "unsupported_template_repair"
     UNSUPPORTED_HYDROGENATION = "unsupported_hydrogenation"
+    RETAINED_NON_POLYMER_FALLBACK_USED = "retained_non_polymer_fallback_used"
+    RETAINED_NON_POLYMER_FALLBACK_BLOCKED = "retained_non_polymer_fallback_blocked"
     UNSUPPORTED_COMPONENT = "unsupported_component"
     STERIC_CLASH = "steric_clash"
 
