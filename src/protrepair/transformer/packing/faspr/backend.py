@@ -172,7 +172,7 @@ def resolve_faspr_executable_path(executable_path: Path | None) -> Path:
             f"FASPR executable path is not a file: {resolved_path}"
         )
 
-    return resolved_path
+    return resolved_path.resolve()
 
 
 def normalize_faspr_timeout_seconds(timeout_seconds: float) -> float:

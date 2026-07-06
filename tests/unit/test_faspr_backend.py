@@ -187,6 +187,30 @@ def test_faspr_backend_builds_local_sequence_override_with_fake_executable(
     assert result.packed_structure.chain_ids() == ("A",)
 
 
+def test_faspr_backend_launches_relative_executable_path_with_sibling_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Relative executable overrides should resolve before cwd-based launch."""
+
+    asset_dir = tmp_path / "assets"
+    asset_dir.mkdir()
+    executable_path = copy_input_faspr_executable(asset_dir)
+    (asset_dir / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    plan = PackingPlan.from_inputs(
+        build_test_structure(),
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    result = FasprPackingBackend(
+        executable_path=Path("assets") / executable_path.name
+    ).pack(plan)
+
+    assert result.backend_name == "faspr"
+    assert result.packed_structure.chain_ids() == ("A",)
+
+
 def test_faspr_backend_converts_subprocess_timeout(
     tmp_path: Path,
 ) -> None:
