@@ -33,6 +33,47 @@ class Scope(ABC):
         """Return stable human-readable tokens for this scope."""
 
 
+def _deduplicated_residue_ids(
+    residue_ids: tuple[ResidueId, ...],
+) -> tuple[ResidueId, ...]:
+    """Return residue ids deduplicated after public boundary type validation."""
+
+    ordered_residue_ids: list[ResidueId] = []
+    seen_residue_ids: set[ResidueId] = set()
+    for residue_id in residue_ids:
+        if not isinstance(residue_id, ResidueId):
+            raise TypeError("residue_ids must contain ResidueId values")
+        if residue_id in seen_residue_ids:
+            continue
+
+        ordered_residue_ids.append(residue_id)
+        seen_residue_ids.add(residue_id)
+
+    return tuple(ordered_residue_ids)
+
+
+def _require_residue_id(
+    residue_id: object,
+    field_name: str,
+    *,
+    allow_none: bool = False,
+) -> None:
+    """Reject malformed residue-id payloads at public scope construction."""
+
+    if allow_none and residue_id is None:
+        return
+    if not isinstance(residue_id, ResidueId):
+        suffix = " or None" if allow_none else ""
+        raise TypeError(f"{field_name} must be a ResidueId{suffix}")
+
+
+def _require_atom_ref(atom_ref: object, field_name: str) -> None:
+    """Reject malformed atom-ref payloads at public scope construction."""
+
+    if not isinstance(atom_ref, AtomRef):
+        raise TypeError(f"{field_name} must be an AtomRef")
+
+
 @dataclass(frozen=True, slots=True)
 class WholeStructureScope(Scope):
     """Semantic scope over the whole active structure."""
@@ -92,7 +133,7 @@ class ResidueSetScope(Scope):
     residue_ids: tuple[ResidueId, ...]
 
     def __post_init__(self) -> None:
-        residue_ids = tuple(dict.fromkeys(self.residue_ids))
+        residue_ids = _deduplicated_residue_ids(self.residue_ids)
         if not residue_ids:
             raise ValueError("residue-set scopes require at least one residue")
 
@@ -125,6 +166,7 @@ class ResidueBoundaryScope(Scope):
     side: ResidueBoundarySide
 
     def __post_init__(self) -> None:
+        _require_residue_id(self.residue_id, "residue_id")
         if not isinstance(self.side, ResidueBoundarySide):
             raise TypeError(
                 "residue-boundary scopes require a ResidueBoundarySide value"
@@ -179,6 +221,16 @@ class AbsentResidueSpanScope(Scope):
     absent_residue_ids: tuple[ResidueId, ...] = ()
 
     def __post_init__(self) -> None:
+        _require_residue_id(
+            self.preceding_residue_id,
+            "preceding_residue_id",
+            allow_none=True,
+        )
+        _require_residue_id(
+            self.following_residue_id,
+            "following_residue_id",
+            allow_none=True,
+        )
         if (
             self.preceding_residue_id is None
             and self.following_residue_id is None
@@ -198,6 +250,10 @@ class AbsentResidueSpanScope(Scope):
         ordered_absent_residue_ids: list[ResidueId] = []
         seen_residue_ids: set[ResidueId] = set()
         for residue_id in self.absent_residue_ids:
+            if not isinstance(residue_id, ResidueId):
+                raise TypeError(
+                    "absent_residue_ids must contain ResidueId values"
+                )
             if residue_id == self.preceding_residue_id:
                 raise ValueError(
                     "absent-residue-span scopes must not list the preceding "
@@ -260,6 +316,8 @@ class AnchorAtomPairScope(Scope):
     right_anchor_atom_ref: AtomRef
 
     def __post_init__(self) -> None:
+        _require_atom_ref(self.left_anchor_atom_ref, "left_anchor_atom_ref")
+        _require_atom_ref(self.right_anchor_atom_ref, "right_anchor_atom_ref")
         if self.left_anchor_atom_ref == self.right_anchor_atom_ref:
             raise ValueError(
                 "anchor-atom-pair scopes require two distinct anchor atoms"
