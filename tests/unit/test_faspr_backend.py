@@ -1,6 +1,7 @@
 """Unit and smoke tests for the FASPR side-chain packing backend."""
 
 import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -16,10 +17,12 @@ from tests.support.canonical_builders import (
 
 import protrepair.transformer.packing.faspr.backend as faspr_backend
 import protrepair.transformer.packing.faspr.paths as faspr_paths
+from protrepair.diagnostics import IssueSeverity, ValidationIssueKind
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, write_structure_string
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
+    AtomRef,
     ResidueId,
 )
 from protrepair.structure.provenance import FileFormat
@@ -322,6 +325,153 @@ def test_faspr_backend_preserves_surviving_topology_bonds_with_fake_executable(
     assert bond.source_metadata.source_id == "backbone"
 
 
+def test_faspr_backend_restores_hydrogens_when_heavy_atoms_are_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Unchanged packed residues should keep original H coordinates and bonds."""
+
+    executable_path = copy_input_faspr_executable(tmp_path)
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    structure = build_hydrogenated_test_structure()
+    residue_id = structure.constitution.chain("A").residues[0].residue_id
+    plan = PackingPlan.from_inputs(
+        structure,
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    result = FasprPackingBackend(executable_path=executable_path).pack(plan)
+    packed_residue = result.packed_structure.constitution.chain("A").residues[0]
+
+    assert packed_residue.atom_site_names() == (
+        "N",
+        "H",
+        "CA",
+        "HA",
+        "C",
+        "O",
+        "CB",
+        "HB1",
+    )
+    assert result.issues == ()
+    original_geometry = structure.geometry.residue_geometry(
+        constitution=structure.constitution,
+        residue_index=structure.constitution.residue_index(residue_id),
+    )
+    packed_geometry = result.packed_structure.geometry.residue_geometry(
+        constitution=result.packed_structure.constitution,
+        residue_index=result.packed_structure.constitution.residue_index(residue_id),
+    )
+    assert (
+        original_geometry.atom_geometry("HA").distance_to(
+            packed_geometry.atom_geometry("HA")
+        )
+        == 0.0
+    )
+    n_index = result.packed_structure.constitution.resolve_atom_index(
+        AtomRef(residue_id=residue_id, atom_name="N")
+    )
+    h_index = result.packed_structure.constitution.resolve_atom_index(
+        AtomRef(residue_id=residue_id, atom_name="H")
+    )
+    assert n_index is not None
+    assert h_index is not None
+    assert result.packed_structure.topology.bond_between(n_index, h_index)
+
+
+def test_faspr_backend_drops_hydrogens_when_fixed_residue_heavy_atoms_move(
+    tmp_path: Path,
+) -> None:
+    """Fixed labels must not preserve stale H when FASPR moves heavy atoms."""
+
+    executable_path = copy_template_faspr_executable(tmp_path)
+    output_template_path = tmp_path / "packed-output.pdb"
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    structure = build_hydrogenated_test_structure()
+    residue_id = structure.constitution.chain("A").residues[0].residue_id
+    output_template_path.write_text(
+        write_structure_string(
+            build_heavy_only_packed_structure(
+                first_residue_atom_positions={"CB": Vec3(9.0, 9.0, 9.0)}
+            ),
+            FileFormat.PDB,
+        ),
+        encoding="utf-8",
+    )
+    plan = PackingPlan.from_inputs(
+        structure,
+        PackingSpec(
+            backend_name="faspr",
+            scope=PackingScope.FULL,
+            frozen_residue_ids=(residue_id,),
+        ),
+    )
+
+    result = FasprPackingBackend(executable_path=executable_path).pack(plan)
+    packed_residue = result.packed_structure.constitution.chain("A").residues[0]
+
+    assert "H" not in packed_residue.atom_site_names()
+    assert "HA" not in packed_residue.atom_site_names()
+    assert "HB1" not in packed_residue.atom_site_names()
+    assert (
+        result.packed_structure.constitution.resolve_atom_index(
+            AtomRef(residue_id=residue_id, atom_name="H")
+        )
+        is None
+    )
+    assert len(result.issues) == 1
+    issue = result.issues[0]
+    assert issue.kind is ValidationIssueKind.PACKING_INVALIDATED_HYDROGENS
+    assert issue.severity is IssueSeverity.WARNING
+    assert issue.scope.targets_residue(residue_id)
+    assert "FASPR invalidated polymer hydrogens" in issue.message
+
+
+def test_faspr_backend_preserves_and_drops_hydrogens_per_residue(
+    tmp_path: Path,
+) -> None:
+    """H merge decisions are residue-local, not all-or-nothing."""
+
+    executable_path = copy_template_faspr_executable(tmp_path)
+    output_template_path = tmp_path / "packed-output.pdb"
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    structure = build_hydrogenated_test_structure(residue_count=2)
+    first_residue_id = structure.constitution.chain("A").residues[0].residue_id
+    second_residue_id = structure.constitution.chain("A").residues[1].residue_id
+    output_template_path.write_text(
+        write_structure_string(
+            build_heavy_only_packed_structure(
+                residue_count=2,
+                atom_positions_by_residue_seq_num={2: {"CB": Vec3(9.0, 9.0, 9.0)}},
+            ),
+            FileFormat.PDB,
+        ),
+        encoding="utf-8",
+    )
+    plan = PackingPlan.from_inputs(
+        structure,
+        PackingSpec(backend_name="faspr", scope=PackingScope.FULL),
+    )
+
+    result = FasprPackingBackend(executable_path=executable_path).pack(plan)
+
+    assert (
+        result.packed_structure.constitution.resolve_atom_index(
+            AtomRef(residue_id=first_residue_id, atom_name="H")
+        )
+        is not None
+    )
+    assert (
+        result.packed_structure.constitution.resolve_atom_index(
+            AtomRef(residue_id=second_residue_id, atom_name="H")
+        )
+        is None
+    )
+    assert len(result.issues) == 1
+    assert result.issues[0].kind is ValidationIssueKind.PACKING_INVALIDATED_HYDROGENS
+    assert result.issues[0].scope.targets_residue(second_residue_id)
+    assert not result.issues[0].scope.targets_residue(first_residue_id)
+
+
 def test_faspr_backend_smoke_runs_packaged_binary() -> None:
     """The packaged FASPR executable should pack a representative fixture."""
 
@@ -349,13 +499,9 @@ def test_faspr_backend_smoke_runs_packaged_binary() -> None:
     assert sum(
         len(chain_site.residues)
         for chain_site in result.packed_structure.constitution.chains
-    ) == sum(
-        len(chain_site.residues)
-        for chain_site in structure.constitution.chains
-    )
+    ) == sum(len(chain_site.residues) for chain_site in structure.constitution.chains)
     assert (
-        result.packed_structure.constitution.ligands
-        == structure.constitution.ligands
+        result.packed_structure.constitution.ligands == structure.constitution.ligands
     )
 
 
@@ -464,6 +610,176 @@ def build_test_structure() -> ProteinStructure:
     )
 
 
+def build_hydrogenated_test_structure(*, residue_count: int = 1) -> ProteinStructure:
+    """Build one small canonical structure with polymer H topology."""
+
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                tuple(
+                    build_residue(
+                        "ALA",
+                        "A",
+                        seq_num,
+                        ("N", "H", "CA", "HA", "C", "O", "CB", "HB1"),
+                    )
+                    for seq_num in range(1, residue_count + 1)
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="faspr-hydrogenated-backend-test",
+    )
+    h_bonds: list[TopologyBond] = []
+    for residue_site in structure.constitution.iter_residues():
+        for heavy_atom_name, hydrogen_atom_name in (
+            ("N", "H"),
+            ("CA", "HA"),
+            ("CB", "HB1"),
+        ):
+            heavy_index = structure.constitution.resolve_atom_index(
+                AtomRef(residue_id=residue_site.residue_id, atom_name=heavy_atom_name)
+            )
+            hydrogen_index = structure.constitution.resolve_atom_index(
+                AtomRef(
+                    residue_id=residue_site.residue_id,
+                    atom_name=hydrogen_atom_name,
+                )
+            )
+            assert heavy_index is not None
+            assert hydrogen_index is not None
+            h_bonds.append(
+                TopologyBond(
+                    atom_index_1=heavy_index,
+                    atom_index_2=hydrogen_index,
+                    provenance=BondProvenance.TEMPLATE_RESOLVED,
+                )
+            )
+
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=tuple(h_bonds),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
+
+
+def build_heavy_only_packed_structure(
+    *,
+    first_residue_atom_positions: Mapping[str, Vec3] | None = None,
+    atom_positions_by_residue_seq_num: Mapping[int, Mapping[str, Vec3]] | None = None,
+    residue_count: int = 1,
+) -> ProteinStructure:
+    """Build one fake FASPR output structure without polymer hydrogens."""
+
+    return build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                tuple(
+                    build_residue(
+                        "ALA",
+                        "A",
+                        seq_num,
+                        ("N", "CA", "C", "O", "CB"),
+                        atom_positions_by_name=(
+                            _hydrogenated_ala_heavy_atom_positions(
+                                first_residue_atom_positions
+                            )
+                            if seq_num == 1
+                            else _hydrogenated_ala_heavy_atom_positions(
+                                None
+                                if atom_positions_by_residue_seq_num is None
+                                else atom_positions_by_residue_seq_num.get(seq_num)
+                            )
+                        ),
+                    )
+                    for seq_num in range(1, residue_count + 1)
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="faspr-packed-heavy-only-backend-test",
+    )
+
+
+def _hydrogenated_ala_heavy_atom_positions(
+    overrides: Mapping[str, Vec3] | None = None,
+) -> Mapping[str, Vec3]:
+    """Return heavy atom positions after stripping H from test ALA."""
+
+    positions = {
+        "N": Vec3(0.000, 0.000, 0.000),
+        "CA": Vec3(2.028, 1.417, 0.000),
+        "C": Vec3(1.145, -0.842, 1.074),
+        "O": Vec3(2.318, -1.152, 1.556),
+        "CB": Vec3(0.000, 0.000, 0.000),
+    }
+    if overrides is not None:
+        positions.update(overrides)
+
+    return positions
+
+
+def copy_input_faspr_executable(tmp_path: Path) -> Path:
+    """Create one fake FASPR executable that copies input to output."""
+
+    executable_path = tmp_path / "FASPR"
+    executable_path.write_text(
+        "\n".join(
+            (
+                "#!/bin/sh",
+                "set -eu",
+                'input_path=""',
+                'output_path=""',
+                'while [ "$#" -gt 0 ]; do',
+                '  case "$1" in',
+                '    -i) input_path="$2"; shift 2 ;;',
+                '    -o) output_path="$2"; shift 2 ;;',
+                "    *) shift ;;",
+                "  esac",
+                "done",
+                'cp "$input_path" "$output_path"',
+            )
+        ),
+        encoding="utf-8",
+    )
+    executable_path.chmod(0o755)
+    return executable_path
+
+
+def copy_template_faspr_executable(tmp_path: Path) -> Path:
+    """Create one fake FASPR executable that returns a prepared output PDB."""
+
+    executable_path = tmp_path / "FASPR"
+    output_template_path = tmp_path / "packed-output.pdb"
+    executable_path.write_text(
+        "\n".join(
+            (
+                "#!/bin/sh",
+                "set -eu",
+                'output_path=""',
+                'while [ "$#" -gt 0 ]; do',
+                '  case "$1" in',
+                '    -o) output_path="$2"; shift 2 ;;',
+                "    *) shift ;;",
+                "  esac",
+                "done",
+                f'cp "{output_template_path}" "$output_path"',
+            )
+        ),
+        encoding="utf-8",
+    )
+    executable_path.chmod(0o755)
+    return executable_path
+
+
 def build_residue(
     component_id: str,
     chain_id: str,
@@ -471,11 +787,20 @@ def build_residue(
     atom_names: tuple[str, ...],
     *,
     is_hetero: bool = False,
+    atom_positions_by_name: Mapping[str, Vec3] | None = None,
 ) -> CanonicalResiduePayload:
     """Build one canonical residue for backend tests."""
 
     atoms = tuple(
-        build_atom(atom_name, atom_index)
+        build_atom(
+            atom_name,
+            atom_index,
+            position=(
+                None
+                if atom_positions_by_name is None
+                else atom_positions_by_name.get(atom_name)
+            ),
+        )
         for atom_index, atom_name in enumerate(atom_names, start=1)
     )
     return residue_payload(
@@ -486,7 +811,12 @@ def build_residue(
     )
 
 
-def build_atom(atom_name: str, atom_index: int) -> CanonicalAtomPayload:
+def build_atom(
+    atom_name: str,
+    atom_index: int,
+    *,
+    position: Vec3 | None = None,
+) -> CanonicalAtomPayload:
     """Build one deterministic canonical atom for backend tests."""
 
     preset_positions = (
@@ -500,7 +830,11 @@ def build_atom(atom_name: str, atom_index: int) -> CanonicalAtomPayload:
     return atom_payload(
         name=atom_name,
         element=infer_element(atom_name),
-        position=preset_positions[(atom_index - 1) % len(preset_positions)],
+        position=(
+            preset_positions[(atom_index - 1) % len(preset_positions)]
+            if position is None
+            else position
+        ),
         b_factor=20.0,
     )
 
