@@ -97,14 +97,14 @@ class BackboneWindowRefinementTransformer(WorkflowStructureTransformer):
         except (RefinementError, ValueError) as error:
             outcome = RefinementStageOutcome.rejected(
                 projected_domain.state,
-                stage=RefinementStage.REPAIR,
+                stage=RefinementStage.BACKBONE_WINDOW,
                 residue_id=None,
                 message=str(error),
             )
         else:
             outcome = RefinementStageOutcome.from_result(
                 refinement_result,
-                stage=RefinementStage.REPAIR,
+                stage=RefinementStage.BACKBONE_WINDOW,
             )
 
         return ProjectedCodomainState(

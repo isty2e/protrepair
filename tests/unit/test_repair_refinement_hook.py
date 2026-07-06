@@ -103,6 +103,8 @@ def test_repair_heavy_atoms_stages_prerequisites_for_explicit_local_refinement()
     )
     assert any(
         repair.kind is RepairEventKind.LOCAL_REFINEMENT_APPLIED
+        and repair.details is not None
+        and repair.details.startswith("repair-stage local refinement via ")
         for repair in result.repairs
     )
 

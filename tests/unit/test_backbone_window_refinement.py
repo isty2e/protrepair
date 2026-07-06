@@ -12,16 +12,24 @@ from tests.support.refinement_benchmarks import resolve_fixture_path
 from tests.support.refinement_cases import EXPLORATORY_REFINEMENT_FIXTURE_SOURCES
 from tests.support.request_builders import ingress_options
 
-from protrepair.diagnostics import IssueSeverity, ValidationIssue, ValidationIssueKind
+from protrepair.chemistry.standard.components import build_standard_component_library
+from protrepair.diagnostics import (
+    IssueSeverity,
+    RepairEventKind,
+    ValidationIssue,
+    ValidationIssueKind,
+)
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.slots import AtomIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
-from protrepair.transformer.artifacts import RegionTransformationResult
+from protrepair.transformer.artifacts import MovedAtomDelta, RegionTransformationResult
 from protrepair.transformer.artifacts.patch import StructureDelta
 from protrepair.transformer.atom_input import AtomInputRealization
+from protrepair.transformer.completion.policies import OrphanFragmentPolicy
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.settings import (
     ContinuousRelaxationProfile,
@@ -32,6 +40,11 @@ from protrepair.transformer.refinement.backbone_window import (
     execute_backbone_window_refinement,
 )
 from protrepair.transformer.refinement.spec import BackboneWindowRefinementSpec
+from protrepair.transformer.result import TransformationResult
+from protrepair.workflow.actions import (
+    BackboneWindowRefinementTransformer,
+    TransformerExecutionContext,
+)
 from protrepair.workflow.contracts import LigandPolicy
 
 
@@ -175,6 +188,108 @@ def test_backbone_window_executor_contextualizes_operator_rejection(
     )
 
 
+def test_backbone_window_transformer_reports_distinct_success_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workflow diagnostics should not collapse backbone windows into repair-stage."""
+
+    structure = _two_residue_backbone_structure()
+    transformer = BackboneWindowRefinementTransformer.from_window_spec(
+        BackboneWindowRefinementSpec(
+            residue_ids=(
+                ResidueId("A", 10),
+                ResidueId("A", 11),
+            )
+        )
+    )
+
+    def fake_execute_backbone_window_refinement(
+        structure_arg: ProteinStructure,
+        window_spec_arg: BackboneWindowRefinementSpec,
+        *,
+        spec: ContinuousRelaxationSettings,
+        component_library=None,
+    ) -> RegionTransformationResult:
+        del window_spec_arg, spec, component_library
+        return RegionTransformationResult(
+            refined_structure=structure_arg,
+            delta=StructureDelta(
+                before_constitution=structure_arg.constitution,
+                after_constitution=structure_arg.constitution,
+                moved_atoms=(MovedAtomDelta(AtomIndex(0), AtomIndex(0)),),
+            ),
+            issues=(),
+            backend_name="fake-backend",
+        )
+
+    monkeypatch.setattr(
+        "protrepair.workflow.actions.backbone_window_refinement."
+        "execute_backbone_window_refinement",
+        fake_execute_backbone_window_refinement,
+    )
+
+    result = transformer.execute(
+        TransformationResult(structure=structure, repairs=(), issues=()),
+        context=_workflow_context(structure),
+    )
+
+    assert len(result.repairs) == 1
+    repair = result.repairs[0]
+    assert repair.kind is RepairEventKind.LOCAL_REFINEMENT_APPLIED
+    assert repair.residue_id == ResidueId("A", 10)
+    assert repair.atom_names == ("N",)
+    assert repair.details == "backbone-window local refinement via fake-backend"
+    assert result.issues == ()
+
+
+def test_backbone_window_transformer_reports_distinct_rejection_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workflow rejection diagnostics should name the backbone-window stage."""
+
+    structure = _two_residue_backbone_structure()
+    transformer = BackboneWindowRefinementTransformer.from_window_spec(
+        BackboneWindowRefinementSpec(
+            residue_ids=(
+                ResidueId("A", 10),
+                ResidueId("A", 11),
+            )
+        )
+    )
+
+    def fake_execute_backbone_window_refinement(
+        structure_arg: ProteinStructure,
+        window_spec_arg: BackboneWindowRefinementSpec,
+        *,
+        spec: ContinuousRelaxationSettings,
+        component_library=None,
+    ) -> RegionTransformationResult:
+        del structure_arg, window_spec_arg, spec, component_library
+        raise ValueError("selected backbone window is invalid")
+
+    monkeypatch.setattr(
+        "protrepair.workflow.actions.backbone_window_refinement."
+        "execute_backbone_window_refinement",
+        fake_execute_backbone_window_refinement,
+    )
+
+    result = transformer.execute(
+        TransformationResult(structure=structure, repairs=(), issues=()),
+        context=_workflow_context(structure),
+    )
+
+    assert result.repairs == ()
+    assert len(result.issues) == 1
+    issue = result.issues[0]
+    assert issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
+    assert issue.severity is IssueSeverity.WARNING
+    assert (
+        issue.message
+        == "backbone-window local refinement was skipped: "
+        "selected backbone window is invalid"
+    )
+
+
 @pytest.mark.parametrize(
     "case_id",
     (
@@ -268,6 +383,16 @@ def _two_residue_backbone_structure() -> ProteinStructure:
             ),
         ),
         source_format=FileFormat.PDB,
+    )
+
+
+def _workflow_context(structure: ProteinStructure) -> TransformerExecutionContext:
+    """Return a minimal workflow context for backbone-window action tests."""
+
+    return TransformerExecutionContext(
+        component_library=build_standard_component_library(),
+        original_structure=structure,
+        orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
     )
 
 
