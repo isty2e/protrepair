@@ -49,6 +49,7 @@ from protrepair.transformer.completion.hydrogen.domain import (
 )
 from protrepair.transformer.completion.hydrogen.geometry import backbone_hydrogen
 from protrepair.transformer.completion.hydrogen.protonation import (
+    DisabledHistidineProtonationRequest,
     HistidineProtonationRequest,
     normalize_histidine_protonation_request,
     resolve_histidine_protonation_assignments,
@@ -61,6 +62,8 @@ from protrepair.transformer.completion.hydrogen.static_patch import (
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 from protrepair.transformer.result import TransformationResult
+
+_DISABLED_HISTIDINE_PROTONATION_REQUEST = DisabledHistidineProtonationRequest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,8 +81,9 @@ def materialize_hydrogens_core(
     component_library: ComponentLibrary | None = None,
     *,
     target_residue_ids: frozenset[ResidueId] | None = None,
-    histidine_protonation: HistidineProtonationRequest | None = None,
-    protonate_histidines: bool = False,
+    histidine_protonation: HistidineProtonationRequest = (
+        _DISABLED_HISTIDINE_PROTONATION_REQUEST
+    ),
 ) -> TransformationResult:
     """Materialize hydrogens on the current heavy-atom structure."""
 
@@ -89,8 +93,7 @@ def materialize_hydrogens_core(
         else component_library
     )
     histidine_protonation_request = normalize_histidine_protonation_request(
-        histidine_protonation,
-        protonate_histidines=protonate_histidines,
+        histidine_protonation
     )
     return _execute_hydrogen_placement_stage(
         TransformationResult(

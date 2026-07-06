@@ -2,6 +2,7 @@
 
 import math
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import TypeAlias, TypeGuard
 
 from protrepair.structure.constitution import ChainSite
@@ -111,7 +112,9 @@ def resolve_histidine_protonation_assignments(
         for residue_offset, residue in enumerate(chain.residues)
         if residue.component_id == "HIS"
     )
-    selected_count = math.floor(len(histidine_indices) * request.ratio)
+    selected_count = math.floor(
+        Decimal(len(histidine_indices)) * Decimal(str(request.ratio))
+    )
     return tuple(
         HistidineDeltaProtonationAssignment(residue_index)
         for residue_index in histidine_indices[:selected_count]

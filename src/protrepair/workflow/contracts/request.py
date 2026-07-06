@@ -269,9 +269,9 @@ class WorkflowTransformRequests:
     committed_sidechain_packing: PackingSpec | None = None
     backbone_window_refinements: tuple[BackboneWindowRefinementSpec, ...] = ()
     repair_refinement: RepairRefinementSpec | None = None
-    histidine_protonation: HistidineProtonationRequest | None = None
     protonate_histidines: bool = False
     allow_retained_non_polymer_rdkit_fallback: bool = True
+    histidine_protonation: HistidineProtonationRequest | None = None
 
     def __post_init__(self) -> None:
         external_span_reconstructions_list: list[ExternalSpanReconstructionSpec] = []
@@ -345,7 +345,6 @@ class WorkflowTransformRequests:
             tuple(backbone_window_refinements),
         )
         object.__setattr__(self, "histidine_protonation", histidine_protonation)
-        object.__setattr__(self, "protonate_histidines", False)
 
     def requests_reference_sidechain_packing(self) -> bool:
         """Return whether workflow-reference side-chain packing was requested."""

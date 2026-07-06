@@ -17,21 +17,25 @@ from protrepair.structure.constitution import AtomSite, ChainSite, ResidueSite
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import ResidueIndex
+from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
 from protrepair.transformer.completion.hydrogen.directives import (
     HistidineDeltaProtonationDirective,
     derive_hydrogen_directives,
 )
 from protrepair.transformer.completion.hydrogen.protonation import (
-    DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO,
-    DisabledHistidineProtonationRequest,
     HistidineDeltaProtonationAssignment,
-    HistidineProtonationRequest,
-    PrasRatioHistidineProtonationRequest,
     normalize_histidine_protonation_request,
     resolve_histidine_protonation_assignments,
 )
 from protrepair.transformer.completion.hydrogen.repair import add_hydrogens
-from protrepair.workflow.contracts import WorkflowTransformRequests
+from protrepair.workflow.contracts import (
+    DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO,
+    DisabledHistidineProtonationRequest,
+    HistidineProtonationRequest,
+    OrphanFragmentPolicy,
+    PrasRatioHistidineProtonationRequest,
+    WorkflowTransformRequests,
+)
 
 
 def test_disabled_histidine_protonation_request_is_a_request() -> None:
@@ -133,7 +137,27 @@ def test_normalize_histidine_protonation_request_rejects_non_bool_shorthand() ->
 def test_workflow_transform_requests_consumes_legacy_histidine_bool() -> None:
     requests = WorkflowTransformRequests(protonate_histidines=True)
 
-    assert requests.protonate_histidines is False
+    assert requests.protonate_histidines is True
+    assert (
+        requests.histidine_protonation_request()
+        == PrasRatioHistidineProtonationRequest()
+    )
+
+
+def test_workflow_transform_requests_preserves_legacy_positional_field_order() -> None:
+    requests = WorkflowTransformRequests(
+        OrphanFragmentPolicy.REBUILD,
+        (),
+        None,
+        None,
+        (),
+        None,
+        True,
+        False,
+    )
+
+    assert requests.protonate_histidines is True
+    assert requests.allow_retained_non_polymer_rdkit_fallback is False
     assert (
         requests.histidine_protonation_request()
         == PrasRatioHistidineProtonationRequest()
@@ -156,6 +180,14 @@ def test_add_hydrogens_rejects_conflicting_histidine_inputs() -> None:
             _empty_chain_structure(),
             histidine_protonation=PrasRatioHistidineProtonationRequest(),
             protonate_histidines=True,
+        )
+
+
+def test_materialize_hydrogens_core_rejects_legacy_histidine_bool() -> None:
+    with pytest.raises(TypeError, match="protonate_histidines"):
+        materialize_hydrogens_core(
+            _empty_chain_structure(),
+            protonate_histidines=True,  # type: ignore[call-arg]
         )
 
 
@@ -198,6 +230,16 @@ def test_resolve_histidine_assignments_handles_no_his() -> None:
     )
 
     assert assignments == ()
+
+
+def test_resolve_histidine_assignments_is_stable_at_float_integer_boundary() -> None:
+    assignments = resolve_histidine_protonation_assignments(
+        _chain(*("HIS",) * 100),
+        PrasRatioHistidineProtonationRequest(ratio=0.29),
+    )
+
+    assert len(assignments) == 29
+    assert assignments[-1].residue_index == ResidueIndex(28)
 
 
 def test_derive_hydrogen_directives_lowers_histidine_assignments() -> None:
