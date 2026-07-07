@@ -17,18 +17,12 @@ def build_secondary_structure_analysis(
     assignments = tuple(
         SecondaryStructureAssignment(
             residue_id=point.residue_id,
-            label=_secondary_structure_label(point.category),
+            label=(
+                "C"
+                if point.category is None
+                else point.category.secondary_structure_label()
+            ),
         )
         for point in ramachandran.points
     )
     return SecondaryStructureAnalysis(assignments=assignments)
-
-
-def _secondary_structure_label(category: str | None) -> str:
-    """Project one coarse Ramachandran category into an assignment label."""
-
-    if category == "helix":
-        return "H"
-    if category == "beta":
-        return "E"
-    return "C"

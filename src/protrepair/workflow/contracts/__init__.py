@@ -26,8 +26,6 @@ from protrepair.workflow.contracts.planning import (
     WorkflowTargetIntent,
 )
 from protrepair.workflow.contracts.policies import (
-    CTerminalOxtPolicy,
-    HydrogenPolicy,
     LigandPolicy,
     MutationPolicy,
     OccupancyPolicy,
@@ -43,6 +41,7 @@ from protrepair.workflow.contracts.request import (
 )
 from protrepair.workflow.contracts.result import (
     ProcessResult,
+    RamachandranCategory,
     RequestedGoalCompletionVerdict,
     RequestedGoalOutcome,
     RequestedGoalReport,
@@ -57,13 +56,11 @@ from protrepair.workflow.contracts.span_policy import ExternalSpanGapSelectionPo
 
 __all__ = [
     "AnalysisBundle",
-    "CTerminalOxtPolicy",
     "DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO",
     "DisabledHistidineProtonationRequest",
     "ExternalSpanGapSelectionPolicy",
     "ExternalSpanReconstructionSpec",
     "HistidineProtonationRequest",
-    "HydrogenPolicy",
     "LigandPolicy",
     "MutationPolicy",
     "OccupancyPolicy",
@@ -71,6 +68,7 @@ __all__ = [
     "ProcessResult",
     "PrasRatioHistidineProtonationRequest",
     "RamachandranAnalysis",
+    "RamachandranCategory",
     "RamachandranPoint",
     "RequestedGoalCompletionVerdict",
     "RetainedNonPolymerChemistryOverride",

@@ -1,6 +1,6 @@
 """Workflow-boundary request contracts for the redesigned ProtRepair package."""
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias, TypeVar, overload
 
@@ -64,17 +64,22 @@ def requested_process_goal(
 ) -> WorkflowGoal:
     """Return one canonical requested goal for the workflow boundary."""
 
-    return ScopedState(scope=scope, value=value)
+    if not is_workflow_goal_state_value(value):
+        raise TypeError("requested goal contained an unsupported requested-goal value")
+
+    goal = ScopedState(scope=scope, value=value)
+    validate_workflow_goal_scope(goal)
+    return goal
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class RequestedGoalSet(Sequence[WorkflowGoal]):
     """Normalized requested-goal set over scoped state propositions."""
 
     goals: tuple[WorkflowGoal, ...] = ()
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "goals", _normalize_requested_goals(self.goals))
+    def __init__(self, goals: Iterable[WorkflowGoal] = ()) -> None:
+        object.__setattr__(self, "goals", _normalize_requested_goals(goals))
 
     def __iter__(self) -> Iterator[WorkflowGoal]:
         """Iterate over normalized requested goals."""
@@ -195,7 +200,7 @@ class RequestedGoalSet(Sequence[WorkflowGoal]):
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class StructureIngressOptions:
     """Ingress-boundary normalization configuration for source interpretation."""
 
@@ -206,6 +211,25 @@ class StructureIngressOptions:
         RetainedNonPolymerChemistryOverride,
         ...,
     ] = ()
+
+    def __init__(
+        self,
+        occupancy_policy: OccupancyPolicy = OccupancyPolicy.HIGHEST,
+        mutation_policy: MutationPolicy = MutationPolicy.HIGHEST_OCCUPANCY,
+        ligand_policy: LigandPolicy = LigandPolicy.DROP,
+        retained_non_polymer_chemistry_overrides: Iterable[
+            RetainedNonPolymerChemistryOverride
+        ] = (),
+    ) -> None:
+        object.__setattr__(self, "occupancy_policy", occupancy_policy)
+        object.__setattr__(self, "mutation_policy", mutation_policy)
+        object.__setattr__(self, "ligand_policy", ligand_policy)
+        object.__setattr__(
+            self,
+            "retained_non_polymer_chemistry_overrides",
+            tuple(retained_non_polymer_chemistry_overrides),
+        )
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         if not isinstance(self.occupancy_policy, OccupancyPolicy):
@@ -244,11 +268,12 @@ class StructureIngressOptions:
             StructureNormalizationPolicy,
         )
 
-        ligand_handling = (
-            LigandHandling.KEEP
-            if self.ligand_policy is LigandPolicy.KEEP
-            else LigandHandling.DROP
-        )
+        if self.ligand_policy is LigandPolicy.KEEP:
+            ligand_handling = LigandHandling.KEEP
+        elif self.ligand_policy is LigandPolicy.REJECT:
+            ligand_handling = LigandHandling.REJECT
+        else:
+            ligand_handling = LigandHandling.DROP
         return StructureNormalizationPolicy(
             occupancy_policy=self.occupancy_policy,
             mutation_policy=self.mutation_policy,
@@ -256,7 +281,7 @@ class StructureIngressOptions:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class WorkflowTransformRequests:
     """Explicit workflow transform requests not expressible as desired states."""
 
@@ -272,6 +297,51 @@ class WorkflowTransformRequests:
     protonate_histidines: bool = False
     allow_retained_non_polymer_rdkit_fallback: bool = True
     histidine_protonation: HistidineProtonationRequest | None = None
+
+    def __init__(
+        self,
+        orphan_fragment_policy: OrphanFragmentPolicy = OrphanFragmentPolicy.REBUILD,
+        external_span_reconstructions: Iterable[
+            ExternalSpanReconstructionSpec
+        ] = (),
+        reference_sidechain_packing: PackingSpec | None = None,
+        committed_sidechain_packing: PackingSpec | None = None,
+        backbone_window_refinements: Iterable[BackboneWindowRefinementSpec] = (),
+        repair_refinement: RepairRefinementSpec | None = None,
+        protonate_histidines: bool = False,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        histidine_protonation: HistidineProtonationRequest | None = None,
+    ) -> None:
+        object.__setattr__(self, "orphan_fragment_policy", orphan_fragment_policy)
+        object.__setattr__(
+            self,
+            "external_span_reconstructions",
+            tuple(external_span_reconstructions),
+        )
+        object.__setattr__(
+            self,
+            "reference_sidechain_packing",
+            reference_sidechain_packing,
+        )
+        object.__setattr__(
+            self,
+            "committed_sidechain_packing",
+            committed_sidechain_packing,
+        )
+        object.__setattr__(
+            self,
+            "backbone_window_refinements",
+            tuple(backbone_window_refinements),
+        )
+        object.__setattr__(self, "repair_refinement", repair_refinement)
+        object.__setattr__(self, "protonate_histidines", protonate_histidines)
+        object.__setattr__(
+            self,
+            "allow_retained_non_polymer_rdkit_fallback",
+            allow_retained_non_polymer_rdkit_fallback,
+        )
+        object.__setattr__(self, "histidine_protonation", histidine_protonation)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         external_span_reconstructions_list: list[ExternalSpanReconstructionSpec] = []
@@ -375,7 +445,7 @@ class WorkflowTransformRequests:
 
 
 def _normalize_requested_goals(
-    requested_goals: Sequence[WorkflowGoal],
+    requested_goals: Iterable[WorkflowGoal],
 ) -> tuple[WorkflowGoal, ...]:
     """Normalize one requested-goal set and reject conflicting duplicates."""
 
@@ -387,11 +457,11 @@ def _normalize_requested_goals(
     for goal in requested_goals:
         if not isinstance(goal, ScopedState):
             raise TypeError("requested_goals must contain ScopedState values")
-        if not _is_workflow_goal_state_value(goal.value):
+        if not is_workflow_goal_state_value(goal.value):
             raise TypeError(
                 "requested_goals contained an unsupported requested-goal value"
             )
-        _validate_workflow_goal_scope(goal)
+        validate_workflow_goal_scope(goal)
 
         axis_key = (goal.scope, type(goal.value))
         existing_value = goal_values_by_axis.get(axis_key)
@@ -409,7 +479,7 @@ def _normalize_requested_goals(
     return tuple(normalized_goals)
 
 
-def _is_workflow_goal_state_value(
+def is_workflow_goal_state_value(
     value: object,
 ) -> bool:
     """Return whether one value belongs to the current workflow goal surface."""
@@ -427,7 +497,7 @@ def _is_workflow_goal_state_value(
     )
 
 
-def _validate_workflow_goal_scope(goal: WorkflowGoal) -> None:
+def validate_workflow_goal_scope(goal: WorkflowGoal) -> None:
     """Reject requested goal propositions with incompatible scope axes."""
 
     if isinstance(goal.value, ClashState) and isinstance(

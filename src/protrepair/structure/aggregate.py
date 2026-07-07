@@ -263,8 +263,8 @@ class ProteinStructure:
             constitution_chain_ids = constitution.chain_ids()
             if polymer_blueprint.chain_ids() != constitution_chain_ids:
                 raise ModelInvariantError(
-                    "structure polymer blueprint must share the constitution "
-                    "polymer chain ids in order"
+                    "structure-attached polymer blueprint must share the "
+                    "constitution polymer chain ids in order"
                 )
 
         structure = object.__new__(cls)

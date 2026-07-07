@@ -19,6 +19,7 @@ class RefinementStage(str, Enum):
     """Internal transformer stages that can apply local refinement."""
 
     REPAIR = "repair-stage"
+    BACKBONE_WINDOW = "backbone-window"
 
 
 @dataclass(frozen=True, slots=True)

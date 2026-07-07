@@ -21,6 +21,9 @@ class RetainedNonPolymerChemistryEvidence:
     heavy_atom_names: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.residue_id, ResidueId):
+            raise TypeError("residue_id must be a ResidueId")
+
         normalized_smiles = self.smiles.strip()
         normalized_heavy_atom_names = tuple(
             atom_name.strip().upper() for atom_name in self.heavy_atom_names

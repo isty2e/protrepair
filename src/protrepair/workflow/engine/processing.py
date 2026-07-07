@@ -1,10 +1,10 @@
 """Public workflow processing entrypoints over canonical structures."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from protrepair.analysis.kinds import AnalysisKind
+from protrepair.analysis.kinds import AnalysisKind, normalize_analysis_kinds
 from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_heavy_atom_elements,
@@ -47,7 +47,7 @@ def process_canonical_structure(
     requested_goals: Sequence[WorkflowGoal] = (),
     transform_requests: WorkflowTransformRequests | None = None,
     planning_context: WorkflowPlanningContext | None = None,
-    analyses: frozenset[AnalysisKind] = frozenset(),
+    analyses: Iterable[AnalysisKind] = frozenset(),
 ) -> ProcessResult:
     """Process a canonical structure through the current repair workflow."""
 
@@ -66,7 +66,7 @@ def process_canonical_structure(
         if planning_context is None
         else planning_context
     )
-    normalized_analyses = frozenset(analyses)
+    normalized_analyses = normalize_analysis_kinds(analyses)
 
     component_library = build_default_component_library()
     normalization_policy = active_ingress.structure_normalization_policy()
@@ -136,7 +136,7 @@ def process_structure_source(
     requested_goals: Sequence[WorkflowGoal] = (),
     transform_requests: WorkflowTransformRequests | None = None,
     planning_context: WorkflowPlanningContext | None = None,
-    analyses: frozenset[AnalysisKind] = frozenset(),
+    analyses: Iterable[AnalysisKind] = frozenset(),
 ) -> ProcessResult:
     """Normalize one supported source and process it through the workflow."""
 
@@ -147,7 +147,7 @@ def process_structure_source(
         if transform_requests is None
         else transform_requests
     )
-    normalized_analyses = frozenset(analyses)
+    normalized_analyses = normalize_analysis_kinds(analyses)
     structure = normalize_source_structure(
         source,
         ingress=active_ingress,

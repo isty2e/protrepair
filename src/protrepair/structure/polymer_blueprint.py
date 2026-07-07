@@ -4,6 +4,21 @@ from collections.abc import Collection
 from dataclasses import dataclass
 
 
+def _normalize_optional_chain_id(
+    chain_id: str | None,
+    *,
+    field_name: str,
+) -> str | None:
+    """Return a normalized assigned or unassigned blueprint chain id."""
+
+    if chain_id is None:
+        return None
+    if not isinstance(chain_id, str):
+        raise TypeError(f"{field_name} must be a string or None")
+
+    return chain_id.strip() or None
+
+
 @dataclass(frozen=True, slots=True)
 class PolymerResidueSlot:
     """One canonical polymer residue slot identified by sequence position."""
@@ -36,15 +51,20 @@ class PolymerResidueSlot:
 
 @dataclass(frozen=True, slots=True)
 class PolymerChainBlueprint:
-    """One canonical polymer chain blueprint ordered by sequence slot."""
+    """One canonical polymer chain blueprint ordered by sequence slot.
+
+    A ``None`` chain id denotes an unassigned reference blueprint. Structure-
+    attached blueprints must use concrete chain ids matching the constitution.
+    """
 
     chain_id: str | None
     residue_slots: tuple[PolymerResidueSlot, ...]
 
     def __post_init__(self) -> None:
-        chain_id = self.chain_id
-        if chain_id is not None:
-            chain_id = chain_id.strip() or None
+        chain_id = _normalize_optional_chain_id(
+            self.chain_id,
+            field_name="polymer chain blueprint chain_id",
+        )
 
         residue_slots = tuple(self.residue_slots)
         if not residue_slots:
@@ -116,10 +136,9 @@ class PolymerBlueprint:
     def chain(self, chain_id: str | None) -> PolymerChainBlueprint:
         """Return one chain blueprint by id or raise if absent."""
 
-        normalized_chain_id = (
-            None
-            if chain_id is None
-            else chain_id.strip() or None
+        normalized_chain_id = _normalize_optional_chain_id(
+            chain_id,
+            field_name="polymer blueprint chain lookup chain_id",
         )
         for chain in self.chains:
             if chain.chain_id == normalized_chain_id:
@@ -129,11 +148,17 @@ class PolymerBlueprint:
 
     def select_chains(
         self,
-        chain_ids: Collection[str],
+        chain_ids: Collection[str | None],
     ) -> "PolymerBlueprint":
         """Return one blueprint restricted to the given chain ids in order."""
 
-        normalized_chain_ids = tuple(chain_id.strip() for chain_id in chain_ids)
+        normalized_chain_ids = tuple(
+            _normalize_optional_chain_id(
+                chain_id,
+                field_name="polymer blueprint selected chain_id",
+            )
+            for chain_id in chain_ids
+        )
         return PolymerBlueprint(
             chains=tuple(
                 self.chain(chain_id)

@@ -32,9 +32,9 @@ from protrepair.diagnostics import (
     ValidationIssue,
     ValidationIssueKind,
 )
-from protrepair.errors import ModelInvariantError
+from protrepair.errors import ModelInvariantError, StructureNormalizationError
 from protrepair.geometry import Vec3
-from protrepair.io.ingress_policy import StructureNormalizationPolicy
+from protrepair.io.ingress_policy import LigandHandling, StructureNormalizationPolicy
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
 from protrepair.scope import ResidueSetScope, WholeStructureScope
 from protrepair.state import (
@@ -65,7 +65,10 @@ from protrepair.transformer.continuous.binding_policy import (
 )
 from protrepair.transformer.local import LocalScopeSpec
 from protrepair.transformer.packing import PackingScope, PackingSpec
-from protrepair.transformer.refinement.spec import RepairRefinementSpec
+from protrepair.transformer.refinement.spec import (
+    BackboneWindowRefinementSpec,
+    RepairRefinementSpec,
+)
 from protrepair.workflow.contracts import (
     AnalysisBundle,
     LigandPolicy,
@@ -78,6 +81,7 @@ from protrepair.workflow.contracts import (
     RequestedGoalReport,
     RequestedGoalSet,
     RequestedGoalStatus,
+    StructureIngressOptions,
     WorkflowTransformRequests,
     requested_process_goal,
 )
@@ -279,6 +283,44 @@ def test_protein_structure_requires_blueprint_chain_ids_to_match_constitution() 
         )
 
 
+def test_protein_structure_rejects_unassigned_reference_blueprint() -> None:
+    """Structure-attached blueprints require concrete constitution chain ids."""
+
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="GLY",
+                        residue_id=ResidueId(chain_id="A", seq_num=1),
+                        atoms=(atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+
+    with pytest.raises(ModelInvariantError, match="structure-attached"):
+        ProteinStructure.from_payload(
+            constitution=structure.constitution,
+            geometry=structure.geometry,
+            topology=structure.topology,
+            polymer_blueprint=PolymerBlueprint(
+                chains=(
+                    PolymerChainBlueprint(
+                        chain_id=None,
+                        residue_slots=(
+                            PolymerResidueSlot(sequence_position=1, token="G"),
+                        ),
+                    ),
+                ),
+            ),
+            provenance=structure.provenance,
+        )
+
+
 def test_protein_structure_chain_selection_subsets_polymer_blueprint() -> None:
     """Selecting chains should subset the attached polymer blueprint."""
 
@@ -444,6 +486,149 @@ def test_request_contracts_normalize_requested_states_and_transforms() -> None:
             SidechainHeavyAtomCompletenessState,
         )
         is SidechainHeavyAtomCompletenessState.COMPLETE
+    )
+
+
+def test_public_ligand_reject_policy_projects_to_normalization_reject() -> None:
+    ingress = ingress_options(ligand_policy=LigandPolicy.REJECT)
+
+    normalization_policy = ingress.structure_normalization_policy()
+
+    assert normalization_policy.rejects_ligands()
+
+
+def test_canonical_normalization_rejects_selected_ligands() -> None:
+    ligand_residue_id = ResidueId(chain_id="A", seq_num=10)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=ResidueId(chain_id="A", seq_num=1),
+                        atoms=(atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        ligands=(
+            residue_payload(
+                component_id="LIG",
+                residue_id=ligand_residue_id,
+                atoms=(atom_payload("C1", "C", Vec3(1.0, 0.0, 0.0)),),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+
+    with pytest.raises(
+        StructureNormalizationError,
+        match="rejected unexpected ligand LIG at A:10",
+    ):
+        apply_structure_normalization_policy(
+            structure,
+            policy=StructureNormalizationPolicy(
+                ligand_handling=LigandHandling.REJECT,
+            ),
+        )
+
+
+def test_canonical_ligand_reject_policy_respects_selected_chains() -> None:
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=ResidueId(chain_id="A", seq_num=1),
+                        atoms=(atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        ligands=(
+            residue_payload(
+                component_id="LIG",
+                residue_id=ResidueId(chain_id="B", seq_num=10),
+                atoms=(atom_payload("C1", "C", Vec3(1.0, 0.0, 0.0)),),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+
+    normalized = apply_structure_normalization_policy(
+        structure,
+        policy=StructureNormalizationPolicy(
+            ligand_handling=LigandHandling.REJECT,
+            selected_chain_ids=("A",),
+        ),
+    )
+
+    assert normalized.constitution.chain_ids() == ("A",)
+    assert normalized.constitution.ligands == ()
+
+
+def test_public_workflow_request_collection_inputs_accept_common_iterables() -> None:
+    residue_a = ResidueId(chain_id="A", seq_num=1)
+    residue_b = ResidueId(chain_id="A", seq_num=2)
+    hydrogen_goal = requested_process_goal(
+        scope=WholeStructureScope(),
+        value=HydrogenCoverageState.COMPLETE,
+    )
+    backbone_window_refinement = BackboneWindowRefinementSpec(
+        residue_ids=[residue_a, residue_b, residue_a],
+        movable_atom_names=[" n ", "CA", "CA"],
+    )
+
+    requested_goals = RequestedGoalSet([hydrogen_goal, hydrogen_goal])
+    ingress = StructureIngressOptions(retained_non_polymer_chemistry_overrides=[])
+    transform_requests = WorkflowTransformRequests(
+        external_span_reconstructions=[],
+        backbone_window_refinements=[
+            backbone_window_refinement,
+            backbone_window_refinement,
+        ],
+    )
+
+    assert requested_goals.goals == (hydrogen_goal,)
+    assert ingress.retained_non_polymer_chemistry_overrides == ()
+    assert backbone_window_refinement.residue_ids == (residue_a, residue_b)
+    assert backbone_window_refinement.movable_atom_names == ("N", "CA")
+    assert transform_requests.external_span_reconstructions == ()
+    assert transform_requests.backbone_window_refinements == (
+        backbone_window_refinement,
+    )
+
+
+def test_public_workflow_request_collection_inputs_accept_generators() -> None:
+    residue_a = ResidueId(chain_id="A", seq_num=1)
+    residue_b = ResidueId(chain_id="A", seq_num=2)
+    hydrogen_goal = requested_process_goal(
+        scope=WholeStructureScope(),
+        value=HydrogenCoverageState.COMPLETE,
+    )
+    backbone_window_refinement = BackboneWindowRefinementSpec(
+        residue_ids=(residue_id for residue_id in (residue_a, residue_b, residue_a)),
+        movable_atom_names=(atom_name for atom_name in (" n ", "CA", "CA")),
+    )
+
+    requested_goals = RequestedGoalSet(goal for goal in (hydrogen_goal, hydrogen_goal))
+    transform_requests = WorkflowTransformRequests(
+        backbone_window_refinements=(
+            refinement
+            for refinement in (backbone_window_refinement, backbone_window_refinement)
+        ),
+    )
+
+    assert requested_goals.goals == (hydrogen_goal,)
+    assert backbone_window_refinement.residue_ids == (residue_a, residue_b)
+    assert backbone_window_refinement.movable_atom_names == ("N", "CA")
+    assert transform_requests.backbone_window_refinements == (
+        backbone_window_refinement,
     )
 
 

@@ -81,7 +81,11 @@ class HydrogenCoverageState(str, Enum):
 
 
 class ClashPresenceState(str, Enum):
-    """Observed presence of clashes over one structure-level fact owner."""
+    """Observed aggregate clash presence over one structure-level fact owner.
+
+    This is the whole-structure clash axis used by structure facts and
+    requested goals. Selected local scopes use `ClashState` instead.
+    """
 
     NONE = "none"
     PRESENT = "present"
