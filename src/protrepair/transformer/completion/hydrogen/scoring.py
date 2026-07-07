@@ -156,23 +156,23 @@ class RotatableHydrogenSearch:
         """Return the lowest-energy hydrogen coordinate from a six-step scan."""
 
         candidate_hydrogens = self.candidate_positions()
-        total_energies: list[float] = []
+        best_candidate: Vec3 | None = None
+        best_score: float | None = None
 
         for environment in environments:
             if environment.residue_number != residue_number:
                 continue
 
             for candidate in candidate_hydrogens:
-                total_energies.append(self.candidate_score(candidate, environment))
+                candidate_score = self.candidate_score(candidate, environment)
+                if best_score is None or candidate_score < best_score:
+                    best_score = candidate_score
+                    best_candidate = candidate
 
-        if not total_energies:
+        if best_candidate is None:
             return Vec3.coerce(self.hydrogen)
 
-        minimum_index = total_energies.index(min(total_energies))
-        if minimum_index >= len(candidate_hydrogens):
-            return Vec3.coerce(self.hydrogen)
-
-        return Vec3.coerce(candidate_hydrogens[minimum_index])
+        return Vec3.coerce(best_candidate)
 
 
 def hydrogen_potential_energy(
