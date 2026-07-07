@@ -90,7 +90,7 @@ if Chem is not None:  # pragma: no branch
 
 @dataclass(frozen=True, slots=True)
 class RdkitContinuousRelaxationBackend:
-    """Optional RDKit-backed continuous local geometry optimizer."""
+    """RDKit-backed continuous local geometry optimizer."""
 
     def relax(
         self,
@@ -102,7 +102,7 @@ class RdkitContinuousRelaxationBackend:
 
         if Chem is None or rdBase is None or rdForceFieldHelpers is None:
             raise RdkitUnavailableError(
-                "RDKit-backed continuous relaxation requires the optional "
+                "RDKit-backed continuous relaxation requires the required "
                 "rdkit dependency"
             )
 

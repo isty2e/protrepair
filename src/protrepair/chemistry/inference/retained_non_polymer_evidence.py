@@ -101,7 +101,7 @@ def template_without_hydrogens(smiles: str) -> "Mol":
 
     if Chem is None:
         raise RdkitUnavailableError(
-            "retained non-polymer chemistry evidence requires the optional "
+            "retained non-polymer chemistry evidence requires the required "
             "rdkit dependency"
         )
 
@@ -113,7 +113,7 @@ def template_with_hydrogens(smiles: str) -> "Mol":
 
     if Chem is None:
         raise RdkitUnavailableError(
-            "retained non-polymer chemistry evidence requires the optional "
+            "retained non-polymer chemistry evidence requires the required "
             "rdkit dependency"
         )
 
@@ -126,7 +126,7 @@ def _cached_template_without_hydrogens(smiles: str) -> "Mol":
 
     if Chem is None:
         raise RdkitUnavailableError(
-            "retained non-polymer chemistry evidence requires the optional "
+            "retained non-polymer chemistry evidence requires the required "
             "rdkit dependency"
         )
 
@@ -146,7 +146,7 @@ def _cached_template_with_hydrogens(smiles: str) -> "Mol":
 
     if Chem is None:
         raise RdkitUnavailableError(
-            "retained non-polymer chemistry evidence requires the optional "
+            "retained non-polymer chemistry evidence requires the required "
             "rdkit dependency"
         )
 

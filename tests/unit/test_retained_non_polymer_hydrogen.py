@@ -67,7 +67,7 @@ from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair impo
 
 try:
     from rdkit import Chem
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - required dependency import guard
     Chem = None
 
 RDKIT_AVAILABLE = Chem is not None
@@ -1331,7 +1331,7 @@ def test_retained_non_polymer_rdkit_fallback_unavailable_reports_issue(
     assert any(
         issue.kind is ValidationIssueKind.MISSING_COMPONENT_DEFINITION
         and issue.residue_id == residue_id
-        and "RDKit optional backend is unavailable" in issue.message
+        and "required RDKit backend cannot be imported" in issue.message
         and "RdkitUnavailableError" not in issue.message
         and "leaving retained non-polymer unchanged" in issue.message
         for issue in result.issues
@@ -1381,7 +1381,7 @@ def test_retained_non_polymer_evidence_rdkit_unavailable_reports_contradiction(
     assert any(
         issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
         and issue.residue_id == residue_id
-        and "RDKit optional backend is unavailable" in issue.message
+        and "required RDKit backend cannot be imported" in issue.message
         and "RdkitUnavailableError" not in issue.message
         and "chemistry evidence could not be projected" in issue.message
         for issue in result.issues

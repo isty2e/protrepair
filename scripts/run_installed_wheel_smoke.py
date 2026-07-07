@@ -28,11 +28,7 @@ def main() -> None:
     )
 
     python = venv_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    install_target = (
-        f"{wheel_path.resolve()}[refinement]"
-        if arguments.with_refinement
-        else str(wheel_path.resolve())
-    )
+    install_target = str(wheel_path.resolve())
     install_command = [str(python), "-m", "pip", "install"]
     if arguments.constraints_path is not None:
         install_command.extend(("-c", str(arguments.constraints_path.resolve())))
@@ -42,7 +38,7 @@ def main() -> None:
         (
             str(python),
             "-c",
-            installed_smoke_program(with_refinement=arguments.with_refinement),
+            installed_smoke_program(),
         ),
         cwd=REPOSITORY_ROOT,
         env=clean_python_environment(),
@@ -73,11 +69,6 @@ def parse_args() -> argparse.Namespace:
         "--keep-venv",
         action="store_true",
         help="Reuse the target virtual environment instead of recreating it.",
-    )
-    parser.add_argument(
-        "--with-refinement",
-        action="store_true",
-        help="Install the wheel with the refinement extra and run RDKit smoke.",
     )
     parser.add_argument(
         "--constraints-path",
@@ -153,11 +144,10 @@ def clean_python_environment() -> dict[str, str]:
     return environment
 
 
-def installed_smoke_program(*, with_refinement: bool) -> str:
+def installed_smoke_program() -> str:
     """Return the Python program executed inside the installed environment."""
 
-    refinement_block = (
-        """
+    refinement_block = """
         from rdkit import Chem
         from protrepair.scope import WholeStructureScope
         from protrepair.state import HydrogenCoverageState
@@ -209,13 +199,6 @@ def installed_smoke_program(*, with_refinement: bool) -> str:
         )
         assert refined.backend_name == "rdkit"
         """
-        if with_refinement
-        else """
-        import importlib.util
-
-        assert importlib.util.find_spec("rdkit") is None
-        """
-    )
     return textwrap.dedent(
         f"""
         from importlib.resources import files

@@ -29,7 +29,7 @@ from protrepair.structure.topology import (
 
 try:
     from rdkit import Chem, rdBase
-except ImportError:  # pragma: no cover - exercised by optional dependency checks
+except ImportError:  # pragma: no cover - exercised by RDKit import-guard checks
     Chem = None
     rdBase = None
 

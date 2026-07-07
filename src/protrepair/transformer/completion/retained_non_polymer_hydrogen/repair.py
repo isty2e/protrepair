@@ -1192,7 +1192,7 @@ def _retained_non_polymer_hydrogen_failure_reason(error: Exception) -> str:
     """Return stable user-facing retained-ligand hydrogenation failure wording."""
 
     if isinstance(error, RdkitUnavailableError):
-        return "RDKit optional backend is unavailable"
+        return "required RDKit backend cannot be imported"
     if isinstance(error, ValueError):
         detail = str(error).strip()
         if detail:

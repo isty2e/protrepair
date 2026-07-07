@@ -10,18 +10,17 @@ and Python versions exercised by release CI:
 
 - CPython 3.10, 3.11, and 3.12.
 - Linux through GitHub Actions `ubuntu-latest`.
-- Lean optional-backend coverage on Linux CPython 3.12.
 
 Python 3.13+, macOS, and Windows are not advertised as release-supported
-surfaces until matching CI lanes, constraints, native FASPR checks, and optional
-backend gates are added.
+surfaces until matching CI lanes, constraints, native FASPR checks, and RDKit
+version gates are added.
 
 ## Required Verification
 
 Install release-constrained dependencies before running release gates:
 
 ```bash
-python -m pip install -c constraints/release.txt ".[dev,refinement]"
+python -m pip install -c constraints/release.txt ".[dev]"
 ```
 
 Run the permanent code-quality and unit surface:
@@ -42,17 +41,6 @@ python -m pytest \
   -q
 ```
 
-Run the lean optional-backend retained-ligand gate without RDKit:
-
-```bash
-rdkit_blocker="$(mktemp -d)"
-printf 'raise ModuleNotFoundError("No module named rdkit")\n' > "$rdkit_blocker/rdkit.py"
-python -m pip install -c constraints/release.txt ".[dev]"
-PYTHONPATH="${rdkit_blocker}:${PYTHONPATH:-}" python -m pytest \
-  tests/unit/test_retained_non_polymer_no_rdkit_release.py \
-  -q
-```
-
 ## RDKit Release Version Policy
 
 The full release CI lane installs RDKit through `constraints/release.txt` and
@@ -60,14 +48,14 @@ runs representative RDKit coordinate-digest checks with
 `PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS=1`. Under that strict release gate, an
 unregistered RDKit backend version is a failure instead of a skip.
 
-Local compatibility runs and no-RDKit lanes may still skip version-bound
-coordinate digests when RDKit is absent or unregistered. Current release
-constraints pin `rdkit==2026.3.2`, which corresponds to RDKit backend version
-`2026.03.2`. The digest registry may carry more than one known coordinate digest
-for the same RDKit version when constrained scientific-stack or platform
-differences preserve topology and atom ordering but move coordinates. The
-registry also carries `2026.03.1` and `2026.03.3` for known
-reviewer/environment parity.
+Local compatibility runs may still skip version-bound coordinate digests when
+RDKit is present but unregistered. Missing RDKit is a broken required-dependency
+installation, not a supported runtime mode. Current release constraints pin
+`rdkit==2026.3.2`, which corresponds to RDKit backend version `2026.03.2`. The
+digest registry may carry more than one known coordinate digest for the same
+RDKit version when constrained scientific-stack or platform differences preserve
+topology and atom ordering but move coordinates. The registry also carries
+`2026.03.1` and `2026.03.3` for known reviewer/environment parity.
 
 ## Build And Install Smoke
 
@@ -77,20 +65,12 @@ Run the installed-wheel functional smoke from a clean worktree:
 python scripts/run_installed_wheel_smoke.py
 ```
 
-Run the optional RDKit refinement smoke before releases that advertise the
-`refinement` extra:
-
-```bash
-python scripts/run_installed_wheel_smoke.py --with-refinement
-```
-
 The script builds a wheel with `hatchling`, installs it into a temporary
 virtual environment, and verifies installed-package imports, bundled chemistry
 resources, coordinate read/write, `process_structure()`, packaged FASPR
-execution, and optional RDKit local refinement. It installs the wheel under
-`constraints/release.txt` by default. Release CI runs both the default no-RDKit
-installed-wheel smoke and the `--with-refinement` installed-wheel smoke on
-Python 3.12.
+execution, and RDKit local refinement. It installs the wheel under
+`constraints/release.txt` by default. Release CI runs the installed-wheel smoke
+on Python 3.12.
 
 Bundled FASPR assets are an installed-package/wheel contract. Source-tree
 execution may use an explicit FASPR `executable_path`, but release verification
@@ -134,7 +114,7 @@ Before tagging:
 - `THIRD_PARTY_NOTICES.md` covers bundled third-party assets.
 - `constraints/release.txt` matches the dependency set used by CI and release
   smoke checks.
-- `pyproject.toml` classifiers and optional dependency groups match the release.
+- `pyproject.toml` classifiers and dependency groups match the release.
 - Release-facing documentation contains no stale historical-plan, old import-root,
   or removed package-path references.
 - `git status --short` is empty.

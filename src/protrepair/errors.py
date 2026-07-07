@@ -34,7 +34,7 @@ class UnknownComponentError(ProtrepairError):
 
 
 class RdkitUnavailableError(ProtrepairError):
-    """Raised when RDKit-backed refinement is requested without RDKit."""
+    """Raised when a required RDKit backend cannot be imported."""
 
 
 class UnsupportedFileFormatError(ProtrepairError):

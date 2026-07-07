@@ -61,7 +61,7 @@ def hydrogenate_retained_non_polymer_payload_with_evidence_result(
 
     if Chem is None:
         raise RdkitUnavailableError(
-            "retained non-polymer evidence hydrogenation requires the optional "
+            "retained non-polymer evidence hydrogenation requires the required "
             "rdkit dependency"
         )
 

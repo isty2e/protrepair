@@ -16,8 +16,7 @@ Current implemented scope:
 - structured Ramachandran and coarse secondary-structure analyses
 - canonical workflow entrypoint via `process_structure()`
 - optional packaged FASPR backend for side-chain packing guidance
-- optional RDKit-backed hydrogenation and local refinement through the
-  `refinement` extra
+- RDKit-backed hydrogenation and local refinement
 
 Topology policy is documented in
 [`docs/topology-bond-policy.md`](docs/topology-bond-policy.md). In short,
@@ -64,12 +63,6 @@ guaranteed to have compiled FASPR assets available; install the package/wheel
 first. For advanced transformer-layer development with a separately built
 FASPR binary, construct the FASPR backend with an explicit FASPR
 `executable_path` whose directory also contains `dun2010bbdep.bin`.
-
-Install optional RDKit-backed refinement support with:
-
-```bash
-pip install ".[refinement]"
-```
 
 ## Usage
 
@@ -141,9 +134,8 @@ hetero multiple-bond or stereochemistry-changing fallback inferences leave the
 retained ligand unchanged with a warning instead of guessing chemistry.
 
 Explicit retained-ligand chemistry overrides are validated at ingress. Invalid
-SMILES/evidence mappings, overrides that do not match the kept heavy-atom set,
-or explicit overrides used without optional RDKit support raise `ValueError`
-before workflow execution rather than falling back silently.
+SMILES/evidence mappings or overrides that do not match the kept heavy-atom set
+raise `ValueError` before workflow execution rather than falling back silently.
 
 ```python
 from protrepair.workflow.contracts import WorkflowTransformRequests

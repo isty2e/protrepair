@@ -34,6 +34,7 @@ classifiers = [
 dependencies = [
   "gemmi>=0.7.5",
   "numpy>=1.26",
+  "rdkit",
   "typing_extensions>=4.12",
 ]
 
@@ -43,9 +44,6 @@ Repository = "https://github.com/isty2e/protrepair"
 Issues = "https://github.com/isty2e/protrepair/issues"
 
 [project.optional-dependencies]
-refinement = [
-  "rdkit",
-]
 dev = [
   "basedpyright>=1.38.2",
   "hypothesis>=6.0",

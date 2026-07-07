@@ -397,13 +397,13 @@ def test_rdkit_backend_discards_assigned_chirality_loss(
 def test_refine_local_region_raises_rdkit_unavailable_error_when_missing_dependency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The seam should surface one clear error when RDKit is unavailable."""
+    """The seam should surface one clear error when required RDKit cannot import."""
 
     monkeypatch.setattr(continuous_rdkit, "Chem", None)
     monkeypatch.setattr(continuous_rdkit, "rdBase", None)
     monkeypatch.setattr(continuous_rdkit, "rdForceFieldHelpers", None)
 
-    with pytest.raises(RdkitUnavailableError, match="optional rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
         transform_local_region(
             build_toy_structure(),
             DirectRegionTransformationSpec(

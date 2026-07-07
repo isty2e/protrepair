@@ -150,7 +150,7 @@ from protrepair.workflow.planning.transformation.runtime import (
 
 try:
     from rdkit import Chem
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - required dependency import guard
     Chem = None
 
 RDKIT_AVAILABLE = Chem is not None
@@ -477,7 +477,7 @@ def test_process_structure_rejects_invalid_retained_non_polymer_override_smiles(
 def test_process_structure_rejects_no_rdkit_retained_non_polymer_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Explicit override validation should report stable no-RDKit input wording."""
+    """Explicit override validation should report stable broken-RDKit wording."""
 
     monkeypatch.setattr(
         "protrepair.chemistry.inference.retained_non_polymer_evidence.Chem",
@@ -512,7 +512,7 @@ def test_process_structure_rejects_no_rdkit_retained_non_polymer_override(
         ValueError,
         match=(
             "retained non-polymer chemistry override validation requires "
-            "optional RDKit support for A:99"
+            "the required RDKit backend for A:99"
         ),
     ):
         process_structure(

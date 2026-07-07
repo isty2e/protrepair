@@ -82,7 +82,7 @@ def retained_non_polymer_rdkit_fallback_expected_hydrogen_atom_names(
     if chem is None:
         raise RdkitUnavailableError(
             "retained non-polymer RDKit fallback hydrogen expectation requires the "
-            "optional rdkit dependency"
+            "required rdkit dependency"
         )
 
     heavy_atom_molecule = _retained_non_polymer_rdkit_pose_molecule(
@@ -118,7 +118,7 @@ def infer_retained_non_polymer_rdkit_fallback(
     if Chem is None:
         raise RdkitUnavailableError(
             "retained non-polymer RDKit fallback hydrogenation requires the "
-            "optional rdkit dependency"
+            "required rdkit dependency"
         )
     if rdBase is None:
         raise RdkitUnavailableError(
@@ -188,7 +188,7 @@ def retained_non_polymer_rdkit_fallback_hydrogenated_molecule(
     if Chem is None:
         raise RdkitUnavailableError(
             "retained non-polymer RDKit fallback hydrogenation requires the "
-            "optional rdkit dependency"
+            "required rdkit dependency"
         )
 
     inference_result = infer_retained_non_polymer_rdkit_fallback(
@@ -214,7 +214,7 @@ def retained_non_polymer_rdkit_fallback_heavy_bond_definitions(
     if Chem is None:
         raise RdkitUnavailableError(
             "retained non-polymer RDKit fallback bond inference requires the "
-            "optional rdkit dependency"
+            "required rdkit dependency"
         )
 
     heavy_atom_molecule = _retained_non_polymer_rdkit_pose_molecule(
@@ -404,7 +404,7 @@ def retained_non_polymer_rdkit_fallback_passive_heavy_bond_definitions(
     if chem is None:
         raise RdkitUnavailableError(
             "retained non-polymer RDKit fallback passive context requires the "
-            "optional rdkit dependency"
+            "required rdkit dependency"
         )
 
     heavy_atom_molecule = _retained_non_polymer_rdkit_pose_molecule(

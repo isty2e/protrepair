@@ -1,6 +1,7 @@
 """Release artifact sanity tests for packaged resources and metadata."""
 
 import hashlib
+import importlib.util
 import re
 from importlib.resources import files
 from pathlib import Path
@@ -15,8 +16,14 @@ def test_bundled_chemistry_resources_are_package_visible() -> None:
     assert resource_root.joinpath("retained_non_polymer_components.json.gz").is_file()
 
 
+def test_required_rdkit_dependency_is_importable() -> None:
+    """RDKit is part of the required runtime dependency set."""
+
+    assert importlib.util.find_spec("rdkit") is not None
+
+
 def test_release_metadata_declares_dependency_boundary() -> None:
-    """Release metadata should keep required and optional backends distinct."""
+    """Release metadata should make RDKit part of the default runtime."""
 
     pyproject = Path("pyproject.toml").read_text()
     project_dependencies, optional_dependencies = pyproject.split(
@@ -33,24 +40,23 @@ def test_release_metadata_declares_dependency_boundary() -> None:
     assert '"scikit-build-core>=0.12,<0.13",' in pyproject
     assert 'license = { text = "MIT AND CC-BY-4.0" }' in pyproject
     assert '"gemmi>=0.7.5",' in project_dependencies
-    assert '"rdkit",' not in project_dependencies
+    assert '"rdkit",' in project_dependencies
     assert "[project.optional-dependencies]" in pyproject
     assert "analysis = [" not in optional_dependencies
     assert "matplotlib" not in optional_dependencies
     assert "gemmi" not in optional_dependencies
-    assert "refinement = [" in pyproject
-    assert '"rdkit",' in optional_dependencies
+    assert "refinement = [" not in pyproject
+    assert '"rdkit",' not in optional_dependencies
     assert "dev = [" in pyproject
 
 
-def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
-    """CI should cover both lean installs and the optional RDKit backend."""
+def test_ci_exercises_required_rdkit_dependency_world() -> None:
+    """CI should install RDKit by default and run RDKit-backed gates."""
 
     workflow = Path(".github/workflows/ci.yml").read_text()
 
     assert "permissions:\n  contents: read" in workflow
     assert "  checks:" in workflow
-    assert "  lean:" in workflow
     assert "  installed-wheel-smoke:" in workflow
     assert "  artifact-content:" in workflow
     assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
@@ -62,21 +68,16 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
         'run: .venv/bin/python -m pip install -c constraints/release.txt ".[dev]"'
         in workflow
     )
-    assert '".[dev,refinement]"' in workflow
+    assert '".[dev,refinement]"' not in workflow
     assert "constraints/release.txt" in workflow
-    full_checks_job, lean_job = workflow.split("  lean:", maxsplit=1)
+    full_checks_job = workflow.split("  installed-wheel-smoke:", maxsplit=1)[0]
     assert 'PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS: "1"' in full_checks_job
-    assert "PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS" not in lean_job
     assert "Basedpyright" in full_checks_job
-    assert "Lean optional dependency boundary" in workflow
-    assert "Verify RDKit is outside the lean environment" in lean_job
-    assert "rdkit_blocker" in lean_job
-    assert "tests/unit/test_release_public_api_contract.py" in lean_job
-    assert "tests/unit/test_readme_usage.py" in lean_job
-    assert "tests/unit/test_retained_non_polymer_no_rdkit_release.py" in lean_job
-    assert "tests/unit/test_parser_repair_performance_support.py" in lean_job
-    assert "test_process_structure_preserves_rdkit_coordinate_digest" in workflow
-    assert "tests/workflow/test_process_representatives.py" in workflow
+    assert "  lean:" not in workflow
+    assert "Verify RDKit is outside the lean environment" not in workflow
+    assert "rdkit_blocker" not in workflow
+    assert "tests/unit/test_retained_non_polymer_no_rdkit_release.py" not in workflow
+    assert "tests/workflow" in workflow
     assert '-m "not benchmark"' in workflow
     installed_wheel_job = workflow.split("  installed-wheel-smoke:", maxsplit=1)[1]
     assert "Installed wheel FASPR/RDKit smoke" in installed_wheel_job
@@ -88,10 +89,7 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
         "run: .venv/bin/python scripts/run_installed_wheel_smoke.py"
         in installed_wheel_job
     )
-    assert (
-        "run: .venv/bin/python scripts/run_installed_wheel_smoke.py "
-        "--with-refinement"
-    ) in installed_wheel_job
+    assert "--with-refinement" not in installed_wheel_job
     assert "continue-on-error" not in installed_wheel_job
     artifact_content_job = workflow.split("  artifact-content:", maxsplit=1)[1]
     assert "Release artifact content" in artifact_content_job
@@ -161,8 +159,8 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert "tests/release/test_artifact_contents.py" in checklist
     assert "tests/unit/test_release_artifacts.py" in checklist
     assert "constraints/release.txt" in checklist
-    assert "Release CI runs both the default no-RDKit" in normalized_checklist
-    assert "--with-refinement" in normalized_checklist
+    assert "Release CI runs the installed-wheel smoke" in normalized_checklist
+    assert "--with-refinement" not in normalized_checklist
     assert "CPython 3.10, 3.11, and 3.12" in checklist
     assert "Linux through GitHub Actions `ubuntu-latest`" in checklist
     assert "Python 3.13+, macOS, and Windows are not advertised" in checklist
@@ -173,6 +171,19 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert "2026.03.3" in checklist
     assert "CMake 3.18 or newer" in normalized_checklist
     assert "working C++ compiler toolchain" in normalized_checklist
+
+
+def test_installed_wheel_smoke_exercises_required_rdkit_by_default() -> None:
+    """Installed-wheel smoke should not keep a hidden no-RDKit mode."""
+
+    smoke_script = Path("scripts/run_installed_wheel_smoke.py").read_text()
+
+    assert "[refinement]" not in smoke_script
+    assert "with_refinement" not in smoke_script
+    assert "--with-refinement" not in smoke_script
+    assert "find_spec(\"rdkit\") is None" not in smoke_script
+    assert "from rdkit import Chem" in smoke_script
+    assert "transform_local_region" in smoke_script
 
 
 def test_release_constraints_pin_release_environment() -> None:
@@ -202,7 +213,7 @@ def test_release_constraints_pin_release_environment() -> None:
         "typing_extensions": "4.16.0",
     }
     assert "numpy==2.4" not in Path("constraints/release.txt").read_text()
-    assert 'pip install -c constraints/release.txt ".[dev,refinement]"' in workflow
+    assert 'pip install -c constraints/release.txt ".[dev]"' in workflow
     assert "DEFAULT_CONSTRAINTS_PATH" in smoke_script
 
 
@@ -339,16 +350,14 @@ def test_faspr_provenance_checksums_match_vendored_files() -> None:
 
 
 def test_readme_documents_retained_ligand_fallback_contract() -> None:
-    """README should document the retained-ligand optional-backend contract."""
+    """README should document the retained-ligand fallback contract."""
 
     readme = Path("README.md").read_text()
 
     assert "RETAINED_NON_POLYMER_FALLBACK_USED" in readme
     assert "RETAINED_NON_POLYMER_FALLBACK_BLOCKED" in readme
-    assert (
-        "explicit overrides used without optional RDKit support raise `ValueError`"
-        in readme
-    )
+    assert "optional RDKit" not in readme
+    assert "refinement extra" not in readme
 
 
 def sha256_file(path: Path) -> str:
