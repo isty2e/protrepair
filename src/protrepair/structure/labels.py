@@ -2,11 +2,13 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import total_ordering
 
 from typing_extensions import Self
 
 
-@dataclass(frozen=True, order=True, slots=True)
+@total_ordering
+@dataclass(frozen=True, slots=True)
 class ResidueId:
     """Canonical identifier for a residue in a chain."""
 
@@ -42,6 +44,14 @@ class ResidueId:
         insertion = self.insertion_code or ""
         return f"{self.chain_id}:{self.seq_num}{insertion}"
 
+    def __lt__(self, other: object) -> bool:
+        """Return canonical residue ordering with blank insertion before letters."""
+
+        if not isinstance(other, ResidueId):
+            return NotImplemented
+
+        return self._ordering_key() < other._ordering_key()
+
     def with_chain_id(self, chain_id: str) -> Self:
         """Return a copy with a different chain identifier."""
 
@@ -50,6 +60,11 @@ class ResidueId:
             seq_num=self.seq_num,
             insertion_code=self.insertion_code,
         )
+
+    def _ordering_key(self) -> tuple[str, int, str]:
+        """Return the canonical sort key for residue identity."""
+
+        return (self.chain_id, self.seq_num, self.insertion_code or "")
 
 
 @dataclass(frozen=True, order=True, slots=True)

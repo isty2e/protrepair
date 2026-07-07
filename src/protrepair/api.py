@@ -1,6 +1,6 @@
 """Public API surface for the ``protrepair`` package."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from protrepair.analysis.kinds import AnalysisKind
@@ -23,7 +23,7 @@ def process_structure(
     requested_goals: Sequence[WorkflowGoal] = (),
     transform_requests: WorkflowTransformRequests | None = None,
     planning_context: WorkflowPlanningContext | None = None,
-    analyses: frozenset[AnalysisKind] = frozenset(),
+    analyses: Iterable[AnalysisKind] = frozenset(),
 ) -> ProcessResult:
     """Process one structure source through the current workflow spine.
 

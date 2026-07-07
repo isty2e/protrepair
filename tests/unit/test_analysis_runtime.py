@@ -1,5 +1,6 @@
 """Analysis runtime tests over the canonical structure model."""
 
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -14,9 +15,12 @@ from tests.support.canonical_builders import (
 from protrepair.analysis.kinds import AnalysisKind
 from protrepair.analysis.ramachandran import _ramachandran_category
 from protrepair.analysis.results import (
+    AnalysisBundle,
     RamachandranAnalysis,
     RamachandranCategory,
     RamachandranPoint,
+    SecondaryStructureAnalysis,
+    SecondaryStructureAssignment,
 )
 from protrepair.analysis.runtime import build_analysis_bundle
 from protrepair.geometry import Vec3
@@ -53,6 +57,39 @@ def test_build_analysis_bundle_returns_requested_outputs_only() -> None:
     assert bundle.ramachandran is not None
     assert bundle.has(AnalysisKind.SECONDARY_STRUCTURE)
     assert bundle.has(AnalysisKind.RAMACHANDRAN)
+
+
+def test_build_analysis_bundle_rejects_raw_analysis_kind_strings() -> None:
+    """Analysis requests should not silently ignore raw enum strings."""
+
+    with pytest.raises(TypeError, match="AnalysisKind"):
+        build_analysis_bundle(
+            analysis_fixture_structure(),
+            requested_analyses=frozenset(
+                {cast(AnalysisKind, AnalysisKind.RAMACHANDRAN.value)}
+            ),
+        )
+
+
+def test_process_structure_accepts_iterable_analysis_inputs() -> None:
+    """Public analysis requests should accept ordinary iterable collections."""
+
+    from protrepair import process_structure
+
+    result = process_structure(
+        Path("tests/fixtures/pdb/1aho.pdb"),
+        analyses=[AnalysisKind.RAMACHANDRAN],
+    )
+
+    assert result.analyses is not None
+    assert result.analyses.ramachandran is not None
+
+
+def test_analysis_bundle_rejects_raw_analysis_kind_lookup_strings() -> None:
+    """Analysis bundle helpers should reject raw enum strings."""
+
+    with pytest.raises(TypeError, match="AnalysisKind"):
+        AnalysisBundle().has(cast(AnalysisKind, AnalysisKind.RAMACHANDRAN.value))
 
 
 def test_build_analysis_bundle_computes_backbone_torsions() -> None:
@@ -277,6 +314,53 @@ def test_ramachandran_point_rejects_raw_category_strings(
             phi_degrees=-60.0,
             psi_degrees=-45.0,
             category=category,
+        )
+
+
+def test_analysis_result_dtos_reject_raw_residue_ids() -> None:
+    """Analysis result DTOs should carry canonical residue identity."""
+
+    raw_residue_id = cast(ResidueId, "A:1")
+
+    with pytest.raises(TypeError, match="ResidueId"):
+        SecondaryStructureAssignment(residue_id=raw_residue_id, label="H")
+
+    with pytest.raises(TypeError, match="ResidueId"):
+        RamachandranPoint(
+            residue_id=raw_residue_id,
+            phi_degrees=-60.0,
+            psi_degrees=-45.0,
+        )
+
+
+def test_analysis_result_dtos_reject_malformed_members_and_scalars() -> None:
+    """Analysis result DTOs should fail before helper calls see bad payloads."""
+
+    residue_id = ResidueId("A", 1)
+
+    with pytest.raises(TypeError, match="labels must be strings"):
+        SecondaryStructureAssignment(
+            residue_id=residue_id,
+            label=cast(str, 1),
+        )
+
+    with pytest.raises(TypeError, match="SecondaryStructureAssignment"):
+        SecondaryStructureAnalysis(
+            assignments=(cast(SecondaryStructureAssignment, "not-an-assignment"),)
+        )
+
+    with pytest.raises(TypeError, match="phi_degrees"):
+        RamachandranPoint(
+            residue_id=residue_id,
+            phi_degrees=cast(float, "nan"),
+            psi_degrees=-45.0,
+        )
+
+    with pytest.raises(ValueError, match="psi_degrees"):
+        RamachandranPoint(
+            residue_id=residue_id,
+            phi_degrees=-60.0,
+            psi_degrees=float("nan"),
         )
 
 

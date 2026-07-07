@@ -10,11 +10,14 @@ from protrepair.diagnostics import (
     IssueSeverity,
     RepairEvent,
     RepairEventKind,
+    ResidueAtomImpact,
     ValidationIssue,
     ValidationIssueKind,
 )
 from protrepair.scope import WholeStructureScope
-from protrepair.state import HydrogenCoverageState
+from protrepair.state import ClashState, HydrogenCoverageState
+from protrepair.state.scoped import ScopedState
+from protrepair.structure.labels import ResidueId
 from protrepair.workflow.contracts import (
     RequestedGoalOutcome,
     RequestedGoalReport,
@@ -70,6 +73,19 @@ def test_requested_goal_outcome_rejects_raw_observed_state_strings() -> None:
                 HydrogenCoverageState,
                 HydrogenCoverageState.COMPLETE.value,
             ),
+        )
+
+
+def test_requested_goal_outcome_rejects_incompatible_goal_scope_axes() -> None:
+    """Outcome DTOs should carry the same goal contract as request DTOs."""
+
+    with pytest.raises(ValueError, match="whole-structure clash goals"):
+        RequestedGoalOutcome(
+            requested_goal=ScopedState(
+                scope=WholeStructureScope(),
+                value=ClashState.NONE,
+            ),
+            status=RequestedGoalStatus.SATISFIED,
         )
 
 
@@ -150,6 +166,51 @@ def test_diagnostic_event_scope_rejects_raw_kind_strings() -> None:
         EventScope(kind=cast(EventScopeKind, EventScopeKind.STRUCTURE.value))
 
 
+def test_diagnostic_event_scope_rejects_raw_residue_ids() -> None:
+    """Event scopes should not accept raw residue-id strings."""
+
+    with pytest.raises(TypeError, match="ResidueId"):
+        EventScope(
+            kind=EventScopeKind.RESIDUE,
+            residue_ids=(cast(ResidueId, "A:1"),),
+        )
+
+    with pytest.raises(TypeError, match="ResidueId"):
+        EventScope(
+            kind=EventScopeKind.RESIDUE,
+            residue_ids=(cast(ResidueId, {"chain_id": "A", "seq_num": 1}),),
+        )
+
+
+def test_residue_atom_impact_rejects_raw_residue_ids() -> None:
+    """Residue impacts should carry canonical residue identity."""
+
+    with pytest.raises(TypeError, match="ResidueId"):
+        ResidueAtomImpact(
+            residue_id=cast(ResidueId, "A:1"),
+            atom_names=("CA",),
+        )
+
+
+def test_residue_atom_impact_rejects_malformed_component_and_atom_names() -> None:
+    """Residue impacts should normalize only typed atom-impact payloads."""
+
+    residue_id = ResidueId("A", 1)
+
+    with pytest.raises(TypeError, match="component_id"):
+        ResidueAtomImpact(
+            residue_id=residue_id,
+            component_id=cast(str, 1),
+            atom_names=("CA",),
+        )
+
+    with pytest.raises(TypeError, match="atom_names"):
+        ResidueAtomImpact(
+            residue_id=residue_id,
+            atom_names=(cast(str, 1),),
+        )
+
+
 def test_repair_event_rejects_raw_kind_strings() -> None:
     """Repair events should not accept raw repair-kind strings."""
 
@@ -157,6 +218,17 @@ def test_repair_event_rejects_raw_kind_strings() -> None:
         RepairEvent(
             kind=cast(RepairEventKind, RepairEventKind.HEAVY_ATOMS_ADDED.value),
             scope=EventScope.for_structure(),
+        )
+
+
+def test_repair_event_rejects_non_impact_members() -> None:
+    """Repair events should not hide malformed impact members."""
+
+    with pytest.raises(TypeError, match="ResidueAtomImpact"):
+        RepairEvent(
+            kind=RepairEventKind.HEAVY_ATOMS_ADDED,
+            scope=EventScope.for_structure(),
+            residue_impacts=(cast(ResidueAtomImpact, "not-an-impact"),),
         )
 
 

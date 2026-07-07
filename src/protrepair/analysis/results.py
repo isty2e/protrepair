@@ -1,9 +1,11 @@
 """Structured analysis result contracts."""
 
+import math
 from dataclasses import dataclass
 from enum import Enum
+from typing import TypeGuard
 
-from protrepair.analysis.kinds import AnalysisKind
+from protrepair.analysis.kinds import AnalysisKind, normalize_analysis_kinds
 from protrepair.structure.labels import ResidueId
 
 
@@ -33,6 +35,13 @@ class SecondaryStructureAssignment:
     label: str
 
     def __post_init__(self) -> None:
+        if not isinstance(self.residue_id, ResidueId):
+            raise TypeError(
+                "secondary-structure assignments require a ResidueId"
+            )
+        if not isinstance(self.label, str):
+            raise TypeError("secondary-structure labels must be strings")
+
         label = self.label.strip()
         if not label:
             raise ValueError("secondary-structure labels must not be blank")
@@ -46,7 +55,15 @@ class SecondaryStructureAnalysis:
     assignments: tuple[SecondaryStructureAssignment, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "assignments", tuple(self.assignments))
+        assignments = tuple(self.assignments)
+        for assignment in assignments:
+            if not isinstance(assignment, SecondaryStructureAssignment):
+                raise TypeError(
+                    "secondary-structure analyses require "
+                    "SecondaryStructureAssignment values"
+                )
+
+        object.__setattr__(self, "assignments", assignments)
 
     def label_for(self, residue_id: ResidueId) -> str | None:
         """Return the assignment label for a residue if available."""
@@ -68,6 +85,24 @@ class RamachandranPoint:
     category: RamachandranCategory | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.residue_id, ResidueId):
+            raise TypeError("Ramachandran points require a ResidueId")
+        object.__setattr__(
+            self,
+            "phi_degrees",
+            _normalize_optional_angle(
+                self.phi_degrees,
+                "Ramachandran point phi_degrees",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "psi_degrees",
+            _normalize_optional_angle(
+                self.psi_degrees,
+                "Ramachandran point psi_degrees",
+            ),
+        )
         if self.category is not None and not isinstance(
             self.category,
             RamachandranCategory,
@@ -110,13 +145,51 @@ class AnalysisBundle:
     secondary_structure: SecondaryStructureAnalysis | None = None
     ramachandran: RamachandranAnalysis | None = None
 
+    def __post_init__(self) -> None:
+        if self.secondary_structure is not None and not isinstance(
+            self.secondary_structure,
+            SecondaryStructureAnalysis,
+        ):
+            raise TypeError(
+                "analysis bundles require SecondaryStructureAnalysis or None"
+            )
+        if self.ramachandran is not None and not isinstance(
+            self.ramachandran,
+            RamachandranAnalysis,
+        ):
+            raise TypeError("analysis bundles require RamachandranAnalysis or None")
+
     def has(self, analysis_kind: AnalysisKind) -> bool:
         """Return whether a specific analysis result is populated."""
 
-        if analysis_kind is AnalysisKind.SECONDARY_STRUCTURE:
+        (normalized_analysis_kind,) = normalize_analysis_kinds((analysis_kind,))
+        if normalized_analysis_kind is AnalysisKind.SECONDARY_STRUCTURE:
             return self.secondary_structure is not None
 
-        if analysis_kind is AnalysisKind.RAMACHANDRAN:
+        if normalized_analysis_kind is AnalysisKind.RAMACHANDRAN:
             return self.ramachandran is not None
 
         return False
+
+
+def _normalize_optional_angle(
+    angle_degrees: float | None,
+    field_name: str,
+) -> float | None:
+    """Return one finite optional analysis angle."""
+
+    if angle_degrees is None:
+        return None
+    if not _is_real_number(angle_degrees):
+        raise TypeError(f"{field_name} must be a finite number or None")
+    angle = float(angle_degrees)
+    if not math.isfinite(angle):
+        raise ValueError(f"{field_name} must be finite")
+
+    return angle
+
+
+def _is_real_number(value: object) -> TypeGuard[int | float]:
+    """Return whether a value is a non-bool real number accepted by analysis DTOs."""
+
+    return isinstance(value, (int, float)) and not isinstance(value, bool)

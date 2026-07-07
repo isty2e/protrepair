@@ -30,6 +30,22 @@ def test_residue_id_normalizes_valid_string_fields() -> None:
     assert residue_id.insertion_code is None
 
 
+def test_residue_id_ordering_handles_blank_and_letter_insertion_codes() -> None:
+    """ResidueId ordering should be total over canonical insertion codes."""
+
+    residue_ids = (
+        ResidueId(chain_id="A", seq_num=100, insertion_code="A"),
+        ResidueId(chain_id="A", seq_num=101),
+        ResidueId(chain_id="A", seq_num=100),
+    )
+
+    assert tuple(sorted(residue_ids)) == (
+        ResidueId(chain_id="A", seq_num=100),
+        ResidueId(chain_id="A", seq_num=100, insertion_code="A"),
+        ResidueId(chain_id="A", seq_num=101),
+    )
+
+
 @pytest.mark.parametrize(
     "chain_id",
     [

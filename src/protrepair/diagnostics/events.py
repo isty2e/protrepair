@@ -33,7 +33,14 @@ class EventScope:
         if not isinstance(self.kind, EventScopeKind):
             raise TypeError("event scope kind must be an EventScopeKind value")
 
-        residue_ids = tuple(dict.fromkeys(self.residue_ids))
+        raw_residue_ids = tuple(self.residue_ids)
+        for residue_id in raw_residue_ids:
+            if not isinstance(residue_id, ResidueId):
+                raise TypeError(
+                    "event scope residue_ids must contain ResidueId values"
+                )
+
+        residue_ids = tuple(dict.fromkeys(raw_residue_ids))
         if self.kind is EventScopeKind.STRUCTURE:
             if residue_ids:
                 raise ValueError(
@@ -128,12 +135,22 @@ class ResidueAtomImpact:
     atom_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        atom_names = tuple(atom_name.strip().upper() for atom_name in self.atom_names)
+        if not isinstance(self.residue_id, ResidueId):
+            raise TypeError("residue atom impacts require a ResidueId")
+
         component_id = self.component_id
         if component_id is not None:
+            if not isinstance(component_id, str):
+                raise TypeError("residue atom impact component_id must be a string")
             component_id = component_id.strip() or None
 
-        object.__setattr__(self, "atom_names", atom_names)
+        atom_names: list[str] = []
+        for atom_name in self.atom_names:
+            if not isinstance(atom_name, str):
+                raise TypeError("residue atom impact atom_names must contain strings")
+            atom_names.append(atom_name.strip().upper())
+
+        object.__setattr__(self, "atom_names", tuple(atom_names))
         object.__setattr__(self, "component_id", component_id)
 
 
@@ -154,6 +171,12 @@ class RepairEvent:
             raise TypeError("repair events require an EventScope value")
 
         residue_impacts = tuple(self.residue_impacts)
+        for residue_impact in residue_impacts:
+            if not isinstance(residue_impact, ResidueAtomImpact):
+                raise TypeError(
+                    "repair events require ResidueAtomImpact values"
+                )
+
         provenance_origins = tuple(dict.fromkeys(self.provenance_origins))
         if self.scope.kind is not EventScopeKind.STRUCTURE:
             scope_residue_ids = set(self.scope.residue_ids)

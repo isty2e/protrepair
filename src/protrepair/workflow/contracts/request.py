@@ -67,7 +67,9 @@ def requested_process_goal(
     if not is_workflow_goal_state_value(value):
         raise TypeError("requested goal contained an unsupported requested-goal value")
 
-    return ScopedState(scope=scope, value=value)
+    goal = ScopedState(scope=scope, value=value)
+    validate_workflow_goal_scope(goal)
+    return goal
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -459,7 +461,7 @@ def _normalize_requested_goals(
             raise TypeError(
                 "requested_goals contained an unsupported requested-goal value"
             )
-        _validate_workflow_goal_scope(goal)
+        validate_workflow_goal_scope(goal)
 
         axis_key = (goal.scope, type(goal.value))
         existing_value = goal_values_by_axis.get(axis_key)
@@ -495,7 +497,7 @@ def is_workflow_goal_state_value(
     )
 
 
-def _validate_workflow_goal_scope(goal: WorkflowGoal) -> None:
+def validate_workflow_goal_scope(goal: WorkflowGoal) -> None:
     """Reject requested goal propositions with incompatible scope axes."""
 
     if isinstance(goal.value, ClashState) and isinstance(

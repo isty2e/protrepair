@@ -29,6 +29,7 @@ from protrepair.workflow.contracts.request import (
     WorkflowGoal,
     WorkflowGoalStateValue,
     is_workflow_goal_state_value,
+    validate_workflow_goal_scope,
 )
 
 if TYPE_CHECKING:
@@ -109,6 +110,7 @@ class RequestedGoalOutcome:
             raise TypeError(
                 "requested goal outcomes require a supported requested-goal value"
             )
+        validate_workflow_goal_scope(self.requested_goal)
         if not isinstance(self.status, RequestedGoalStatus):
             raise TypeError(
                 "requested goal outcomes require a RequestedGoalStatus value"
