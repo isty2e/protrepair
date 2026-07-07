@@ -69,3 +69,24 @@ jobs:
             tests/workflow/test_process_representatives.py::test_process_structure_preserves_representative_semantics \
             tests/workflow/test_process_representatives.py::test_process_structure_preserves_rdkit_coordinate_digest \
             -q
+
+  installed-wheel-smoke:
+    name: Installed wheel FASPR smoke (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create release build environment
+        run: python -m venv .venv
+
+      - name: Install constrained release build tools
+        run: .venv/bin/python -m pip install -c constraints/release.txt hatchling hatch-vcs scikit-build-core
+
+      - name: Run installed-wheel FASPR smoke
+        run: .venv/bin/python scripts/run_installed_wheel_smoke.py

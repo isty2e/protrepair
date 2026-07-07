@@ -49,6 +49,7 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
 
     assert "  checks:" in workflow
     assert "  lean:" in workflow
+    assert "  installed-wheel-smoke:" in workflow
     assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
     assert 'python-version: "3.12"' in workflow
     assert "ubuntu-latest" in workflow
@@ -70,6 +71,17 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
     assert "test_process_structure_preserves_rdkit_coordinate_digest" in workflow
     assert "tests/workflow/test_process_representatives.py" in workflow
     assert '-m "not benchmark"' in workflow
+    installed_wheel_job = workflow.split("  installed-wheel-smoke:", maxsplit=1)[1]
+    assert "Installed wheel FASPR smoke" in installed_wheel_job
+    assert (
+        "pip install -c constraints/release.txt hatchling hatch-vcs "
+        "scikit-build-core"
+    ) in installed_wheel_job
+    assert (
+        "run: .venv/bin/python scripts/run_installed_wheel_smoke.py"
+        in installed_wheel_job
+    )
+    assert "continue-on-error" not in installed_wheel_job
 
 
 def test_release_gate_sources_are_sdist_visible() -> None:
