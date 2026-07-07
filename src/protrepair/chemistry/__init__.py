@@ -25,6 +25,8 @@ from protrepair.chemistry.component.semantics import (
 from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.radii import (
     COVALENT_RADII_SOURCE,
+    RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE,
+    RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION,
     VAN_DER_WAALS_RADII_SOURCE,
     ElementRadiusLookup,
     ElementRadiusResolution,
@@ -75,6 +77,8 @@ __all__ = [
     "RotatableHydrogenKind",
     "TetrahedralCenterSemantics",
     "RadiusKind",
+    "RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE",
+    "RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION",
     "VAN_DER_WAALS_RADII_SOURCE",
     "UnknownElementRadiusError",
     "build_default_component_library",

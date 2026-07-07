@@ -1,23 +1,9 @@
-"""Literature-backed element radii used by chemistry and diagnostics.
+"""Static RDKit PeriodicTable element radii used by diagnostics.
 
-The codebase previously carried separate hard-coded radius tables in clash,
-geometry, and hydrogen-placement helpers. Those values were already close to
-standard literature tables, but the owner and provenance were unclear.
-
-This module centralizes the radius families that ProtRepair currently relies on:
-
-- van der Waals radii: Bondi, J. Phys. Chem. 1964, 68, 441-451
-  DOI: 10.1021/j100785a001; Bondi, J. Phys. Chem. 1966, 70, 3006-3007
-  DOI: 10.1021/j100881a503; Mantina et al., J. Phys. Chem. A 2009,
-  113, 5806-5812 DOI: 10.1021/jp8111556; Batsanov, Inorg. Mater.
-  2001, 37, 871-885
-- covalent radii: Cordero et al., Dalton Trans. 2008, 2832-2838
-  DOI: 10.1039/B801115J
-
-Watchpoint:
-- Later literature revisits hydrogen vdW radii, but ProtRepair intentionally keeps
-  Bondi's 1.20 A hydrogen value for clash gating to avoid silently loosening
-  existing steric thresholds during the 48jm line of work.
+The lookup path intentionally does not import RDKit at runtime. Radius values are
+a committed snapshot of ``rdkit.Chem.GetPeriodicTable().GetRvdw`` and
+``GetRcovalent`` for atomic numbers 1 through 118, generated from the release
+constraint version recorded below.
 """
 
 from collections.abc import Iterable, Mapping
@@ -25,54 +11,263 @@ from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
 
+RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION = "2026.03.2"
+RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE = (
+    "RDKit PeriodicTable GetRvdw/GetRcovalent snapshot generated from "
+    "rdkit==2026.3.2 (rdBase.rdkitVersion=2026.03.2) for atomic numbers 1-118"
+)
 VAN_DER_WAALS_RADII_SOURCE = (
-    "Bondi, J. Phys. Chem. 1964, 68, 441-451; DOI: 10.1021/j100785a001; "
-    "Bondi, J. Phys. Chem. 1966, 70, 3006-3007; DOI: 10.1021/j100881a503; "
-    "Mantina et al., J. Phys. Chem. A 2009, 113, 5806-5812; "
-    "DOI: 10.1021/jp8111556; Batsanov, Inorg. Mater. 2001, 37, 871-885"
+    f"{RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE}; radius API: GetRvdw"
 )
-
 COVALENT_RADII_SOURCE = (
-    "Cordero et al., Dalton Trans. 2008, 2832-2838; DOI: 10.1039/B801115J"
+    f"{RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE}; radius API: GetRcovalent"
 )
 
-BONDI_VAN_DER_WAALS_RADII_ANGSTROM: Mapping[str, float] = MappingProxyType(
-    {
-        "H": 1.20,
-        "C": 1.70,
-        "N": 1.55,
-        "O": 1.52,
-        "F": 1.47,
-        "MG": 1.73,
-        "P": 1.80,
-        "S": 1.80,
-        "CA": 2.31,
-        "FE": 2.00,
-        "SE": 1.90,
-        "ZN": 1.39,
-        "CL": 1.75,
-        "BR": 1.85,
-        "I": 1.98,
-    }
+RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM: Mapping[str, float] = (
+    MappingProxyType(
+        {
+            "H": 1.2,
+            "HE": 1.4,
+            "LI": 2.2,
+            "BE": 1.9,
+            "B": 1.8,
+            "C": 1.7,
+            "N": 1.6,
+            "O": 1.55,
+            "F": 1.5,
+            "NE": 1.54,
+            "NA": 2.4,
+            "MG": 2.2,
+            "AL": 2.1,
+            "SI": 2.1,
+            "P": 1.95,
+            "S": 1.8,
+            "CL": 1.8,
+            "AR": 1.88,
+            "K": 2.8,
+            "CA": 2.4,
+            "SC": 2.3,
+            "TI": 2.15,
+            "V": 2.05,
+            "CR": 2.05,
+            "MN": 2.05,
+            "FE": 2.05,
+            "CO": 2.0,
+            "NI": 2.0,
+            "CU": 2.0,
+            "ZN": 2.1,
+            "GA": 2.1,
+            "GE": 2.1,
+            "AS": 2.05,
+            "SE": 1.9,
+            "BR": 1.9,
+            "KR": 2.02,
+            "RB": 2.9,
+            "SR": 2.55,
+            "Y": 2.4,
+            "ZR": 2.3,
+            "NB": 2.15,
+            "MO": 2.1,
+            "TC": 2.05,
+            "RU": 2.05,
+            "RH": 2.0,
+            "PD": 2.05,
+            "AG": 2.1,
+            "CD": 2.2,
+            "IN": 2.2,
+            "SN": 2.25,
+            "SB": 2.2,
+            "TE": 2.1,
+            "I": 2.1,
+            "XE": 2.16,
+            "CS": 3.0,
+            "BA": 2.7,
+            "LA": 2.5,
+            "CE": 2.48,
+            "PR": 2.47,
+            "ND": 2.45,
+            "PM": 2.43,
+            "SM": 2.42,
+            "EU": 2.4,
+            "GD": 2.38,
+            "TB": 2.37,
+            "DY": 2.35,
+            "HO": 2.33,
+            "ER": 2.32,
+            "TM": 2.3,
+            "YB": 2.28,
+            "LU": 2.27,
+            "HF": 2.25,
+            "TA": 2.2,
+            "W": 2.1,
+            "RE": 2.05,
+            "OS": 2.0,
+            "IR": 2.0,
+            "PT": 2.05,
+            "AU": 2.1,
+            "HG": 2.05,
+            "TL": 2.2,
+            "PB": 2.3,
+            "BI": 2.3,
+            "PO": 2.0,
+            "AT": 2.0,
+            "RN": 2.0,
+            "FR": 2.0,
+            "RA": 2.0,
+            "AC": 2.0,
+            "TH": 2.4,
+            "PA": 2.0,
+            "U": 2.3,
+            "NP": 2.0,
+            "PU": 2.0,
+            "AM": 2.0,
+            "CM": 2.0,
+            "BK": 2.0,
+            "CF": 2.0,
+            "ES": 2.0,
+            "FM": 2.0,
+            "MD": 2.0,
+            "NO": 2.0,
+            "LR": 2.0,
+            "RF": 2.0,
+            "DB": 2.0,
+            "SG": 2.0,
+            "BH": 2.0,
+            "HS": 2.0,
+            "MT": 2.0,
+            "DS": 2.0,
+            "RG": 2.0,
+            "CN": 2.0,
+            "NH": 2.0,
+            "FL": 2.0,
+            "MC": 2.0,
+            "LV": 2.0,
+            "TS": 2.0,
+            "OG": 2.0,
+        }
+    )
 )
 
-CORDERO_COVALENT_RADII_ANGSTROM: Mapping[str, float] = MappingProxyType(
+RDKIT_PERIODIC_TABLE_COVALENT_RADII_ANGSTROM: Mapping[str, float] = MappingProxyType(
     {
         "H": 0.31,
+        "HE": 0.28,
+        "LI": 1.28,
+        "BE": 0.96,
+        "B": 0.84,
         "C": 0.76,
         "N": 0.71,
         "O": 0.66,
         "F": 0.57,
+        "NE": 0.58,
+        "NA": 1.66,
         "MG": 1.41,
+        "AL": 1.21,
+        "SI": 1.11,
         "P": 1.07,
         "S": 1.05,
-        "CA": 1.76,
-        "FE": 1.32,
-        "SE": 1.20,
-        "ZN": 1.22,
         "CL": 1.02,
-        "BR": 1.20,
+        "AR": 1.06,
+        "K": 2.03,
+        "CA": 1.76,
+        "SC": 1.7,
+        "TI": 1.6,
+        "V": 1.52,
+        "CR": 1.39,
+        "MN": 1.39,
+        "FE": 1.32,
+        "CO": 1.26,
+        "NI": 1.24,
+        "CU": 1.32,
+        "ZN": 1.22,
+        "GA": 1.22,
+        "GE": 1.2,
+        "AS": 1.19,
+        "SE": 1.2,
+        "BR": 1.2,
+        "KR": 1.16,
+        "RB": 2.2,
+        "SR": 1.95,
+        "Y": 1.9,
+        "ZR": 1.75,
+        "NB": 1.64,
+        "MO": 1.54,
+        "TC": 1.47,
+        "RU": 1.46,
+        "RH": 1.42,
+        "PD": 1.39,
+        "AG": 1.45,
+        "CD": 1.44,
+        "IN": 1.42,
+        "SN": 1.39,
+        "SB": 1.39,
+        "TE": 1.38,
         "I": 1.39,
+        "XE": 1.4,
+        "CS": 2.44,
+        "BA": 2.15,
+        "LA": 2.07,
+        "CE": 2.04,
+        "PR": 2.03,
+        "ND": 2.01,
+        "PM": 1.99,
+        "SM": 1.98,
+        "EU": 1.98,
+        "GD": 1.96,
+        "TB": 1.94,
+        "DY": 1.92,
+        "HO": 1.92,
+        "ER": 1.89,
+        "TM": 1.9,
+        "YB": 1.87,
+        "LU": 1.87,
+        "HF": 1.75,
+        "TA": 1.7,
+        "W": 1.62,
+        "RE": 1.51,
+        "OS": 1.44,
+        "IR": 1.41,
+        "PT": 1.36,
+        "AU": 1.36,
+        "HG": 1.32,
+        "TL": 1.45,
+        "PB": 1.46,
+        "BI": 1.48,
+        "PO": 1.4,
+        "AT": 1.5,
+        "RN": 1.5,
+        "FR": 2.6,
+        "RA": 2.2,
+        "AC": 2.15,
+        "TH": 2.06,
+        "PA": 2.0,
+        "U": 1.96,
+        "NP": 1.9,
+        "PU": 1.87,
+        "AM": 1.8,
+        "CM": 1.69,
+        "BK": 1.9,
+        "CF": 1.9,
+        "ES": 1.9,
+        "FM": 1.9,
+        "MD": 1.9,
+        "NO": 1.9,
+        "LR": 1.9,
+        "RF": 1.9,
+        "DB": 1.9,
+        "SG": 1.9,
+        "BH": 1.9,
+        "HS": 1.9,
+        "MT": 1.9,
+        "DS": 1.9,
+        "RG": 1.9,
+        "CN": 1.9,
+        "NH": 1.36,
+        "FL": 1.43,
+        "MC": 1.62,
+        "LV": 1.75,
+        "TS": 1.65,
+        "OG": 1.57,
     }
 )
 
@@ -333,9 +528,9 @@ def _radius_table(kind: RadiusKind) -> Mapping[str, float]:
     """Return the active radius table for one radius kind."""
 
     if kind is RadiusKind.VAN_DER_WAALS:
-        return BONDI_VAN_DER_WAALS_RADII_ANGSTROM
+        return RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM
     if kind is RadiusKind.COVALENT:
-        return CORDERO_COVALENT_RADII_ANGSTROM
+        return RDKIT_PERIODIC_TABLE_COVALENT_RADII_ANGSTROM
 
     raise TypeError("kind must be a RadiusKind")
 

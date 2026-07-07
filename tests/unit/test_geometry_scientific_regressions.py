@@ -170,7 +170,7 @@ def test_scientific_regression_radii_cover_selenium_and_common_metals() -> None:
 
     assert van_der_waals_radius_angstrom("SE") == pytest.approx(1.90)
     assert covalent_radius_angstrom("SE") == pytest.approx(1.20)
-    assert van_der_waals_radius_angstrom("FE") == pytest.approx(2.00)
+    assert van_der_waals_radius_angstrom("FE") == pytest.approx(2.05)
     assert covalent_radius_angstrom("ZN") == pytest.approx(1.22)
 
 

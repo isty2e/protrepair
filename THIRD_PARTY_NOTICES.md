@@ -14,6 +14,22 @@ against the upstream PRAS implementation during migration. The legacy source
 trees have been removed from the repository working tree; provenance now lives
 in git history and the upstream project.
 
+## RDKit
+
+- Runtime dependency: `rdkit`
+- Upstream project: `rdkit/rdkit`
+- PyPI wheel project: `kuelumbus/rdkit-pypi`
+- RDKit source license: BSD 3-Clause
+- PyPI wheel wrapper license file: MIT
+
+ProtRepair uses RDKit as a required runtime dependency for retained-ligand
+chemistry and local refinement. It also includes a static element-radius
+snapshot in `src/protrepair/chemistry/radii.py` generated from
+`rdkit==2026.3.2` (`rdBase.rdkitVersion=2026.03.2`) via
+`rdkit.Chem.GetPeriodicTable().GetRvdw` and `GetRcovalent` for atomic numbers
+1 through 118. The snapshot is committed so diagnostics do not import RDKit at
+radius-lookup time.
+
 ## FASPR
 
 - Upstream project: `tommyhuangthu/FASPR`

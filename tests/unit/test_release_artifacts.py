@@ -186,6 +186,29 @@ def test_installed_wheel_smoke_exercises_required_rdkit_by_default() -> None:
     assert "transform_local_region" in smoke_script
 
 
+def test_rdkit_radius_snapshot_provenance_is_documented() -> None:
+    """RDKit runtime and static radius snapshot provenance should be explicit."""
+
+    pyproject = Path("pyproject.toml").read_text()
+    notices = " ".join(Path("THIRD_PARTY_NOTICES.md").read_text().split())
+    radii_source = Path("src/protrepair/chemistry/radii.py").read_text()
+
+    assert '"rdkit",' in pyproject
+    assert "Runtime dependency: `rdkit`" in notices
+    assert "RDKit source license: BSD 3-Clause" in notices
+    assert "PyPI wheel wrapper license file: MIT" in notices
+    assert "src/protrepair/chemistry/radii.py" in notices
+    assert "rdkit==2026.3.2" in notices
+    assert "rdBase.rdkitVersion=2026.03.2" in notices
+    assert "GetRvdw" in notices
+    assert "GetRcovalent" in notices
+    assert (
+        'RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION = "2026.03.2"'
+        in radii_source
+    )
+    assert "rdkit==2026.3.2" in radii_source
+
+
 def test_release_constraints_pin_release_environment() -> None:
     """Release constraints should pin CI tools without narrowing metadata ranges."""
 

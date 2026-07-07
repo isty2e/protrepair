@@ -4,6 +4,8 @@ import pytest
 
 from protrepair.chemistry import (
     COVALENT_RADII_SOURCE,
+    RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE,
+    RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION,
     VAN_DER_WAALS_RADII_SOURCE,
     ElementRadiusLookup,
     ElementRadiusResolution,
@@ -21,27 +23,29 @@ from protrepair.transformer.completion.hydrogen.geometry import (
 )
 
 
-def test_van_der_waals_radii_match_bondi_consensus_values() -> None:
-    """Supported vdW radii should match the centralized Bondi-family owner."""
+def test_van_der_waals_radii_match_rdkit_periodic_table_snapshot() -> None:
+    """Supported vdW radii should match the static RDKit PeriodicTable snapshot."""
 
-    assert "10.1021/j100785a001" in VAN_DER_WAALS_RADII_SOURCE
-    assert "10.1021/j100881a503" in VAN_DER_WAALS_RADII_SOURCE
-    assert "10.1021/jp8111556" in VAN_DER_WAALS_RADII_SOURCE
+    assert RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION == "2026.03.2"
+    assert "rdkit==2026.3.2" in RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE
+    assert "GetRvdw" in VAN_DER_WAALS_RADII_SOURCE
     assert van_der_waals_radius_angstrom("H") == 1.20
     assert van_der_waals_radius_angstrom("C") == 1.70
-    assert van_der_waals_radius_angstrom("O") == 1.52
+    assert van_der_waals_radius_angstrom("N") == 1.60
+    assert van_der_waals_radius_angstrom("O") == 1.55
+    assert van_der_waals_radius_angstrom("P") == 1.95
     assert van_der_waals_radius_angstrom("Se") == 1.90
-    assert van_der_waals_radius_angstrom("ZN") == 1.39
-    assert van_der_waals_radius_angstrom("Mg") == 1.73
-    assert van_der_waals_radius_angstrom("Ca") == 2.31
-    assert van_der_waals_radius_angstrom("Fe") == 2.00
-    assert van_der_waals_radius_angstrom("I") == 1.98
+    assert van_der_waals_radius_angstrom("ZN") == 2.10
+    assert van_der_waals_radius_angstrom("Mg") == 2.20
+    assert van_der_waals_radius_angstrom("Ca") == 2.40
+    assert van_der_waals_radius_angstrom("Fe") == 2.05
+    assert van_der_waals_radius_angstrom("I") == 2.10
 
 
-def test_covalent_radii_match_cordero_values_for_supported_elements() -> None:
-    """Supported covalent radii should come from the centralized Cordero owner."""
+def test_covalent_radii_match_rdkit_periodic_table_snapshot() -> None:
+    """Supported covalent radii should match the static RDKit PeriodicTable snapshot."""
 
-    assert "10.1039/B801115J" in COVALENT_RADII_SOURCE
+    assert "GetRcovalent" in COVALENT_RADII_SOURCE
     assert covalent_radius_angstrom("H") == 0.31
     assert covalent_radius_angstrom("C") == 0.76
     assert covalent_radius_angstrom("N") == 0.71

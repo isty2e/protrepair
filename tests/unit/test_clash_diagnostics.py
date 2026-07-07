@@ -174,10 +174,10 @@ def test_clash_context_uses_explicit_common_metal_vdw_radii() -> None:
         policy=ClashPolicy(include_ligands=True),
     )
 
-    assert context.van_der_waals_radius("FE") == 2.00
-    assert context.van_der_waals_radius("ZN") == 1.39
-    assert context.van_der_waals_radius("MG") == 1.73
-    assert context.van_der_waals_radius("CA") == 2.31
+    assert context.van_der_waals_radius("FE") == 2.05
+    assert context.van_der_waals_radius("ZN") == 2.10
+    assert context.van_der_waals_radius("MG") == 2.20
+    assert context.van_der_waals_radius("CA") == 2.40
 
 
 def test_standard_component_templates_expose_heavy_bond_hops() -> None:

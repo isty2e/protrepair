@@ -57,6 +57,11 @@ RDKit version when constrained scientific-stack or platform differences preserve
 topology and atom ordering but move coordinates. The registry also carries
 `2026.03.1` and `2026.03.3` for known reviewer/environment parity.
 
+Element-radius diagnostics use a static `rdkit==2026.3.2` PeriodicTable
+snapshot generated from `GetRvdw` and `GetRcovalent`, not runtime RDKit lookup.
+Update `src/protrepair/chemistry/radii.py`, `THIRD_PARTY_NOTICES.md`, and the
+radius sentinel tests together if the release RDKit pin changes.
+
 ## Build And Install Smoke
 
 Run the installed-wheel functional smoke from a clean worktree:
