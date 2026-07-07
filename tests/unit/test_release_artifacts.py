@@ -23,6 +23,12 @@ def test_release_metadata_declares_dependency_boundary() -> None:
         maxsplit=1,
     )
 
+    assert 'requires-python = ">=3.10,<3.13"' in pyproject
+    assert '"Programming Language :: Python :: 3.10"' in pyproject
+    assert '"Programming Language :: Python :: 3.11"' in pyproject
+    assert '"Programming Language :: Python :: 3.12"' in pyproject
+    assert "Python :: 3.13" not in pyproject
+    assert '"Operating System :: POSIX :: Linux"' in pyproject
     assert '"scikit-build-core>=0.12,<0.13",' in pyproject
     assert 'license = { text = "MIT AND CC-BY-4.0" }' in pyproject
     assert '"gemmi>=0.7.5",' in project_dependencies
@@ -43,6 +49,11 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
 
     assert "  checks:" in workflow
     assert "  lean:" in workflow
+    assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
+    assert 'python-version: "3.12"' in workflow
+    assert "ubuntu-latest" in workflow
+    assert "macos-latest" not in workflow
+    assert "windows-latest" not in workflow
     assert (
         'run: .venv/bin/python -m pip install -c constraints/release.txt ".[dev]"'
         in workflow
@@ -86,6 +97,9 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert "python scripts/run_installed_wheel_smoke.py" in checklist
     assert "tests/unit/test_release_artifacts.py" in checklist
     assert "constraints/release.txt" in checklist
+    assert "CPython 3.10, 3.11, and 3.12" in checklist
+    assert "Linux through GitHub Actions `ubuntu-latest`" in checklist
+    assert "Python 3.13+, macOS, and Windows are not advertised" in checklist
 
 
 def test_release_constraints_pin_release_environment() -> None:

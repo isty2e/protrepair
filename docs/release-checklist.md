@@ -3,6 +3,19 @@
 This checklist defines the local gates required before tagging a `protrepair`
 release.
 
+## Supported Release Matrix
+
+The current release-supported surface is intentionally capped to the platforms
+and Python versions exercised by release CI:
+
+- CPython 3.10, 3.11, and 3.12.
+- Linux through GitHub Actions `ubuntu-latest`.
+- Lean optional-backend coverage on Linux CPython 3.12.
+
+Python 3.13+, macOS, and Windows are not advertised as release-supported
+surfaces until matching CI lanes, constraints, native FASPR checks, and optional
+backend gates are added.
+
 ## Required Verification
 
 Install release-constrained dependencies before running release gates:
