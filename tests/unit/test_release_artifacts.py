@@ -50,6 +50,7 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
     assert "  checks:" in workflow
     assert "  lean:" in workflow
     assert "  installed-wheel-smoke:" in workflow
+    assert "  artifact-content:" in workflow
     assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
     assert 'python-version: "3.12"' in workflow
     assert "ubuntu-latest" in workflow
@@ -86,6 +87,17 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
         in installed_wheel_job
     )
     assert "continue-on-error" not in installed_wheel_job
+    artifact_content_job = workflow.split("  artifact-content:", maxsplit=1)[1]
+    assert "Release artifact content" in artifact_content_job
+    assert (
+        "pip install -c constraints/release.txt pytest hatchling hatch-vcs "
+        "scikit-build-core"
+    ) in artifact_content_job
+    assert (
+        "run: .venv/bin/python -m pytest "
+        "tests/release/test_artifact_contents.py -q"
+    ) in artifact_content_job
+    assert "continue-on-error" not in artifact_content_job
 
 
 def test_release_gate_sources_are_sdist_visible() -> None:
@@ -111,6 +123,7 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert '"scripts/run_installed_wheel_smoke.py",' in pyproject
     assert '"scripts",' not in pyproject
     assert "python scripts/run_installed_wheel_smoke.py" in checklist
+    assert "tests/release/test_artifact_contents.py" in checklist
     assert "tests/unit/test_release_artifacts.py" in checklist
     assert "constraints/release.txt" in checklist
     assert "CPython 3.10, 3.11, and 3.12" in checklist

@@ -93,6 +93,12 @@ should not rely on speculative build-directory probing.
 
 ## Artifact Contents
 
+Run the fresh wheel/sdist archive content gate:
+
+```bash
+python -m pytest tests/release/test_artifact_contents.py -q
+```
+
 Confirm that the wheel contains these non-code assets:
 
 - `protrepair/chemistry/resources/nonstandard_components.json.gz`

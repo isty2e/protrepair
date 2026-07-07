@@ -94,3 +94,24 @@ jobs:
 
       - name: Run installed-wheel FASPR smoke
         run: .venv/bin/python scripts/run_installed_wheel_smoke.py
+
+  artifact-content:
+    name: Release artifact content (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create release artifact test environment
+        run: python -m venv .venv
+
+      - name: Install constrained release artifact test tools
+        run: .venv/bin/python -m pip install -c constraints/release.txt pytest hatchling hatch-vcs scikit-build-core
+
+      - name: Run release artifact content tests
+        run: .venv/bin/python -m pytest tests/release/test_artifact_contents.py -q
