@@ -93,6 +93,7 @@ experimental = true
 only-include = [
   "CHANGELOG.md",
   "CMakeLists.txt",
+  "constraints/release.txt",
   "LICENSE",
   "README.md",
   "THIRD_PARTY_NOTICES.md",

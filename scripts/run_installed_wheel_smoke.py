@@ -10,6 +10,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_VENV_PATH = REPOSITORY_ROOT / ".tmp" / "release-wheel-smoke"
+DEFAULT_CONSTRAINTS_PATH = REPOSITORY_ROOT / "constraints" / "release.txt"
 
 
 def main() -> None:
@@ -33,7 +34,11 @@ def main() -> None:
         if arguments.with_refinement
         else str(wheel_path.resolve())
     )
-    run((str(python), "-m", "pip", "install", install_target))
+    install_command = [str(python), "-m", "pip", "install"]
+    if arguments.constraints_path is not None:
+        install_command.extend(("-c", str(arguments.constraints_path.resolve())))
+    install_command.append(install_target)
+    run(tuple(install_command))
     run(
         (
             str(python),
@@ -74,6 +79,12 @@ def parse_args() -> argparse.Namespace:
         "--with-refinement",
         action="store_true",
         help="Install the wheel with the refinement extra and run RDKit smoke.",
+    )
+    parser.add_argument(
+        "--constraints-path",
+        type=Path,
+        default=DEFAULT_CONSTRAINTS_PATH,
+        help="Constraints file used for the smoke install.",
     )
     return parser.parse_args()
 

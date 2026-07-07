@@ -43,8 +43,12 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
 
     assert "  checks:" in workflow
     assert "  lean:" in workflow
-    assert 'run: .venv/bin/python -m pip install ".[dev]"' in workflow
+    assert (
+        'run: .venv/bin/python -m pip install -c constraints/release.txt ".[dev]"'
+        in workflow
+    )
     assert '".[dev,refinement]"' in workflow
+    assert "constraints/release.txt" in workflow
     full_checks_job, lean_job = workflow.split("  lean:", maxsplit=1)
     assert "Basedpyright" in full_checks_job
     assert "Lean optional dependency boundary" in workflow
@@ -70,15 +74,49 @@ def test_release_gate_sources_are_sdist_visible() -> None:
 
     assert Path("docs/release-checklist.md").is_file()
     assert Path("scripts/run_installed_wheel_smoke.py").is_file()
+    assert Path("constraints/release.txt").is_file()
     assert "docs/release-checklist.md" not in gitignore_lines
     assert "scripts/" not in gitignore_lines
     assert "scripts/*" in gitignore_lines
     assert "!scripts/run_installed_wheel_smoke.py" in gitignore_lines
     assert '"docs",' in pyproject
+    assert '"constraints/release.txt",' in pyproject
     assert '"scripts/run_installed_wheel_smoke.py",' in pyproject
     assert '"scripts",' not in pyproject
     assert "python scripts/run_installed_wheel_smoke.py" in checklist
     assert "tests/unit/test_release_artifacts.py" in checklist
+    assert "constraints/release.txt" in checklist
+
+
+def test_release_constraints_pin_release_environment() -> None:
+    """Release constraints should pin CI tools without narrowing metadata ranges."""
+
+    constraint_lines = [
+        line.strip()
+        for line in Path("constraints/release.txt").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    constraints = dict(line.split("==", maxsplit=1) for line in constraint_lines)
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    smoke_script = Path("scripts/run_installed_wheel_smoke.py").read_text()
+
+    assert all("==" in line for line in constraint_lines)
+    assert constraints == {
+        "basedpyright": "1.39.9",
+        "gemmi": "0.7.5",
+        "hatch-vcs": "0.5.0",
+        "hatchling": "1.30.1",
+        "numpy": "2.2.6",
+        "pytest": "8.4.2",
+        "pytest-cov": "7.1.0",
+        "rdkit": "2026.3.2",
+        "ruff": "0.15.20",
+        "scikit-build-core": "0.12.2",
+        "typing_extensions": "4.16.0",
+    }
+    assert "numpy==2.4" not in Path("constraints/release.txt").read_text()
+    assert 'pip install -c constraints/release.txt ".[dev,refinement]"' in workflow
+    assert "DEFAULT_CONSTRAINTS_PATH" in smoke_script
 
 
 def test_release_docs_state_faspr_installed_asset_contract() -> None:

@@ -5,6 +5,12 @@ release.
 
 ## Required Verification
 
+Install release-constrained dependencies before running release gates:
+
+```bash
+python -m pip install -c constraints/release.txt ".[dev,refinement]"
+```
+
 Run the permanent code-quality and unit surface:
 
 ```bash
@@ -28,6 +34,7 @@ Run the lean optional-backend retained-ligand gate without RDKit:
 ```bash
 rdkit_blocker="$(mktemp -d)"
 printf 'raise ModuleNotFoundError("No module named rdkit")\n' > "$rdkit_blocker/rdkit.py"
+python -m pip install -c constraints/release.txt ".[dev]"
 PYTHONPATH="${rdkit_blocker}:${PYTHONPATH:-}" python -m pytest \
   tests/unit/test_retained_non_polymer_no_rdkit_release.py \
   -q
@@ -51,7 +58,8 @@ python scripts/run_installed_wheel_smoke.py --with-refinement
 The script builds a wheel with `hatchling`, installs it into a temporary
 virtual environment, and verifies installed-package imports, bundled chemistry
 resources, coordinate read/write, `process_structure()`, packaged FASPR
-execution, and optional RDKit local refinement.
+execution, and optional RDKit local refinement. It installs the wheel under
+`constraints/release.txt` by default.
 
 Bundled FASPR assets are an installed-package/wheel contract. Source-tree
 execution may use an explicit FASPR `executable_path`, but release verification
@@ -73,6 +81,8 @@ Before tagging:
 - `CHANGELOG.md` describes the shipped scope.
 - `README.md` examples pass through `tests/unit/test_readme_usage.py`.
 - `THIRD_PARTY_NOTICES.md` covers bundled third-party assets.
+- `constraints/release.txt` matches the dependency set used by CI and release
+  smoke checks.
 - `pyproject.toml` classifiers and optional dependency groups match the release.
 - Release-facing documentation contains no stale historical-plan, old import-root,
   or removed package-path references.

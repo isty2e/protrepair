@@ -26,7 +26,7 @@ jobs:
         run: python -m venv .venv
 
       - name: Install package, dev, and refinement dependencies
-        run: .venv/bin/python -m pip install ".[dev,refinement]"
+        run: .venv/bin/python -m pip install -c constraints/release.txt ".[dev,refinement]"
 
       - name: Ruff
         run: .venv/bin/ruff check src/protrepair tests --extend-select=I,UP
@@ -53,7 +53,7 @@ jobs:
         run: python -m venv .venv
 
       - name: Install package and dev dependencies
-        run: .venv/bin/python -m pip install ".[dev]"
+        run: .venv/bin/python -m pip install -c constraints/release.txt ".[dev]"
 
       - name: Verify RDKit is outside the lean environment
         run: .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rdkit') is None"

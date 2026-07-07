@@ -1,0 +1,16 @@
+# Release and CI constraints.
+#
+# Keep public dependency ranges in pyproject.toml. This file pins the
+# release-gate environment used by CI, local release verification, and
+# installed-wheel smoke tests.
+basedpyright==1.39.9
+gemmi==0.7.5
+hatch-vcs==0.5.0
+hatchling==1.30.1
+numpy==2.2.6
+pytest==8.4.2
+pytest-cov==7.1.0
+rdkit==2026.3.2
+ruff==0.15.20
+scikit-build-core==0.12.2
+typing_extensions==4.16.0
