@@ -23,6 +23,7 @@ pytestmark = pytest.mark.corpus
                     "331f4fc7df32cdeafe561ecf03c820cc945902be99b15e79a94f843ea3b9dee4",
                     "50e9b4880ac62f9d3e51f4f1886d9cfa70db116a3a445db8b29d8860b8c8c70f",
                     "6ac4b51edef7084208a3f975815b4535e6047ac1a4debba5f9d1cf2fd07f1d5d",
+                    "68293d3f3f56f119cf5e82e27e0a3d7a12066717c89f075f2551190f8627c8da",
                     "7e592081d5e5f4b774509c57c698be2b61adb6dfbaa0cfc78ca93acd1389c20d",
                     "8c845fc012e27c3a99c6ed4e406d0ab2aee7cbb2fa28ce876f1fc2093c0a5620",
                     "a141aee6f97e69f3e006e6acd470421056b18f102ffe4316fb744793833ec036",

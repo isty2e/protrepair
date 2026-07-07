@@ -35,7 +35,7 @@ from protrepair.structure.slots import ResidueIndex
 
 HYDROGEN_ANCHOR_DISTANCE_CUTOFF_ANGSTROM = 1.45
 DISULFIDE_BOND_DISTANCE_CUTOFF_ANGSTROM = 3.0
-CLASH_GRID_CELL_SIZE_ANGSTROM = 4.0
+MINIMUM_CLASH_GRID_CELL_SIZE_ANGSTROM = 1.0
 HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
 DONOR_ELEMENTS = frozenset({"N", "O", "S"})
@@ -191,6 +191,7 @@ class AtomSite:
     element: str
     geometry: AtomGeometry
     context: ResidueContext
+    grid_cell_size_angstrom: float
     residue_id: ResidueId = field(init=False, compare=False)
     component_id: str = field(init=False, compare=False)
     domain: ContactDomain = field(init=False, compare=False)
@@ -198,10 +199,20 @@ class AtomSite:
     is_hydrogen_atom: bool = field(init=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self.grid_cell_size_angstrom <= 0.0:
+            raise ValueError("grid_cell_size_angstrom must be positive")
+
         object.__setattr__(self, "residue_id", self.context.residue_id)
         object.__setattr__(self, "component_id", self.context.component_id)
         object.__setattr__(self, "domain", self.context.domain)
-        object.__setattr__(self, "grid_cell", _cell_id_from_geometry(self.geometry))
+        object.__setattr__(
+            self,
+            "grid_cell",
+            _cell_id_from_geometry(
+                self.geometry,
+                cell_size_angstrom=self.grid_cell_size_angstrom,
+            ),
+        )
         object.__setattr__(self, "is_hydrogen_atom", self.element == "H")
 
     def is_hydrogen(self) -> bool:
@@ -233,6 +244,7 @@ class ClashDetectionContext:
     atom_sites: tuple[AtomSite, ...]
     policy: ClashPolicy
     van_der_waals_radius_by_element: Mapping[str, float]
+    candidate_cell_size_angstrom: float
     allowed_distance_by_element_pair: Mapping[tuple[str, str], float] = field(
         init=False,
         repr=False,
@@ -240,6 +252,9 @@ class ClashDetectionContext:
     )
 
     def __post_init__(self) -> None:
+        if self.candidate_cell_size_angstrom <= 0.0:
+            raise ValueError("candidate_cell_size_angstrom must be positive")
+
         object.__setattr__(self, "atom_sites", tuple(self.atom_sites))
         radius_by_element = dict(self.van_der_waals_radius_by_element)
         object.__setattr__(
@@ -329,8 +344,12 @@ class ClashDetectionBasis:
     policy: ClashPolicy
     constitution_address_space_key: StructureAddressSpaceKey
     van_der_waals_radius_by_element: Mapping[str, float]
+    candidate_cell_size_angstrom: float
 
     def __post_init__(self) -> None:
+        if self.candidate_cell_size_angstrom <= 0.0:
+            raise ValueError("candidate_cell_size_angstrom must be positive")
+
         object.__setattr__(
             self,
             "residue_context_bases",
@@ -379,6 +398,7 @@ class ClashDetectionBasis:
                         ].residue_geometry.atom_geometry(atom_site_basis.atom_name)
                     ),
                     context=residue_contexts[atom_site_basis.residue_context_index],
+                    grid_cell_size_angstrom=self.candidate_cell_size_angstrom,
                 )
                 for atom_site_basis in self.atom_site_bases
             )
@@ -392,6 +412,7 @@ class ClashDetectionBasis:
             atom_sites=frame.atom_sites,
             policy=self.policy,
             van_der_waals_radius_by_element=self.van_der_waals_radius_by_element,
+            candidate_cell_size_angstrom=self.candidate_cell_size_angstrom,
         )
 
 
@@ -573,14 +594,19 @@ def prepare_clash_detection_basis(
     )
     radius_lookup = prepare_radius_lookup(elements, RadiusKind.VAN_DER_WAALS)
     radius_lookup.require_complete("clash detection basis")
+    radius_by_element = {
+        element: radius_lookup.radius_angstrom(element) for element in elements
+    }
     return ClashDetectionBasis(
         residue_context_bases=residue_context_bases,
         atom_site_bases=atom_site_bases,
         policy=normalized_policy,
         constitution_address_space_key=structure.constitution.address_space_key,
-        van_der_waals_radius_by_element={
-            element: radius_lookup.radius_angstrom(element) for element in elements
-        },
+        van_der_waals_radius_by_element=radius_by_element,
+        candidate_cell_size_angstrom=_clash_candidate_cell_size_angstrom(
+            radius_by_element,
+            policy=normalized_policy,
+        ),
     )
 
 
@@ -620,10 +646,31 @@ def prepare_projected_clash_detection_context(
         component_library=component_library,
         include_ligands=normalized_policy.include_ligands,
     )
-    atom_sites = tuple(build_atom_sites(residue_contexts, policy=normalized_policy))
+    elements = _atom_site_elements_from_residue_contexts(
+        residue_contexts,
+        policy=normalized_policy,
+    )
+    radius_lookup = prepare_radius_lookup(elements, RadiusKind.VAN_DER_WAALS)
+    radius_lookup.require_complete("clash detection context")
+    radius_by_element = {
+        element: radius_lookup.radius_angstrom(element) for element in elements
+    }
+    candidate_cell_size_angstrom = _clash_candidate_cell_size_angstrom(
+        radius_by_element,
+        policy=normalized_policy,
+    )
+    atom_sites = tuple(
+        build_atom_sites(
+            residue_contexts,
+            policy=normalized_policy,
+            candidate_cell_size_angstrom=candidate_cell_size_angstrom,
+        )
+    )
     return _clash_detection_context_from_atom_sites(
         atom_sites,
         policy=normalized_policy,
+        van_der_waals_radius_by_element=radius_by_element,
+        candidate_cell_size_angstrom=candidate_cell_size_angstrom,
     )
 
 
@@ -641,18 +688,16 @@ def _clash_detection_context_from_atom_sites(
     atom_sites: tuple[AtomSite, ...],
     *,
     policy: ClashPolicy,
+    van_der_waals_radius_by_element: Mapping[str, float],
+    candidate_cell_size_angstrom: float,
 ) -> ClashDetectionContext:
     """Build one prepared clash context from precomputed atom sites."""
 
-    elements = frozenset(atom_site.element for atom_site in atom_sites)
-    radius_lookup = prepare_radius_lookup(elements, RadiusKind.VAN_DER_WAALS)
-    radius_lookup.require_complete("clash detection context")
     return ClashDetectionContext(
         atom_sites=atom_sites,
         policy=policy,
-        van_der_waals_radius_by_element={
-            element: radius_lookup.radius_angstrom(element) for element in elements
-        },
+        van_der_waals_radius_by_element=van_der_waals_radius_by_element,
+        candidate_cell_size_angstrom=candidate_cell_size_angstrom,
     )
 
 
@@ -713,6 +758,23 @@ def _allowed_distance_by_element_pair(
         for left_element, left_radius in radius_by_element.items()
         for right_element, right_radius in radius_by_element.items()
     }
+
+
+def _clash_candidate_cell_size_angstrom(
+    radius_by_element: Mapping[str, float],
+    *,
+    policy: ClashPolicy,
+) -> float:
+    """Return a grid cell width that cannot miss any distance-admissible pair."""
+
+    allowed_distances = _allowed_distance_by_element_pair(
+        radius_by_element,
+        policy=policy,
+    ).values()
+    return max(
+        MINIMUM_CLASH_GRID_CELL_SIZE_ANGSTROM,
+        *allowed_distances,
+    )
 
 
 def _atom_site_distance_squared(left_site: AtomSite, right_site: AtomSite) -> float:
@@ -891,13 +953,17 @@ def cell_id(atom_site: AtomSite) -> tuple[int, int, int]:
     return atom_site.grid_cell
 
 
-def _cell_id_from_geometry(geometry: AtomGeometry) -> tuple[int, int, int]:
+def _cell_id_from_geometry(
+    geometry: AtomGeometry,
+    *,
+    cell_size_angstrom: float,
+) -> tuple[int, int, int]:
     """Return one geometry site's spatial hash cell identifier."""
 
     return (
-        floor(geometry.position.x / CLASH_GRID_CELL_SIZE_ANGSTROM),
-        floor(geometry.position.y / CLASH_GRID_CELL_SIZE_ANGSTROM),
-        floor(geometry.position.z / CLASH_GRID_CELL_SIZE_ANGSTROM),
+        floor(geometry.position.x / cell_size_angstrom),
+        floor(geometry.position.y / cell_size_angstrom),
+        floor(geometry.position.z / cell_size_angstrom),
     )
 
 
@@ -1146,6 +1212,7 @@ def build_atom_sites(
     residue_contexts: tuple[ResidueContext, ...],
     *,
     policy: ClashPolicy,
+    candidate_cell_size_angstrom: float,
 ) -> tuple[AtomSite, ...]:
     """Return atom sites considered by the clash detector."""
 
@@ -1163,10 +1230,26 @@ def build_atom_sites(
                     element=atom_site.element,
                     geometry=residue_geometry.atom_geometry(atom_site.name),
                     context=context,
+                    grid_cell_size_angstrom=candidate_cell_size_angstrom,
                 )
             )
 
     return tuple(atom_sites)
+
+
+def _atom_site_elements_from_residue_contexts(
+    residue_contexts: tuple[ResidueContext, ...],
+    *,
+    policy: ClashPolicy,
+) -> frozenset[str]:
+    """Return atom elements considered by the clash detector."""
+
+    return frozenset(
+        atom_site.element
+        for context in residue_contexts
+        for atom_site in context.residue_site.atom_sites
+        if policy.include_hydrogens or atom_site.element != "H"
+    )
 
 
 def should_consider_pair(

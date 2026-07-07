@@ -13,6 +13,9 @@ a static snapshot of RDKit PeriodicTable radii generated from `rdkit==2026.3.2`
 - Hot atom-pair loops should consume prepared `ElementRadiusLookup` values.
   Callers that work on batches should raise one aggregate unresolved-element
   error at the preparation boundary instead of warning per atom pair.
+- Spatial search envelopes must be derived from the active radius table and
+  policy thresholds. Fixed legacy cutoffs are acceptable only for non-radius
+  scoring terms such as the rotatable-H potential-energy horizon.
 
 This policy is intentionally separate from RDKit force-field behavior. UFF and
 RDKit PDB proximity bonding are algorithm-specific mechanisms, not the canonical

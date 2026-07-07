@@ -18,7 +18,11 @@ from protrepair.transformer.completion.hydrogen.rotatable import (
     RotatableHydrogenSearch,
     build_rotatable_hydrogen_environments,
 )
-from protrepair.transformer.completion.hydrogen.scoring import recalculate_coordinate
+from protrepair.transformer.completion.hydrogen.scoring import (
+    hydrogen_steric_penalty_against_site,
+    recalculate_coordinate,
+    rotatable_hydrogen_vdw_radius_angstrom,
+)
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
 
@@ -162,6 +166,26 @@ def test_rotatable_hydrogen_environment_reports_unknown_radii_once() -> None:
     assert "rotatable hydrogen scoring environment" in error_message
     assert "XX" in error_message
     assert "C1" in error_message
+
+
+def test_rotatable_hydrogen_steric_penalty_uses_radius_derived_cutoff() -> None:
+    """Broad-radius sites beyond the legacy fixed cutoff should still be scored."""
+
+    penalty = hydrogen_steric_penalty_against_site(
+        hydrogen_x=0.0,
+        hydrogen_y=0.0,
+        hydrogen_z=0.0,
+        site_x=3.10,
+        site_y=0.0,
+        site_z=0.0,
+        site_element="CS",
+        hydrogen_vdw_radius=rotatable_hydrogen_vdw_radius_angstrom("H"),
+        site_vdw_radius=rotatable_hydrogen_vdw_radius_angstrom("CS"),
+        donor_element="O",
+        allow_hydrogen_bond=True,
+    )
+
+    assert penalty > 0.0
 
 
 def test_optimize_rotatable_hydrogen_preserves_candidate_identity_across_environments(
@@ -503,7 +527,7 @@ def test_build_rotatable_hydrogen_environments_filters_far_chain_sites() -> None
                 "GLY",
                 "A",
                 2,
-                (atom_payload("N", "N", Vec3(0.0, 5.0, 0.0)),),
+                (atom_payload("N", "N", Vec3(0.0, 4.8, 0.0)),),
             ),
             build_residue(
                 "GLY",
@@ -520,9 +544,62 @@ def test_build_rotatable_hydrogen_environments_filters_far_chain_sites() -> None
         ),
     )
 
-    assert environments[0].atom_y == (5.0,)
+    assert environments[0].atom_y == (4.8,)
     assert environments[1].atom_y == ()
     assert environments[2].atom_y == ()
+
+
+def test_rotatable_hydrogen_environment_radius_covers_broad_radius_sites(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Environment packing should include sites that can affect steric scoring."""
+
+    candidate_hydrogens = (Vec3(3.0, 0.0, 0.0), Vec3(-3.0, 0.0, 0.0))
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_positions",
+        lambda self: candidate_hydrogens,
+    )
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "potential_energy",
+        lambda self, hydrogen, environment: 0.0,
+    )
+    library = build_standard_component_library()
+    environments = build_rotatable_hydrogen_environments(
+        residues=(
+            build_residue(
+                "SER",
+                "A",
+                1,
+                (
+                    atom_payload("N", "N", Vec3(0.0, -2.0, 0.0)),
+                    atom_payload("CA", "C", Vec3(0.0, -1.0, 0.0)),
+                    atom_payload("C", "C", Vec3(0.0, 8.0, 0.0)),
+                    atom_payload("O", "O", Vec3(0.0, 9.0, 0.0)),
+                    atom_payload("CB", "C", Vec3(1.0, 0.0, 0.0)),
+                    atom_payload("OG", "O", Vec3(2.0, 0.0, 0.0)),
+                    atom_payload("HG", "H", Vec3(3.0, 0.0, 0.0)),
+                ),
+            ),
+            build_residue(
+                "GLY",
+                "A",
+                2,
+                (atom_payload("CS1", "CS", Vec3(6.10, 0.0, 0.0)),),
+            ),
+        ),
+        residue_numbers=["1", "2"],
+        templates=(library.require("SER"), library.require("GLY")),
+    )
+
+    result = search_template().optimized_coordinate(
+        residue_number="1",
+        environments=environments,
+    )
+
+    assert environments[0].atom_x == (6.10,)
+    assert result == Vec3(-3.0, 0.0, 0.0)
 
 
 def search_template() -> RotatableHydrogenSearch:

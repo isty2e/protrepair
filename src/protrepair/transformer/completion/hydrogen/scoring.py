@@ -1,6 +1,6 @@
 """Neutral rotatable-hydrogen search and scoring primitives."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from math import acos, degrees, pi, sqrt
 
@@ -13,7 +13,7 @@ from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame,
 CoordinateLike = Vec3 | Sequence[float] | NDArray[np.float64]
 Vector = NDArray[np.float64]
 ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON = 1e-12
-ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM = 6.25
+ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM = 6.25
 ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE = 100.0
 ROTATABLE_HYDROGEN_HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 ROTATABLE_HYDROGEN_HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
@@ -235,7 +235,10 @@ def hydrogen_potential_energy(
             + (delta_y * delta_y)
             + (delta_z * delta_z)
         )
-        if separation_sq_angstrom > 6.25:
+        if (
+            separation_sq_angstrom
+            > ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM
+        ):
             continue
 
         separation = sqrt(separation_sq_angstrom) / 10.0
@@ -330,12 +333,21 @@ def hydrogen_steric_penalty_against_site(
     delta_x = hydrogen_x - site_x
     delta_y = hydrogen_y - site_y
     delta_z = hydrogen_z - site_z
+    allowed_distance = (
+        rotatable_hydrogen_steric_cutoff_angstrom(
+            hydrogen_vdw_radius=hydrogen_vdw_radius,
+            site_vdw_radius=site_vdw_radius,
+        )
+    )
+    if allowed_distance <= 0.0:
+        return 0.0
+
     separation_sq_angstrom = (
         (delta_x * delta_x)
         + (delta_y * delta_y)
         + (delta_z * delta_z)
     )
-    if separation_sq_angstrom > ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM:
+    if separation_sq_angstrom >= allowed_distance * allowed_distance:
         return 0.0
 
     separation = sqrt(separation_sq_angstrom)
@@ -346,11 +358,6 @@ def hydrogen_steric_penalty_against_site(
     ):
         return 0.0
 
-    allowed_distance = (
-        hydrogen_vdw_radius
-        + site_vdw_radius
-        - ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM
-    )
     if separation >= allowed_distance:
         return 0.0
 
@@ -380,6 +387,44 @@ def rotatable_hydrogen_vdw_radius_angstrom(element: str) -> float:
 
     return prepare_radius_lookup((element,), RadiusKind.VAN_DER_WAALS).radius_angstrom(
         element
+    )
+
+
+def rotatable_hydrogen_steric_cutoff_angstrom(
+    *,
+    hydrogen_vdw_radius: float,
+    site_vdw_radius: float,
+) -> float:
+    """Return the H-heavy distance below which steric scoring can be non-zero."""
+
+    return (
+        hydrogen_vdw_radius
+        + site_vdw_radius
+        - ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM
+    )
+
+
+def max_rotatable_hydrogen_steric_cutoff_angstrom(
+    site_elements: Iterable[str],
+) -> float:
+    """Return the maximum H-heavy steric scoring horizon for site elements."""
+
+    site_element_tuple = tuple(site_elements)
+    radius_lookup = prepare_radius_lookup(
+        ("H", *site_element_tuple),
+        RadiusKind.VAN_DER_WAALS,
+    )
+    radius_lookup.require_complete("rotatable hydrogen scoring radius")
+    hydrogen_vdw_radius = radius_lookup.radius_angstrom("H")
+    return max(
+        0.0,
+        *(
+            rotatable_hydrogen_steric_cutoff_angstrom(
+                hydrogen_vdw_radius=hydrogen_vdw_radius,
+                site_vdw_radius=radius_lookup.radius_angstrom(site_element),
+            )
+            for site_element in site_element_tuple
+        ),
     )
 
 
@@ -475,7 +520,7 @@ __all__ = [
     "ROTATABLE_HYDROGEN_HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM",
     "ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS",
     "ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM",
-    "ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM",
+    "ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM",
     "RotatableHydrogenEnvironment",
     "RotatableHydrogenLocalSite",
     "RotatableHydrogenSearch",
@@ -483,7 +528,9 @@ __all__ = [
     "hydrogen_potential_energy",
     "hydrogen_steric_penalty",
     "hydrogen_steric_penalty_against_site",
+    "max_rotatable_hydrogen_steric_cutoff_angstrom",
     "probable_rotatable_hydrogen_bond",
     "recalculate_coordinate",
+    "rotatable_hydrogen_steric_cutoff_angstrom",
     "rotatable_hydrogen_vdw_radius_angstrom",
 ]

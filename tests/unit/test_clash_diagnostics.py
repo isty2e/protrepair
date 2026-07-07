@@ -27,6 +27,7 @@ from protrepair.diagnostics import (
     has_clashes_in_context,
     prepare_clash_detection_basis,
     prepare_clash_detection_context,
+    prepare_projected_clash_detection_context,
 )
 from protrepair.diagnostics.clash_pair_generation import (
     ContactDomain,
@@ -179,6 +180,61 @@ def test_clash_context_uses_explicit_common_metal_vdw_radii() -> None:
     assert context.van_der_waals_radius("ZN") == 2.10
     assert context.van_der_waals_radius("MG") == 2.20
     assert context.van_der_waals_radius("CA") == 2.40
+
+
+def test_clash_detection_cell_size_covers_maximum_radius_pair() -> None:
+    """Spatial hashing should not miss broad-radius pairs in non-adjacent old cells."""
+
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    build_residue(
+                        "CSX",
+                        "A",
+                        1,
+                        (atom("CS1", "CS", Vec3(3.99, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+            chain_payload(
+                "B",
+                (
+                    build_residue(
+                        "CSX",
+                        "B",
+                        1,
+                        (atom("CS1", "CS", Vec3(8.10, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="broad-radius-grid-boundary-clash",
+    )
+    component_library = build_standard_component_library()
+
+    context = prepare_clash_detection_context(
+        structure,
+        component_library=component_library,
+    )
+    report = context.detect_clashes()
+    focused_report = context.detect_clashes(
+        focus_residue_ids=frozenset((ResidueId("A", 1),))
+    )
+    projected_context = prepare_projected_clash_detection_context(
+        structure,
+        residue_ids=(ResidueId("A", 1), ResidueId("B", 1)),
+        component_library=component_library,
+    )
+
+    assert context.candidate_cell_size_angstrom > 4.0
+    assert len(report.clashes) == 1
+    assert focused_report == report
+    assert projected_context.detect_clashes() == report
+    assert report.clashes[0].allowed_distance_angstrom > 4.0
+    assert report.clashes[0].distance_angstrom == pytest.approx(4.11)
 
 
 def test_clash_context_reports_unresolved_element_radii_once() -> None:

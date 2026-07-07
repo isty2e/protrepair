@@ -2,7 +2,6 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from math import sqrt
 
 from protrepair.chemistry import (
     HydrogenSemantics,
@@ -12,10 +11,10 @@ from protrepair.chemistry import (
 )
 from protrepair.geometry import InternalCoordinateFrame, Vec3
 from protrepair.transformer.completion.hydrogen.scoring import (
-    ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM,
     RotatableHydrogenEnvironment,
     RotatableHydrogenLocalSite,
     RotatableHydrogenSearch,
+    max_rotatable_hydrogen_steric_cutoff_angstrom,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
@@ -219,6 +218,9 @@ def build_rotatable_hydrogen_environments(
         residues=residues,
         templates=templates,
     )
+    max_steric_scoring_radius = max_rotatable_hydrogen_steric_cutoff_angstrom(
+        site.element for site in environment_sites
+    )
     environments: list[RotatableHydrogenEnvironment] = []
     for residue_index, (residue, residue_number, template) in enumerate(
         zip(residues, residue_numbers, templates, strict=True)
@@ -257,7 +259,8 @@ def build_rotatable_hydrogen_environments(
             placement_spec.donor_atom_name
         )
         interaction_radius_sq = _rotatable_hydrogen_environment_radius_sq(
-            placement_spec
+            placement_spec,
+            max_steric_scoring_radius_angstrom=max_steric_scoring_radius,
         )
 
         for site in environment_sites:
@@ -343,15 +346,16 @@ def _rotatable_hydrogen_environment_sites(
 
 def _rotatable_hydrogen_environment_radius_sq(
     placement_spec: RotatableHydrogenPlacementSpec,
+    *,
+    max_steric_scoring_radius_angstrom: float,
 ) -> float:
     """Return donor-centered radius squared that safely covers scored candidates."""
 
-    scoring_radius = sqrt(ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM)
     candidate_radius = max(
         placement_spec.build_bond_length,
         placement_spec.reproject_bond_length,
     )
-    environment_radius = scoring_radius + candidate_radius
+    environment_radius = max_steric_scoring_radius_angstrom + candidate_radius
     return environment_radius * environment_radius
 
 

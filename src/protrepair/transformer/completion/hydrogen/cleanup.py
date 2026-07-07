@@ -171,6 +171,7 @@ class _HydrogenCleanupClashRuntime:
     hydrogen_sites_by_key: Mapping[tuple[ResidueId, str], DiagnosticAtomSite]
     atom_sites_by_cell: Mapping[tuple[int, int, int], tuple[DiagnosticAtomSite, ...]]
     van_der_waals_radius_by_element: Mapping[str, float]
+    candidate_cell_size_angstrom: float
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -231,6 +232,9 @@ class _TargetedHydrogenClashScorer:
             element=self.hydrogen_site.element,
             geometry=self.hydrogen_site.geometry.with_position(candidate_position),
             context=self.hydrogen_site.context,
+            grid_cell_size_angstrom=(
+                self.clash_runtime.candidate_cell_size_angstrom
+            ),
         )
         overlaps: list[float] = []
         for other_site in self.clash_runtime.neighboring_atom_sites(
@@ -313,6 +317,7 @@ def _build_hydrogen_cleanup_clash_runtime(
             cell: tuple(atom_sites) for cell, atom_sites in atom_sites_by_cell.items()
         },
         van_der_waals_radius_by_element=context.van_der_waals_radius_by_element,
+        candidate_cell_size_angstrom=context.candidate_cell_size_angstrom,
     )
 
 

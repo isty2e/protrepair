@@ -72,6 +72,7 @@ WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, frozenset[str]]] = {
         ),
         "2026.03.3": frozenset(
             {
+                "b70c3393c244d48ac0a0b07d033bce9185017a1fc5deb8f5b38060d4d21c3d71",
                 "8aac67d8b5ab6c036adad32e05d203d628cd88af75aaf3a9eeb1252fac829640",
             }
         ),
