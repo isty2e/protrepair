@@ -57,6 +57,30 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
     assert '-m "not benchmark"' in workflow
 
 
+def test_release_gate_sources_are_sdist_visible() -> None:
+    """Release gates should not live only in ignored local checkout files."""
+
+    checklist = Path("docs/release-checklist.md").read_text()
+    gitignore_lines = {
+        line.strip()
+        for line in Path(".gitignore").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    pyproject = Path("pyproject.toml").read_text()
+
+    assert Path("docs/release-checklist.md").is_file()
+    assert Path("scripts/run_installed_wheel_smoke.py").is_file()
+    assert "docs/release-checklist.md" not in gitignore_lines
+    assert "scripts/" not in gitignore_lines
+    assert "scripts/*" in gitignore_lines
+    assert "!scripts/run_installed_wheel_smoke.py" in gitignore_lines
+    assert '"docs",' in pyproject
+    assert '"scripts/run_installed_wheel_smoke.py",' in pyproject
+    assert '"scripts",' not in pyproject
+    assert "python scripts/run_installed_wheel_smoke.py" in checklist
+    assert "tests/unit/test_release_artifacts.py" in checklist
+
+
 def test_release_docs_state_faspr_installed_asset_contract() -> None:
     """Release docs should not imply arbitrary source-tree FASPR availability."""
 
