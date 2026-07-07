@@ -111,6 +111,13 @@ Confirm that the wheel contains these non-code assets:
 - `protrepair/packing/faspr/bin/FASPR`
 - `protrepair/packing/faspr/bin/dun2010bbdep.bin`
 
+## GitHub Actions Policy
+
+CI may use first-party GitHub actions pinned to reviewed major-version tags for
+readability, currently `actions/checkout@v4` and `actions/setup-python@v5`.
+Review those major tags before each release. Any other action reference must be
+pinned to a full 40-character commit SHA before it is added to release CI.
+
 ## Release Metadata
 
 Before tagging:

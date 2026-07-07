@@ -1,6 +1,7 @@
 """Release artifact sanity tests for packaged resources and metadata."""
 
 import hashlib
+import re
 from importlib.resources import files
 from pathlib import Path
 
@@ -98,6 +99,33 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
         "tests/release/test_artifact_contents.py -q"
     ) in artifact_content_job
     assert "continue-on-error" not in artifact_content_job
+
+
+def test_ci_action_refs_follow_release_pinning_policy() -> None:
+    """Action refs should follow the documented release supply-chain policy."""
+
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    checklist = Path("docs/release-checklist.md").read_text()
+    allowed_major_tag_refs = {
+        "actions/checkout@v4",
+        "actions/setup-python@v5",
+    }
+    sha_pinned_ref = re.compile(r".+@[0-9a-f]{40}$")
+    action_refs = re.findall(r"^\s*uses:\s*(\S+)\s*$", workflow, re.MULTILINE)
+
+    assert action_refs
+    for action_ref in action_refs:
+        assert action_ref in allowed_major_tag_refs or sha_pinned_ref.fullmatch(
+            action_ref
+        ), action_ref
+
+    normalized_checklist = " ".join(checklist.split())
+    assert "first-party GitHub actions pinned to reviewed major-version tags" in (
+        normalized_checklist
+    )
+    assert "actions/checkout@v4" in normalized_checklist
+    assert "actions/setup-python@v5" in normalized_checklist
+    assert "full 40-character commit SHA" in normalized_checklist
 
 
 def test_release_gate_sources_are_sdist_visible() -> None:
