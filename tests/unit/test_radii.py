@@ -1,11 +1,19 @@
 """Unit tests for literature-backed element radii ownership."""
 
+import pytest
+
 from protrepair.chemistry import (
     COVALENT_RADII_SOURCE,
-    DEFAULT_COVALENT_RADIUS_ANGSTROM,
-    DEFAULT_VAN_DER_WAALS_RADIUS_ANGSTROM,
     VAN_DER_WAALS_RADII_SOURCE,
+    ElementRadiusLookup,
+    ElementRadiusResolution,
+    ElementRadiusResolutionStatus,
+    RadiusKind,
+    UnknownElementRadiusError,
     covalent_radius_angstrom,
+    normalize_radius_element_symbol,
+    prepare_radius_lookup,
+    resolve_element_radius,
     van_der_waals_radius_angstrom,
 )
 from protrepair.transformer.completion.hydrogen.geometry import (
@@ -46,11 +54,132 @@ def test_covalent_radii_match_cordero_values_for_supported_elements() -> None:
     assert covalent_radius_angstrom("CL") == 1.02
 
 
-def test_unsupported_element_radii_keep_explicit_default_policy() -> None:
-    """Table additions must not change the unknown-element fallback contract."""
+def test_unsupported_element_radii_resolve_explicitly_unknown() -> None:
+    """Unsupported element symbols should not fall back to carbon-like defaults."""
 
-    assert van_der_waals_radius_angstrom("XX") == DEFAULT_VAN_DER_WAALS_RADIUS_ANGSTROM
-    assert covalent_radius_angstrom("XX") == DEFAULT_COVALENT_RADIUS_ANGSTROM
+    vdw_resolution = resolve_element_radius("XX", RadiusKind.VAN_DER_WAALS)
+    covalent_resolution = resolve_element_radius("XX", RadiusKind.COVALENT)
+
+    assert vdw_resolution.status is ElementRadiusResolutionStatus.UNKNOWN
+    assert vdw_resolution.requested_element_symbol == "XX"
+    assert vdw_resolution.normalized_element_symbol == "XX"
+    assert vdw_resolution.radius_angstrom is None
+    assert covalent_resolution.status is ElementRadiusResolutionStatus.UNKNOWN
+    with pytest.raises(UnknownElementRadiusError, match="van_der_waals radius"):
+        van_der_waals_radius_angstrom("XX")
+    with pytest.raises(UnknownElementRadiusError, match="covalent radius"):
+        covalent_radius_angstrom("XX")
+
+
+def test_invalid_element_radii_resolve_separately_from_unsupported_symbols() -> None:
+    """Invalid element strings should stay distinguishable from unsupported symbols."""
+
+    blank_resolution = resolve_element_radius("  ", RadiusKind.VAN_DER_WAALS)
+    pseudo_resolution = resolve_element_radius(" C1 ", RadiusKind.VAN_DER_WAALS)
+
+    assert blank_resolution.status is ElementRadiusResolutionStatus.UNKNOWN
+    assert blank_resolution.requested_element_symbol == ""
+    assert blank_resolution.normalized_element_symbol is None
+    assert pseudo_resolution.status is ElementRadiusResolutionStatus.UNKNOWN
+    assert pseudo_resolution.requested_element_symbol == "C1"
+    assert pseudo_resolution.normalized_element_symbol is None
+    assert normalize_radius_element_symbol(" C1 ") is None
+
+
+def test_deuterium_and_tritium_alias_to_hydrogen_radius() -> None:
+    """D/T are isotope aliases of H for element-radius diagnostics."""
+
+    deuterium_resolution = resolve_element_radius("D", RadiusKind.VAN_DER_WAALS)
+    tritium_resolution = resolve_element_radius("t", RadiusKind.COVALENT)
+
+    assert deuterium_resolution.status is ElementRadiusResolutionStatus.ALIASED
+    assert deuterium_resolution.requested_element_symbol == "D"
+    assert deuterium_resolution.normalized_element_symbol == "H"
+    assert deuterium_resolution.radius_angstrom == van_der_waals_radius_angstrom("H")
+    assert tritium_resolution.status is ElementRadiusResolutionStatus.ALIASED
+    assert tritium_resolution.requested_element_symbol == "T"
+    assert tritium_resolution.normalized_element_symbol == "H"
+    assert tritium_resolution.radius_angstrom == covalent_radius_angstrom("H")
+
+
+def test_prepared_radius_lookup_records_unresolved_elements_once() -> None:
+    """Hot-loop callers should be able to pre-resolve unique element symbols."""
+
+    lookup = prepare_radius_lookup(
+        ("C", "c", "D", "XX", "XX", "C1", ""),
+        RadiusKind.VAN_DER_WAALS,
+    )
+
+    assert lookup.has_unresolved_elements()
+    assert lookup.unresolved_element_symbols == ("", "C1", "XX")
+    assert lookup.radius_angstrom("C") == van_der_waals_radius_angstrom("C")
+    assert lookup.radius_angstrom("c") == van_der_waals_radius_angstrom("C")
+    assert lookup.radius_angstrom("D") == van_der_waals_radius_angstrom("H")
+    with pytest.raises(UnknownElementRadiusError, match="prepared van_der_waals"):
+        lookup.radius_angstrom("XX")
+
+
+def test_radius_resolution_value_objects_reject_invariant_drift() -> None:
+    """Radius facts should not be constructible in contradictory states."""
+
+    with pytest.raises(ValueError, match="unknown radius resolution"):
+        ElementRadiusResolution(
+            kind=RadiusKind.VAN_DER_WAALS,
+            requested_element_symbol="XX",
+            normalized_element_symbol="XX",
+            status=ElementRadiusResolutionStatus.UNKNOWN,
+            radius_angstrom=1.7,
+            source=VAN_DER_WAALS_RADII_SOURCE,
+        )
+
+    with pytest.raises(ValueError, match="requires radius and source"):
+        ElementRadiusResolution(
+            kind=RadiusKind.VAN_DER_WAALS,
+            requested_element_symbol="C",
+            normalized_element_symbol="C",
+            status=ElementRadiusResolutionStatus.KNOWN,
+            radius_angstrom=None,
+            source=None,
+        )
+
+    with pytest.raises(ValueError, match="cannot describe an alias"):
+        ElementRadiusResolution(
+            kind=RadiusKind.VAN_DER_WAALS,
+            requested_element_symbol="D",
+            normalized_element_symbol="H",
+            status=ElementRadiusResolutionStatus.KNOWN,
+            radius_angstrom=1.2,
+            source=VAN_DER_WAALS_RADII_SOURCE,
+        )
+
+    with pytest.raises(ValueError, match="requires distinct symbols"):
+        ElementRadiusResolution(
+            kind=RadiusKind.VAN_DER_WAALS,
+            requested_element_symbol="H",
+            normalized_element_symbol="H",
+            status=ElementRadiusResolutionStatus.ALIASED,
+            radius_angstrom=1.2,
+            source=VAN_DER_WAALS_RADII_SOURCE,
+        )
+
+    with pytest.raises(ValueError, match="prepared radius values must be positive"):
+        ElementRadiusLookup(
+            kind=RadiusKind.VAN_DER_WAALS,
+            radius_by_element_symbol={"C": 0.0},
+        )
+
+    with pytest.raises(ValueError, match="invalid radius lookup key"):
+        ElementRadiusLookup(
+            kind=RadiusKind.VAN_DER_WAALS,
+            radius_by_element_symbol={"C1": 1.7},
+        )
+
+    with pytest.raises(ValueError, match="cannot overlap resolved"):
+        ElementRadiusLookup(
+            kind=RadiusKind.VAN_DER_WAALS,
+            radius_by_element_symbol={"C": 1.7},
+            unresolved_element_symbols=(" c ",),
+        )
 
 
 def test_rotatable_hydrogen_scoring_uses_shared_vdw_owner() -> None:

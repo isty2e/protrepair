@@ -11,8 +11,9 @@ from typing_extensions import Self
 
 from protrepair.chemistry import (
     ComponentLibrary,
+    RadiusKind,
     ResidueTemplate,
-    van_der_waals_radius_angstrom,
+    prepare_radius_lookup,
 )
 from protrepair.diagnostics import clash_topology_rules
 from protrepair.diagnostics.clash_pair_generation import (
@@ -570,13 +571,14 @@ def prepare_clash_detection_basis(
     elements = frozenset(
         atom_site_basis.element for atom_site_basis in atom_site_bases
     )
+    radius_lookup = prepare_radius_lookup(elements, RadiusKind.VAN_DER_WAALS)
     return ClashDetectionBasis(
         residue_context_bases=residue_context_bases,
         atom_site_bases=atom_site_bases,
         policy=normalized_policy,
         constitution_address_space_key=structure.constitution.address_space_key,
         van_der_waals_radius_by_element={
-            element: van_der_waals_radius_angstrom(element) for element in elements
+            element: radius_lookup.radius_angstrom(element) for element in elements
         },
     )
 
@@ -642,11 +644,12 @@ def _clash_detection_context_from_atom_sites(
     """Build one prepared clash context from precomputed atom sites."""
 
     elements = frozenset(atom_site.element for atom_site in atom_sites)
+    radius_lookup = prepare_radius_lookup(elements, RadiusKind.VAN_DER_WAALS)
     return ClashDetectionContext(
         atom_sites=atom_sites,
         policy=policy,
         van_der_waals_radius_by_element={
-            element: van_der_waals_radius_angstrom(element) for element in elements
+            element: radius_lookup.radius_angstrom(element) for element in elements
         },
     )
 
