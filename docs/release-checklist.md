@@ -59,8 +59,9 @@ topology and atom ordering but move coordinates. The registry also carries
 
 Element-radius diagnostics use a static `rdkit==2026.3.2` PeriodicTable
 snapshot generated from `GetRvdw` and `GetRcovalent`, not runtime RDKit lookup.
-Update `src/protrepair/chemistry/radii.py`, `THIRD_PARTY_NOTICES.md`, and the
-radius sentinel tests together if the release RDKit pin changes.
+See `docs/radius-policy.md` for the canonical unknown-element and batch-lookup
+contract. Update `src/protrepair/chemistry/radii.py`, `THIRD_PARTY_NOTICES.md`,
+and the radius sentinel tests together if the release RDKit pin changes.
 
 ## Build And Install Smoke
 

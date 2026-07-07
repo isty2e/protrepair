@@ -13,6 +13,7 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
+from protrepair.chemistry import UnknownElementRadiusError
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import (
     ClashPolicy,
@@ -178,6 +179,41 @@ def test_clash_context_uses_explicit_common_metal_vdw_radii() -> None:
     assert context.van_der_waals_radius("ZN") == 2.10
     assert context.van_der_waals_radius("MG") == 2.20
     assert context.van_der_waals_radius("CA") == 2.40
+
+
+def test_clash_context_reports_unresolved_element_radii_once() -> None:
+    """Clash preparation should aggregate unknown radii before pair iteration."""
+
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom("XX1", "XX", Vec3(0.0, 0.0, 0.0)),
+                    atom("C1", "C1", Vec3(1.0, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="unknown-radius-clash-context",
+    )
+
+    with pytest.raises(UnknownElementRadiusError) as error_info:
+        prepare_clash_detection_context(
+            structure,
+            component_library=build_standard_component_library(),
+            policy=ClashPolicy(include_ligands=True),
+        )
+
+    error_message = str(error_info.value)
+    assert "clash detection basis has unresolved van_der_waals radius" in (
+        error_message
+    )
+    assert "C1" in error_message
+    assert "XX" in error_message
 
 
 def test_standard_component_templates_expose_heavy_bond_hops() -> None:

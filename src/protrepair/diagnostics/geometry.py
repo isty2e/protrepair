@@ -9,10 +9,12 @@ from math import acos, degrees, sqrt
 from protrepair.chemistry import (
     BondDefinition,
     ComponentLibrary,
+    ElementRadiusLookup,
+    RadiusKind,
     ResidueTemplate,
     RestraintLibrary,
     build_default_restraint_library,
-    covalent_radius_angstrom,
+    prepare_radius_lookup,
 )
 from protrepair.chemistry.restraint.template import (
     AngleRestraintTarget,
@@ -391,6 +393,11 @@ def detect_residue_bond_length_outliers(
 ) -> tuple[BondLengthOutlier, ...]:
     """Return bonded heavy-atom length outliers for one residue."""
 
+    covalent_radius_lookup = _unrestrained_bond_covalent_radius_lookup(
+        residue,
+        template=template,
+        restraint_template=restraint_template,
+    )
     outliers: list[BondLengthOutlier] = []
     for bond in template.definition.bonds:
         if not residue.has_atom_site(bond.atom_name_1) or not residue.has_atom_site(
@@ -413,6 +420,7 @@ def detect_residue_bond_length_outliers(
                 left_atom_site.element,
                 right_atom_site.element,
                 bond=bond,
+                radius_lookup=covalent_radius_lookup,
             )
             tolerance = policy.bond_length_tolerance_angstrom
         else:
@@ -583,15 +591,53 @@ def expected_bond_length_angstrom(
     element_2: str,
     *,
     bond: BondDefinition,
+    radius_lookup: ElementRadiusLookup | None = None,
 ) -> float:
     """Return a broad expected bond length for one heavy-atom pair."""
 
     del bond
-    normalized_element_1 = element_1.strip().upper()
-    normalized_element_2 = element_2.strip().upper()
-    return covalent_radius_angstrom(normalized_element_1) + covalent_radius_angstrom(
-        normalized_element_2
+    active_radius_lookup = (
+        prepare_radius_lookup((element_1, element_2), RadiusKind.COVALENT)
+        if radius_lookup is None
+        else radius_lookup
     )
+    active_radius_lookup.require_complete("bond length expectation")
+    return active_radius_lookup.radius_angstrom(
+        element_1
+    ) + active_radius_lookup.radius_angstrom(element_2)
+
+
+def _unrestrained_bond_covalent_radius_lookup(
+    residue: ResidueSite,
+    *,
+    template: ResidueTemplate,
+    restraint_template: ResidueRestraintTemplate | None,
+) -> ElementRadiusLookup:
+    """Return prepared covalent radii needed by fallback bond-length checks."""
+
+    elements: list[str] = []
+    for bond in template.definition.bonds:
+        if not residue.has_atom_site(bond.atom_name_1) or not residue.has_atom_site(
+            bond.atom_name_2
+        ):
+            continue
+
+        restraint_target = (
+            None
+            if restraint_template is None
+            else restraint_template.bond_target(bond.atom_name_1, bond.atom_name_2)
+        )
+        if restraint_target is not None:
+            continue
+
+        elements.append(residue.atom_site(bond.atom_name_1).element)
+        elements.append(residue.atom_site(bond.atom_name_2).element)
+
+    radius_lookup = prepare_radius_lookup(elements, RadiusKind.COVALENT)
+    radius_lookup.require_complete(
+        f"heavy geometry fallback bonds for {residue.residue_id.display_token()}"
+    )
+    return radius_lookup
 
 
 def bond_length_tolerance_angstrom(

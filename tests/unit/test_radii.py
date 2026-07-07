@@ -121,6 +121,15 @@ def test_prepared_radius_lookup_records_unresolved_elements_once() -> None:
     assert lookup.radius_angstrom("D") == van_der_waals_radius_angstrom("H")
     with pytest.raises(UnknownElementRadiusError, match="prepared van_der_waals"):
         lookup.radius_angstrom("XX")
+    with pytest.raises(
+        UnknownElementRadiusError,
+        match="radius policy test has unresolved van_der_waals radius",
+    ) as error_info:
+        lookup.require_complete("radius policy test")
+
+    error_message = str(error_info.value)
+    assert error_message.count("XX") == 1
+    assert "C1" in error_message
 
 
 def test_radius_resolution_value_objects_reject_invariant_drift() -> None:

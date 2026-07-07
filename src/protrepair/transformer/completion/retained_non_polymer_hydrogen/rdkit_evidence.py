@@ -15,7 +15,11 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_hydrogen_bond_definitions,
     template_without_hydrogens,
 )
-from protrepair.chemistry.radii import covalent_radius_angstrom
+from protrepair.chemistry.radii import (
+    ElementRadiusLookup,
+    RadiusKind,
+    prepare_radius_lookup,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
@@ -137,9 +141,14 @@ def _validate_evidence_bond_geometry(
 ) -> None:
     """Raise when evidence atom mapping is implausible for payload geometry."""
 
-    for bond_definition in retained_non_polymer_evidence_heavy_bond_definitions(
+    heavy_bond_definitions = retained_non_polymer_evidence_heavy_bond_definitions(
         evidence
-    ):
+    )
+    covalent_radius_lookup = _evidence_bond_covalent_radius_lookup(
+        payload,
+        heavy_bond_definitions=heavy_bond_definitions,
+    )
+    for bond_definition in heavy_bond_definitions:
         atom_name_1 = bond_definition.atom_name_1
         atom_name_2 = bond_definition.atom_name_2
         element_1 = payload.atom_site(atom_name_1).element
@@ -147,9 +156,9 @@ def _validate_evidence_bond_geometry(
         observed_distance = payload.position(atom_name_1).distance_to(
             payload.position(atom_name_2)
         )
-        expected_distance = covalent_radius_angstrom(
+        expected_distance = covalent_radius_lookup.radius_angstrom(
             element_1
-        ) + covalent_radius_angstrom(element_2)
+        ) + covalent_radius_lookup.radius_angstrom(element_2)
         deviation = abs(observed_distance - expected_distance)
         if deviation <= EVIDENCE_BOND_DISTANCE_TOLERANCE_ANGSTROM:
             continue
@@ -160,6 +169,28 @@ def _validate_evidence_bond_geometry(
             f"{atom_name_1}-{atom_name_2}: observed {observed_distance:.2f} A, "
             f"expected about {expected_distance:.2f} A"
         )
+
+
+def _evidence_bond_covalent_radius_lookup(
+    payload: CompletionResiduePayload,
+    *,
+    heavy_bond_definitions: tuple[BondDefinition, ...],
+) -> ElementRadiusLookup:
+    """Return prepared covalent radii needed by evidence-bond geometry checks."""
+
+    radius_lookup = prepare_radius_lookup(
+        (
+            payload.atom_site(atom_name).element
+            for bond_definition in heavy_bond_definitions
+            for atom_name in (
+                bond_definition.atom_name_1,
+                bond_definition.atom_name_2,
+            )
+        ),
+        RadiusKind.COVALENT,
+    )
+    radius_lookup.require_complete("retained non-polymer evidence bond geometry")
+    return radius_lookup
 
 
 def _rdkit_pose_molecule(

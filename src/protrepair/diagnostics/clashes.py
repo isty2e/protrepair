@@ -572,6 +572,7 @@ def prepare_clash_detection_basis(
         atom_site_basis.element for atom_site_basis in atom_site_bases
     )
     radius_lookup = prepare_radius_lookup(elements, RadiusKind.VAN_DER_WAALS)
+    radius_lookup.require_complete("clash detection basis")
     return ClashDetectionBasis(
         residue_context_bases=residue_context_bases,
         atom_site_bases=atom_site_bases,
@@ -645,6 +646,7 @@ def _clash_detection_context_from_atom_sites(
 
     elements = frozenset(atom_site.element for atom_site in atom_sites)
     radius_lookup = prepare_radius_lookup(elements, RadiusKind.VAN_DER_WAALS)
+    radius_lookup.require_complete("clash detection context")
     return ClashDetectionContext(
         atom_sites=atom_sites,
         policy=policy,

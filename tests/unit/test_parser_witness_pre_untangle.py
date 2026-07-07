@@ -8,7 +8,10 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
-from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry import (
+    UnknownElementRadiusError,
+    build_default_component_library,
+)
 from protrepair.diagnostics.parser_readability import (
     RDKitProximityBondCluster,
     RDKitProximityBondWitness,
@@ -189,6 +192,68 @@ def test_parser_witness_pre_untangle_score_uses_element_aware_clearance() -> Non
 
     assert score.unresolved_contact_count == 1
     assert score.total_overlap_angstrom > 0.0
+
+
+def test_parser_witness_scoring_reports_unknown_radius_elements_once() -> None:
+    """Witness scoring should aggregate unknown covalent radii before ranking."""
+
+    cys_id = ResidueId("A", 1)
+    ala_id = ResidueId("B", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="CYS",
+                        residue_id=cys_id,
+                        atoms=(atom_payload("SG", "S", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+            chain_payload(
+                "B",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=ala_id,
+                        atoms=(atom_payload("CB", "C", Vec3(1.98, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    cluster = RDKitProximityBondCluster(
+        residue_ids=(cys_id, ala_id),
+        bonds=(
+            RDKitProximityBondWitness(
+                atom_ref_1=AtomRef(cys_id, "SG"),
+                atom_ref_2=AtomRef(ala_id, "CB"),
+                element_1="XX",
+                element_2="C1",
+                is_known_component_bond=False,
+            ),
+            RDKitProximityBondWitness(
+                atom_ref_1=AtomRef(cys_id, "SG"),
+                atom_ref_2=AtomRef(ala_id, "CB"),
+                element_1="XX",
+                element_2="C",
+                is_known_component_bond=False,
+            ),
+        ),
+    )
+
+    with pytest.raises(UnknownElementRadiusError) as error_info:
+        parser_scoring_module.parser_witness_scoring_context(structure, cluster)
+
+    message = str(error_info.value)
+    assert (
+        "parser-witness pre-untangle scoring has unresolved covalent radius"
+        in message
+    )
+    assert message.count("XX") == 1
+    assert "C1" in message
 
 
 def test_parser_witness_pre_untangle_deduplicates_rotation_plans_per_residue(

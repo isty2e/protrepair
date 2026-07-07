@@ -19,9 +19,13 @@ from tests.support.whole_structure_sources import WHOLE_STRUCTURE_CORPUS_SOURCES
 
 from protrepair.chemistry import (
     ComponentLibrary,
+    UnknownElementRadiusError,
     build_default_component_library,
 )
-from protrepair.chemistry.component.graph import ChemicalComponentDefinition
+from protrepair.chemistry.component.graph import (
+    BondDefinition,
+    ChemicalComponentDefinition,
+)
 from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.inference import (
     retained_non_polymer_fallback as fallback_inference,
@@ -953,6 +957,43 @@ def test_retained_non_polymer_override_detects_swapped_same_element_mapping() ->
         and "C1-O1" in issue.message
         for issue in result.issues
     )
+
+
+def test_retained_non_polymer_evidence_geometry_reports_unknown_radii_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Evidence geometry checks should aggregate unknown covalent radii."""
+
+    payload = completion_payload(
+        component_id="UNK",
+        residue_id=ResidueId("L", 1),
+        is_hetero=True,
+        atoms=(
+            atom_payload("C1", "XX", Vec3(0.0, 0.0, 0.0)),
+            atom_payload("O1", "C1", Vec3(1.4, 0.0, 0.0)),
+        ),
+    )
+    evidence = RetainedNonPolymerChemistryOverride(
+        residue_id=ResidueId("L", 1),
+        smiles="CO",
+        heavy_atom_names=("C1", "O1"),
+    ).to_evidence()
+    monkeypatch.setattr(
+        rdkit_evidence,
+        "retained_non_polymer_evidence_heavy_bond_definitions",
+        lambda _evidence: (
+            BondDefinition(atom_name_1="C1", atom_name_2="O1"),
+            BondDefinition(atom_name_1="C1", atom_name_2="O1"),
+        ),
+    )
+
+    with pytest.raises(UnknownElementRadiusError) as error_info:
+        rdkit_evidence._validate_evidence_bond_geometry(payload, evidence=evidence)
+
+    message = str(error_info.value)
+    assert "retained non-polymer evidence bond geometry" in message
+    assert message.count("XX") == 1
+    assert "C1" in message
 
 
 @pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")

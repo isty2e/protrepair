@@ -1,13 +1,13 @@
 """Neutral rotatable-hydrogen search and scoring primitives."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import acos, degrees, pi, sqrt
 
 import numpy as np
 from numpy.typing import NDArray
 
-from protrepair.chemistry import van_der_waals_radius_angstrom
+from protrepair.chemistry import ElementRadiusLookup, RadiusKind, prepare_radius_lookup
 from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
 
 CoordinateLike = Vec3 | Sequence[float] | NDArray[np.float64]
@@ -52,6 +52,32 @@ class RotatableHydrogenEnvironment:
     sigmas_nm: tuple[float, ...]
     epsilons_kj_mol: tuple[float, ...]
     local_sites: tuple[RotatableHydrogenLocalSite, ...] = ()
+    van_der_waals_radius_lookup: ElementRadiusLookup = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        radius_lookup = prepare_radius_lookup(
+            (
+                "H",
+                *self.elements,
+                *(local_site.element for local_site in self.local_sites),
+            ),
+            RadiusKind.VAN_DER_WAALS,
+        )
+        if radius_lookup.has_unresolved_elements():
+            raise radius_lookup.unresolved_radius_error(
+                "rotatable hydrogen scoring environment"
+            )
+
+        object.__setattr__(self, "van_der_waals_radius_lookup", radius_lookup)
+
+    def van_der_waals_radius(self, element: str) -> float:
+        """Return a prepared vdW radius for one scoring element."""
+
+        return self.van_der_waals_radius_lookup.radius_angstrom(element)
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,6 +281,8 @@ def hydrogen_steric_penalty(
             site_y=local_site.y,
             site_z=local_site.z,
             site_element=local_site.element,
+            hydrogen_vdw_radius=environment.van_der_waals_radius("H"),
+            site_vdw_radius=environment.van_der_waals_radius(local_site.element),
             donor_element=search.donor_element,
             allow_hydrogen_bond=False,
         )
@@ -274,6 +302,8 @@ def hydrogen_steric_penalty(
             site_y=site_y,
             site_z=site_z,
             site_element=site_element,
+            hydrogen_vdw_radius=environment.van_der_waals_radius("H"),
+            site_vdw_radius=environment.van_der_waals_radius(site_element),
             donor_element=search.donor_element,
             allow_hydrogen_bond=True,
         )
@@ -290,6 +320,8 @@ def hydrogen_steric_penalty_against_site(
     site_y: float,
     site_z: float,
     site_element: str,
+    hydrogen_vdw_radius: float,
+    site_vdw_radius: float,
     donor_element: str,
     allow_hydrogen_bond: bool,
 ) -> float:
@@ -315,8 +347,8 @@ def hydrogen_steric_penalty_against_site(
         return 0.0
 
     allowed_distance = (
-        rotatable_hydrogen_vdw_radius_angstrom("H")
-        + rotatable_hydrogen_vdw_radius_angstrom(site_element)
+        hydrogen_vdw_radius
+        + site_vdw_radius
         - ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM
     )
     if separation >= allowed_distance:
@@ -346,7 +378,9 @@ def probable_rotatable_hydrogen_bond(
 def rotatable_hydrogen_vdw_radius_angstrom(element: str) -> float:
     """Return the van der Waals radius used by rotatable-H scoring."""
 
-    return van_der_waals_radius_angstrom(element)
+    return prepare_radius_lookup((element,), RadiusKind.VAN_DER_WAALS).radius_angstrom(
+        element
+    )
 
 
 def recalculate_coordinate(

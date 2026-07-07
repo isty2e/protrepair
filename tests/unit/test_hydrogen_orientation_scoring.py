@@ -8,6 +8,7 @@ from tests.support.canonical_builders import (
     completion_payload,
 )
 
+from protrepair.chemistry import UnknownElementRadiusError
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.structure.labels import ResidueId
@@ -140,6 +141,27 @@ def test_optimize_rotatable_hydrogen_selects_least_bad_candidate(
     )
 
     assert result == Vec3(1.8, 0.0, 0.0)
+
+
+def test_rotatable_hydrogen_environment_reports_unknown_radii_once() -> None:
+    """Rotatable-H scoring should fail before candidate loops for unknown elements."""
+
+    with pytest.raises(UnknownElementRadiusError) as error_info:
+        RotatableHydrogenEnvironment(
+            residue_number="11",
+            atom_x=(0.0, 0.0),
+            atom_y=(0.0, 1.0),
+            atom_z=(0.0, 0.0),
+            elements=("XX", "C1"),
+            charges=(0.0, 0.0),
+            sigmas_nm=(0.0, 0.0),
+            epsilons_kj_mol=(0.0, 0.0),
+        )
+
+    error_message = str(error_info.value)
+    assert "rotatable hydrogen scoring environment" in error_message
+    assert "XX" in error_message
+    assert "C1" in error_message
 
 
 def test_optimize_rotatable_hydrogen_preserves_candidate_identity_across_environments(

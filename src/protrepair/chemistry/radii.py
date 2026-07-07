@@ -395,6 +395,23 @@ class ElementRadiusLookup:
 
         return bool(self.unresolved_element_symbols)
 
+    def require_complete(self, context: str) -> None:
+        """Raise one aggregate error if any requested element lacks a radius."""
+
+        if self.has_unresolved_elements():
+            raise self.unresolved_radius_error(context)
+
+    def unresolved_radius_error(self, context: str) -> UnknownElementRadiusError:
+        """Return an aggregate unresolved-radius error for this prepared lookup."""
+
+        unresolved = ", ".join(
+            repr(element_symbol) for element_symbol in self.unresolved_element_symbols
+        )
+        return UnknownElementRadiusError(
+            f"{context} has unresolved {self.kind.value} radius for element(s): "
+            f"{unresolved}"
+        )
+
     def radius_angstrom(self, element: str) -> float:
         """Return one prepared radius or raise for an unresolved element."""
 
@@ -414,7 +431,7 @@ def van_der_waals_radius_angstrom(element: str) -> float:
 
 
 def covalent_radius_angstrom(element: str) -> float:
-    """Return the Cordero covalent radius for one element, or raise when unsupported."""
+    """Return the RDKit covalent radius for one element, or raise when unsupported."""
 
     return element_radius_angstrom(element, RadiusKind.COVALENT)
 
