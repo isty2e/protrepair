@@ -66,6 +66,8 @@ jobs:
           printf 'raise ModuleNotFoundError("No module named rdkit")\n' > "$rdkit_blocker/rdkit.py"
           PYTHONPATH="$rdkit_blocker:${PYTHONPATH:-}" .venv/bin/pytest \
             tests/unit/test_release_artifacts.py \
+            tests/unit/test_release_public_api_contract.py \
+            tests/unit/test_readme_usage.py \
             tests/unit/test_retained_non_polymer_no_rdkit_release.py \
             tests/unit/test_parser_repair_performance_support.py \
             tests/workflow/test_process_representatives.py::test_process_structure_preserves_representative_semantics \

@@ -68,6 +68,8 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
     assert "Lean optional dependency boundary" in workflow
     assert "Verify RDKit is outside the lean environment" in lean_job
     assert "rdkit_blocker" in lean_job
+    assert "tests/unit/test_release_public_api_contract.py" in lean_job
+    assert "tests/unit/test_readme_usage.py" in lean_job
     assert "tests/unit/test_retained_non_polymer_no_rdkit_release.py" in lean_job
     assert "tests/unit/test_parser_repair_performance_support.py" in lean_job
     assert "test_process_structure_preserves_rdkit_coordinate_digest" in workflow
