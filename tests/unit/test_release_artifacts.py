@@ -62,6 +62,8 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
     assert '".[dev,refinement]"' in workflow
     assert "constraints/release.txt" in workflow
     full_checks_job, lean_job = workflow.split("  lean:", maxsplit=1)
+    assert 'PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS: "1"' in full_checks_job
+    assert "PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS" not in lean_job
     assert "Basedpyright" in full_checks_job
     assert "Lean optional dependency boundary" in workflow
     assert "Verify RDKit is outside the lean environment" in lean_job
@@ -112,6 +114,9 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert "CPython 3.10, 3.11, and 3.12" in checklist
     assert "Linux through GitHub Actions `ubuntu-latest`" in checklist
     assert "Python 3.13+, macOS, and Windows are not advertised" in checklist
+    assert "PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS=1" in checklist
+    assert "rdkit==2026.3.2" in checklist
+    assert "2026.03.2" in checklist
 
 
 def test_release_constraints_pin_release_environment() -> None:

@@ -59,6 +59,8 @@ def test_fallback_cross_layer_helpers_raise_typed_rdkit_unavailable(
 def test_fallback_inference_result_owns_pose_bonds_names_and_bounds() -> None:
     """Canonical fallback result should carry all full-inference projections."""
 
+    from rdkit import rdBase
+
     residue_site, residue_geometry = _retained_ligand_pose(
         (
             ("C1", "C", Vec3(0.0, 0.0, 0.0)),
@@ -71,6 +73,7 @@ def test_fallback_inference_result_owns_pose_bonds_names_and_bounds() -> None:
         residue_geometry,
     )
 
+    assert inference_result.rdkit_backend_version == rdBase.rdkitVersion
     assert inference_result.hydrogen_atom_names == ("H001", "H002", "H003", "H004")
     assert inference_result.heavy_bond_definitions == (
         BondDefinition("O1", "C1"),

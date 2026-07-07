@@ -53,6 +53,19 @@ PYTHONPATH="${rdkit_blocker}:${PYTHONPATH:-}" python -m pytest \
   -q
 ```
 
+## RDKit Release Version Policy
+
+The full release CI lane installs RDKit through `constraints/release.txt` and
+runs representative RDKit coordinate-digest checks with
+`PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS=1`. Under that strict release gate, an
+unregistered RDKit backend version is a failure instead of a skip.
+
+Local compatibility runs and no-RDKit lanes may still skip version-bound
+coordinate digests when RDKit is absent or unregistered. Current release
+constraints pin `rdkit==2026.3.2`, which corresponds to the registered backend
+digest version `2026.03.2`. The digest registry also carries `2026.03.1` for
+known reviewer/environment parity.
+
 ## Build And Install Smoke
 
 Run the installed-wheel functional smoke from a clean worktree:

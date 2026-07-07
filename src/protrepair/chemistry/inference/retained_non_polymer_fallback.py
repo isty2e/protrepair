@@ -6,9 +6,10 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 try:
-    from rdkit import Chem
+    from rdkit import Chem, rdBase
 except ImportError:  # pragma: no cover - exercised by availability checks
     Chem = None
+    rdBase = None
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.errors import RdkitUnavailableError
@@ -41,6 +42,7 @@ class RetainedNonPolymerRdkitFallbackInferenceResult:
     """Canonical RDKit fallback inference over one retained non-polymer pose."""
 
     hydrogenated_molecule: "Mol"
+    rdkit_backend_version: str
     hydrogen_atom_names: tuple[str, ...]
     hydrogen_name_projection: tuple[tuple[str, str], ...]
     heavy_bond_definitions: tuple[BondDefinition, ...]
@@ -118,6 +120,11 @@ def infer_retained_non_polymer_rdkit_fallback(
             "retained non-polymer RDKit fallback hydrogenation requires the "
             "optional rdkit dependency"
         )
+    if rdBase is None:
+        raise RdkitUnavailableError(
+            "retained non-polymer RDKit fallback hydrogenation requires RDKit "
+            "backend metadata"
+        )
 
     heavy_atom_molecule = _retained_non_polymer_rdkit_pose_molecule(
         residue_site,
@@ -151,6 +158,7 @@ def infer_retained_non_polymer_rdkit_fallback(
     )
     return RetainedNonPolymerRdkitFallbackInferenceResult(
         hydrogenated_molecule=hydrogenated_molecule,
+        rdkit_backend_version=str(rdBase.rdkitVersion),
         hydrogen_atom_names=resolved_hydrogen_atom_names,
         hydrogen_name_projection=hydrogen_name_projection.projection,
         heavy_bond_definitions=_heavy_bond_definitions_from_molecule(

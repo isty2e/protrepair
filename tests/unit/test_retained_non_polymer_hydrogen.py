@@ -1014,6 +1014,8 @@ def test_add_retained_non_polymer_hydrogens_uses_rdkit_fallback_without_support(
 ):
     """Unsupported retained non-polymers should fall back to RDKit hydrogenation."""
 
+    from rdkit import rdBase
+
     structure = build_structure(
         chains=(),
         ligands=(
@@ -1083,6 +1085,7 @@ def test_add_retained_non_polymer_hydrogens_uses_rdkit_fallback_without_support(
         and repair.atom_names == added_hydrogen_names
         and repair.details is not None
         and "RDKit coordinate/proximity fallback" in repair.details
+        and rdBase.rdkitVersion in repair.details
         for repair in result.repairs
     )
     fallback_issues = _fallback_used_issues(result.issues)
@@ -1093,6 +1096,7 @@ def test_add_retained_non_polymer_hydrogens_uses_rdkit_fallback_without_support(
     assert "L:1" in fallback_issues[0].message
     assert "UNK" in fallback_issues[0].message
     assert "RDKit coordinate/proximity fallback" in fallback_issues[0].message
+    assert rdBase.rdkitVersion in fallback_issues[0].message
     pdb_conect_lines = tuple(
         line
         for line in write_structure_string(
