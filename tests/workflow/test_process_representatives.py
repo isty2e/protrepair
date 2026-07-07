@@ -1,6 +1,7 @@
 """Representative workflow replay tests."""
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -52,16 +53,27 @@ WORKFLOW_REPRESENTATIVE_CASE_IDS: tuple[str, ...] = (
     "1cjc-hydrogen-keep-ligand",
     "1afc-hydrogen-his-protonated",
 )
-WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, str]] = {
-    # RDKit force-field coordinates can drift across patch releases even when
-    # topology, atom ordering, and workflow issues are unchanged. Keep this as
-    # a backend-version-bound regression check, not a portable semantic digest.
+WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, frozenset[str]]] = {
+    # RDKit force-field coordinates can drift across backend/scientific-stack
+    # environments even when topology, atom ordering, and workflow issues are
+    # unchanged. Keep this as a backend-version-bounded regression check over
+    # known digest sets, not a portable semantic digest.
     "1afc-hydrogen-his-protonated": {
-        "2026.03.1": (
-            "519c3e1c408148db2af3ff629d2e5a33cf912f22bf6ba668af0428a7a87d2a33"
+        "2026.03.1": frozenset(
+            {
+                "519c3e1c408148db2af3ff629d2e5a33cf912f22bf6ba668af0428a7a87d2a33",
+            }
         ),
-        "2026.03.2": (
-            "8aac67d8b5ab6c036adad32e05d203d628cd88af75aaf3a9eeb1252fac829640"
+        "2026.03.2": frozenset(
+            {
+                "519c3e1c408148db2af3ff629d2e5a33cf912f22bf6ba668af0428a7a87d2a33",
+                "8aac67d8b5ab6c036adad32e05d203d628cd88af75aaf3a9eeb1252fac829640",
+            }
+        ),
+        "2026.03.3": frozenset(
+            {
+                "8aac67d8b5ab6c036adad32e05d203d628cd88af75aaf3a9eeb1252fac829640",
+            }
         ),
     },
 }
@@ -134,7 +146,7 @@ def _assert_rdkit_coordinate_digest_matches(
             pytest.fail(message)
         pytest.skip(message)
 
-    assert actual_digest == expected_by_version[rdkit_version]
+    assert actual_digest in expected_by_version[rdkit_version]
 
 
 def _strict_rdkit_digest_release_gate_enabled() -> bool:
@@ -156,10 +168,7 @@ def test_unknown_rdkit_coordinate_digest_skips_outside_release_gate(
     """Unregistered RDKit versions stay skippable outside release strict mode."""
 
     monkeypatch.delenv(STRICT_RDKIT_DIGEST_RELEASE_GATE_ENV, raising=False)
-    monkeypatch.setattr(
-        "tests.workflow.test_process_representatives._rdkit_version",
-        lambda: "2099.99.9",
-    )
+    _patch_rdkit_version(monkeypatch, "2099.99.9")
 
     with pytest.raises(pytest.skip.Exception):
         _assert_rdkit_coordinate_digest_matches(
@@ -168,16 +177,30 @@ def test_unknown_rdkit_coordinate_digest_skips_outside_release_gate(
         )
 
 
+def test_registered_rdkit_coordinate_digest_accepts_known_environment_variants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A registered RDKit version may have multiple known coordinate digests."""
+
+    _patch_rdkit_version(monkeypatch, "2026.03.2")
+
+    _assert_rdkit_coordinate_digest_matches(
+        "1afc-hydrogen-his-protonated",
+        "519c3e1c408148db2af3ff629d2e5a33cf912f22bf6ba668af0428a7a87d2a33",
+    )
+    _assert_rdkit_coordinate_digest_matches(
+        "1afc-hydrogen-his-protonated",
+        "8aac67d8b5ab6c036adad32e05d203d628cd88af75aaf3a9eeb1252fac829640",
+    )
+
+
 def test_unknown_rdkit_coordinate_digest_fails_release_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Release strict mode should fail instead of skipping unknown RDKit."""
 
     monkeypatch.setenv(STRICT_RDKIT_DIGEST_RELEASE_GATE_ENV, "1")
-    monkeypatch.setattr(
-        "tests.workflow.test_process_representatives._rdkit_version",
-        lambda: "2099.99.9",
-    )
+    _patch_rdkit_version(monkeypatch, "2099.99.9")
 
     with pytest.raises(pytest.fail.Exception):
         _assert_rdkit_coordinate_digest_matches(
@@ -192,10 +215,7 @@ def test_unknown_rdkit_coordinate_digest_ignores_non_release_truthy_env(
     """Strict release behavior is opt-in only for the documented env value."""
 
     monkeypatch.setenv(STRICT_RDKIT_DIGEST_RELEASE_GATE_ENV, "true")
-    monkeypatch.setattr(
-        "tests.workflow.test_process_representatives._rdkit_version",
-        lambda: "2099.99.9",
-    )
+    _patch_rdkit_version(monkeypatch, "2099.99.9")
 
     with pytest.raises(pytest.skip.Exception):
         _assert_rdkit_coordinate_digest_matches(
@@ -210,16 +230,26 @@ def test_missing_rdkit_coordinate_digest_fails_release_gate(
     """Release strict mode treats missing RDKit as missing digest coverage."""
 
     monkeypatch.setenv(STRICT_RDKIT_DIGEST_RELEASE_GATE_ENV, "1")
-    monkeypatch.setattr(
-        "tests.workflow.test_process_representatives._rdkit_version",
-        lambda: None,
-    )
+    _patch_rdkit_version(monkeypatch, None)
 
     with pytest.raises(pytest.fail.Exception):
         _assert_rdkit_coordinate_digest_matches(
             "1afc-hydrogen-his-protonated",
             "unused",
         )
+
+
+def _patch_rdkit_version(
+    monkeypatch: pytest.MonkeyPatch,
+    rdkit_version: str | None,
+) -> None:
+    """Patch the module-local RDKit version probe regardless of collection name."""
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_rdkit_version",
+        lambda: rdkit_version,
+    )
 
 
 @pytest.mark.representative_regression

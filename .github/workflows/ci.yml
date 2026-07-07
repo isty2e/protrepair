@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest
@@ -75,7 +78,7 @@ jobs:
             -q
 
   installed-wheel-smoke:
-    name: Installed wheel FASPR smoke (Python 3.12)
+    name: Installed wheel FASPR/RDKit smoke (Python 3.12)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -94,6 +97,9 @@ jobs:
 
       - name: Run installed-wheel FASPR smoke
         run: .venv/bin/python scripts/run_installed_wheel_smoke.py
+
+      - name: Run installed-wheel RDKit refinement smoke
+        run: .venv/bin/python scripts/run_installed_wheel_smoke.py --with-refinement
 
   artifact-content:
     name: Release artifact content (Python 3.12)

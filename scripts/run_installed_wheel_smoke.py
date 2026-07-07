@@ -22,11 +22,10 @@ def main() -> None:
         build_wheel()
         wheel_path = newest_wheel()
 
-    venv_path = arguments.venv_path
-    if venv_path.exists() and not arguments.keep_venv:
-        shutil.rmtree(venv_path)
-    if not venv_path.exists():
-        run((sys.executable, "-m", "venv", str(venv_path)))
+    venv_path = prepare_virtual_environment(
+        arguments.venv_path,
+        keep_venv=arguments.keep_venv,
+    )
 
     python = venv_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     install_target = (
@@ -105,6 +104,33 @@ def newest_wheel() -> Path:
     if not wheel_paths:
         raise SystemExit("no ProtRepair wheel found in dist/")
     return wheel_paths[-1]
+
+
+def prepare_virtual_environment(venv_path: Path, *, keep_venv: bool) -> Path:
+    """Create or recreate the smoke-test virtual environment safely."""
+
+    resolved_venv_path = venv_path.resolve()
+    if resolved_venv_path.exists() and not keep_venv:
+        _assert_recreatable_virtual_environment(resolved_venv_path)
+        shutil.rmtree(resolved_venv_path)
+    if not resolved_venv_path.exists():
+        run((sys.executable, "-m", "venv", str(resolved_venv_path)))
+    return resolved_venv_path
+
+
+def _assert_recreatable_virtual_environment(venv_path: Path) -> None:
+    """Reject destructive recreation unless the target already looks like a venv."""
+
+    repository_root = REPOSITORY_ROOT.resolve()
+    if venv_path == repository_root or venv_path.parent == venv_path:
+        raise SystemExit(f"refusing to remove unsafe venv path: {venv_path}")
+    if not venv_path.is_dir():
+        raise SystemExit(f"refusing to remove non-directory venv path: {venv_path}")
+    if not (venv_path / "pyvenv.cfg").is_file():
+        raise SystemExit(
+            "refusing to remove existing --venv-path without pyvenv.cfg: "
+            f"{venv_path}"
+        )
 
 
 def run(

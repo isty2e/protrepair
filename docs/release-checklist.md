@@ -62,9 +62,12 @@ unregistered RDKit backend version is a failure instead of a skip.
 
 Local compatibility runs and no-RDKit lanes may still skip version-bound
 coordinate digests when RDKit is absent or unregistered. Current release
-constraints pin `rdkit==2026.3.2`, which corresponds to the registered backend
-digest version `2026.03.2`. The digest registry also carries `2026.03.1` for
-known reviewer/environment parity.
+constraints pin `rdkit==2026.3.2`, which corresponds to RDKit backend version
+`2026.03.2`. The digest registry may carry more than one known coordinate digest
+for the same RDKit version when constrained scientific-stack or platform
+differences preserve topology and atom ordering but move coordinates. The
+registry also carries `2026.03.1` and `2026.03.3` for known
+reviewer/environment parity.
 
 ## Build And Install Smoke
 
@@ -85,7 +88,9 @@ The script builds a wheel with `hatchling`, installs it into a temporary
 virtual environment, and verifies installed-package imports, bundled chemistry
 resources, coordinate read/write, `process_structure()`, packaged FASPR
 execution, and optional RDKit local refinement. It installs the wheel under
-`constraints/release.txt` by default.
+`constraints/release.txt` by default. Release CI runs both the default no-RDKit
+installed-wheel smoke and the `--with-refinement` installed-wheel smoke on
+Python 3.12.
 
 Bundled FASPR assets are an installed-package/wheel contract. Source-tree
 execution may use an explicit FASPR `executable_path`, but release verification
@@ -117,6 +122,8 @@ CI may use first-party GitHub actions pinned to reviewed major-version tags for
 readability, currently `actions/checkout@v4` and `actions/setup-python@v5`.
 Review those major tags before each release. Any other action reference must be
 pinned to a full 40-character commit SHA before it is added to release CI.
+Workflow token permissions are constrained to `contents: read`; widen them only
+for a concrete release job that needs additional repository access.
 
 ## Release Metadata
 

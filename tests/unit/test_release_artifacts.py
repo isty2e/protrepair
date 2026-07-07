@@ -48,6 +48,7 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
 
     workflow = Path(".github/workflows/ci.yml").read_text()
 
+    assert "permissions:\n  contents: read" in workflow
     assert "  checks:" in workflow
     assert "  lean:" in workflow
     assert "  installed-wheel-smoke:" in workflow
@@ -78,7 +79,7 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
     assert "tests/workflow/test_process_representatives.py" in workflow
     assert '-m "not benchmark"' in workflow
     installed_wheel_job = workflow.split("  installed-wheel-smoke:", maxsplit=1)[1]
-    assert "Installed wheel FASPR smoke" in installed_wheel_job
+    assert "Installed wheel FASPR/RDKit smoke" in installed_wheel_job
     assert (
         "pip install -c constraints/release.txt hatchling hatch-vcs "
         "scikit-build-core"
@@ -87,6 +88,10 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
         "run: .venv/bin/python scripts/run_installed_wheel_smoke.py"
         in installed_wheel_job
     )
+    assert (
+        "run: .venv/bin/python scripts/run_installed_wheel_smoke.py "
+        "--with-refinement"
+    ) in installed_wheel_job
     assert "continue-on-error" not in installed_wheel_job
     artifact_content_job = workflow.split("  artifact-content:", maxsplit=1)[1]
     assert "Release artifact content" in artifact_content_job
@@ -126,6 +131,7 @@ def test_ci_action_refs_follow_release_pinning_policy() -> None:
     assert "actions/checkout@v4" in normalized_checklist
     assert "actions/setup-python@v5" in normalized_checklist
     assert "full 40-character commit SHA" in normalized_checklist
+    assert "contents: read" in normalized_checklist
 
 
 def test_release_gate_sources_are_sdist_visible() -> None:
@@ -155,12 +161,16 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert "tests/release/test_artifact_contents.py" in checklist
     assert "tests/unit/test_release_artifacts.py" in checklist
     assert "constraints/release.txt" in checklist
+    assert "Release CI runs both the default no-RDKit" in normalized_checklist
+    assert "--with-refinement" in normalized_checklist
     assert "CPython 3.10, 3.11, and 3.12" in checklist
     assert "Linux through GitHub Actions `ubuntu-latest`" in checklist
     assert "Python 3.13+, macOS, and Windows are not advertised" in checklist
     assert "PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS=1" in checklist
     assert "rdkit==2026.3.2" in checklist
     assert "2026.03.2" in checklist
+    assert "more than one known coordinate digest" in normalized_checklist
+    assert "2026.03.3" in checklist
     assert "CMake 3.18 or newer" in normalized_checklist
     assert "working C++ compiler toolchain" in normalized_checklist
 
