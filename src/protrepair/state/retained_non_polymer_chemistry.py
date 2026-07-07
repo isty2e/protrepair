@@ -52,10 +52,20 @@ class RetainedNonPolymerChemistryResolution:
     hydrogen_bond_definitions: tuple[BondDefinition, ...] = ()
     heavy_atom_elements: tuple[str, ...] = ()
     failure_reason: str = ""
+    rdkit_backend_version: str | None = None
     hydrogen_name_projection_candidate_count: int = 0
     hydrogen_name_projection_candidate_limit: int = 0
 
     def __post_init__(self) -> None:
+        rdkit_backend_version = self.rdkit_backend_version
+        if rdkit_backend_version is not None:
+            rdkit_backend_version = rdkit_backend_version.strip() or None
+            object.__setattr__(
+                self,
+                "rdkit_backend_version",
+                rdkit_backend_version,
+            )
+
         resolved = self.source.is_resolved()
         if (
             self.source is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
@@ -78,6 +88,20 @@ class RetainedNonPolymerChemistryResolution:
             raise ValueError(
                 "resolved retained non-polymer chemistry must not carry a failure "
                 "reason"
+            )
+        if (
+            self.source is RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
+            and rdkit_backend_version is None
+        ):
+            raise ValueError(
+                "RDKit fallback chemistry must carry an RDKit backend version"
+            )
+        if (
+            self.source is not RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
+            and rdkit_backend_version is not None
+        ):
+            raise ValueError(
+                "RDKit backend version is only valid for RDKit fallback chemistry"
             )
         if self.hydrogen_name_projection_candidate_count < 0:
             raise ValueError(
@@ -204,6 +228,7 @@ def resolve_retained_non_polymer_chemistry(
 
     return RetainedNonPolymerChemistryResolution(
         source=RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK,
+        rdkit_backend_version=fallback_inference_result.rdkit_backend_version,
         expected_hydrogen_atom_names=(
             fallback_inference_result.hydrogen_atom_names
         ),

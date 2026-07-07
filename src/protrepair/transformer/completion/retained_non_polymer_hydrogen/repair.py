@@ -111,6 +111,7 @@ class _RdkitFallbackHydrogenationResult:
     """Fallback hydrogenated payload plus RDKit-derived topology bonds."""
 
     payload: CompletionResiduePayload
+    rdkit_backend_version: str
     heavy_bond_definitions: tuple[BondDefinition, ...]
     hydrogen_bond_definitions: tuple[BondDefinition, ...]
 
@@ -495,13 +496,16 @@ def _hydrogenate_retained_non_polymer_payload(
                     residue_id=payload.residue_id,
                     component_id=payload.component_id,
                     atom_names=added_atom_names,
-                    details=_RDKIT_FALLBACK_VISIBILITY_DETAILS,
+                    details=_rdkit_fallback_visibility_details(
+                        hydrogenation_result.rdkit_backend_version
+                    ),
                 ),
             )
         ),
         issues=(
             _retained_non_polymer_hydrogen_fallback_visibility_issue(
-                payload.residue_site
+                payload.residue_site,
+                rdkit_backend_version=hydrogenation_result.rdkit_backend_version,
             ),
         ),
         topology_plan=_topology_plan_for_bond_definitions(
@@ -569,6 +573,7 @@ def _hydrogenate_retained_non_polymer_payload_with_rdkit_fallback_result(
                 ),
             )
         ),
+        rdkit_backend_version=fallback_inference_result.rdkit_backend_version,
         heavy_bond_definitions=fallback_inference_result.heavy_bond_definitions,
         hydrogen_bond_definitions=fallback_inference_result.hydrogen_bond_definitions,
     )
@@ -1203,6 +1208,8 @@ def _retained_non_polymer_hydrogen_failure_reason(error: Exception) -> str:
 
 def _retained_non_polymer_hydrogen_fallback_visibility_issue(
     residue_site: ResidueSite,
+    *,
+    rdkit_backend_version: str,
 ) -> ValidationIssue:
     """Return one warning that RDKit fallback chemistry was used."""
 
@@ -1211,11 +1218,21 @@ def _retained_non_polymer_hydrogen_fallback_visibility_issue(
         severity=IssueSeverity.WARNING,
         message=(
             f"{residue_site.residue_id.display_token()} "
-            f"{residue_site.component_id} retained non-polymer hydrogens used "
-            "RDKit coordinate/proximity fallback; provide a template or explicit "
-            "chemistry evidence for stricter hydrogenation"
+            f"{residue_site.component_id} "
+            f"{_rdkit_fallback_visibility_details(rdkit_backend_version)}; "
+            "provide a template or explicit chemistry evidence for stricter "
+            "hydrogenation"
         ),
         residue_id=residue_site.residue_id,
+    )
+
+
+def _rdkit_fallback_visibility_details(rdkit_backend_version: str) -> str:
+    """Return stable user-facing RDKit fallback provenance details."""
+
+    return (
+        f"{_RDKIT_FALLBACK_VISIBILITY_DETAILS} "
+        f"(RDKit {rdkit_backend_version})"
     )
 
 

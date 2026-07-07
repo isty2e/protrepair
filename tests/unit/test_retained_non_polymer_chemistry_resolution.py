@@ -45,5 +45,46 @@ def test_projection_candidate_count_requires_limit() -> None:
     with pytest.raises(ValueError, match="candidate_limit is required"):
         RetainedNonPolymerChemistryResolution(
             source=RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK,
+            rdkit_backend_version="2026.03.2",
             hydrogen_name_projection_candidate_count=2,
+        )
+
+
+def test_rdkit_fallback_requires_backend_version() -> None:
+    """RDKit fallback chemistry must identify the backend that inferred it."""
+
+    with pytest.raises(ValueError, match="backend version"):
+        RetainedNonPolymerChemistryResolution(
+            source=RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK,
+        )
+
+
+def test_rdkit_backend_version_is_rdkit_fallback_only() -> None:
+    """Backend-version provenance belongs only to RDKit fallback chemistry."""
+
+    with pytest.raises(ValueError, match="only valid for RDKit fallback"):
+        RetainedNonPolymerChemistryResolution(
+            source=RetainedNonPolymerChemistryEvidenceSource.TEMPLATE,
+            rdkit_backend_version="2026.03.2",
+        )
+
+
+def test_rdkit_backend_version_is_normalized() -> None:
+    """Resolution stores a canonical backend-version token."""
+
+    resolution = RetainedNonPolymerChemistryResolution(
+        source=RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK,
+        rdkit_backend_version=" 2026.03.2 ",
+    )
+
+    assert resolution.rdkit_backend_version == "2026.03.2"
+
+
+def test_rdkit_backend_version_must_not_be_blank() -> None:
+    """Blank backend-version provenance is equivalent to missing provenance."""
+
+    with pytest.raises(ValueError, match="backend version"):
+        RetainedNonPolymerChemistryResolution(
+            source=RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK,
+            rdkit_backend_version="   ",
         )

@@ -53,11 +53,17 @@ Or install directly from GitHub:
 pip install "git+https://github.com/isty2e/protrepair.git"
 ```
 
-Built packages and wheels include the vendored FASPR executable and rotamer
-library used by the optional side-chain packing backend. Direct source-tree
-imports are not guaranteed to have compiled FASPR assets available; install the
-package/wheel first, or pass an explicit FASPR `executable_path` for local
-development.
+Prefer a built wheel when you need the optional FASPR side-chain packing
+backend. Built packages and wheels include the vendored FASPR executable and
+rotamer library.
+
+Source installs, including direct GitHub installs, build the vendored FASPR
+executable through `scikit-build-core` and CMake. They require CMake 3.18 or
+newer and a working C++ compiler toolchain. Direct source-tree imports are not
+guaranteed to have compiled FASPR assets available; install the package/wheel
+first. For advanced transformer-layer development with a separately built
+FASPR binary, construct the FASPR backend with an explicit FASPR
+`executable_path` whose directory also contains `dun2010bbdep.bin`.
 
 Install optional RDKit-backed refinement support with:
 

@@ -5,9 +5,11 @@
 
 # Local project management notes
 .tickets/
-docs/release-checklist.md
 .python-version
-scripts/
+
+# Local development scripts, except release-gate tooling
+scripts/*
+!scripts/run_installed_wheel_smoke.py
 
 # Python caches and environments
 __pycache__/

@@ -1,6 +1,7 @@
 """Release artifact sanity tests for packaged resources and metadata."""
 
 import hashlib
+import re
 from importlib.resources import files
 from pathlib import Path
 
@@ -23,6 +24,12 @@ def test_release_metadata_declares_dependency_boundary() -> None:
         maxsplit=1,
     )
 
+    assert 'requires-python = ">=3.10,<3.13"' in pyproject
+    assert '"Programming Language :: Python :: 3.10"' in pyproject
+    assert '"Programming Language :: Python :: 3.11"' in pyproject
+    assert '"Programming Language :: Python :: 3.12"' in pyproject
+    assert "Python :: 3.13" not in pyproject
+    assert '"Operating System :: POSIX :: Linux"' in pyproject
     assert '"scikit-build-core>=0.12,<0.13",' in pyproject
     assert 'license = { text = "MIT AND CC-BY-4.0" }' in pyproject
     assert '"gemmi>=0.7.5",' in project_dependencies
@@ -41,20 +48,162 @@ def test_ci_exercises_required_and_refinement_dependency_worlds() -> None:
 
     workflow = Path(".github/workflows/ci.yml").read_text()
 
+    assert "permissions:\n  contents: read" in workflow
     assert "  checks:" in workflow
     assert "  lean:" in workflow
-    assert 'run: .venv/bin/python -m pip install ".[dev]"' in workflow
+    assert "  installed-wheel-smoke:" in workflow
+    assert "  artifact-content:" in workflow
+    assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
+    assert 'python-version: "3.12"' in workflow
+    assert "ubuntu-latest" in workflow
+    assert "macos-latest" not in workflow
+    assert "windows-latest" not in workflow
+    assert (
+        'run: .venv/bin/python -m pip install -c constraints/release.txt ".[dev]"'
+        in workflow
+    )
     assert '".[dev,refinement]"' in workflow
+    assert "constraints/release.txt" in workflow
     full_checks_job, lean_job = workflow.split("  lean:", maxsplit=1)
+    assert 'PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS: "1"' in full_checks_job
+    assert "PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS" not in lean_job
     assert "Basedpyright" in full_checks_job
     assert "Lean optional dependency boundary" in workflow
     assert "Verify RDKit is outside the lean environment" in lean_job
     assert "rdkit_blocker" in lean_job
+    assert "tests/unit/test_release_public_api_contract.py" in lean_job
+    assert "tests/unit/test_readme_usage.py" in lean_job
     assert "tests/unit/test_retained_non_polymer_no_rdkit_release.py" in lean_job
     assert "tests/unit/test_parser_repair_performance_support.py" in lean_job
     assert "test_process_structure_preserves_rdkit_coordinate_digest" in workflow
     assert "tests/workflow/test_process_representatives.py" in workflow
     assert '-m "not benchmark"' in workflow
+    installed_wheel_job = workflow.split("  installed-wheel-smoke:", maxsplit=1)[1]
+    assert "Installed wheel FASPR/RDKit smoke" in installed_wheel_job
+    assert (
+        "pip install -c constraints/release.txt hatchling hatch-vcs "
+        "scikit-build-core"
+    ) in installed_wheel_job
+    assert (
+        "run: .venv/bin/python scripts/run_installed_wheel_smoke.py"
+        in installed_wheel_job
+    )
+    assert (
+        "run: .venv/bin/python scripts/run_installed_wheel_smoke.py "
+        "--with-refinement"
+    ) in installed_wheel_job
+    assert "continue-on-error" not in installed_wheel_job
+    artifact_content_job = workflow.split("  artifact-content:", maxsplit=1)[1]
+    assert "Release artifact content" in artifact_content_job
+    assert (
+        "pip install -c constraints/release.txt pytest hatchling hatch-vcs "
+        "scikit-build-core"
+    ) in artifact_content_job
+    assert (
+        "run: .venv/bin/python -m pytest "
+        "tests/release/test_artifact_contents.py -q"
+    ) in artifact_content_job
+    assert "continue-on-error" not in artifact_content_job
+
+
+def test_ci_action_refs_follow_release_pinning_policy() -> None:
+    """Action refs should follow the documented release supply-chain policy."""
+
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    checklist = Path("docs/release-checklist.md").read_text()
+    allowed_major_tag_refs = {
+        "actions/checkout@v4",
+        "actions/setup-python@v5",
+    }
+    sha_pinned_ref = re.compile(r".+@[0-9a-f]{40}$")
+    action_refs = re.findall(r"^\s*uses:\s*(\S+)\s*$", workflow, re.MULTILINE)
+
+    assert action_refs
+    for action_ref in action_refs:
+        assert action_ref in allowed_major_tag_refs or sha_pinned_ref.fullmatch(
+            action_ref
+        ), action_ref
+
+    normalized_checklist = " ".join(checklist.split())
+    assert "first-party GitHub actions pinned to reviewed major-version tags" in (
+        normalized_checklist
+    )
+    assert "actions/checkout@v4" in normalized_checklist
+    assert "actions/setup-python@v5" in normalized_checklist
+    assert "full 40-character commit SHA" in normalized_checklist
+    assert "contents: read" in normalized_checklist
+
+
+def test_release_gate_sources_are_sdist_visible() -> None:
+    """Release gates should not live only in ignored local checkout files."""
+
+    checklist = Path("docs/release-checklist.md").read_text()
+    normalized_checklist = " ".join(checklist.split())
+    gitignore_lines = {
+        line.strip()
+        for line in Path(".gitignore").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    pyproject = Path("pyproject.toml").read_text()
+
+    assert Path("docs/release-checklist.md").is_file()
+    assert Path("scripts/run_installed_wheel_smoke.py").is_file()
+    assert Path("constraints/release.txt").is_file()
+    assert "docs/release-checklist.md" not in gitignore_lines
+    assert "scripts/" not in gitignore_lines
+    assert "scripts/*" in gitignore_lines
+    assert "!scripts/run_installed_wheel_smoke.py" in gitignore_lines
+    assert '"docs",' in pyproject
+    assert '"constraints/release.txt",' in pyproject
+    assert '"scripts/run_installed_wheel_smoke.py",' in pyproject
+    assert '"scripts",' not in pyproject
+    assert "python scripts/run_installed_wheel_smoke.py" in checklist
+    assert "tests/release/test_artifact_contents.py" in checklist
+    assert "tests/unit/test_release_artifacts.py" in checklist
+    assert "constraints/release.txt" in checklist
+    assert "Release CI runs both the default no-RDKit" in normalized_checklist
+    assert "--with-refinement" in normalized_checklist
+    assert "CPython 3.10, 3.11, and 3.12" in checklist
+    assert "Linux through GitHub Actions `ubuntu-latest`" in checklist
+    assert "Python 3.13+, macOS, and Windows are not advertised" in checklist
+    assert "PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS=1" in checklist
+    assert "rdkit==2026.3.2" in checklist
+    assert "2026.03.2" in checklist
+    assert "more than one known coordinate digest" in normalized_checklist
+    assert "2026.03.3" in checklist
+    assert "CMake 3.18 or newer" in normalized_checklist
+    assert "working C++ compiler toolchain" in normalized_checklist
+
+
+def test_release_constraints_pin_release_environment() -> None:
+    """Release constraints should pin CI tools without narrowing metadata ranges."""
+
+    constraint_lines = [
+        line.strip()
+        for line in Path("constraints/release.txt").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    constraints = dict(line.split("==", maxsplit=1) for line in constraint_lines)
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    smoke_script = Path("scripts/run_installed_wheel_smoke.py").read_text()
+
+    assert all("==" in line for line in constraint_lines)
+    assert constraints == {
+        "basedpyright": "1.39.9",
+        "gemmi": "0.7.5",
+        "hatch-vcs": "0.5.0",
+        "hatchling": "1.30.1",
+        "numpy": "2.2.6",
+        "pytest": "8.4.2",
+        "pytest-cov": "7.1.0",
+        "rdkit": "2026.3.2",
+        "ruff": "0.15.20",
+        "scikit-build-core": "0.12.2",
+        "typing_extensions": "4.16.0",
+    }
+    assert "numpy==2.4" not in Path("constraints/release.txt").read_text()
+    assert 'pip install -c constraints/release.txt ".[dev,refinement]"' in workflow
+    assert "DEFAULT_CONSTRAINTS_PATH" in smoke_script
 
 
 def test_release_docs_state_faspr_installed_asset_contract() -> None:
@@ -66,8 +215,13 @@ def test_release_docs_state_faspr_installed_asset_contract() -> None:
     assert "Built packages and wheels include the vendored FASPR executable" in (
         normalized_readme
     )
+    assert "Prefer a built wheel" in normalized_readme
+    assert "direct GitHub installs" in normalized_readme
+    assert "CMake 3.18 or newer" in normalized_readme
+    assert "working C++ compiler toolchain" in normalized_readme
     assert "Direct source-tree imports are not guaranteed" in normalized_readme
     assert "explicit FASPR `executable_path`" in normalized_readme
+    assert "dun2010bbdep.bin" in normalized_readme
 
 
 def test_faspr_runtime_policy_documents_hydrogen_merge_contract() -> None:
