@@ -104,6 +104,7 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     """Release gates should not live only in ignored local checkout files."""
 
     checklist = Path("docs/release-checklist.md").read_text()
+    normalized_checklist = " ".join(checklist.split())
     gitignore_lines = {
         line.strip()
         for line in Path(".gitignore").read_text().splitlines()
@@ -132,6 +133,8 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert "PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS=1" in checklist
     assert "rdkit==2026.3.2" in checklist
     assert "2026.03.2" in checklist
+    assert "CMake 3.18 or newer" in normalized_checklist
+    assert "working C++ compiler toolchain" in normalized_checklist
 
 
 def test_release_constraints_pin_release_environment() -> None:
@@ -174,8 +177,13 @@ def test_release_docs_state_faspr_installed_asset_contract() -> None:
     assert "Built packages and wheels include the vendored FASPR executable" in (
         normalized_readme
     )
+    assert "Prefer a built wheel" in normalized_readme
+    assert "direct GitHub installs" in normalized_readme
+    assert "CMake 3.18 or newer" in normalized_readme
+    assert "working C++ compiler toolchain" in normalized_readme
     assert "Direct source-tree imports are not guaranteed" in normalized_readme
     assert "explicit FASPR `executable_path`" in normalized_readme
+    assert "dun2010bbdep.bin" in normalized_readme
 
 
 def test_faspr_runtime_policy_documents_hydrogen_merge_contract() -> None:

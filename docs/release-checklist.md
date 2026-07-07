@@ -91,6 +91,11 @@ Bundled FASPR assets are an installed-package/wheel contract. Source-tree
 execution may use an explicit FASPR `executable_path`, but release verification
 should not rely on speculative build-directory probing.
 
+Source installs and GitHub installs build the vendored FASPR executable through
+`scikit-build-core` and CMake. The documented native-build prerequisite is CMake
+3.18 or newer plus a working C++ compiler toolchain. Prefer wheels for users who
+need FASPR but do not want to build native assets locally.
+
 ## Artifact Contents
 
 Run the fresh wheel/sdist archive content gate:
