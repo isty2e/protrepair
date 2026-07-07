@@ -247,7 +247,7 @@ write_structure(structure, Path("output.pdb"))
 Run the permanent verification surface with:
 
 ```bash
-ruff check src/protrepair tests --extend-select=I,UP --fix
+ruff check src/protrepair tests --extend-select=I,UP
 basedpyright src/protrepair tests
 pytest tests/unit -q
 ```

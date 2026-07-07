@@ -160,7 +160,7 @@ def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> st
 
 def build_gemmi_structure(
     structure: ProteinStructure,
-):
+) -> gemmi.Structure:
     """Project the canonical structure model into a gemmi structure."""
 
     raw_structure = gemmi.Structure()
@@ -194,7 +194,7 @@ def build_gemmi_structure(
 
 
 def add_topology_connections_to_gemmi_structure(
-    raw_structure,
+    raw_structure: gemmi.Structure,
     structure: ProteinStructure,
     *,
     include_pdb_conect_origin: bool,
@@ -320,7 +320,7 @@ def source_connection_link_id(bond: TopologyBond) -> str:
 
 
 def populate_gemmi_connection_partner(
-    raw_partner,
+    raw_partner: gemmi.AtomAddress,
     structure: ProteinStructure,
     atom_index: AtomIndex,
 ) -> None:
@@ -342,7 +342,9 @@ def populate_gemmi_connection_partner(
     raw_partner.altloc = "\0" if atom_geometry.altloc is None else atom_geometry.altloc
 
 
-def gemmi_connection_type(relationship_type: BondRelationshipType):
+def gemmi_connection_type(
+    relationship_type: BondRelationshipType,
+) -> gemmi.ConnectionType:
     """Return the gemmi connection type for one canonical relationship."""
 
     if relationship_type is BondRelationshipType.COVALENT:
@@ -528,7 +530,7 @@ def build_gemmi_residue(
     *,
     residue_geometry: ResidueGeometry,
     formal_charge_by_atom_name: tuple[tuple[str, int | None], ...],
-):
+) -> gemmi.Residue:
     """Project a canonical residue into a gemmi residue."""
 
     raw_residue = gemmi.Residue()
@@ -562,7 +564,7 @@ def build_gemmi_atom(
     *,
     atom_geometry: AtomGeometry,
     formal_charge: int | None,
-):
+) -> gemmi.Atom:
     """Project a canonical atom into a gemmi atom."""
 
     raw_atom = gemmi.Atom()
