@@ -142,6 +142,217 @@ def test_optimize_rotatable_hydrogen_selects_least_bad_candidate(
     assert result == Vec3(1.8, 0.0, 0.0)
 
 
+def test_optimize_rotatable_hydrogen_preserves_candidate_identity_across_environments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The best score from a later environment should still select its candidate."""
+
+    candidate_hydrogens = (Vec3(1.0, 0.0, 0.0), Vec3(2.0, 0.0, 0.0))
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_positions",
+        lambda self: candidate_hydrogens,
+    )
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_score",
+        lambda self, hydrogen, environment: (
+            1.0
+            if environment.atom_y == (2.0,) and Vec3.coerce(hydrogen).x == 2.0
+            else 5.0
+        ),
+    )
+
+    result = search_template().optimized_coordinate(
+        residue_number="19",
+        environments=(
+            RotatableHydrogenEnvironment(
+                residue_number="19",
+                atom_x=(0.0,),
+                atom_y=(1.0,),
+                atom_z=(0.0,),
+                elements=("C",),
+                charges=(0.0,),
+                sigmas_nm=(0.0,),
+                epsilons_kj_mol=(0.0,),
+            ),
+            RotatableHydrogenEnvironment(
+                residue_number="19",
+                atom_x=(0.0,),
+                atom_y=(2.0,),
+                atom_z=(0.0,),
+                elements=("C",),
+                charges=(0.0,),
+                sigmas_nm=(0.0,),
+                epsilons_kj_mol=(0.0,),
+            ),
+        ),
+    )
+
+    assert result == Vec3(2.0, 0.0, 0.0)
+
+
+def test_optimize_rotatable_hydrogen_keeps_first_candidate_on_score_tie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tie handling should remain deterministic in environment scan order."""
+
+    candidate_hydrogens = (Vec3(1.0, 0.0, 0.0), Vec3(2.0, 0.0, 0.0))
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_positions",
+        lambda self: candidate_hydrogens,
+    )
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_score",
+        lambda self, hydrogen, environment: (
+            1.0
+            if (
+                environment.atom_y == (1.0,)
+                and Vec3.coerce(hydrogen).x == 2.0
+            )
+            or (
+                environment.atom_y == (2.0,)
+                and Vec3.coerce(hydrogen).x == 1.0
+            )
+            else 5.0
+        ),
+    )
+
+    result = search_template().optimized_coordinate(
+        residue_number="19",
+        environments=(
+            RotatableHydrogenEnvironment(
+                residue_number="19",
+                atom_x=(0.0,),
+                atom_y=(1.0,),
+                atom_z=(0.0,),
+                elements=("C",),
+                charges=(0.0,),
+                sigmas_nm=(0.0,),
+                epsilons_kj_mol=(0.0,),
+            ),
+            RotatableHydrogenEnvironment(
+                residue_number="19",
+                atom_x=(0.0,),
+                atom_y=(2.0,),
+                atom_z=(0.0,),
+                elements=("C",),
+                charges=(0.0,),
+                sigmas_nm=(0.0,),
+                epsilons_kj_mol=(0.0,),
+            ),
+        ),
+    )
+
+    assert result == Vec3(2.0, 0.0, 0.0)
+
+
+def test_optimize_rotatable_hydrogen_does_not_score_nonmatching_environments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Residue-number filtering should happen before any candidate scoring."""
+
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_positions",
+        lambda self: (Vec3(1.0, 0.0, 0.0),),
+    )
+
+    def score_matching_environment(
+        self,
+        hydrogen,
+        environment: RotatableHydrogenEnvironment,
+    ) -> float:
+        if environment.residue_number != "target":
+            pytest.fail("nonmatching environments must not be scored")
+        return 0.0
+
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_score",
+        score_matching_environment,
+    )
+
+    result = search_template().optimized_coordinate(
+        residue_number="target",
+        environments=(
+            minimal_environment("other", marker=1.0),
+            minimal_environment("target", marker=2.0),
+        ),
+    )
+
+    assert result == Vec3(1.0, 0.0, 0.0)
+
+
+def test_optimize_rotatable_hydrogen_handles_single_candidate_across_environments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A one-candidate scan should still evaluate every matching environment."""
+
+    candidate = Vec3(4.0, 0.0, 0.0)
+    scored_environment_markers: list[float] = []
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_positions",
+        lambda self: (candidate,),
+    )
+
+    def score_environment(
+        self,
+        hydrogen,
+        environment: RotatableHydrogenEnvironment,
+    ) -> float:
+        scored_environment_markers.append(environment.atom_y[0])
+        return environment.atom_y[0]
+
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_score",
+        score_environment,
+    )
+
+    result = search_template().optimized_coordinate(
+        residue_number="target",
+        environments=(
+            minimal_environment("target", marker=2.0),
+            minimal_environment("target", marker=1.0),
+        ),
+    )
+
+    assert result == candidate
+    assert scored_environment_markers == [2.0, 1.0]
+
+
+def test_optimize_rotatable_hydrogen_does_not_score_empty_candidate_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty candidate scan should fall back without calling the scorer."""
+
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_positions",
+        lambda self: (),
+    )
+
+    def score_empty_candidate_scan(self, hydrogen, environment) -> float:
+        pytest.fail("empty candidate scans must not call candidate_score")
+
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_score",
+        score_empty_candidate_scan,
+    )
+
+    result = search_template().optimized_coordinate(
+        residue_number="target",
+        environments=(minimal_environment("target", marker=1.0),),
+    )
+
+    assert result == Vec3(9.0, 9.0, 9.0)
+
+
 def test_rotatable_hydrogen_search_skips_undefined_candidate_frames() -> None:
     """Degenerate anchor frames should fall back instead of leaking math errors."""
 
@@ -307,6 +518,25 @@ def search_template() -> RotatableHydrogenSearch:
         sigma=0.0,
         epsilon=0.0,
         donor_element="O",
+    )
+
+
+def minimal_environment(
+    residue_number: str,
+    *,
+    marker: float,
+) -> RotatableHydrogenEnvironment:
+    """Return one marker-bearing environment for identity-focused tests."""
+
+    return RotatableHydrogenEnvironment(
+        residue_number=residue_number,
+        atom_x=(0.0,),
+        atom_y=(marker,),
+        atom_z=(0.0,),
+        elements=("C",),
+        charges=(0.0,),
+        sigmas_nm=(0.0,),
+        epsilons_kj_mol=(0.0,),
     )
 
 

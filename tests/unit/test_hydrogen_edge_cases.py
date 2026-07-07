@@ -405,10 +405,10 @@ def test_insertion_code_survives_class6_hydrogen_placement() -> None:
     assert residue.has_atom_site("HG")
 
 
-def test_rotatable_hydrogen_falls_back_to_initial_position_on_legacy_index_overflow(
+def test_rotatable_hydrogen_keeps_candidate_identity_on_legacy_index_overflow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Legacy duplicate residue numbers should fall back to the initial hydrogen."""
+    """Duplicate residue-number environments should still select the best candidate."""
 
     candidate_hydrogens = [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]
     energy_calls = iter((5.0, 6.0, 1.0, 2.0))
@@ -422,7 +422,7 @@ def test_rotatable_hydrogen_falls_back_to_initial_position_on_legacy_index_overf
     )
     monkeypatch.setattr(
         RotatableHydrogenSearch,
-        "potential_energy",
+        "candidate_score",
         lambda self, hydrogen, environment: next(energy_calls),
     )
 
@@ -463,7 +463,7 @@ def test_rotatable_hydrogen_falls_back_to_initial_position_on_legacy_index_overf
         ),
     )
 
-    assert result == Vec3(9.0, 9.0, 9.0)
+    assert result == Vec3(1.0, 0.0, 0.0)
 
 
 def test_ordered_patch_exposes_backbone_hydrogen_anchor_positions() -> None:
