@@ -1,5 +1,6 @@
 """Canonical raw-structure ingress normalization transformations."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import isfinite
 
@@ -138,7 +139,7 @@ class _RawAtomPayload:
 
 
 def normalize_raw_structure(
-    raw_structure,
+    raw_structure: gemmi.Structure,
     *,
     file_format: FileFormat,
     policy: StructureNormalizationPolicy,
@@ -427,7 +428,7 @@ def apply_structure_normalization_policy(
 
 
 def _source_inter_residue_connections_from_raw_structure(
-    raw_structure,
+    raw_structure: gemmi.Structure,
     *,
     constitution: StructureConstitution,
     geometry: StructureGeometry,
@@ -464,7 +465,7 @@ def _source_inter_residue_connections_from_raw_structure(
 
 
 def _source_atom_identity_from_connection_partner(
-    partner,
+    partner: gemmi.AtomAddress,
 ) -> SourceAtomIdentity | None:
     """Return source endpoint identity for one gemmi connection partner."""
 
@@ -477,11 +478,15 @@ def _source_atom_identity_from_connection_partner(
         return None
 
     seqid = partner.res_id.seqid
+    seq_num = seqid.num
+    if seq_num is None:
+        return None
+
     return SourceAtomIdentity(
         atom_ref=AtomRef(
             residue_id=ResidueId(
                 chain_id=chain_id,
-                seq_num=int(seqid.num),
+                seq_num=int(seq_num),
                 insertion_code=normalize_insertion_code(seqid.icode),
             ),
             atom_name=atom_name,
@@ -492,7 +497,7 @@ def _source_atom_identity_from_connection_partner(
 
 
 def _relationship_type_from_connection(
-    connection_type,
+    connection_type: gemmi.ConnectionType,
 ) -> BondRelationshipType:
     """Map gemmi connection types into topology relationship types."""
 
@@ -527,8 +532,21 @@ def _normalize_reported_connection_distance(
     return normalized_distance
 
 
+def _raw_residue_seq_num(raw_residue: gemmi.Residue) -> int:
+    """Return a source residue sequence number or reject malformed raw input."""
+
+    seq_num = raw_residue.seqid.num
+    if seq_num is None:
+        raise StructureNormalizationError(
+            "structure normalization rejected residue without a sequence number: "
+            f"{raw_residue.name.strip()!r}"
+        )
+
+    return int(seq_num)
+
+
 def _normalize_polymer_residues(
-    raw_chain,
+    raw_chain: gemmi.Chain,
     chain_id: str,
     policy: StructureNormalizationPolicy,
 ) -> list[_NormalizedResiduePayload]:
@@ -560,7 +578,7 @@ def _normalize_polymer_residues(
 
 
 def _normalize_ligands(
-    raw_chain,
+    raw_chain: gemmi.Chain,
     chain_id: str,
     policy: StructureNormalizationPolicy,
 ) -> list[_NormalizedResiduePayload]:
@@ -577,7 +595,7 @@ def _normalize_ligands(
 
         residue_id = ResidueId(
             chain_id=chain_id,
-            seq_num=int(raw_residue.seqid.num),
+            seq_num=_raw_residue_seq_num(raw_residue),
             insertion_code=normalize_insertion_code(raw_residue.seqid.icode),
         )
         if policy.rejects_ligands():
@@ -655,7 +673,7 @@ def _select_residue_altloc(
 def _raw_atoms_for_selected_altloc(
     raw_atom_payloads: tuple[_RawAtomPayload, ...],
     selected_altloc: str | None,
-):
+) -> Iterable[_RawAtomPayload]:
     """Yield atom payloads belonging to the selected residue-level altloc cohort."""
 
     for atom_payload in raw_atom_payloads:
@@ -669,7 +687,7 @@ def _raw_atoms_for_selected_altloc(
 
 
 def _select_atom_name_variants(
-    raw_atom_payloads,
+    raw_atom_payloads: Iterable[_RawAtomPayload],
     *,
     selected_altloc: str | None,
     occupancy_policy: OccupancyPolicy,
@@ -714,7 +732,7 @@ def _selected_altloc_priority(
 
 
 def _normalize_residue(
-    raw_residue,
+    raw_residue: gemmi.Residue,
     chain_id: str,
     occupancy_policy: OccupancyPolicy,
 ) -> _NormalizedResiduePayload:
@@ -722,7 +740,7 @@ def _normalize_residue(
 
     residue_id = ResidueId(
         chain_id=chain_id,
-        seq_num=int(raw_residue.seqid.num),
+        seq_num=_raw_residue_seq_num(raw_residue),
         insertion_code=normalize_insertion_code(raw_residue.seqid.icode),
     )
     selected_atom_payloads = _select_atom_variants(
@@ -752,7 +770,7 @@ def _normalize_residue(
 
 
 def _select_atom_variants(
-    raw_residue,
+    raw_residue: gemmi.Residue,
     *,
     residue_id: ResidueId,
     occupancy_policy: OccupancyPolicy,
@@ -793,7 +811,7 @@ def _should_replace_occupancy_score(
 
 
 def _atom_payload_from_raw_site(
-    raw_atom,
+    raw_atom: gemmi.Atom,
     *,
     residue_id: ResidueId,
 ) -> _RawAtomPayload:
@@ -858,7 +876,10 @@ def _validated_raw_atom_float(
     return normalized_value
 
 
-def _validated_raw_atom_occupancy(raw_atom, residue_id: ResidueId) -> float:
+def _validated_raw_atom_occupancy(
+    raw_atom: gemmi.Atom,
+    residue_id: ResidueId,
+) -> float:
     """Return a finite PDB/mmCIF occupancy in the accepted [0, 1] range."""
 
     occupancy = _validated_raw_atom_float(
@@ -877,7 +898,10 @@ def _validated_raw_atom_occupancy(raw_atom, residue_id: ResidueId) -> float:
     return occupancy
 
 
-def _validated_raw_atom_b_factor(raw_atom, residue_id: ResidueId) -> float:
+def _validated_raw_atom_b_factor(
+    raw_atom: gemmi.Atom,
+    residue_id: ResidueId,
+) -> float:
     """Return a finite non-negative source B factor with no upper bound."""
 
     b_factor = _validated_raw_atom_float(
@@ -928,7 +952,7 @@ def _should_replace_residue(
     return candidate_score > current_score
 
 
-def _is_ligand_residue(raw_residue) -> bool:
+def _is_ligand_residue(raw_residue: gemmi.Residue) -> bool:
     """Return whether one raw residue should be classified as a ligand."""
 
     return bool(
@@ -940,7 +964,7 @@ def _is_ligand_residue(raw_residue) -> bool:
     )
 
 
-def _is_water_residue(raw_residue) -> bool:
+def _is_water_residue(raw_residue: gemmi.Residue) -> bool:
     """Return whether one raw residue represents water."""
 
     return bool(

@@ -323,7 +323,6 @@ STANDARD_TETRAHEDRAL_CENTER_SEMANTICS: dict[
 
 
 @lru_cache(maxsize=1)
-@lru_cache(maxsize=1)
 def build_standard_component_library() -> ComponentLibrary:
     """Return the built-in library for the 20 standard residues."""
 

@@ -126,7 +126,7 @@ def read_structure_string_with_policy(
         ) from error
 
 
-def read_raw_structure(path: Path, file_format: FileFormat):
+def read_raw_structure(path: Path, file_format: FileFormat) -> gemmi.Structure:
     """Read one coordinate file with a format-specific gemmi ingress path.
 
     The size guard is repeated here so direct raw-parser callers cannot bypass
@@ -145,7 +145,10 @@ def read_raw_structure(path: Path, file_format: FileFormat):
     )
 
 
-def read_raw_structure_string(contents: str, file_format: FileFormat):
+def read_raw_structure_string(
+    contents: str,
+    file_format: FileFormat,
+) -> gemmi.Structure:
     """Read one coordinate payload with a format-specific gemmi ingress path.
 
     The returned gemmi object can contain multiple source models; canonical
