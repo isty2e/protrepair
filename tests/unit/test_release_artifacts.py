@@ -205,7 +205,7 @@ def test_rdkit_radius_snapshot_provenance_is_documented() -> None:
     assert '"rdkit",' in pyproject
     assert "Runtime dependency: `rdkit`" in notices
     assert "RDKit source license: BSD 3-Clause" in notices
-    assert "PyPI wheel wrapper license file: MIT" in notices
+    assert "PyPI package license: BSD 3-Clause" in notices
     assert "src/protrepair/chemistry/radii.py" in notices
     assert "rdkit==2026.3.2" in notices
     assert "rdBase.rdkitVersion=2026.03.2" in notices

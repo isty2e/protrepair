@@ -118,25 +118,14 @@ def detect_near_covalent_contacts(
     structure: ProteinStructure,
     *,
     component_library: ComponentLibrary | None = None,
-    context: ClashDetectionContext | None = None,
     focus_residue_ids: frozenset[ResidueId] | None = None,
     pair_policy: ClashPolicy | None = None,
     policy: NearCovalentContactPolicy | None = None,
 ) -> tuple[NearCovalentContact, ...]:
     """Return severe nonbonded contacts short enough to look near-covalent."""
 
-    if context is not None:
-        return detect_near_covalent_contacts_from_context(
-            context,
-            focus_residue_ids=focus_residue_ids,
-            policy=policy,
-        )
-
     if component_library is None:
-        raise ValueError(
-            "near-covalent contact detection requires either a prepared "
-            "context or a component library"
-        )
+        raise ValueError("near-covalent contact detection requires a component library")
 
     active_policy = NearCovalentContactPolicy() if policy is None else policy
     return _detect_near_covalent_contacts_from_candidate_context(

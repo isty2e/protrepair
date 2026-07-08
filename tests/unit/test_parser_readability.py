@@ -1,3 +1,4 @@
+import pytest
 from tests.support.canonical_builders import (
     atom_payload,
     build_structure,
@@ -6,10 +7,12 @@ from tests.support.canonical_builders import (
 )
 
 from protrepair.chemistry import build_default_component_library
+from protrepair.diagnostics import parser_readability as parser_readability_module
 from protrepair.diagnostics.parser_readability import (
     _atom_ref_from_pdb_atom_line,
     prepare_rdkit_no_conect_known_bond_lookup,
 )
+from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
 from protrepair.io.pdb_projection import (
@@ -26,6 +29,46 @@ from protrepair.structure.topology import (
     SourceBondRecordType,
     TopologyBond,
 )
+
+
+def test_parser_readability_raises_when_required_rdkit_backend_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Required RDKit diagnostics should not silently report an empty probe."""
+
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=ResidueId("A", 1),
+                        atoms=(
+                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload("H", "H", Vec3(0.0, 1.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    monkeypatch.setattr(parser_readability_module, "Chem", None)
+    monkeypatch.setattr(parser_readability_module, "rdBase", None)
+
+    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+        parser_readability_module.probe_rdkit_no_conect_parser_readability(structure)
+    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+        parser_readability_module.measure_rdkit_no_conect_sanitize_readability(
+            structure
+        )
+    extra_heavy_bond_count = (
+        parser_readability_module
+        .measure_rdkit_no_conect_extra_heavy_proximity_bond_count
+    )
+    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+        extra_heavy_bond_count(structure)
 
 
 def test_pdb_atom_line_parser_normalizes_blank_chain_id() -> None:

@@ -14,7 +14,7 @@ from protrepair.diagnostics.geometry import residue_sort_key
 from protrepair.diagnostics.near_covalent import (
     NearCovalentContact,
     NearCovalentContactPolicy,
-    detect_near_covalent_contacts,
+    detect_near_covalent_contacts_from_context,
 )
 from protrepair.geometry import Vec3
 from protrepair.scope import ResidueSetScope
@@ -195,9 +195,8 @@ def propose_joint_correction_scopes(
     )
     focus_residue_id_set = frozenset(focus_residue_ids)
     near_covalent_contacts = tuple(
-        detect_near_covalent_contacts(
-            structure,
-            context=clash_context,
+        detect_near_covalent_contacts_from_context(
+            clash_context,
             focus_residue_ids=focus_residue_id_set,
             policy=NearCovalentContactPolicy(
                 minimum_overlap_angstrom=active_policy.minimum_overlap_angstrom,

@@ -21,7 +21,7 @@ from protrepair.diagnostics.kinds import (
 )
 from protrepair.diagnostics.near_covalent import (
     NearCovalentContact,
-    detect_near_covalent_contacts,
+    detect_near_covalent_contacts_from_context,
 )
 from protrepair.diagnostics.parser_readability import (
     measure_rdkit_no_conect_sanitize_readability_metrics,
@@ -308,9 +308,8 @@ def measure_refinement_acceptance_metrics(
         restraint_library=restraint_library,
         residue_ids=focus_residue_ids,
     )
-    near_covalent_contacts = detect_near_covalent_contacts(
-        structure,
-        context=clash_context,
+    near_covalent_contacts = detect_near_covalent_contacts_from_context(
+        clash_context,
         focus_residue_ids=focus_residue_ids,
     )
     stereochemistry_report = detect_sidechain_stereochemistry(

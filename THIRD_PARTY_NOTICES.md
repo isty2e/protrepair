@@ -20,7 +20,7 @@ in git history and the upstream project.
 - Upstream project: `rdkit/rdkit`
 - PyPI wheel project: `kuelumbus/rdkit-pypi`
 - RDKit source license: BSD 3-Clause
-- PyPI wheel wrapper license file: MIT
+- PyPI package license: BSD 3-Clause
 
 ProtRepair uses RDKit as a required runtime dependency for retained-ligand
 chemistry and local refinement. It also includes a static element-radius

@@ -7,7 +7,9 @@ from protrepair.diagnostics.clashes import (
     detect_clashes_from_context,
     prepare_clash_detection_context,
 )
-from protrepair.diagnostics.near_covalent import detect_near_covalent_contacts
+from protrepair.diagnostics.near_covalent import (
+    detect_near_covalent_contacts_from_context,
+)
 from protrepair.diagnostics.parser_readability import (
     RDKitKnownBondLookup,
     RDKitProximityBondCluster,
@@ -118,9 +120,8 @@ def parser_witness_pre_untangle_candidate_rank(
         clash_context,
         focus_residue_ids=frozenset(cluster.residue_ids),
     ).clashes
-    near_covalent_contacts = detect_near_covalent_contacts(
-        structure,
-        context=clash_context,
+    near_covalent_contacts = detect_near_covalent_contacts_from_context(
+        clash_context,
         focus_residue_ids=frozenset(cluster.residue_ids),
     )
     return ParserWitnessPreUntangleCandidateRank(

@@ -10,6 +10,7 @@ from typing import Protocol
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
+from protrepair.errors import RdkitUnavailableError
 from protrepair.io.pdb_projection import (
     RDKitNoConectPDBBlockProjector,
     pdb_without_conect,
@@ -32,6 +33,15 @@ try:
 except ImportError:  # pragma: no cover - exercised by RDKit import-guard checks
     Chem = None
     rdBase = None
+
+
+def _require_rdkit_parser_backend(context: str) -> None:
+    """Raise when the required RDKit parser backend is unavailable."""
+
+    if Chem is None or rdBase is None:
+        raise RdkitUnavailableError(
+            f"{context} requires the required rdkit dependency"
+        )
 
 
 class _RDKitResidueInfo(Protocol):
@@ -448,7 +458,8 @@ def probe_rdkit_no_conect_parser_readability(
 ) -> RDKitNoConectParserReadabilityProbe:
     """Return one reusable no-CONECT RDKit parser-readability probe."""
 
-    if Chem is None or not _structure_contains_hydrogens(structure):
+    _require_rdkit_parser_backend("RDKit no-CONECT parser-readability probe")
+    if not _structure_contains_hydrogens(structure):
         return RDKitNoConectParserReadabilityProbe(
             sanitize_readable=None,
             residue_problem_witnesses=(),
@@ -483,7 +494,8 @@ def measure_rdkit_no_conect_extra_heavy_proximity_bond_count(
 ) -> int:
     """Return the extra heavy-heavy parser witness count without clustering."""
 
-    if Chem is None or not _structure_contains_hydrogens(structure):
+    _require_rdkit_parser_backend("RDKit no-CONECT parser proximity-bond count")
+    if not _structure_contains_hydrogens(structure):
         return 0
 
     problem_surface = _rdkit_no_conect_problem_surface(
@@ -547,7 +559,9 @@ def measure_rdkit_no_conect_sanitize_readability(
     not an authoritative structure truth.
     """
 
-    if Chem is None or not _structure_contains_hydrogens(structure):
+    _require_rdkit_parser_backend("RDKit no-CONECT sanitize readability")
+    assert Chem is not None
+    if not _structure_contains_hydrogens(structure):
         return None
 
     pdb_block = pdb_without_conect(structure)
@@ -764,7 +778,9 @@ def _rdkit_no_conect_problem_surface(
 ) -> _RDKitNoConectProblemSurface:
     """Return parsed RDKit problem data before witness projection."""
 
-    if Chem is None or not _structure_contains_hydrogens(structure):
+    _require_rdkit_parser_backend("RDKit no-CONECT parser problem surface")
+    assert Chem is not None
+    if not _structure_contains_hydrogens(structure):
         return _RDKitNoConectProblemSurface(
             molecule=None,
             residue_atom_names={},
