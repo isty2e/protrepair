@@ -18,6 +18,10 @@ from protrepair.chemistry import (
     resolve_element_radius,
     van_der_waals_radius_angstrom,
 )
+from protrepair.chemistry.radii import (
+    RDKIT_PERIODIC_TABLE_COVALENT_RADII_ANGSTROM,
+    RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM,
+)
 from protrepair.transformer.completion.hydrogen.geometry import (
     rotatable_hydrogen_vdw_radius_angstrom,
 )
@@ -56,6 +60,48 @@ def test_covalent_radii_match_rdkit_periodic_table_snapshot() -> None:
     assert covalent_radius_angstrom("Ca") == 1.76
     assert covalent_radius_angstrom("Fe") == 1.32
     assert covalent_radius_angstrom("CL") == 1.02
+
+
+def test_radius_snapshot_matches_live_rdkit_release_periodic_table() -> None:
+    """The committed snapshot should match the pinned release RDKit table."""
+
+    from rdkit import Chem, rdBase
+
+    if rdBase.rdkitVersion != RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION:
+        pytest.skip(
+            "live RDKit PeriodicTable verifier requires release snapshot version "
+            f"{RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION}; got "
+            f"{rdBase.rdkitVersion}"
+        )
+
+    periodic_table = Chem.GetPeriodicTable()
+    live_vdw_radii = {
+        periodic_table.GetElementSymbol(atomic_number).upper(): (
+            periodic_table.GetRvdw(atomic_number)
+        )
+        for atomic_number in range(1, 119)
+    }
+    live_covalent_radii = {
+        periodic_table.GetElementSymbol(atomic_number).upper(): (
+            periodic_table.GetRcovalent(atomic_number)
+        )
+        for atomic_number in range(1, 119)
+    }
+
+    assert set(RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM) == set(
+        live_vdw_radii
+    )
+    assert set(RDKIT_PERIODIC_TABLE_COVALENT_RADII_ANGSTROM) == set(
+        live_covalent_radii
+    )
+    for element_symbol, radius_angstrom in live_vdw_radii.items():
+        assert RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM[
+            element_symbol
+        ] == pytest.approx(radius_angstrom)
+    for element_symbol, radius_angstrom in live_covalent_radii.items():
+        assert RDKIT_PERIODIC_TABLE_COVALENT_RADII_ANGSTROM[
+            element_symbol
+        ] == pytest.approx(radius_angstrom)
 
 
 def test_unsupported_element_radii_resolve_explicitly_unknown() -> None:

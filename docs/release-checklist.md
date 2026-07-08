@@ -28,7 +28,7 @@ Run the permanent code-quality and unit surface:
 ```bash
 python -m ruff check
 python -m basedpyright
-python -m pytest tests/unit -q
+python -m pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q
 ```
 
 Run the release-facing API and documentation smoke surface:
@@ -62,6 +62,10 @@ snapshot generated from `GetRvdw` and `GetRcovalent`, not runtime RDKit lookup.
 See `docs/radius-policy.md` for the canonical unknown-element and batch-lookup
 contract. Update `src/protrepair/chemistry/radii.py`, `THIRD_PARTY_NOTICES.md`,
 and the radius sentinel tests together if the release RDKit pin changes.
+`tests/unit/test_radii.py` includes a live RDKit PeriodicTable verifier that
+compares all atomic numbers 1 through 118 when the installed RDKit backend
+version matches the committed snapshot version; the release constraints make
+that verifier active in release CI.
 
 ## Build And Install Smoke
 
@@ -99,8 +103,17 @@ Confirm that the wheel contains these non-code assets:
 
 - `protrepair/chemistry/resources/nonstandard_components.json.gz`
 - `protrepair/chemistry/resources/retained_non_polymer_components.json.gz`
+- `protrepair/chemistry/radii.py`
 - `protrepair/packing/faspr/bin/FASPR`
 - `protrepair/packing/faspr/bin/dun2010bbdep.bin`
+
+Confirm that the sdist contains the release gate sources:
+
+- `constraints/release.txt`
+- `docs/release-checklist.md`
+- `docs/radius-policy.md`
+- `scripts/run_installed_wheel_smoke.py`
+- `THIRD_PARTY_NOTICES.md`
 
 ## GitHub Actions Policy
 

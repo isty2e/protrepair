@@ -57,6 +57,7 @@ def test_built_wheel_contains_runtime_assets_and_notices(
 
     assert {
         "protrepair/py.typed",
+        "protrepair/chemistry/radii.py",
         "protrepair/chemistry/resources/nonstandard_components.json.gz",
         "protrepair/chemistry/resources/retained_non_polymer_components.json.gz",
         "protrepair/packing/faspr/bin/FASPR",
@@ -72,6 +73,19 @@ def test_built_wheel_contains_runtime_assets_and_notices(
     assert _has_suffix(names, ".dist-info/licenses/vendor/faspr/PROVENANCE.md")
     assert _has_suffix(names, ".dist-info/licenses/vendor/faspr/README.upstream.md")
 
+    with ZipFile(built_release_artifacts.wheel_path) as archive:
+        notices_name = next(
+            name
+            for name in archive.namelist()
+            if name.endswith(".dist-info/licenses/THIRD_PARTY_NOTICES.md")
+        )
+        notices = archive.read(notices_name).decode("utf-8")
+
+    assert "src/protrepair/chemistry/radii.py" in notices
+    assert "rdkit==2026.3.2" in notices
+    assert "GetRvdw" in notices
+    assert "GetRcovalent" in notices
+
 
 def test_built_sdist_contains_release_sources_and_vendor_snapshot(
     built_release_artifacts: BuiltReleaseArtifacts,
@@ -82,6 +96,7 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
         names = frozenset(archive.getnames())
 
     assert _has_suffix(names, "/src/protrepair/py.typed")
+    assert _has_suffix(names, "/src/protrepair/chemistry/radii.py")
     assert _has_suffix(
         names,
         "/src/protrepair/chemistry/resources/nonstandard_components.json.gz",
@@ -92,6 +107,7 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
     )
     assert _has_suffix(names, "/constraints/release.txt")
     assert _has_suffix(names, "/docs/release-checklist.md")
+    assert _has_suffix(names, "/docs/radius-policy.md")
     assert _has_suffix(names, "/scripts/run_installed_wheel_smoke.py")
     assert _has_suffix(names, "/THIRD_PARTY_NOTICES.md")
 

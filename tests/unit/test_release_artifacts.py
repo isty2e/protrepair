@@ -145,6 +145,7 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     pyproject = Path("pyproject.toml").read_text()
 
     assert Path("docs/release-checklist.md").is_file()
+    assert Path("docs/radius-policy.md").is_file()
     assert Path("scripts/run_installed_wheel_smoke.py").is_file()
     assert Path("constraints/release.txt").is_file()
     assert "docs/release-checklist.md" not in gitignore_lines
@@ -158,7 +159,12 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert "python scripts/run_installed_wheel_smoke.py" in checklist
     assert "tests/release/test_artifact_contents.py" in checklist
     assert "tests/unit/test_release_artifacts.py" in checklist
+    assert "tests/unit/test_radii.py" in checklist
+    assert "tests/corpus" in checklist
+    assert "tests/workflow" in checklist
+    assert "-m \"not benchmark\"" in checklist
     assert "constraints/release.txt" in checklist
+    assert "docs/radius-policy.md" in checklist
     assert "Release CI runs the installed-wheel smoke" in normalized_checklist
     assert "--with-refinement" not in normalized_checklist
     assert "CPython 3.10, 3.11, and 3.12" in checklist
@@ -167,6 +173,8 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert "PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS=1" in checklist
     assert "rdkit==2026.3.2" in checklist
     assert "2026.03.2" in checklist
+    assert "all atomic numbers 1 through 118" in normalized_checklist
+    assert "live RDKit PeriodicTable verifier" in normalized_checklist
     assert "more than one known coordinate digest" in normalized_checklist
     assert "2026.03.3" in checklist
     assert "CMake 3.18 or newer" in normalized_checklist
@@ -191,6 +199,7 @@ def test_rdkit_radius_snapshot_provenance_is_documented() -> None:
 
     pyproject = Path("pyproject.toml").read_text()
     notices = " ".join(Path("THIRD_PARTY_NOTICES.md").read_text().split())
+    radius_policy = " ".join(Path("docs/radius-policy.md").read_text().split())
     radii_source = Path("src/protrepair/chemistry/radii.py").read_text()
 
     assert '"rdkit",' in pyproject
@@ -202,6 +211,8 @@ def test_rdkit_radius_snapshot_provenance_is_documented() -> None:
     assert "rdBase.rdkitVersion=2026.03.2" in notices
     assert "GetRvdw" in notices
     assert "GetRcovalent" in notices
+    assert "static snapshot of RDKit PeriodicTable radii" in radius_policy
+    assert "must not depend on vdW clash overlap" in radius_policy
     assert (
         'RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION = "2026.03.2"'
         in radii_source
