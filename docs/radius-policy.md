@@ -21,6 +21,8 @@ This policy is intentionally separate from RDKit force-field behavior. UFF and
 RDKit PDB proximity bonding are algorithm-specific mechanisms, not the canonical
 per-element diagnostic radius table.
 
-Near-covalent checks currently consume clash output, so changing vdW radii can
-still change which near-covalent contacts are considered. That coupling is
-tracked separately from the radius lookup contract.
+Near-covalent checks use covalent radii plus an explicit distance margin to
+generate candidate contacts. They may reuse clash atom-pair scope policy for
+hydrogen, ligand, and bonded-neighbor exclusions, but they must not depend on
+vdW clash overlap or on the output of steric clash filtering. Changing vdW
+radii alone must not suppress a contact that satisfies the covalent threshold.

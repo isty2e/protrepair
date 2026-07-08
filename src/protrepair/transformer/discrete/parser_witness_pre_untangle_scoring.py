@@ -120,7 +120,8 @@ def parser_witness_pre_untangle_candidate_rank(
     ).clashes
     near_covalent_contacts = detect_near_covalent_contacts(
         structure,
-        clashes=focus_clashes,
+        context=clash_context,
+        focus_residue_ids=frozenset(cluster.residue_ids),
     )
     return ParserWitnessPreUntangleCandidateRank(
         parser_extra_heavy_proximity_bond_count=(

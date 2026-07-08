@@ -13,7 +13,7 @@ from tests.support.canonical_builders import (
 
 import protrepair.transformer.continuous.rdkit as continuous_rdkit
 from protrepair.chemistry import build_default_component_library
-from protrepair.diagnostics import ClashPolicy, detect_clashes_involving_residues
+from protrepair.diagnostics import ClashPolicy
 from protrepair.diagnostics.near_covalent import detect_near_covalent_contacts
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat, read_structure, write_structure_string
@@ -88,7 +88,7 @@ def test_joint_correction_scope_proposals_cluster_representative_contact() -> No
     assert proposals
     assert proposals[0].residue_ids == REPRESENTATIVE_RESIDUE_IDS
     assert proposals[0].contact_pair_count >= 1
-    assert proposals[0].worst_overlap_angstrom >= 1.0
+    assert proposals[0].worst_overlap_angstrom > 0.0
 
 
 def test_joint_correction_scope_keeps_sidechain_only_contacts_sidechain_local() -> None:
@@ -136,7 +136,7 @@ def test_joint_correction_scope_promotes_backbone_contacts_to_residue_atoms() ->
     assert proposals
     assert proposals[0].residue_ids == (ResidueId("A", 1), ResidueId("B", 2))
     assert proposals[0].contact_pair_count >= 1
-    assert proposals[0].worst_overlap_angstrom > 2.0
+    assert proposals[0].worst_overlap_angstrom > 1.0
     assert proposals[0].motion_class is JointCorrectionMotionClass.RESIDUE_ATOMS
     assert (
         proposals[0].as_local_scope_spec().lowering
@@ -354,16 +354,11 @@ def test_representative_joint_scope_contact_is_detected_as_near_covalent() -> No
 
     component_library = build_default_component_library()
     structure = _hydrogenated_1afc_structure()
-    clash_report = detect_clashes_involving_residues(
-        structure,
-        residue_ids=frozenset((ResidueId("C", 45),)),
-        component_library=component_library,
-        policy=ClashPolicy(include_hydrogens=True),
-    )
-
     near_covalent_contacts = detect_near_covalent_contacts(
         structure,
-        clashes=clash_report.clashes,
+        component_library=component_library,
+        focus_residue_ids=frozenset((ResidueId("C", 45),)),
+        pair_policy=ClashPolicy(include_hydrogens=True),
     )
 
     assert near_covalent_contacts

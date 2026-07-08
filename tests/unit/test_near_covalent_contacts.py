@@ -9,8 +9,9 @@ from tests.support.canonical_builders import (
 )
 
 from protrepair.chemistry import UnknownElementRadiusError
+from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics.clash_pair_generation import ContactDomain
-from protrepair.diagnostics.clashes import StericClash
+from protrepair.diagnostics.clashes import ClashPolicy, detect_clashes
 from protrepair.diagnostics.near_covalent import detect_near_covalent_contacts
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
@@ -47,24 +48,111 @@ def test_near_covalent_contacts_report_unknown_radii_once() -> None:
         ),
         source_format=FileFormat.PDB,
     )
-    clash = StericClash(
-        left_residue_id=left_id,
-        left_component_id="UNX",
-        left_atom_name="X1",
-        left_domain=ContactDomain.POLYMER,
-        right_residue_id=right_id,
-        right_component_id="UNY",
-        right_atom_name="Y1",
-        right_domain=ContactDomain.POLYMER,
-        distance_angstrom=1.0,
-        allowed_distance_angstrom=2.5,
-        overlap_angstrom=1.5,
-    )
-
     with pytest.raises(UnknownElementRadiusError) as error_info:
-        detect_near_covalent_contacts(structure, clashes=(clash, clash))
+        detect_near_covalent_contacts(
+            structure,
+            component_library=build_standard_component_library(),
+        )
 
     message = str(error_info.value)
     assert "near-covalent contact detection has unresolved covalent radius" in message
     assert message.count("XX") == 1
     assert "C1" in message
+
+
+def test_near_covalent_contacts_do_not_depend_on_vdw_clash_output() -> None:
+    """Covalent-radius proximity should be detected even without a vdW clash."""
+
+    left_id = ResidueId("A", 1)
+    right_id = ResidueId("B", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="FRX",
+                        residue_id=left_id,
+                        atoms=(atom_payload("FR1", "FR", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+            chain_payload(
+                "B",
+                (
+                    residue_payload(
+                        component_id="FRY",
+                        residue_id=right_id,
+                        atoms=(atom_payload("FR1", "FR", Vec3(4.40, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    component_library = build_standard_component_library()
+
+    clash_report = detect_clashes(
+        structure,
+        component_library=component_library,
+        policy=ClashPolicy(heavy_overlap_tolerance_angstrom=10.0),
+    )
+    contacts = detect_near_covalent_contacts(
+        structure,
+        component_library=component_library,
+        pair_policy=ClashPolicy(heavy_overlap_tolerance_angstrom=10.0),
+    )
+
+    assert not clash_report.clashes
+    assert len(contacts) == 1
+    assert contacts[0].distance_angstrom == pytest.approx(4.40)
+    assert contacts[0].covalent_distance_cutoff_angstrom == pytest.approx(5.65)
+    assert contacts[0].overlap_angstrom == pytest.approx(1.25)
+
+
+def test_near_covalent_contacts_keep_retained_ions_out_by_default() -> None:
+    """Metal-like retained sites should not enter polymer-only diagnostics."""
+
+    polymer_id = ResidueId("A", 1)
+    ligand_id = ResidueId("Z", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=polymer_id,
+                        atoms=(atom_payload("O", "O", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        ligands=(
+            residue_payload(
+                component_id="ZN",
+                residue_id=ligand_id,
+                atoms=(atom_payload("ZN", "ZN", Vec3(2.10, 0.0, 0.0)),),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    component_library = build_standard_component_library()
+
+    default_contacts = detect_near_covalent_contacts(
+        structure,
+        component_library=component_library,
+    )
+    ligand_contacts = detect_near_covalent_contacts(
+        structure,
+        component_library=component_library,
+        pair_policy=ClashPolicy(include_ligands=True),
+    )
+
+    assert default_contacts == ()
+    assert len(ligand_contacts) == 1
+    assert {
+        ligand_contacts[0].left_domain,
+        ligand_contacts[0].right_domain,
+    } == {ContactDomain.POLYMER, ContactDomain.RETAINED_NON_POLYMER}
