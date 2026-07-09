@@ -121,6 +121,7 @@ def parser_witness_pre_untangle_candidate_rank(
         focus_residue_ids=frozenset(cluster.residue_ids),
     ).clashes
     near_covalent_contacts = detect_near_covalent_contacts_from_context(
+        structure,
         clash_context,
         focus_residue_ids=frozenset(cluster.residue_ids),
     )

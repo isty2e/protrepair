@@ -49,3 +49,8 @@ generate candidate contacts. They may reuse clash atom-pair scope policy for
 hydrogen, ligand, and bonded-neighbor exclusions, but they must not depend on
 vdW clash overlap or on the output of steric clash filtering. Changing vdW
 radii alone must not suppress a contact that satisfies the covalent threshold.
+Canonical covalent, disulfide, and metal-coordination topology relationships
+explain their endpoint proximity and therefore do not become unexpected
+near-covalent pathology; an `UNKNOWN` relationship does not suppress a
+finding. Same-residue heavy-atom eligibility follows the explicit
+near-covalent policy while known template-bond neighbors remain excluded.

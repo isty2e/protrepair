@@ -196,6 +196,7 @@ def propose_joint_correction_scopes(
     focus_residue_id_set = frozenset(focus_residue_ids)
     near_covalent_contacts = tuple(
         detect_near_covalent_contacts_from_context(
+            structure,
             clash_context,
             focus_residue_ids=focus_residue_id_set,
             policy=NearCovalentContactPolicy(
@@ -288,7 +289,7 @@ def batch_joint_correction_scope_proposals(
                 residue.residue_id
             )
         )
-        for residue in structure.constitution.iter_residues(include_ligands=False)
+        for residue in structure.constitution.iter_residues(include_ligands=True)
     }
     context_residue_ids_by_index = {
         proposal_index: _proposal_context_residue_ids(

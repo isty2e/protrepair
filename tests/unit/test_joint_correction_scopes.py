@@ -349,6 +349,57 @@ def test_batch_joint_correction_scope_proposals_filters_below_threshold() -> Non
         (ResidueId("A", 3), ResidueId("A", 4)),
     )
 
+
+def test_joint_scope_batches_genuine_polymer_ligand_contact() -> None:
+    """Unexpected holo contacts should remain representable through batching."""
+
+    polymer_id = ResidueId("A", 1)
+    ligand_id = ResidueId("A", 401)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=polymer_id,
+                        atoms=(atom_payload("CB", "C", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        ligands=(
+            residue_payload(
+                component_id="NAD",
+                residue_id=ligand_id,
+                atoms=(atom_payload("C5N", "C", Vec3(1.5, 0.0, 0.0)),),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    component_library = build_default_component_library()
+    chemistry_readiness_facts = StructureChemistryReadinessFacts.from_structure(
+        structure,
+        component_library=component_library,
+    )
+
+    proposals = propose_joint_correction_scopes(
+        structure,
+        focus_residue_ids=(polymer_id,),
+        component_library=component_library,
+        chemistry_readiness_facts=chemistry_readiness_facts,
+        include_ligands=True,
+    )
+    batched = batch_joint_correction_scope_proposals(
+        structure,
+        proposals=proposals,
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0].residue_ids == (polymer_id, ligand_id)
+    assert batched == proposals
+
 def test_representative_joint_scope_contact_is_detected_as_near_covalent() -> None:
     """Representative sanitize failure should surface as one near-covalent contact."""
 

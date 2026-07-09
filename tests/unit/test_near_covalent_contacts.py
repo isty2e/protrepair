@@ -1,6 +1,7 @@
 """Unit tests for near-covalent contact classification."""
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from tests.support.canonical_builders import (
@@ -10,18 +11,32 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
-from protrepair.chemistry import UnknownElementRadiusError
+from protrepair.chemistry import (
+    UnknownElementRadiusError,
+    build_default_component_library,
+)
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics.clash_pair_generation import ContactDomain
-from protrepair.diagnostics.clashes import ClashPolicy, detect_clashes
+from protrepair.diagnostics.clashes import (
+    ClashPolicy,
+    detect_clashes,
+    prepare_clash_detection_context,
+)
 from protrepair.diagnostics.near_covalent import (
     NearCovalentContact,
     NearCovalentContactPolicy,
     detect_near_covalent_contacts,
+    detect_near_covalent_contacts_from_context,
 )
 from protrepair.geometry import Vec3
-from protrepair.io import FileFormat
-from protrepair.structure.labels import ResidueId
+from protrepair.io import FileFormat, read_structure
+from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.topology import (
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
 
 
 @pytest.mark.parametrize(
@@ -216,3 +231,241 @@ def test_near_covalent_contacts_keep_retained_ions_out_by_default() -> None:
         ligand_contacts[0].left_domain,
         ligand_contacts[0].right_domain,
     } == {ContactDomain.POLYMER, ContactDomain.RETAINED_NON_POLYMER}
+
+
+def test_near_covalent_contacts_honor_same_residue_policy() -> None:
+    """Same-residue nonbonded heavy pairs should follow their explicit policy."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="UNL",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload("C2", "C", Vec3(1.5, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    component_library = build_standard_component_library()
+
+    ignored = detect_near_covalent_contacts(
+        structure,
+        component_library=component_library,
+    )
+    included = detect_near_covalent_contacts(
+        structure,
+        component_library=component_library,
+        policy=NearCovalentContactPolicy(ignore_same_residue=False),
+    )
+
+    assert ignored == ()
+    assert len(included) == 1
+    assert {included[0].left_atom_name, included[0].right_atom_name} == {"C1", "C2"}
+
+
+def test_near_covalent_contacts_still_ignore_template_bonded_pair() -> None:
+    """Enabling same-residue diagnostics must not report a known template bond."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload("CA", "C", Vec3(1.0, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+
+    contacts = detect_near_covalent_contacts(
+        structure,
+        component_library=build_standard_component_library(),
+        policy=NearCovalentContactPolicy(ignore_same_residue=False),
+    )
+
+    assert contacts == ()
+
+
+@pytest.mark.parametrize(
+    "relationship_type",
+    (
+        BondRelationshipType.COVALENT,
+        BondRelationshipType.DISULFIDE,
+        BondRelationshipType.METAL_COORDINATION,
+    ),
+)
+def test_near_covalent_contacts_exclude_expected_topology_relationships(
+    relationship_type: BondRelationshipType,
+) -> None:
+    """Canonical close-contact relationships should not become pathologies."""
+
+    structure = _polymer_ligand_contact_structure()
+    structure = _with_topology_relationship(structure, relationship_type)
+
+    contacts = detect_near_covalent_contacts(
+        structure,
+        component_library=build_default_component_library(),
+        pair_policy=ClashPolicy(include_ligands=True),
+    )
+
+    assert contacts == ()
+
+
+def test_near_covalent_contacts_do_not_hide_unknown_topology_relationship() -> None:
+    """UNKNOWN topology must not silently legitimize an unexplained close pair."""
+
+    structure = _with_topology_relationship(
+        _polymer_ligand_contact_structure(),
+        BondRelationshipType.UNKNOWN,
+    )
+
+    contacts = detect_near_covalent_contacts(
+        structure,
+        component_library=build_default_component_library(),
+        pair_policy=ClashPolicy(include_ligands=True),
+    )
+
+    assert len(contacts) == 1
+
+
+def test_6nbb_zinc_coordination_is_not_near_covalent_pathology() -> None:
+    """Source-explicit 6NBB zinc coordination should remain topology truth."""
+
+    structure = read_structure(Path("tests/fixtures/corpus/pdb6nbb.ent"))
+    cysteine_id = ResidueId("A", 46)
+    zinc_id = ResidueId("A", 402)
+    coordination_bond = structure.topology.bond_between(
+        structure.constitution.atom_index(AtomRef(cysteine_id, "SG")),
+        structure.constitution.atom_index(AtomRef(zinc_id, "ZN")),
+    )
+
+    assert coordination_bond is not None
+    assert (
+        coordination_bond.relationship_type
+        is BondRelationshipType.METAL_COORDINATION
+    )
+
+    contacts = detect_near_covalent_contacts(
+        structure,
+        component_library=build_default_component_library(),
+        focus_residue_ids=frozenset((cysteine_id,)),
+        pair_policy=ClashPolicy(include_ligands=True),
+    )
+
+    assert not any(
+        {
+            (contact.left_residue_id, contact.left_atom_name),
+            (contact.right_residue_id, contact.right_atom_name),
+        }
+        == {(cysteine_id, "SG"), (zinc_id, "ZN")}
+        for contact in contacts
+    )
+
+
+def test_context_projection_rejects_mismatched_structure_address_space() -> None:
+    """Prepared geometry and canonical topology must share one address space."""
+
+    source_structure = _polymer_ligand_contact_structure()
+    mismatched_structure = build_structure(
+        chains=(
+            chain_payload(
+                "B",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=ResidueId("B", 1),
+                        atoms=(atom_payload("CB", "C", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    component_library = build_default_component_library()
+    context = prepare_clash_detection_context(
+        source_structure,
+        component_library=component_library,
+        policy=ClashPolicy(include_ligands=True),
+    )
+
+    with pytest.raises(ValueError, match="matching structure address space"):
+        detect_near_covalent_contacts_from_context(
+            mismatched_structure,
+            context,
+        )
+
+
+def _polymer_ligand_contact_structure() -> ProteinStructure:
+    """Return one unexplained polymer-ligand near-covalent contact."""
+
+    return build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=ResidueId("A", 1),
+                        atoms=(atom_payload("CB", "C", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        ligands=(
+            residue_payload(
+                component_id="NAD",
+                residue_id=ResidueId("A", 401),
+                atoms=(atom_payload("C5N", "C", Vec3(1.5, 0.0, 0.0)),),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+
+
+def _with_topology_relationship(
+    structure: ProteinStructure,
+    relationship_type: BondRelationshipType,
+) -> ProteinStructure:
+    """Return the contact fixture with one canonical topology relationship."""
+
+    topology = StructureTopology(
+        constitution=structure.constitution,
+        atom_topologies=structure.topology.atom_topologies,
+        bonds=(
+            TopologyBond(
+                atom_index_1=structure.constitution.atom_index(
+                    AtomRef(ResidueId("A", 1), "CB")
+                ),
+                atom_index_2=structure.constitution.atom_index(
+                    AtomRef(ResidueId("A", 401), "C5N")
+                ),
+                relationship_type=relationship_type,
+            ),
+        ),
+    )
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=topology,
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )

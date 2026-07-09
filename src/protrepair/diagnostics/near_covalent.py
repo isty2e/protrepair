@@ -24,12 +24,21 @@ from protrepair.diagnostics.clashes import (
     build_residue_contexts,
     probable_hydrogen_bond,
     residue_sort_key,
+    same_residue_bond_hops,
     should_ignore_pair,
 )
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.topology import BondRelationshipType
 
 MINIMUM_NEAR_COVALENT_GRID_CELL_SIZE_ANGSTROM = 1.0
+_EXPECTED_CLOSE_CONTACT_RELATIONSHIP_TYPES = frozenset(
+    {
+        BondRelationshipType.COVALENT,
+        BondRelationshipType.DISULFIDE,
+        BondRelationshipType.METAL_COORDINATION,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +101,7 @@ class _NearCovalentCandidateContext:
     atom_sites: tuple[AtomSite, ...]
     pair_policy: ClashPolicy
     covalent_radius_by_element: Mapping[str, float]
+    expected_topology_endpoint_pairs: frozenset[tuple[AtomRef, AtomRef]]
 
     def __post_init__(self) -> None:
         radius_by_element = dict(self.covalent_radius_by_element)
@@ -107,6 +117,19 @@ class _NearCovalentCandidateContext:
             "covalent_radius_by_element",
             MappingProxyType(radius_by_element),
         )
+        expected_endpoint_pairs = frozenset(self.expected_topology_endpoint_pairs)
+        if any(
+            left_ref >= right_ref
+            for left_ref, right_ref in expected_endpoint_pairs
+        ):
+            raise ValueError(
+                "expected topology endpoint pairs must be distinct and ordered"
+            )
+        object.__setattr__(
+            self,
+            "expected_topology_endpoint_pairs",
+            expected_endpoint_pairs,
+        )
 
     def covalent_radius(self, element: str) -> float:
         """Return the cached covalent radius for one atom element."""
@@ -117,6 +140,7 @@ class _NearCovalentCandidateContext:
         self,
         *,
         focus_residue_ids: frozenset[ResidueId] | None = None,
+        include_same_residue_heavy_pairs: bool = False,
     ) -> Iterator[tuple[AtomSite, AtomSite]]:
         """Yield spatially pruned atom pairs before covalent distance checks."""
 
@@ -124,8 +148,22 @@ class _NearCovalentCandidateContext:
             self.atom_sites,
             focus_residue_ids=focus_residue_ids,
             policy=self.pair_policy,
+            include_same_residue_heavy_pairs=include_same_residue_heavy_pairs,
         ):
             yield cast(AtomSite, left_site), cast(AtomSite, right_site)
+
+    def topology_expects_close_contact(
+        self,
+        left_site: AtomSite,
+        right_site: AtomSite,
+    ) -> bool:
+        """Return whether canonical topology explains this close atom pair."""
+
+        endpoint_pair = _canonical_atom_ref_pair(
+            _atom_ref_for_site(left_site),
+            _atom_ref_for_site(right_site),
+        )
+        return endpoint_pair in self.expected_topology_endpoint_pairs
 
 
 def detect_near_covalent_contacts(
@@ -155,6 +193,7 @@ def detect_near_covalent_contacts(
 
 
 def detect_near_covalent_contacts_from_context(
+    structure: ProteinStructure,
     context: ClashDetectionContext,
     *,
     focus_residue_ids: frozenset[ResidueId] | None = None,
@@ -164,38 +203,13 @@ def detect_near_covalent_contacts_from_context(
 
     active_policy = NearCovalentContactPolicy() if policy is None else policy
     return _detect_near_covalent_contacts_from_candidate_context(
-        _candidate_context_from_clash_context(context, policy=active_policy),
+        _candidate_context_from_clash_context(
+            structure,
+            context,
+            policy=active_policy,
+        ),
         focus_residue_ids=focus_residue_ids,
         policy=active_policy,
-    )
-
-
-def _is_near_covalent_contact(
-    left_site: AtomSite,
-    right_site: AtomSite,
-    *,
-    policy: NearCovalentContactPolicy,
-    context: _NearCovalentCandidateContext,
-) -> bool:
-    """Return whether one atom-site pair resembles an extra covalent bond."""
-
-    if (
-        policy.ignore_same_residue
-        and left_site.residue_id == right_site.residue_id
-    ):
-        return False
-
-    covalent_distance_cutoff = _covalent_distance_cutoff_angstrom(
-        left_site,
-        right_site,
-        context=context,
-        policy=policy,
-    )
-    distance = left_site.geometry.distance_to(right_site.geometry)
-    overlap_angstrom = covalent_distance_cutoff - distance
-    return (
-        overlap_angstrom > 0.0
-        and overlap_angstrom >= policy.minimum_overlap_angstrom
     )
 
 
@@ -210,6 +224,7 @@ def _detect_near_covalent_contacts_from_candidate_context(
     contacts: list[NearCovalentContact] = []
     for left_site, right_site in context.candidate_atom_site_pairs(
         focus_residue_ids=focus_residue_ids,
+        include_same_residue_heavy_pairs=not policy.ignore_same_residue,
     ):
         contact = _near_covalent_contact_for_atom_site_pair(
             left_site,
@@ -272,15 +287,25 @@ def _prepare_near_covalent_candidate_context(
             element: covalent_radius_lookup.radius_angstrom(element)
             for element in elements
         },
+        expected_topology_endpoint_pairs=_expected_topology_endpoint_pairs(structure),
     )
 
 
 def _candidate_context_from_clash_context(
+    structure: ProteinStructure,
     context: ClashDetectionContext,
     *,
     policy: NearCovalentContactPolicy,
 ) -> _NearCovalentCandidateContext:
     """Project a clash context into a covalent-radius candidate context."""
+
+    if (
+        context.constitution_address_space_key
+        != structure.constitution.address_space_key
+    ):
+        raise ValueError(
+            "near-covalent contact context requires a matching structure address space"
+        )
 
     elements = tuple(dict.fromkeys(site.element for site in context.atom_sites))
     covalent_radius_lookup = prepare_radius_lookup(elements, RadiusKind.COVALENT)
@@ -304,6 +329,7 @@ def _candidate_context_from_clash_context(
             element: covalent_radius_lookup.radius_angstrom(element)
             for element in elements
         },
+        expected_topology_endpoint_pairs=_expected_topology_endpoint_pairs(structure),
     )
 
 
@@ -338,18 +364,24 @@ def _near_covalent_contact_for_atom_site_pair(
 ) -> NearCovalentContact | None:
     """Return a near-covalent contact for one atom-site pair if admitted."""
 
-    if not _is_near_covalent_contact(
-        left_site,
-        right_site,
-        policy=policy,
-        context=context,
-    ):
+    same_residue = left_site.residue_id == right_site.residue_id
+    if same_residue and policy.ignore_same_residue:
+        return None
+
+    if context.topology_expects_close_contact(left_site, right_site):
+        return None
+
+    if same_residue:
+        bond_hops = same_residue_bond_hops(left_site, right_site)
+        if (
+            bond_hops is not None
+            and bond_hops <= context.pair_policy.ignore_same_residue_bond_hops
+        ):
+            return None
+    elif should_ignore_pair(left_site, right_site, policy=context.pair_policy):
         return None
 
     distance = left_site.geometry.distance_to(right_site.geometry)
-    if should_ignore_pair(left_site, right_site, policy=context.pair_policy):
-        return None
-
     if probable_hydrogen_bond(left_site, right_site, distance):
         return None
 
@@ -359,6 +391,13 @@ def _near_covalent_contact_for_atom_site_pair(
         context=context,
         policy=policy,
     )
+    overlap_angstrom = covalent_distance_cutoff - distance
+    if (
+        overlap_angstrom <= 0.0
+        or overlap_angstrom < policy.minimum_overlap_angstrom
+    ):
+        return None
+
     return NearCovalentContact(
         left_residue_id=left_site.residue_id,
         left_component_id=left_site.component_id,
@@ -370,8 +409,42 @@ def _near_covalent_contact_for_atom_site_pair(
         right_domain=right_site.domain,
         distance_angstrom=distance,
         covalent_distance_cutoff_angstrom=covalent_distance_cutoff,
-        overlap_angstrom=covalent_distance_cutoff - distance,
+        overlap_angstrom=overlap_angstrom,
     )
+
+
+def _expected_topology_endpoint_pairs(
+    structure: ProteinStructure,
+) -> frozenset[tuple[AtomRef, AtomRef]]:
+    """Project topology relationships that explain legitimate close contacts."""
+
+    return frozenset(
+        _canonical_atom_ref_pair(
+            structure.constitution.atom_ref_at(bond.atom_index_1),
+            structure.constitution.atom_ref_at(bond.atom_index_2),
+        )
+        for bond in structure.topology.bonds
+        if bond.relationship_type in _EXPECTED_CLOSE_CONTACT_RELATIONSHIP_TYPES
+    )
+
+
+def _atom_ref_for_site(site: AtomSite) -> AtomRef:
+    """Return canonical identity for one prepared diagnostic atom site."""
+
+    return AtomRef(residue_id=site.residue_id, atom_name=site.atom_name)
+
+
+def _canonical_atom_ref_pair(
+    atom_ref_1: AtomRef,
+    atom_ref_2: AtomRef,
+) -> tuple[AtomRef, AtomRef]:
+    """Return one ordered canonical atom-reference pair."""
+
+    if atom_ref_1 == atom_ref_2:
+        raise ValueError("atom-reference pairs require distinct endpoints")
+    if atom_ref_1 < atom_ref_2:
+        return (atom_ref_1, atom_ref_2)
+    return (atom_ref_2, atom_ref_1)
 
 
 def _near_covalent_candidate_cell_size_angstrom(

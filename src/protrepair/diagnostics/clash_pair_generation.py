@@ -97,6 +97,7 @@ def iter_candidate_atom_site_pairs(
     *,
     focus_residue_ids: frozenset[ResidueId] | None,
     policy: ClashPairPolicy | None,
+    include_same_residue_heavy_pairs: bool = False,
 ) -> Iterator[tuple[ClashPairAtomSite, ClashPairAtomSite]]:
     """Yield locality-pruned candidate pairs, optionally restricted to one focus."""
 
@@ -105,6 +106,7 @@ def iter_candidate_atom_site_pairs(
             atom_sites,
             focus_residue_ids=focus_residue_ids,
             policy=policy,
+            include_same_residue_heavy_pairs=include_same_residue_heavy_pairs,
         )
         return
 
@@ -131,6 +133,9 @@ def iter_candidate_atom_site_pairs(
                     previous_atom_site,
                     atom_site,
                     policy=policy,
+                    include_same_residue_heavy_pairs=(
+                        include_same_residue_heavy_pairs
+                    ),
                 ):
                     continue
 
@@ -144,6 +149,7 @@ def _iter_focused_candidate_atom_site_pairs(
     *,
     focus_residue_ids: frozenset[ResidueId],
     policy: ClashPairPolicy | None,
+    include_same_residue_heavy_pairs: bool,
 ) -> Iterator[tuple[ClashPairAtomSite, ClashPairAtomSite]]:
     """Yield candidate pairs touching focus atoms without streaming all pairs."""
 
@@ -191,6 +197,9 @@ def _iter_focused_candidate_atom_site_pairs(
                     left_site,
                     right_site,
                     policy=policy,
+                    include_same_residue_heavy_pairs=(
+                        include_same_residue_heavy_pairs
+                    ),
                 ):
                     continue
 
@@ -202,6 +211,7 @@ def pair_can_be_rejected_before_distance(
     right_site: ClashPairAtomSite,
     *,
     policy: ClashPairPolicy | None,
+    include_same_residue_heavy_pairs: bool = False,
 ) -> bool:
     """Return whether one pair can be rejected without distance/topology work."""
 
@@ -225,6 +235,7 @@ def pair_can_be_rejected_before_distance(
 
     return (
         policy is not None
+        and not include_same_residue_heavy_pairs
         and left_site.residue_id == right_site.residue_id
         and not left_site.is_hydrogen_atom
         and not right_site.is_hydrogen_atom

@@ -243,6 +243,7 @@ class ClashDetectionContext:
 
     atom_sites: tuple[AtomSite, ...]
     policy: ClashPolicy
+    constitution_address_space_key: StructureAddressSpaceKey
     van_der_waals_radius_by_element: Mapping[str, float]
     candidate_cell_size_angstrom: float
     allowed_distance_by_element_pair: Mapping[tuple[str, str], float] = field(
@@ -256,6 +257,11 @@ class ClashDetectionContext:
             raise ValueError("candidate_cell_size_angstrom must be positive")
 
         object.__setattr__(self, "atom_sites", tuple(self.atom_sites))
+        object.__setattr__(
+            self,
+            "constitution_address_space_key",
+            tuple(self.constitution_address_space_key),
+        )
         radius_by_element = dict(self.van_der_waals_radius_by_element)
         object.__setattr__(
             self, "van_der_waals_radius_by_element", MappingProxyType(radius_by_element)
@@ -411,6 +417,7 @@ class ClashDetectionBasis:
         return ClashDetectionContext(
             atom_sites=frame.atom_sites,
             policy=self.policy,
+            constitution_address_space_key=self.constitution_address_space_key,
             van_der_waals_radius_by_element=self.van_der_waals_radius_by_element,
             candidate_cell_size_angstrom=self.candidate_cell_size_angstrom,
         )
@@ -669,6 +676,7 @@ def prepare_projected_clash_detection_context(
     return _clash_detection_context_from_atom_sites(
         atom_sites,
         policy=normalized_policy,
+        constitution_address_space_key=structure.constitution.address_space_key,
         van_der_waals_radius_by_element=radius_by_element,
         candidate_cell_size_angstrom=candidate_cell_size_angstrom,
     )
@@ -688,6 +696,7 @@ def _clash_detection_context_from_atom_sites(
     atom_sites: tuple[AtomSite, ...],
     *,
     policy: ClashPolicy,
+    constitution_address_space_key: StructureAddressSpaceKey,
     van_der_waals_radius_by_element: Mapping[str, float],
     candidate_cell_size_angstrom: float,
 ) -> ClashDetectionContext:
@@ -696,6 +705,7 @@ def _clash_detection_context_from_atom_sites(
     return ClashDetectionContext(
         atom_sites=atom_sites,
         policy=policy,
+        constitution_address_space_key=constitution_address_space_key,
         van_der_waals_radius_by_element=van_der_waals_radius_by_element,
         candidate_cell_size_angstrom=candidate_cell_size_angstrom,
     )

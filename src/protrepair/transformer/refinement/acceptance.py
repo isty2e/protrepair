@@ -309,6 +309,7 @@ def measure_refinement_acceptance_metrics(
         residue_ids=focus_residue_ids,
     )
     near_covalent_contacts = detect_near_covalent_contacts_from_context(
+        structure,
         clash_context,
         focus_residue_ids=focus_residue_ids,
     )
