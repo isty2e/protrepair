@@ -13,12 +13,14 @@ from protrepair.geometry import (
 )
 from protrepair.transformer.completion.hydrogen.domain import HydrogenResidueSite
 from protrepair.transformer.completion.hydrogen.geometry import (
-    RotatableHydrogenSearch,
     cysteine_thiol,
     n_terminal_hydrogens,
     serine_hydroxyl,
     threonine_hydroxyl,
     tyrosine_hydroxyl,
+)
+from protrepair.transformer.completion.hydrogen.rotatable import (
+    ROTATABLE_HYDROGEN_SPECS,
 )
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 
@@ -117,23 +119,11 @@ def cysteine_sidechain_hydrogens(
         atom_coordinates["CB"],
         atom_coordinates["CA"],
     )
-    search = RotatableHydrogenSearch(
+    search = ROTATABLE_HYDROGEN_SPECS[RotatableHydrogenKind.CYS].search(
         outer_anchor=atom_coordinates["CA"],
         inner_anchor=atom_coordinates["CB"],
         donor=atom_coordinates["SG"],
         hydrogen=hydrogen,
-        build_bond_length=1.34,
-        reproject_bond_length=0.96,
-        dihedral=InternalCoordinateFrame.torsion(
-            atom_coordinates["CA"],
-            atom_coordinates["CB"],
-            atom_coordinates["SG"],
-            hydrogen,
-        ),
-        partial_charge=0.19,
-        sigma=0.11,
-        epsilon=0.07,
-        donor_element="S",
     )
     optimized = site.optimize_rotatable(search)
     return ["HA", "HB1", "HB2", "HG"], [
@@ -164,23 +154,11 @@ def serine_sidechain_hydrogens(
         atom_coordinates["CB"],
         atom_coordinates["CA"],
     )
-    search = RotatableHydrogenSearch(
+    search = ROTATABLE_HYDROGEN_SPECS[RotatableHydrogenKind.SER].search(
         outer_anchor=atom_coordinates["CA"],
         inner_anchor=atom_coordinates["CB"],
         donor=atom_coordinates["OG"],
         hydrogen=initial_hydrogen,
-        build_bond_length=0.96,
-        reproject_bond_length=0.96,
-        dihedral=InternalCoordinateFrame.torsion(
-            atom_coordinates["CA"],
-            atom_coordinates["CB"],
-            atom_coordinates["OG"],
-            initial_hydrogen,
-        ),
-        partial_charge=0.41,
-        sigma=0.0,
-        epsilon=0.0,
-        donor_element="O",
     )
     optimized = site.optimize_rotatable(search)
     hb1, hb2 = TetrahedralCenter(
@@ -213,23 +191,11 @@ def threonine_sidechain_hydrogens(
         atom_coordinates["CB"],
         atom_coordinates["CG2"],
     )
-    search = RotatableHydrogenSearch(
+    search = ROTATABLE_HYDROGEN_SPECS[RotatableHydrogenKind.THR].search(
         outer_anchor=atom_coordinates["CA"],
         inner_anchor=atom_coordinates["CB"],
         donor=atom_coordinates["OG1"],
         hydrogen=initial_hydrogen,
-        build_bond_length=0.96,
-        reproject_bond_length=0.96,
-        dihedral=InternalCoordinateFrame.torsion(
-            atom_coordinates["CA"],
-            atom_coordinates["CB"],
-            atom_coordinates["OG1"],
-            initial_hydrogen,
-        ),
-        partial_charge=0.41,
-        sigma=0.0,
-        epsilon=0.0,
-        donor_element="O",
     )
     optimized = site.optimize_rotatable(search)
     return ["HG1", "HA", "HB", "1HG2", "2HG2", "3HG2"], [
@@ -287,23 +253,11 @@ def tyrosine_sidechain_hydrogens(
         atom_coordinates["CZ"],
         atom_coordinates["CE2"],
     )
-    search = RotatableHydrogenSearch(
+    search = ROTATABLE_HYDROGEN_SPECS[RotatableHydrogenKind.TYR].search(
         outer_anchor=atom_coordinates["CE2"],
         inner_anchor=atom_coordinates["CZ"],
         donor=atom_coordinates["OH"],
         hydrogen=initial_hydrogen,
-        build_bond_length=0.96,
-        reproject_bond_length=0.96,
-        dihedral=InternalCoordinateFrame.torsion(
-            atom_coordinates["CE2"],
-            atom_coordinates["CZ"],
-            atom_coordinates["OH"],
-            initial_hydrogen,
-        ),
-        partial_charge=0.37,
-        sigma=0.0,
-        epsilon=0.0,
-        donor_element="O",
     )
     optimized = site.optimize_rotatable(search)
     hb1, hb2 = TetrahedralCenter(

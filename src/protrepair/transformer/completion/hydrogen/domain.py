@@ -19,7 +19,6 @@ from protrepair.transformer.completion.hydrogen.rotatable import (
     RotatableHydrogenEnvironment,
     RotatableHydrogenSearch,
     build_rotatable_hydrogen_environments,
-    optimization_residue_number,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
@@ -29,9 +28,17 @@ from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 class HydrogenCompletionEnvironment:
     """Chain-local environment shared by residue-local hydrogen sites."""
 
-    residue_numbers: tuple[str, ...]
     rotatable_environments: tuple[RotatableHydrogenEnvironment, ...]
     sg_positions: tuple[Vec3, ...]
+
+    def __post_init__(self) -> None:
+        residue_ids = tuple(
+            environment.residue_id for environment in self.rotatable_environments
+        )
+        if len(residue_ids) != len(set(residue_ids)):
+            raise ValueError(
+                "hydrogen completion environments must not repeat residue identities"
+            )
 
     @classmethod
     def from_payloads(
@@ -42,14 +49,9 @@ class HydrogenCompletionEnvironment:
     ) -> "HydrogenCompletionEnvironment":
         """Build the shared hydrogen environment for one chain residue tuple."""
 
-        residue_numbers = tuple(
-            optimization_residue_number(residue) for residue in residues
-        )
         return cls(
-            residue_numbers=residue_numbers,
             rotatable_environments=build_rotatable_hydrogen_environments(
                 residues=residues,
-                residue_numbers=list(residue_numbers),
                 templates=templates,
             ),
             sg_positions=tuple(
@@ -59,14 +61,6 @@ class HydrogenCompletionEnvironment:
             ),
         )
 
-    def residue_number(
-        self,
-        residue_index: ResidueIndex,
-    ) -> str:
-        """Return the legacy ProtRepair residue-number token for one residue slot."""
-
-        return self.residue_numbers[residue_index.value]
-
     def optimize_rotatable(
         self,
         residue_index: ResidueIndex,
@@ -75,8 +69,7 @@ class HydrogenCompletionEnvironment:
         """Return the optimized rotatable-hydrogen coordinate for one residue."""
 
         return search.optimized_coordinate(
-            residue_number=self.residue_number(residue_index),
-            environments=self.rotatable_environments,
+            self.rotatable_environments[residue_index.value]
         )
 
     def has_disulfide_partner(
@@ -321,13 +314,6 @@ class HydrogenResidueSite:
                 )
             ),
         )
-
-    def residue_number(
-        self,
-    ) -> str:
-        """Return the legacy ProtRepair residue-number token for this site."""
-
-        return self.environment.residue_number(self.residue_index)
 
     def optimize_rotatable(
         self,

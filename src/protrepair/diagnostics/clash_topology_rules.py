@@ -1,7 +1,7 @@
 """Bonded/topological pair exclusion rules for clash diagnostics."""
 
 from collections.abc import Mapping
-from math import acos, degrees, sqrt
+from math import acos, degrees, isfinite, sqrt
 
 from typing_extensions import Protocol
 
@@ -13,7 +13,7 @@ from protrepair.structure.labels import ResidueId
 DISULFIDE_BOND_DISTANCE_CUTOFF_ANGSTROM = 3.0
 HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
-# Baker-Hubbard-style minimum for diagnostic suppression, not full H-bond analysis.
+# Baker-Hubbard-style diagnostic cutoff: DOI 10.1016/0079-6107(84)90007-5.
 HYDROGEN_BOND_MIN_DONOR_HYDROGEN_ACCEPTOR_ANGLE_DEGREES = 120.0
 HYDROGEN_BOND_DEGENERATE_NORM_EPSILON = 1e-12
 DONOR_ELEMENTS = frozenset({"N", "O", "S"})
@@ -398,29 +398,65 @@ def probable_hydrogen_bond(
     ):
         return False
 
-    angle_degrees = _donor_hydrogen_acceptor_angle_degrees(
-        hydrogen_site.context.residue_geometry.atom_geometry(anchor_atom_name),
-        hydrogen_site.geometry,
-        acceptor_site.geometry,
+    donor_position = hydrogen_site.context.residue_geometry.atom_geometry(
+        anchor_atom_name
+    ).position
+    hydrogen_position = hydrogen_site.geometry.position
+    acceptor_position = acceptor_site.geometry.position
+    return probable_hydrogen_bond_geometry(
+        donor_element=donor_atom.element,
+        acceptor_element=acceptor_site.element,
+        hydrogen_acceptor_distance_angstrom=pair_distance,
+        donor_x=donor_position.x,
+        donor_y=donor_position.y,
+        donor_z=donor_position.z,
+        hydrogen_x=hydrogen_position.x,
+        hydrogen_y=hydrogen_position.y,
+        hydrogen_z=hydrogen_position.z,
+        acceptor_x=acceptor_position.x,
+        acceptor_y=acceptor_position.y,
+        acceptor_z=acceptor_position.z,
     )
-    return (
-        angle_degrees is not None
-        and angle_degrees
-        > HYDROGEN_BOND_MIN_DONOR_HYDROGEN_ACCEPTOR_ANGLE_DEGREES
+
+
+def probable_hydrogen_bond_geometry(
+    *,
+    donor_element: str,
+    acceptor_element: str,
+    hydrogen_acceptor_distance_angstrom: float,
+    donor_x: float,
+    donor_y: float,
+    donor_z: float,
+    hydrogen_x: float,
+    hydrogen_y: float,
+    hydrogen_z: float,
+    acceptor_x: float,
+    acceptor_y: float,
+    acceptor_z: float,
+) -> bool:
+    """Return whether one D-H-A geometry may suppress a steric clash."""
+
+    if (
+        donor_element not in DONOR_ELEMENTS
+        or acceptor_element not in ACCEPTOR_ELEMENTS
+        or not isfinite(hydrogen_acceptor_distance_angstrom)
+        or not (
+            HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM
+            <= hydrogen_acceptor_distance_angstrom
+            <= HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM
+        )
+    ):
+        return False
+
+    donor_vector = (
+        donor_x - hydrogen_x,
+        donor_y - hydrogen_y,
+        donor_z - hydrogen_z,
     )
-
-
-def _donor_hydrogen_acceptor_angle_degrees(
-    donor_geometry: ClashTopologyPositionedGeometry,
-    hydrogen_geometry: ClashTopologyPositionedGeometry,
-    acceptor_geometry: ClashTopologyPositionedGeometry,
-) -> float | None:
-    """Return D-H-A angle in degrees, or None when geometry is undefined."""
-
-    donor_vector = _vector_from_hydrogen_to_atom(donor_geometry, hydrogen_geometry)
-    acceptor_vector = _vector_from_hydrogen_to_atom(
-        acceptor_geometry,
-        hydrogen_geometry,
+    acceptor_vector = (
+        acceptor_x - hydrogen_x,
+        acceptor_y - hydrogen_y,
+        acceptor_z - hydrogen_z,
     )
     donor_norm = _vector_norm(donor_vector)
     acceptor_norm = _vector_norm(acceptor_vector)
@@ -428,23 +464,16 @@ def _donor_hydrogen_acceptor_angle_degrees(
         donor_norm <= HYDROGEN_BOND_DEGENERATE_NORM_EPSILON
         or acceptor_norm <= HYDROGEN_BOND_DEGENERATE_NORM_EPSILON
     ):
-        return None
+        return False
 
     cosine = _dot_product(donor_vector, acceptor_vector) / (donor_norm * acceptor_norm)
+    if not isfinite(cosine):
+        return False
+
     clamped_cosine = max(-1.0, min(1.0, cosine))
-    return degrees(acos(clamped_cosine))
-
-
-def _vector_from_hydrogen_to_atom(
-    atom_geometry: ClashTopologyPositionedGeometry,
-    hydrogen_geometry: ClashTopologyPositionedGeometry,
-) -> tuple[float, float, float]:
-    """Return vector from hydrogen position to another atom position."""
-
     return (
-        atom_geometry.position.x - hydrogen_geometry.position.x,
-        atom_geometry.position.y - hydrogen_geometry.position.y,
-        atom_geometry.position.z - hydrogen_geometry.position.z,
+        degrees(acos(clamped_cosine))
+        > HYDROGEN_BOND_MIN_DONOR_HYDROGEN_ACCEPTOR_ANGLE_DEGREES
     )
 
 

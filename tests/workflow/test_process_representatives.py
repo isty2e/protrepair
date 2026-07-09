@@ -62,21 +62,14 @@ WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, frozenset[str]]] = {
     # unchanged. Keep this as a backend-version-bounded regression check over
     # known digest sets, not a portable semantic digest.
     "1afc-hydrogen-his-protonated": {
-        "2026.03.1": frozenset(
-            {
-                "519c3e1c408148db2af3ff629d2e5a33cf912f22bf6ba668af0428a7a87d2a33",
-            }
-        ),
         "2026.03.2": frozenset(
             {
-                "519c3e1c408148db2af3ff629d2e5a33cf912f22bf6ba668af0428a7a87d2a33",
-                "8aac67d8b5ab6c036adad32e05d203d628cd88af75aaf3a9eeb1252fac829640",
+                "7c6878597c371d5688f87e70dc64081a7d7de9eb7011e60d9569b86e932c01d9",
             }
         ),
         "2026.03.3": frozenset(
             {
-                "b70c3393c244d48ac0a0b07d033bce9185017a1fc5deb8f5b38060d4d21c3d71",
-                "8aac67d8b5ab6c036adad32e05d203d628cd88af75aaf3a9eeb1252fac829640",
+                "7c6878597c371d5688f87e70dc64081a7d7de9eb7011e60d9569b86e932c01d9",
             }
         ),
     },
@@ -175,21 +168,17 @@ def test_unknown_rdkit_coordinate_digest_skips_outside_release_gate(
         )
 
 
-def test_registered_rdkit_coordinate_digest_accepts_known_environment_variants(
+def test_registered_rdkit_coordinate_digest_accepts_current_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A registered RDKit version may have multiple known coordinate digests."""
+    """Each registered RDKit backend should accept the current-code digest."""
 
-    _patch_rdkit_version(monkeypatch, "2026.03.2")
-
-    _assert_rdkit_coordinate_digest_matches(
-        "1afc-hydrogen-his-protonated",
-        "519c3e1c408148db2af3ff629d2e5a33cf912f22bf6ba668af0428a7a87d2a33",
-    )
-    _assert_rdkit_coordinate_digest_matches(
-        "1afc-hydrogen-his-protonated",
-        "8aac67d8b5ab6c036adad32e05d203d628cd88af75aaf3a9eeb1252fac829640",
-    )
+    for rdkit_version in ("2026.03.2", "2026.03.3"):
+        _patch_rdkit_version(monkeypatch, rdkit_version)
+        _assert_rdkit_coordinate_digest_matches(
+            "1afc-hydrogen-his-protonated",
+            "7c6878597c371d5688f87e70dc64081a7d7de9eb7011e60d9569b86e932c01d9",
+        )
 
 
 def test_unknown_rdkit_coordinate_digest_fails_release_gate(

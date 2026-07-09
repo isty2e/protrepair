@@ -53,11 +53,14 @@ snapshot verification instead of skipping either contract.
 Local compatibility runs may still skip version-bound coordinate digests when
 RDKit is present but unregistered. Missing RDKit is a broken required-dependency
 installation, not a supported runtime mode. Current release constraints pin
-`rdkit==2026.3.2`, which corresponds to RDKit backend version `2026.03.2`. The
-digest registry may carry more than one known coordinate digest for the same
-RDKit version when constrained scientific-stack or platform differences preserve
-topology and atom ordering but move coordinates. The registry also carries
-`2026.03.1` and `2026.03.3` for known reviewer/environment parity.
+`rdkit==2026.3.2`, which corresponds to RDKit backend version `2026.03.2`.
+The current axis-specific rotatable-hydrogen contract combines protein-specific
+AMBER donor-H geometry with corrected PRAS torsion search and nonbonded scoring.
+It has the same verified 1AFC coordinate digest under RDKit `2026.03.2` and
+`2026.03.3`; RDKit readability remains an interoperability gate rather than a
+scientific ranking oracle.
+Digests from older code are not retained as acceptable variants because doing
+so would hide a regression to the incomplete torsion scan.
 
 Element-radius diagnostics use a static `rdkit==2026.3.2` PeriodicTable
 snapshot generated from `GetRvdw` and `GetRcovalent`, not runtime RDKit lookup.

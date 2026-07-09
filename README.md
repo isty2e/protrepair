@@ -255,6 +255,13 @@ ProtRepair descends from the original
 [PRAS](https://github.com/osita-sunday-nnyigide/Pras_Server) project. The public
 distribution name and import package are now `protrepair`.
 
+Rotatable donor-hydrogen placement uses an axis-specific scientific contract:
+it retains the PRAS AMBER-derived nonbonded model and torsion-search lineage
+while correcting the cumulative scan and unconditional O-H bond-length
+override. Family-specific donor-H bond geometry follows the protein parameters
+in [AMBER ff14SB](https://doi.org/10.1021/acs.jctc.5b00255). RDKit readability
+is an interoperability gate, not the scientific ranking oracle.
+
 ## Changelog
 
 Release notes are tracked in [CHANGELOG.md](CHANGELOG.md).

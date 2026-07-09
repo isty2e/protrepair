@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from math import pi
 
 import numpy as np
+from numpy.typing import NDArray
 
 from protrepair.geometry import (
     AxisRotation,
@@ -14,11 +15,7 @@ from protrepair.geometry import (
     Vec3,
 )
 from protrepair.transformer.completion.hydrogen.scoring import (
-    ROTATABLE_HYDROGEN_ACCEPTOR_ELEMENTS,
     ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE,
-    ROTATABLE_HYDROGEN_DONOR_ELEMENTS,
-    ROTATABLE_HYDROGEN_HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM,
-    ROTATABLE_HYDROGEN_HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM,
     ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS,
     ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM,
     ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM,
@@ -26,13 +23,10 @@ from protrepair.transformer.completion.hydrogen.scoring import (
     RotatableHydrogenEnvironment,
     RotatableHydrogenLocalSite,
     RotatableHydrogenSearch,
-    Vector,
     hydrogen_potential_energy,
     hydrogen_steric_penalty,
     hydrogen_steric_penalty_against_site,
     max_rotatable_hydrogen_steric_cutoff_angstrom,
-    probable_rotatable_hydrogen_bond,
-    recalculate_coordinate,
     rotatable_hydrogen_steric_cutoff_angstrom,
     rotatable_hydrogen_vdw_radius_angstrom,
 )
@@ -179,7 +173,11 @@ def n_terminal_hydrogens(
     )
 
 
-def scale_bond(origin: Vector, candidate: Vector, bond_length: float) -> Vec3:
+def scale_bond(
+    origin: NDArray[np.float64],
+    candidate: NDArray[np.float64],
+    bond_length: float,
+) -> Vec3:
     """Scale a candidate point to the desired bond length from the origin."""
 
     direction = candidate - origin
@@ -194,11 +192,7 @@ def scale_bond(origin: Vector, candidate: Vector, bond_length: float) -> Vec3:
 
 
 __all__ = [
-    "ROTATABLE_HYDROGEN_ACCEPTOR_ELEMENTS",
     "ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE",
-    "ROTATABLE_HYDROGEN_DONOR_ELEMENTS",
-    "ROTATABLE_HYDROGEN_HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM",
-    "ROTATABLE_HYDROGEN_HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM",
     "ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS",
     "ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM",
     "ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM",
@@ -206,7 +200,6 @@ __all__ = [
     "RotatableHydrogenEnvironment",
     "RotatableHydrogenLocalSite",
     "RotatableHydrogenSearch",
-    "Vector",
     "backbone_hydrogen",
     "cysteine_thiol",
     "hydrogen_potential_energy",
@@ -216,8 +209,6 @@ __all__ = [
     "is_disulfide_bonded",
     "max_rotatable_hydrogen_steric_cutoff_angstrom",
     "n_terminal_hydrogens",
-    "probable_rotatable_hydrogen_bond",
-    "recalculate_coordinate",
     "rotatable_hydrogen_steric_cutoff_angstrom",
     "rotatable_hydrogen_vdw_radius_angstrom",
     "scale_bond",

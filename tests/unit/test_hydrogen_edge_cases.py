@@ -41,10 +41,6 @@ from protrepair.structure.topology import (
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.completion.hydrogen import core as hydrogen_core
 from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
-from protrepair.transformer.completion.hydrogen.rotatable import (
-    RotatableHydrogenEnvironment,
-    RotatableHydrogenSearch,
-)
 from protrepair.transformer.completion.shared import OrderedAtomPatch
 from protrepair.workflow.contracts import (
     LigandPolicy,
@@ -403,67 +399,6 @@ def test_insertion_code_survives_class6_hydrogen_placement() -> None:
 
     assert residue.residue_id.insertion_code == "A"
     assert residue.has_atom_site("HG")
-
-
-def test_rotatable_hydrogen_keeps_candidate_identity_on_legacy_index_overflow(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Duplicate residue-number environments should still select the best candidate."""
-
-    candidate_hydrogens = [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]
-    energy_calls = iter((5.0, 6.0, 1.0, 2.0))
-
-    monkeypatch.setattr(
-        RotatableHydrogenSearch,
-        "candidate_positions",
-        lambda self: tuple(
-            Vec3.from_iterable(candidate) for candidate in candidate_hydrogens
-        ),
-    )
-    monkeypatch.setattr(
-        RotatableHydrogenSearch,
-        "candidate_score",
-        lambda self, hydrogen, environment: next(energy_calls),
-    )
-
-    result = RotatableHydrogenSearch(
-        outer_anchor=[0.0, 0.0, 0.0],
-        inner_anchor=[0.0, 0.0, 0.0],
-        donor=[0.0, 0.0, 0.0],
-        hydrogen=[9.0, 9.0, 9.0],
-        build_bond_length=1.0,
-        reproject_bond_length=1.0,
-        dihedral=0.0,
-        partial_charge=0.0,
-        sigma=0.0,
-        epsilon=0.0,
-    ).optimized_coordinate(
-        residue_number="7",
-        environments=(
-            RotatableHydrogenEnvironment(
-                residue_number="7",
-                atom_x=(1.0,),
-                atom_y=(0.0,),
-                atom_z=(0.0,),
-                elements=("C",),
-                charges=(0.0,),
-                sigmas_nm=(0.0,),
-                epsilons_kj_mol=(0.0,),
-            ),
-            RotatableHydrogenEnvironment(
-                residue_number="7",
-                atom_x=(0.0,),
-                atom_y=(1.0,),
-                atom_z=(0.0,),
-                elements=("C",),
-                charges=(0.0,),
-                sigmas_nm=(0.0,),
-                epsilons_kj_mol=(0.0,),
-            ),
-        ),
-    )
-
-    assert result == Vec3(1.0, 0.0, 0.0)
 
 
 def test_ordered_patch_exposes_backbone_hydrogen_anchor_positions() -> None:

@@ -191,7 +191,7 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert "live RDKit PeriodicTable verifier" in normalized_checklist
     assert "byte-for-byte" in checklist
     assert "SHA-256" in checklist
-    assert "more than one known coordinate digest" in normalized_checklist
+    assert "same verified 1AFC coordinate digest" in normalized_checklist
     assert "2026.03.3" in checklist
     assert "CMake 3.18 or newer" in normalized_checklist
     assert "working C++ compiler toolchain" in normalized_checklist
