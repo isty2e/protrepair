@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from math import isfinite
 from types import MappingProxyType
 from typing import cast
 
@@ -40,9 +41,13 @@ class NearCovalentContactPolicy:
     ignore_same_residue: bool = True
 
     def __post_init__(self) -> None:
+        if not isfinite(self.minimum_overlap_angstrom):
+            raise ValueError("minimum_overlap_angstrom must be finite")
         if self.minimum_overlap_angstrom < 0.0:
             raise ValueError("minimum_overlap_angstrom must be non-negative")
 
+        if not isfinite(self.covalent_distance_margin_angstrom):
+            raise ValueError("covalent_distance_margin_angstrom must be finite")
         if self.covalent_distance_margin_angstrom < 0.0:
             raise ValueError(
                 "covalent_distance_margin_angstrom must be non-negative"
@@ -66,10 +71,16 @@ class NearCovalentContact:
     overlap_angstrom: float
 
     def __post_init__(self) -> None:
+        if not isfinite(self.distance_angstrom):
+            raise ValueError("near-covalent contacts require finite distance")
         if self.distance_angstrom < 0.0:
             raise ValueError("near-covalent contacts require non-negative distance")
+        if not isfinite(self.covalent_distance_cutoff_angstrom):
+            raise ValueError("near-covalent contacts require a finite cutoff")
         if self.covalent_distance_cutoff_angstrom <= 0.0:
             raise ValueError("near-covalent contacts require a positive cutoff")
+        if not isfinite(self.overlap_angstrom):
+            raise ValueError("near-covalent contacts require finite overlap")
         if self.overlap_angstrom <= 0.0:
             raise ValueError("near-covalent contacts require positive overlap")
 
@@ -84,8 +95,11 @@ class _NearCovalentCandidateContext:
 
     def __post_init__(self) -> None:
         radius_by_element = dict(self.covalent_radius_by_element)
-        if any(radius <= 0.0 for radius in radius_by_element.values()):
-            raise ValueError("covalent radii must be positive")
+        if any(
+            not isfinite(radius) or radius <= 0.0
+            for radius in radius_by_element.values()
+        ):
+            raise ValueError("covalent radii must be finite and positive")
 
         object.__setattr__(self, "atom_sites", tuple(self.atom_sites))
         object.__setattr__(

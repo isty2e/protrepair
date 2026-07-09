@@ -9,6 +9,7 @@ constraint version recorded below.
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
+from math import isfinite
 from types import MappingProxyType
 
 RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION = "2026.03.2"
@@ -314,11 +315,34 @@ class ElementRadiusResolution:
             raise TypeError("kind must be a RadiusKind")
         if not isinstance(self.status, ElementRadiusResolutionStatus):
             raise TypeError("status must be an ElementRadiusResolutionStatus")
-        if self.radius_angstrom is not None and self.radius_angstrom <= 0.0:
-            raise ValueError("radius_angstrom must be positive when present")
+        if self.radius_angstrom is not None and (
+            not isfinite(self.radius_angstrom) or self.radius_angstrom <= 0.0
+        ):
+            raise ValueError("radius_angstrom must be finite and positive when present")
+
+        requested_element_symbol = _radius_lookup_key(
+            self.requested_element_symbol
+        )
+        if requested_element_symbol != self.requested_element_symbol:
+            raise ValueError("requested element symbol must be a canonical lookup key")
+        expected_normalized_element_symbol = normalize_radius_element_symbol(
+            requested_element_symbol
+        )
+        if self.normalized_element_symbol != expected_normalized_element_symbol:
+            raise ValueError(
+                "normalized element symbol must match the canonical radius resolver"
+            )
+
         if self.status is ElementRadiusResolutionStatus.UNKNOWN:
             if self.radius_angstrom is not None or self.source is not None:
                 raise ValueError("unknown radius resolution cannot carry a radius")
+            if (
+                expected_normalized_element_symbol is not None
+                and expected_normalized_element_symbol in _radius_table(self.kind)
+            ):
+                raise ValueError(
+                    "unknown radius resolution cannot describe a known table element"
+                )
             return
 
         if self.radius_angstrom is None or self.source is None:
@@ -332,6 +356,17 @@ class ElementRadiusResolution:
                 raise ValueError("known radius resolution cannot describe an alias")
         elif self.requested_element_symbol == self.normalized_element_symbol:
             raise ValueError("aliased radius resolution requires distinct symbols")
+        if self.source != _radius_source(self.kind):
+            raise ValueError(
+                "known radius resolution must use the canonical radius source"
+            )
+        expected_radius_angstrom = _radius_table(self.kind).get(
+            self.normalized_element_symbol
+        )
+        if self.radius_angstrom != expected_radius_angstrom:
+            raise ValueError(
+                "known radius resolution must match the active radius table"
+            )
 
     def is_known(self) -> bool:
         """Return whether this lookup resolved to a concrete radius."""
@@ -364,8 +399,8 @@ class ElementRadiusLookup:
         for element_symbol, radius_angstrom in self.radius_by_element_symbol.items():
             if not _valid_radius_lookup_key(element_symbol):
                 raise ValueError(f"invalid radius lookup key {element_symbol!r}")
-            if radius_angstrom <= 0.0:
-                raise ValueError("prepared radius values must be positive")
+            if not isfinite(radius_angstrom) or radius_angstrom <= 0.0:
+                raise ValueError("prepared radius values must be finite and positive")
         object.__setattr__(
             self,
             "radius_by_element_symbol",
@@ -400,6 +435,17 @@ class ElementRadiusLookup:
 
         if self.has_unresolved_elements():
             raise self.unresolved_radius_error(context)
+
+    def require_kind(self, expected_kind: RadiusKind, context: str) -> None:
+        """Raise when this lookup cannot serve a radius-family consumer."""
+
+        if not isinstance(expected_kind, RadiusKind):
+            raise TypeError("expected_kind must be a RadiusKind")
+        if self.kind is not expected_kind:
+            raise ValueError(
+                f"{context} requires {expected_kind.value} radius lookup; "
+                f"got {self.kind.value}"
+            )
 
     def unresolved_radius_error(self, context: str) -> UnknownElementRadiusError:
         """Return an aggregate unresolved-radius error for this prepared lookup."""
@@ -530,7 +576,11 @@ def normalize_radius_element_symbol(element: str) -> str | None:
 def _radius_lookup_key(element: str) -> str:
     """Return the stable lookup key for one raw element string."""
 
-    return element.strip().upper()
+    stripped_element = element.strip()
+    if not stripped_element.isascii():
+        return stripped_element
+
+    return stripped_element.upper()
 
 
 def _valid_radius_lookup_key(element_symbol: str) -> bool:

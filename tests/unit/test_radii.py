@@ -7,6 +7,7 @@ from protrepair.chemistry import (
     RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE,
     RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION,
     VAN_DER_WAALS_RADII_SOURCE,
+    BondDefinition,
     ElementRadiusLookup,
     ElementRadiusResolution,
     ElementRadiusResolutionStatus,
@@ -22,8 +23,14 @@ from protrepair.chemistry.radii import (
     RDKIT_PERIODIC_TABLE_COVALENT_RADII_ANGSTROM,
     RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM,
 )
+from protrepair.diagnostics.geometry import expected_bond_length_angstrom
+from protrepair.diagnostics.parser_readability import RDKitProximityBondWitness
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.transformer.completion.hydrogen.geometry import (
     rotatable_hydrogen_vdw_radius_angstrom,
+)
+from protrepair.transformer.discrete.parser_witness_pre_untangle_scoring import (
+    parser_witness_target_distance_angstrom,
 )
 
 
@@ -136,6 +143,16 @@ def test_invalid_element_radii_resolve_separately_from_unsupported_symbols() -> 
     assert normalize_radius_element_symbol(" C1 ") is None
 
 
+def test_unicode_confusable_element_does_not_normalize_to_ascii_element() -> None:
+    """Raw non-ASCII tokens must not become valid through Unicode uppercasing."""
+
+    resolution = resolve_element_radius("ſ", RadiusKind.VAN_DER_WAALS)
+
+    assert resolution.status is ElementRadiusResolutionStatus.UNKNOWN
+    assert resolution.requested_element_symbol == "ſ"
+    assert resolution.normalized_element_symbol is None
+
+
 def test_deuterium_and_tritium_alias_to_hydrogen_radius() -> None:
     """D/T are isotope aliases of H for element-radius diagnostics."""
 
@@ -221,7 +238,10 @@ def test_radius_resolution_value_objects_reject_invariant_drift() -> None:
             source=VAN_DER_WAALS_RADII_SOURCE,
         )
 
-    with pytest.raises(ValueError, match="prepared radius values must be positive"):
+    with pytest.raises(
+        ValueError,
+        match="prepared radius values must be finite and positive",
+    ):
         ElementRadiusLookup(
             kind=RadiusKind.VAN_DER_WAALS,
             radius_by_element_symbol={"C": 0.0},
@@ -238,6 +258,89 @@ def test_radius_resolution_value_objects_reject_invariant_drift() -> None:
             kind=RadiusKind.VAN_DER_WAALS,
             radius_by_element_symbol={"C": 1.7},
             unresolved_element_symbols=(" c ",),
+        )
+
+
+@pytest.mark.parametrize("radius_angstrom", (float("nan"), float("inf")))
+def test_radius_value_objects_reject_non_finite_values(
+    radius_angstrom: float,
+) -> None:
+    """Prepared and resolved radius facts must always be finite."""
+
+    with pytest.raises(ValueError, match="finite and positive"):
+        ElementRadiusResolution(
+            kind=RadiusKind.VAN_DER_WAALS,
+            requested_element_symbol="C",
+            normalized_element_symbol="C",
+            status=ElementRadiusResolutionStatus.KNOWN,
+            radius_angstrom=radius_angstrom,
+            source=VAN_DER_WAALS_RADII_SOURCE,
+        )
+    with pytest.raises(ValueError, match="finite and positive"):
+        ElementRadiusLookup(
+            kind=RadiusKind.VAN_DER_WAALS,
+            radius_by_element_symbol={"C": radius_angstrom},
+        )
+
+
+def test_radius_resolution_rejects_facts_not_produced_by_canonical_resolver() -> None:
+    """Resolution fields must agree with the active table and source contract."""
+
+    with pytest.raises(ValueError, match="known table element"):
+        ElementRadiusResolution(
+            kind=RadiusKind.VAN_DER_WAALS,
+            requested_element_symbol="C",
+            normalized_element_symbol="C",
+            status=ElementRadiusResolutionStatus.UNKNOWN,
+            radius_angstrom=None,
+            source=None,
+        )
+    with pytest.raises(ValueError, match="canonical radius source"):
+        ElementRadiusResolution(
+            kind=RadiusKind.VAN_DER_WAALS,
+            requested_element_symbol="C",
+            normalized_element_symbol="C",
+            status=ElementRadiusResolutionStatus.KNOWN,
+            radius_angstrom=1.7,
+            source="invented source",
+        )
+    with pytest.raises(ValueError, match="active radius table"):
+        ElementRadiusResolution(
+            kind=RadiusKind.VAN_DER_WAALS,
+            requested_element_symbol="C",
+            normalized_element_symbol="C",
+            status=ElementRadiusResolutionStatus.KNOWN,
+            radius_angstrom=9.9,
+            source=VAN_DER_WAALS_RADII_SOURCE,
+        )
+
+
+def test_covalent_consumers_reject_vdw_lookup() -> None:
+    """A prepared lookup kind must be enforced at every injectable consumer."""
+
+    vdw_lookup = prepare_radius_lookup(
+        ("C", "O"),
+        RadiusKind.VAN_DER_WAALS,
+    )
+    witness = RDKitProximityBondWitness(
+        atom_ref_1=AtomRef(ResidueId("A", 1), "C1"),
+        atom_ref_2=AtomRef(ResidueId("A", 2), "O1"),
+        element_1="C",
+        element_2="O",
+        is_known_component_bond=False,
+    )
+
+    with pytest.raises(ValueError, match="requires covalent radius lookup"):
+        expected_bond_length_angstrom(
+            "C",
+            "O",
+            bond=BondDefinition("C1", "O1"),
+            radius_lookup=vdw_lookup,
+        )
+    with pytest.raises(ValueError, match="requires covalent radius lookup"):
+        parser_witness_target_distance_angstrom(
+            witness,
+            covalent_radius_lookup=vdw_lookup,
         )
 
 

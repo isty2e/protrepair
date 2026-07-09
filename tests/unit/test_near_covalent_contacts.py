@@ -1,5 +1,7 @@
 """Unit tests for near-covalent contact classification."""
 
+from dataclasses import replace
+
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
@@ -12,10 +14,68 @@ from protrepair.chemistry import UnknownElementRadiusError
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics.clash_pair_generation import ContactDomain
 from protrepair.diagnostics.clashes import ClashPolicy, detect_clashes
-from protrepair.diagnostics.near_covalent import detect_near_covalent_contacts
+from protrepair.diagnostics.near_covalent import (
+    NearCovalentContact,
+    NearCovalentContactPolicy,
+    detect_near_covalent_contacts,
+)
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
 from protrepair.structure.labels import ResidueId
+
+
+@pytest.mark.parametrize(
+    "value",
+    (float("nan"), float("inf")),
+)
+def test_near_covalent_policy_rejects_non_finite_minimum_overlap(
+    value: float,
+) -> None:
+    """Near-covalent overlap policy must remain finite."""
+
+    with pytest.raises(ValueError, match="minimum_overlap_angstrom must be finite"):
+        NearCovalentContactPolicy(minimum_overlap_angstrom=value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    (float("nan"), float("inf")),
+)
+def test_near_covalent_policy_rejects_non_finite_covalent_margin(
+    value: float,
+) -> None:
+    """Near-covalent margin policy must remain finite."""
+
+    with pytest.raises(
+        ValueError,
+        match="covalent_distance_margin_angstrom must be finite",
+    ):
+        NearCovalentContactPolicy(covalent_distance_margin_angstrom=value)
+
+
+def test_near_covalent_contact_rejects_non_finite_measurements() -> None:
+    """Materialized near-covalent facts must contain finite measurements."""
+
+    contact = NearCovalentContact(
+        left_residue_id=ResidueId("A", 1),
+        left_component_id="ALA",
+        left_atom_name="CB",
+        left_domain=ContactDomain.POLYMER,
+        right_residue_id=ResidueId("B", 1),
+        right_component_id="ALA",
+        right_atom_name="CB",
+        right_domain=ContactDomain.POLYMER,
+        distance_angstrom=1.0,
+        covalent_distance_cutoff_angstrom=1.5,
+        overlap_angstrom=0.5,
+    )
+
+    with pytest.raises(ValueError, match="finite distance"):
+        replace(contact, distance_angstrom=float("nan"))
+    with pytest.raises(ValueError, match="finite cutoff"):
+        replace(contact, covalent_distance_cutoff_angstrom=float("inf"))
+    with pytest.raises(ValueError, match="finite overlap"):
+        replace(contact, overlap_angstrom=float("nan"))
 
 
 def test_near_covalent_contacts_report_unknown_radii_once() -> None:

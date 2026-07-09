@@ -228,6 +228,10 @@ def parser_witness_target_distance_angstrom(
         if covalent_radius_lookup is None
         else covalent_radius_lookup
     )
+    active_radius_lookup.require_kind(
+        RadiusKind.COVALENT,
+        "parser-witness target distance",
+    )
     active_radius_lookup.require_complete("parser-witness target distance")
     return (
         active_radius_lookup.radius_angstrom(witness.element_1)

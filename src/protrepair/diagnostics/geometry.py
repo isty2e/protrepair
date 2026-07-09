@@ -601,6 +601,10 @@ def expected_bond_length_angstrom(
         if radius_lookup is None
         else radius_lookup
     )
+    active_radius_lookup.require_kind(
+        RadiusKind.COVALENT,
+        "bond length expectation",
+    )
     active_radius_lookup.require_complete("bond length expectation")
     return active_radius_lookup.radius_angstrom(
         element_1
