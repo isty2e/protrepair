@@ -39,6 +39,7 @@ from protrepair.diagnostics.kinds import (
     RepairEventKind,
     ValidationIssueKind,
 )
+from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, write_structure_string
 from protrepair.io.gemmi_writer import pdb_atom_serial_by_atom_ref
@@ -1332,10 +1333,10 @@ def test_strict_retained_non_polymer_mode_blocks_rdkit_fallback_and_preserves_so
     )
 
 
-def test_retained_non_polymer_rdkit_fallback_unavailable_reports_issue(
+def test_retained_non_polymer_rdkit_fallback_unavailable_raises_capability_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Unavailable RDKit fallback should be visible without flaky skip behavior."""
+    """Unavailable required RDKit should not become a chemistry warning."""
 
     residue_id = ResidueId("L", 1)
     monkeypatch.setattr(fallback_inference, "Chem", None)
@@ -1357,32 +1358,17 @@ def test_retained_non_polymer_rdkit_fallback_unavailable_reports_issue(
         source_name="retained-non-polymer-rdkit-unavailable-fallback",
     )
 
-    result = add_retained_non_polymer_hydrogens(
-        structure,
-        component_library=build_retained_non_polymer_component_library(),
-    )
-
-    assert result.structure.constitution.ligands[0].atom_site_names() == (
-        "C1",
-        "O1",
-        "HSRC",
-    )
-    assert result.repairs == ()
-    assert not _fallback_used_issues(result.issues)
-    assert any(
-        issue.kind is ValidationIssueKind.MISSING_COMPONENT_DEFINITION
-        and issue.residue_id == residue_id
-        and "required RDKit backend cannot be imported" in issue.message
-        and "RdkitUnavailableError" not in issue.message
-        and "leaving retained non-polymer unchanged" in issue.message
-        for issue in result.issues
-    )
+    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+        add_retained_non_polymer_hydrogens(
+            structure,
+            component_library=build_retained_non_polymer_component_library(),
+        )
 
 
-def test_retained_non_polymer_evidence_rdkit_unavailable_reports_contradiction(
+def test_retained_non_polymer_evidence_rdkit_unavailable_raises_capability_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Unavailable RDKit evidence projection should remain a chemistry issue."""
+    """Unavailable required RDKit should not become an evidence contradiction."""
 
     residue_id = ResidueId("L", 1)
     monkeypatch.setattr(rdkit_evidence, "Chem", None)
@@ -1404,29 +1390,18 @@ def test_retained_non_polymer_evidence_rdkit_unavailable_reports_contradiction(
         source_name="retained-non-polymer-rdkit-unavailable-evidence",
     )
 
-    result = add_retained_non_polymer_hydrogens(
-        structure,
-        component_library=build_retained_non_polymer_component_library(),
-        chemistry_evidence=(
-            RetainedNonPolymerChemistryOverride(
-                residue_id=residue_id,
-                smiles="CO",
-                heavy_atom_names=("C1", "O1"),
-            ).to_evidence(),
-        ),
-    )
-
-    assert result.structure == structure
-    assert result.repairs == ()
-    assert not _fallback_used_issues(result.issues)
-    assert any(
-        issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
-        and issue.residue_id == residue_id
-        and "required RDKit backend cannot be imported" in issue.message
-        and "RdkitUnavailableError" not in issue.message
-        and "chemistry evidence could not be projected" in issue.message
-        for issue in result.issues
-    )
+    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+        add_retained_non_polymer_hydrogens(
+            structure,
+            component_library=build_retained_non_polymer_component_library(),
+            chemistry_evidence=(
+                RetainedNonPolymerChemistryOverride(
+                    residue_id=residue_id,
+                    smiles="CO",
+                    heavy_atom_names=("C1", "O1"),
+                ).to_evidence(),
+            ),
+        )
 
 
 @pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")

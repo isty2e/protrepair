@@ -23,7 +23,6 @@ from protrepair.chemistry.inference.retained_non_polymer_fallback import (
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
-from protrepair.errors import RdkitUnavailableError
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 
@@ -161,7 +160,7 @@ def resolve_retained_non_polymer_chemistry(
             heavy_atom_elements = retained_non_polymer_evidence_heavy_atom_elements(
                 evidence
             )
-        except (RdkitUnavailableError, RuntimeError, ValueError) as error:
+        except (RuntimeError, ValueError) as error:
             return RetainedNonPolymerChemistryResolution(
                 source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
                 failure_reason=str(error),
@@ -220,7 +219,7 @@ def resolve_retained_non_polymer_chemistry(
                 if atom_site.element == "H"
             },
         )
-    except (RdkitUnavailableError, RuntimeError, ValueError) as error:
+    except (RuntimeError, ValueError) as error:
         return RetainedNonPolymerChemistryResolution(
             source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
             failure_reason=str(error),

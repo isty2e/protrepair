@@ -15,7 +15,7 @@ from protrepair.chemistry.inference import retained_non_polymer_fallback
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
-from protrepair.errors import RefinementError
+from protrepair.errors import RdkitUnavailableError, RefinementError
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
 from protrepair.scope import AtomSetScope
@@ -602,10 +602,10 @@ def test_continuous_readiness_accepts_present_retained_ligand_h_topology() -> No
     require_atom_scope_continuous_relaxation_execution(atom_scope_facts)
 
 
-def test_resolve_local_bond_planning_support_recovers_no_rdkit_passive_context(
+def test_resolve_local_bond_planning_support_propagates_no_rdkit_capability_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No-RDKit passive retained fallback should resolve as unsupported."""
+    """No-RDKit passive context should expose the required capability failure."""
 
     monkeypatch.setattr(retained_non_polymer_fallback, "Chem", None)
     snapshot = ProteinStructureSnapshot.from_structure(
@@ -619,13 +619,11 @@ def test_resolve_local_bond_planning_support_recovers_no_rdkit_passive_context(
     )
     residue_id = ResidueId("L", 1)
 
-    resolution = support_resolution_for_residue(
-        snapshot,
-        residue_id=residue_id,
-    )
-
-    assert resolution.mode is LocalBondPlanningSupportMode.UNSUPPORTED
-    assert resolution.fallback_bond_definitions == ()
+    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+        support_resolution_for_residue(
+            snapshot,
+            residue_id=residue_id,
+        )
 
 
 def test_resolve_local_bond_planning_support_blocks_selected_template_less_ligand() -> (

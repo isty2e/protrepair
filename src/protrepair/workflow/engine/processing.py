@@ -256,7 +256,7 @@ def _validated_retained_non_polymer_chemistry_evidence(
                 retained_non_polymer_evidence_heavy_atom_elements(evidence)
             )
         except RdkitUnavailableError as error:
-            raise ValueError(
+            raise RdkitUnavailableError(
                 "retained non-polymer chemistry override validation requires "
                 "the required RDKit backend for "
                 f"{override.residue_id.display_token()}"

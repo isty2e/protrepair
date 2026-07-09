@@ -37,6 +37,7 @@ from protrepair.diagnostics.parser_readability import (
     RDKitProximityBondCluster,
     RDKitProximityBondWitness,
 )
+from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, write_structure_string
 from protrepair.io.structure_ingress import (
@@ -509,7 +510,7 @@ def test_process_structure_rejects_no_rdkit_retained_non_polymer_override(
     )
 
     with pytest.raises(
-        ValueError,
+        RdkitUnavailableError,
         match=(
             "retained non-polymer chemistry override validation requires "
             "the required RDKit backend for A:99"

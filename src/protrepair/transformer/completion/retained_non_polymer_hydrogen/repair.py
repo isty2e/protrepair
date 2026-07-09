@@ -33,7 +33,6 @@ from protrepair.diagnostics.kinds import (
     RepairEventKind,
     ValidationIssueKind,
 )
-from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
@@ -293,7 +292,7 @@ def _hydrogenate_retained_non_polymer_payload(
                     evidence=chemistry_evidence,
                 )
             )
-        except (RdkitUnavailableError, RuntimeError, ValueError) as error:
+        except (RuntimeError, ValueError) as error:
             return _RetainedNonPolymerHydrogenPayloadResult(
                 payload=source_payload or payload,
                 repairs=(),
@@ -456,7 +455,7 @@ def _hydrogenate_retained_non_polymer_payload(
             )
         )
         hydrogenated_payload = hydrogenation_result.payload
-    except (RdkitUnavailableError, RuntimeError, ValueError) as error:
+    except (RuntimeError, ValueError) as error:
         return _RetainedNonPolymerHydrogenPayloadResult(
             payload=source_payload or payload,
             repairs=(),
@@ -1191,8 +1190,6 @@ def _retained_non_polymer_hydrogen_fallback_issue(
 def _retained_non_polymer_hydrogen_failure_reason(error: Exception) -> str:
     """Return stable user-facing retained-ligand hydrogenation failure wording."""
 
-    if isinstance(error, RdkitUnavailableError):
-        return "required RDKit backend cannot be imported"
     if isinstance(error, ValueError):
         detail = str(error).strip()
         if detail:
