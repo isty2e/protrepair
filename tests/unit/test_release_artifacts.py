@@ -38,7 +38,7 @@ def test_release_metadata_declares_dependency_boundary() -> None:
     assert "Python :: 3.13" not in pyproject
     assert '"Operating System :: POSIX :: Linux"' in pyproject
     assert '"scikit-build-core>=0.12,<0.13",' in pyproject
-    assert 'license = { text = "MIT AND CC-BY-4.0" }' in pyproject
+    assert 'license = { text = "MIT AND BSD-3-Clause AND CC-BY-4.0" }' in pyproject
     assert '"gemmi>=0.7.5",' in project_dependencies
     assert '"rdkit",' in project_dependencies
     assert "[project.optional-dependencies]" in pyproject
@@ -206,6 +206,11 @@ def test_rdkit_radius_snapshot_provenance_is_documented() -> None:
     assert "Runtime dependency: `rdkit`" in notices
     assert "RDKit source license: BSD 3-Clause" in notices
     assert "PyPI package license: BSD 3-Clause" in notices
+    rdkit_license = Path("vendor/rdkit/LICENSE").read_text()
+    assert "BSD 3-Clause License" in rdkit_license
+    assert "Redistribution and use in source and binary forms" in rdkit_license
+    assert "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS" in rdkit_license
+    assert '"vendor/rdkit/LICENSE"' in pyproject
     assert "src/protrepair/chemistry/radii.py" in notices
     assert "rdkit==2026.3.2" in notices
     assert "rdBase.rdkitVersion=2026.03.2" in notices

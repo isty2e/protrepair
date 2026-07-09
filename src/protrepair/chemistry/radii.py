@@ -18,10 +18,36 @@ RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE = (
     "rdkit==2026.3.2 (rdBase.rdkitVersion=2026.03.2) for atomic numbers 1-118"
 )
 VAN_DER_WAALS_RADII_SOURCE = (
-    f"{RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE}; radius API: GetRvdw"
+    f"{RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE}; radius API: GetRvdw; "
+    "upstream source: BODR v10.1"
 )
 COVALENT_RADII_SOURCE = (
-    f"{RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE}; radius API: GetRcovalent"
+    f"{RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE}; radius API: GetRcovalent; "
+    "upstream source: Cordero et al. DOI 10.1039/B801115J"
+)
+
+_RDKIT_VAN_DER_WAALS_SOURCE_DEFAULT_ELEMENT_SYMBOLS = frozenset(
+    {"DS", "RG", "CN", "NH", "FL", "MC", "LV", "TS", "OG"}
+)
+_RDKIT_COVALENT_SOURCE_DEFAULT_ELEMENT_SYMBOLS = frozenset(
+    {
+        "BK",
+        "CF",
+        "ES",
+        "FM",
+        "MD",
+        "NO",
+        "LR",
+        "RF",
+        "DB",
+        "SG",
+        "BH",
+        "HS",
+        "MT",
+        "DS",
+        "RG",
+        "CN",
+    }
 )
 
 RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM: Mapping[str, float] = (
@@ -288,11 +314,17 @@ class RadiusKind(str, Enum):
 
 
 class ElementRadiusResolutionStatus(str, Enum):
-    """Resolution status for one element-radius lookup."""
+    """Availability status for one element-radius lookup."""
 
-    KNOWN = "known"
-    ALIASED = "aliased"
+    RESOLVED = "resolved"
     UNKNOWN = "unknown"
+
+
+class ElementRadiusDataQuality(str, Enum):
+    """Upstream source quality for one resolved radius value."""
+
+    SOURCE_REPORTED = "source_reported"
+    SOURCE_DEFAULT = "source_default"
 
 
 class UnknownElementRadiusError(ValueError):
@@ -309,12 +341,18 @@ class ElementRadiusResolution:
     status: ElementRadiusResolutionStatus
     radius_angstrom: float | None
     source: str | None
+    data_quality: ElementRadiusDataQuality | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, RadiusKind):
             raise TypeError("kind must be a RadiusKind")
         if not isinstance(self.status, ElementRadiusResolutionStatus):
             raise TypeError("status must be an ElementRadiusResolutionStatus")
+        if self.data_quality is not None and not isinstance(
+            self.data_quality,
+            ElementRadiusDataQuality,
+        ):
+            raise TypeError("data_quality must be an ElementRadiusDataQuality")
         if self.radius_angstrom is not None and (
             not isfinite(self.radius_angstrom) or self.radius_angstrom <= 0.0
         ):
@@ -334,8 +372,14 @@ class ElementRadiusResolution:
             )
 
         if self.status is ElementRadiusResolutionStatus.UNKNOWN:
-            if self.radius_angstrom is not None or self.source is not None:
-                raise ValueError("unknown radius resolution cannot carry a radius")
+            if (
+                self.radius_angstrom is not None
+                or self.source is not None
+                or self.data_quality is not None
+            ):
+                raise ValueError(
+                    "unknown radius resolution cannot carry radius source or quality"
+                )
             if (
                 expected_normalized_element_symbol is not None
                 and expected_normalized_element_symbol in _radius_table(self.kind)
@@ -345,33 +389,50 @@ class ElementRadiusResolution:
                 )
             return
 
-        if self.radius_angstrom is None or self.source is None:
-            raise ValueError("known radius resolution requires radius and source")
+        if (
+            self.radius_angstrom is None
+            or self.source is None
+            or self.data_quality is None
+        ):
+            raise ValueError(
+                "resolved radius resolution requires radius source and source quality"
+            )
         if not self.source.strip():
-            raise ValueError("known radius resolution source must be non-empty")
+            raise ValueError("resolved radius resolution source must be non-empty")
         if self.normalized_element_symbol is None:
-            raise ValueError("known radius resolution requires a normalized symbol")
-        if self.status is ElementRadiusResolutionStatus.KNOWN:
-            if self.requested_element_symbol != self.normalized_element_symbol:
-                raise ValueError("known radius resolution cannot describe an alias")
-        elif self.requested_element_symbol == self.normalized_element_symbol:
-            raise ValueError("aliased radius resolution requires distinct symbols")
+            raise ValueError("resolved radius resolution requires a normalized symbol")
         if self.source != _radius_source(self.kind):
             raise ValueError(
-                "known radius resolution must use the canonical radius source"
+                "resolved radius resolution must use the canonical radius source"
             )
         expected_radius_angstrom = _radius_table(self.kind).get(
             self.normalized_element_symbol
         )
         if self.radius_angstrom != expected_radius_angstrom:
             raise ValueError(
-                "known radius resolution must match the active radius table"
+                "resolved radius resolution must match the active radius table"
+            )
+        expected_data_quality = _radius_data_quality(
+            self.kind,
+            self.normalized_element_symbol,
+        )
+        if self.data_quality is not expected_data_quality:
+            raise ValueError(
+                "resolved radius resolution must match canonical source quality"
             )
 
-    def is_known(self) -> bool:
+    def is_resolved(self) -> bool:
         """Return whether this lookup resolved to a concrete radius."""
 
-        return self.status is not ElementRadiusResolutionStatus.UNKNOWN
+        return self.status is ElementRadiusResolutionStatus.RESOLVED
+
+    def is_alias(self) -> bool:
+        """Return whether the requested symbol resolved through an alias."""
+
+        return (
+            self.is_resolved()
+            and self.requested_element_symbol != self.normalized_element_symbol
+        )
 
     def require_radius(self) -> float:
         """Return the concrete radius or raise with stable unknown-element wording."""
@@ -392,6 +453,7 @@ class ElementRadiusLookup:
     kind: RadiusKind
     radius_by_element_symbol: Mapping[str, float]
     unresolved_element_symbols: tuple[str, ...] = ()
+    source_default_element_symbols: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, RadiusKind):
@@ -401,6 +463,16 @@ class ElementRadiusLookup:
                 raise ValueError(f"invalid radius lookup key {element_symbol!r}")
             if not isfinite(radius_angstrom) or radius_angstrom <= 0.0:
                 raise ValueError("prepared radius values must be finite and positive")
+            normalized_element_symbol = normalize_radius_element_symbol(element_symbol)
+            expected_radius_angstrom = (
+                None
+                if normalized_element_symbol is None
+                else _radius_table(self.kind).get(normalized_element_symbol)
+            )
+            if radius_angstrom != expected_radius_angstrom:
+                raise ValueError(
+                    "prepared radius values must match the active radius table"
+                )
         object.__setattr__(
             self,
             "radius_by_element_symbol",
@@ -424,11 +496,48 @@ class ElementRadiusLookup:
             "unresolved_element_symbols",
             normalized_unresolved_element_symbols,
         )
+        normalized_source_default_element_symbols = tuple(
+            sorted(
+                {
+                    _radius_lookup_key(symbol)
+                    for symbol in self.source_default_element_symbols
+                }
+            )
+        )
+        expected_source_default_element_symbols = tuple(
+            sorted(
+                element_symbol
+                for element_symbol in self.radius_by_element_symbol
+                if _radius_data_quality(
+                    self.kind,
+                    normalize_radius_element_symbol(element_symbol),
+                )
+                is ElementRadiusDataQuality.SOURCE_DEFAULT
+            )
+        )
+        if (
+            normalized_source_default_element_symbols
+            != expected_source_default_element_symbols
+        ):
+            raise ValueError(
+                "prepared source-default radius keys must match canonical source "
+                "quality"
+            )
+        object.__setattr__(
+            self,
+            "source_default_element_symbols",
+            normalized_source_default_element_symbols,
+        )
 
     def has_unresolved_elements(self) -> bool:
         """Return whether at least one requested element failed to resolve."""
 
         return bool(self.unresolved_element_symbols)
+
+    def has_source_defaults(self) -> bool:
+        """Return whether any prepared radius is an upstream source default."""
+
+        return bool(self.source_default_element_symbols)
 
     def require_complete(self, context: str) -> None:
         """Raise one aggregate error if any requested element lacks a radius."""
@@ -504,6 +613,7 @@ def resolve_element_radius(element: str, kind: RadiusKind) -> ElementRadiusResol
             status=ElementRadiusResolutionStatus.UNKNOWN,
             radius_angstrom=None,
             source=None,
+            data_quality=None,
         )
 
     radius_angstrom = _radius_table(kind).get(normalized_element_symbol)
@@ -515,19 +625,17 @@ def resolve_element_radius(element: str, kind: RadiusKind) -> ElementRadiusResol
             status=ElementRadiusResolutionStatus.UNKNOWN,
             radius_angstrom=None,
             source=None,
+            data_quality=None,
         )
 
     return ElementRadiusResolution(
         kind=kind,
         requested_element_symbol=requested_element_symbol,
         normalized_element_symbol=normalized_element_symbol,
-        status=(
-            ElementRadiusResolutionStatus.ALIASED
-            if requested_element_symbol != normalized_element_symbol
-            else ElementRadiusResolutionStatus.KNOWN
-        ),
+        status=ElementRadiusResolutionStatus.RESOLVED,
         radius_angstrom=radius_angstrom,
         source=_radius_source(kind),
+        data_quality=_radius_data_quality(kind, normalized_element_symbol),
     )
 
 
@@ -539,6 +647,7 @@ def prepare_radius_lookup(
 
     radius_by_element_symbol: dict[str, float] = {}
     unresolved_element_symbols: set[str] = set()
+    source_default_element_symbols: set[str] = set()
     for element in elements:
         lookup_key = _radius_lookup_key(element)
         if (
@@ -553,11 +662,14 @@ def prepare_radius_lookup(
             continue
 
         radius_by_element_symbol[lookup_key] = resolution.radius_angstrom
+        if resolution.data_quality is ElementRadiusDataQuality.SOURCE_DEFAULT:
+            source_default_element_symbols.add(lookup_key)
 
     return ElementRadiusLookup(
         kind=kind,
         radius_by_element_symbol=radius_by_element_symbol,
         unresolved_element_symbols=tuple(unresolved_element_symbols),
+        source_default_element_symbols=tuple(source_default_element_symbols),
     )
 
 
@@ -611,3 +723,26 @@ def _radius_source(kind: RadiusKind) -> str:
         return COVALENT_RADII_SOURCE
 
     raise TypeError("kind must be a RadiusKind")
+
+
+def _radius_data_quality(
+    kind: RadiusKind,
+    normalized_element_symbol: str | None,
+) -> ElementRadiusDataQuality:
+    """Return pinned upstream source quality for one resolved radius value."""
+
+    if normalized_element_symbol is None:
+        raise ValueError("resolved radius quality requires a normalized symbol")
+    source_default_symbols = (
+        _RDKIT_VAN_DER_WAALS_SOURCE_DEFAULT_ELEMENT_SYMBOLS
+        if kind is RadiusKind.VAN_DER_WAALS
+        else _RDKIT_COVALENT_SOURCE_DEFAULT_ELEMENT_SYMBOLS
+        if kind is RadiusKind.COVALENT
+        else None
+    )
+    if source_default_symbols is None:
+        raise TypeError("kind must be a RadiusKind")
+    if normalized_element_symbol in source_default_symbols:
+        return ElementRadiusDataQuality.SOURCE_DEFAULT
+
+    return ElementRadiusDataQuality.SOURCE_REPORTED

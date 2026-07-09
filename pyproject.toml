@@ -12,10 +12,11 @@ dynamic = ["version"]
 description = "Typed Python package for repairing protein structure files."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
-license = { text = "MIT AND CC-BY-4.0" }
+license = { text = "MIT AND BSD-3-Clause AND CC-BY-4.0" }
 license-files = [
   "LICENSE",
   "THIRD_PARTY_NOTICES.md",
+  "vendor/rdkit/LICENSE",
   "vendor/faspr/LICENSE",
   "vendor/faspr/DUNBRACK_ROTAMER_LIBRARY_NOTICE.md",
   "vendor/faspr/PROVENANCE.md",
@@ -101,6 +102,7 @@ only-include = [
   "scripts/run_installed_wheel_smoke.py",
   "src/protrepair",
   "vendor/faspr",
+  "vendor/rdkit",
 ]
 exclude = [
   ".gitignore",

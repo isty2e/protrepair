@@ -8,6 +8,7 @@ from protrepair.chemistry import (
     RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION,
     VAN_DER_WAALS_RADII_SOURCE,
     BondDefinition,
+    ElementRadiusDataQuality,
     ElementRadiusLookup,
     ElementRadiusResolution,
     ElementRadiusResolutionStatus,
@@ -118,10 +119,12 @@ def test_unsupported_element_radii_resolve_explicitly_unknown() -> None:
     covalent_resolution = resolve_element_radius("XX", RadiusKind.COVALENT)
 
     assert vdw_resolution.status is ElementRadiusResolutionStatus.UNKNOWN
+    assert vdw_resolution.data_quality is None
     assert vdw_resolution.requested_element_symbol == "XX"
     assert vdw_resolution.normalized_element_symbol == "XX"
     assert vdw_resolution.radius_angstrom is None
     assert covalent_resolution.status is ElementRadiusResolutionStatus.UNKNOWN
+    assert covalent_resolution.data_quality is None
     with pytest.raises(UnknownElementRadiusError, match="van_der_waals radius"):
         van_der_waals_radius_angstrom("XX")
     with pytest.raises(UnknownElementRadiusError, match="covalent radius"):
@@ -159,11 +162,18 @@ def test_deuterium_and_tritium_alias_to_hydrogen_radius() -> None:
     deuterium_resolution = resolve_element_radius("D", RadiusKind.VAN_DER_WAALS)
     tritium_resolution = resolve_element_radius("t", RadiusKind.COVALENT)
 
-    assert deuterium_resolution.status is ElementRadiusResolutionStatus.ALIASED
+    assert deuterium_resolution.status is ElementRadiusResolutionStatus.RESOLVED
+    assert deuterium_resolution.is_alias()
+    assert (
+        deuterium_resolution.data_quality
+        is ElementRadiusDataQuality.SOURCE_REPORTED
+    )
     assert deuterium_resolution.requested_element_symbol == "D"
     assert deuterium_resolution.normalized_element_symbol == "H"
     assert deuterium_resolution.radius_angstrom == van_der_waals_radius_angstrom("H")
-    assert tritium_resolution.status is ElementRadiusResolutionStatus.ALIASED
+    assert tritium_resolution.status is ElementRadiusResolutionStatus.RESOLVED
+    assert tritium_resolution.is_alias()
+    assert tritium_resolution.data_quality is ElementRadiusDataQuality.SOURCE_REPORTED
     assert tritium_resolution.requested_element_symbol == "T"
     assert tritium_resolution.normalized_element_symbol == "H"
     assert tritium_resolution.radius_angstrom == covalent_radius_angstrom("H")
@@ -195,6 +205,91 @@ def test_prepared_radius_lookup_records_unresolved_elements_once() -> None:
     assert "C1" in error_message
 
 
+def test_radius_resolution_distinguishes_upstream_source_defaults() -> None:
+    """Pinned upstream defaults must not masquerade as reported radius data."""
+
+    covalent_default = resolve_element_radius("BK", RadiusKind.COVALENT)
+    covalent_same_value = resolve_element_radius("Y", RadiusKind.COVALENT)
+    covalent_superheavy_reported = resolve_element_radius("NH", RadiusKind.COVALENT)
+    vdw_default = resolve_element_radius("DS", RadiusKind.VAN_DER_WAALS)
+    vdw_same_value = resolve_element_radius("CO", RadiusKind.VAN_DER_WAALS)
+    vdw_actinide_reported = resolve_element_radius("BK", RadiusKind.VAN_DER_WAALS)
+
+    assert covalent_default.data_quality is ElementRadiusDataQuality.SOURCE_DEFAULT
+    assert (
+        covalent_same_value.data_quality
+        is ElementRadiusDataQuality.SOURCE_REPORTED
+    )
+    assert (
+        covalent_superheavy_reported.data_quality
+        is ElementRadiusDataQuality.SOURCE_REPORTED
+    )
+    assert vdw_default.data_quality is ElementRadiusDataQuality.SOURCE_DEFAULT
+    assert vdw_same_value.data_quality is ElementRadiusDataQuality.SOURCE_REPORTED
+    assert (
+        vdw_actinide_reported.data_quality
+        is ElementRadiusDataQuality.SOURCE_REPORTED
+    )
+
+    covalent_source_defaults = {
+        element_symbol
+        for element_symbol in RDKIT_PERIODIC_TABLE_COVALENT_RADII_ANGSTROM
+        if resolve_element_radius(
+            element_symbol,
+            RadiusKind.COVALENT,
+        ).data_quality
+        is ElementRadiusDataQuality.SOURCE_DEFAULT
+    }
+    vdw_source_defaults = {
+        element_symbol
+        for element_symbol in RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM
+        if resolve_element_radius(
+            element_symbol,
+            RadiusKind.VAN_DER_WAALS,
+        ).data_quality
+        is ElementRadiusDataQuality.SOURCE_DEFAULT
+    }
+    assert covalent_source_defaults == {
+        "BK",
+        "CF",
+        "ES",
+        "FM",
+        "MD",
+        "NO",
+        "LR",
+        "RF",
+        "DB",
+        "SG",
+        "BH",
+        "HS",
+        "MT",
+        "DS",
+        "RG",
+        "CN",
+    }
+    assert vdw_source_defaults == {
+        "DS",
+        "RG",
+        "CN",
+        "NH",
+        "FL",
+        "MC",
+        "LV",
+        "TS",
+        "OG",
+    }
+
+
+def test_prepared_lookup_preserves_source_default_elements() -> None:
+    """Hot-loop lookup preparation should retain source-quality metadata."""
+
+    lookup = prepare_radius_lookup(("BK", "Y", "XX"), RadiusKind.COVALENT)
+
+    assert lookup.source_default_element_symbols == ("BK",)
+    assert lookup.has_source_defaults()
+    assert lookup.unresolved_element_symbols == ("XX",)
+
+
 def test_radius_resolution_value_objects_reject_invariant_drift() -> None:
     """Radius facts should not be constructible in contradictory states."""
 
@@ -206,36 +301,40 @@ def test_radius_resolution_value_objects_reject_invariant_drift() -> None:
             status=ElementRadiusResolutionStatus.UNKNOWN,
             radius_angstrom=1.7,
             source=VAN_DER_WAALS_RADII_SOURCE,
+            data_quality=None,
         )
 
-    with pytest.raises(ValueError, match="requires radius and source"):
+    with pytest.raises(ValueError, match="requires radius source and source quality"):
         ElementRadiusResolution(
             kind=RadiusKind.VAN_DER_WAALS,
             requested_element_symbol="C",
             normalized_element_symbol="C",
-            status=ElementRadiusResolutionStatus.KNOWN,
+            status=ElementRadiusResolutionStatus.RESOLVED,
             radius_angstrom=None,
             source=None,
+            data_quality=ElementRadiusDataQuality.SOURCE_REPORTED,
         )
 
-    with pytest.raises(ValueError, match="cannot describe an alias"):
+    with pytest.raises(ValueError, match="canonical radius resolver"):
         ElementRadiusResolution(
             kind=RadiusKind.VAN_DER_WAALS,
-            requested_element_symbol="D",
+            requested_element_symbol="X",
             normalized_element_symbol="H",
-            status=ElementRadiusResolutionStatus.KNOWN,
+            status=ElementRadiusResolutionStatus.RESOLVED,
             radius_angstrom=1.2,
             source=VAN_DER_WAALS_RADII_SOURCE,
+            data_quality=ElementRadiusDataQuality.SOURCE_REPORTED,
         )
 
-    with pytest.raises(ValueError, match="requires distinct symbols"):
+    with pytest.raises(ValueError, match="source quality"):
         ElementRadiusResolution(
             kind=RadiusKind.VAN_DER_WAALS,
             requested_element_symbol="H",
             normalized_element_symbol="H",
-            status=ElementRadiusResolutionStatus.ALIASED,
+            status=ElementRadiusResolutionStatus.RESOLVED,
             radius_angstrom=1.2,
             source=VAN_DER_WAALS_RADII_SOURCE,
+            data_quality=None,
         )
 
     with pytest.raises(
@@ -251,6 +350,18 @@ def test_radius_resolution_value_objects_reject_invariant_drift() -> None:
         ElementRadiusLookup(
             kind=RadiusKind.VAN_DER_WAALS,
             radius_by_element_symbol={"C1": 1.7},
+        )
+
+    with pytest.raises(ValueError, match="active radius table"):
+        ElementRadiusLookup(
+            kind=RadiusKind.VAN_DER_WAALS,
+            radius_by_element_symbol={"C": 9.9},
+        )
+
+    with pytest.raises(ValueError, match="active radius table"):
+        ElementRadiusLookup(
+            kind=RadiusKind.VAN_DER_WAALS,
+            radius_by_element_symbol={"XX": 1.9},
         )
 
     with pytest.raises(ValueError, match="cannot overlap resolved"):
@@ -272,9 +383,10 @@ def test_radius_value_objects_reject_non_finite_values(
             kind=RadiusKind.VAN_DER_WAALS,
             requested_element_symbol="C",
             normalized_element_symbol="C",
-            status=ElementRadiusResolutionStatus.KNOWN,
+            status=ElementRadiusResolutionStatus.RESOLVED,
             radius_angstrom=radius_angstrom,
             source=VAN_DER_WAALS_RADII_SOURCE,
+            data_quality=ElementRadiusDataQuality.SOURCE_REPORTED,
         )
     with pytest.raises(ValueError, match="finite and positive"):
         ElementRadiusLookup(
@@ -294,24 +406,38 @@ def test_radius_resolution_rejects_facts_not_produced_by_canonical_resolver() ->
             status=ElementRadiusResolutionStatus.UNKNOWN,
             radius_angstrom=None,
             source=None,
+            data_quality=None,
         )
     with pytest.raises(ValueError, match="canonical radius source"):
         ElementRadiusResolution(
             kind=RadiusKind.VAN_DER_WAALS,
             requested_element_symbol="C",
             normalized_element_symbol="C",
-            status=ElementRadiusResolutionStatus.KNOWN,
+            status=ElementRadiusResolutionStatus.RESOLVED,
             radius_angstrom=1.7,
             source="invented source",
+            data_quality=ElementRadiusDataQuality.SOURCE_REPORTED,
         )
     with pytest.raises(ValueError, match="active radius table"):
         ElementRadiusResolution(
             kind=RadiusKind.VAN_DER_WAALS,
             requested_element_symbol="C",
             normalized_element_symbol="C",
-            status=ElementRadiusResolutionStatus.KNOWN,
+            status=ElementRadiusResolutionStatus.RESOLVED,
             radius_angstrom=9.9,
             source=VAN_DER_WAALS_RADII_SOURCE,
+            data_quality=ElementRadiusDataQuality.SOURCE_REPORTED,
+        )
+
+    with pytest.raises(ValueError, match="canonical source quality"):
+        ElementRadiusResolution(
+            kind=RadiusKind.COVALENT,
+            requested_element_symbol="BK",
+            normalized_element_symbol="BK",
+            status=ElementRadiusResolutionStatus.RESOLVED,
+            radius_angstrom=1.9,
+            source=COVALENT_RADII_SOURCE,
+            data_quality=ElementRadiusDataQuality.SOURCE_REPORTED,
         )
 
 

@@ -65,6 +65,7 @@ def test_built_wheel_contains_runtime_assets_and_notices(
     } <= names
     assert _has_suffix(names, ".dist-info/licenses/LICENSE")
     assert _has_suffix(names, ".dist-info/licenses/THIRD_PARTY_NOTICES.md")
+    assert _has_suffix(names, ".dist-info/licenses/vendor/rdkit/LICENSE")
     assert _has_suffix(names, ".dist-info/licenses/vendor/faspr/LICENSE")
     assert _has_suffix(
         names,
@@ -110,6 +111,7 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
     assert _has_suffix(names, "/docs/radius-policy.md")
     assert _has_suffix(names, "/scripts/run_installed_wheel_smoke.py")
     assert _has_suffix(names, "/THIRD_PARTY_NOTICES.md")
+    assert _has_suffix(names, "/vendor/rdkit/LICENSE")
 
     vendor_root = REPOSITORY_ROOT / "vendor/faspr"
     for vendor_path in sorted(vendor_root.rglob("*")):

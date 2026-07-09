@@ -61,7 +61,8 @@ Element-radius diagnostics use a static `rdkit==2026.3.2` PeriodicTable
 snapshot generated from `GetRvdw` and `GetRcovalent`, not runtime RDKit lookup.
 See `docs/radius-policy.md` for the canonical unknown-element and batch-lookup
 contract. Update `src/protrepair/chemistry/radii.py`, `THIRD_PARTY_NOTICES.md`,
-and the radius sentinel tests together if the release RDKit pin changes.
+`vendor/rdkit/LICENSE`, and the radius sentinel/quality tests together if the
+release RDKit pin changes.
 `tests/unit/test_radii.py` includes a live RDKit PeriodicTable verifier that
 compares all atomic numbers 1 through 118 when the installed RDKit backend
 version matches the committed snapshot version; the release constraints make
@@ -114,6 +115,7 @@ Confirm that the sdist contains the release gate sources:
 - `docs/radius-policy.md`
 - `scripts/run_installed_wheel_smoke.py`
 - `THIRD_PARTY_NOTICES.md`
+- `vendor/rdkit/LICENSE`
 
 ## GitHub Actions Policy
 
