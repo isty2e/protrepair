@@ -121,7 +121,7 @@ def template_resolved_hydrogen_topology_bonds_for_new_atoms(
         new_hydrogen_atom_names = frozenset(
             atom_site.name
             for atom_site in target_residue_site.atom_sites
-            if atom_site.element == "H" and atom_site.name not in source_atom_names
+            if atom_site.is_hydrogen() and atom_site.name not in source_atom_names
         )
         if not new_hydrogen_atom_names:
             continue
@@ -150,7 +150,7 @@ def template_heavy_bond_definitions_for_present_atoms(
     present_heavy_atom_names = frozenset(
         atom_site.name
         for atom_site in residue_site.atom_sites
-        if atom_site.element != "H"
+        if not atom_site.is_hydrogen()
     )
     return tuple(
         bond_definition

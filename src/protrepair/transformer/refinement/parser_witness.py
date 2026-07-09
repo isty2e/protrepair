@@ -311,7 +311,7 @@ def _atom_ref_supports_sidechain_only_motion(
         return False
 
     atom_site = residue.atom_site(atom_ref.atom_name)
-    if atom_site.element == "H":
+    if atom_site.is_hydrogen():
         return False
 
     return atom_site.name.strip().upper() not in POLYMER_BACKBONE_HEAVY_ATOM_NAMES

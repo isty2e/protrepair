@@ -44,6 +44,18 @@ BSD 3-Clause text in `vendor/rdkit/LICENSE`. `THIRD_PARTY_NOTICES.md` records
 the runtime and snapshot provenance separately from the underlying scientific
 sources.
 
+Radius aliases do not own general element semantics. Canonical structure atom
+sites retain their source element symbol and derive a separate
+`ElementIdentity`: `D` and `T` keep their source spelling and isotope mass
+number while sharing hydrogen chemical identity with `H`. Diagnostics,
+readiness, completion, packing, and refinement classify source atoms through
+that model-owned identity rather than literal element comparisons. Coordinate
+egress restores explicit isotope symbols after Gemmi projection so the
+canonical source identity is not collapsed to an unknown element. Polymer
+hydrogen completion also restores D/T labels when the same residue-local atom
+name survives rebuilding; it does not guess an isotope reassignment when a
+source hydrogen identity is replaced by a different materialized atom name.
+
 Near-covalent checks use covalent radii plus an explicit distance margin to
 generate candidate contacts. They may reuse clash atom-pair scope policy for
 hydrogen, ligand, and bonded-neighbor exclusions, but they must not depend on

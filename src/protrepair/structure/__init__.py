@@ -12,6 +12,7 @@ from protrepair.structure.constitution import (
     ResidueSite,
     StructureConstitution,
 )
+from protrepair.structure.element import ElementIdentity
 from protrepair.structure.endpoint import (
     StructureCarrierHandle,
     StructureCarrierKind,
@@ -53,6 +54,7 @@ __all__ = [
     "BondProvenance",
     "BondRelationshipType",
     "ChainSite",
+    "ElementIdentity",
     "FileFormat",
     "PolymerBlueprint",
     "PolymerChainBlueprint",

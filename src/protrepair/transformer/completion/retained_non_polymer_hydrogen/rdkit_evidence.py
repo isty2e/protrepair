@@ -104,7 +104,9 @@ def _validate_evidence_alignment(
     """Raise when one evidence cannot be projected onto the current payload."""
 
     payload_heavy_atom_names = tuple(
-        atom_site.name for atom_site in payload.atom_sites if atom_site.element != "H"
+        atom_site.name
+        for atom_site in payload.atom_sites
+        if not atom_site.is_hydrogen()
     )
     if set(payload_heavy_atom_names) != set(evidence.heavy_atom_names):
         raise ValueError(

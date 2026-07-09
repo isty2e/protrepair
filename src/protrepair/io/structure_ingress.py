@@ -1,6 +1,6 @@
 """Canonical raw-structure ingress normalization transformations."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from math import isfinite
 
@@ -147,6 +147,7 @@ def normalize_raw_structure(
     pdb_conect_atom_identity_pairs: tuple[
         tuple[SourceAtomIdentity, SourceAtomIdentity], ...
     ] = (),
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str] | None = None,
 ) -> ProteinStructure:
     """Normalize the first model from one raw gemmi structure."""
 
@@ -170,14 +171,29 @@ def normalize_raw_structure(
             ),
         )
 
+    normalized_source_elements = (
+        {}
+        if source_element_by_atom_identity is None
+        else source_element_by_atom_identity
+    )
     model = raw_structure[0]
     for raw_chain in model:
         chain_id = normalize_chain_id(raw_chain.name)
         if not policy.selects_chain(chain_id):
             continue
 
-        polymer_residues = _normalize_polymer_residues(raw_chain, chain_id, policy)
-        chain_ligands = _normalize_ligands(raw_chain, chain_id, policy)
+        polymer_residues = _normalize_polymer_residues(
+            raw_chain,
+            chain_id,
+            policy,
+            source_element_by_atom_identity=normalized_source_elements,
+        )
+        chain_ligands = _normalize_ligands(
+            raw_chain,
+            chain_id,
+            policy,
+            source_element_by_atom_identity=normalized_source_elements,
+        )
         if polymer_residues:
             chains.append((chain_id, polymer_residues))
         ligands.extend(chain_ligands)
@@ -549,6 +565,8 @@ def _normalize_polymer_residues(
     raw_chain: gemmi.Chain,
     chain_id: str,
     policy: StructureNormalizationPolicy,
+    *,
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
 ) -> list[_NormalizedResiduePayload]:
     """Normalize polymer residues in one raw chain."""
 
@@ -563,6 +581,7 @@ def _normalize_polymer_residues(
             raw_residue,
             chain_id,
             policy.occupancy_policy,
+            source_element_by_atom_identity=source_element_by_atom_identity,
         )
         residue_id = residue.residue_id
         if residue_id not in grouped_residues:
@@ -581,6 +600,8 @@ def _normalize_ligands(
     raw_chain: gemmi.Chain,
     chain_id: str,
     policy: StructureNormalizationPolicy,
+    *,
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
 ) -> list[_NormalizedResiduePayload]:
     """Normalize ligand residues in one raw chain under one normalization policy."""
 
@@ -604,7 +625,12 @@ def _normalize_ligands(
                 f"{raw_residue.name} at {residue_id.display_token()}"
             )
 
-        ligand = _normalize_residue(raw_residue, chain_id, policy.occupancy_policy)
+        ligand = _normalize_residue(
+            raw_residue,
+            chain_id,
+            policy.occupancy_policy,
+            source_element_by_atom_identity=source_element_by_atom_identity,
+        )
         if residue_id not in grouped_ligands:
             grouped_ligands[residue_id] = []
             ligand_order.append(residue_id)
@@ -735,6 +761,8 @@ def _normalize_residue(
     raw_residue: gemmi.Residue,
     chain_id: str,
     occupancy_policy: OccupancyPolicy,
+    *,
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
 ) -> _NormalizedResiduePayload:
     """Normalize one raw gemmi residue into the canonical residue entity."""
 
@@ -747,6 +775,7 @@ def _normalize_residue(
         raw_residue,
         residue_id=residue_id,
         occupancy_policy=occupancy_policy,
+        source_element_by_atom_identity=source_element_by_atom_identity,
     )
     return _NormalizedResiduePayload(
         constitution=ResidueSite(
@@ -774,11 +803,17 @@ def _select_atom_variants(
     *,
     residue_id: ResidueId,
     occupancy_policy: OccupancyPolicy,
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
 ) -> list[tuple[AtomSite, AtomGeometry, int | None]]:
     """Resolve atom sites by residue altloc cohort, then by atom name."""
 
     raw_atom_payloads = tuple(
-        _atom_payload_from_raw_site(raw_atom, residue_id=residue_id)
+        _atom_payload_from_raw_site(
+            raw_atom,
+            residue_id=residue_id,
+            component_id=raw_residue.name,
+            source_element_by_atom_identity=source_element_by_atom_identity,
+        )
         for raw_atom in raw_residue
     )
     selected_altloc = _select_residue_altloc(raw_atom_payloads, occupancy_policy)
@@ -814,6 +849,8 @@ def _atom_payload_from_raw_site(
     raw_atom: gemmi.Atom,
     *,
     residue_id: ResidueId,
+    component_id: str,
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
 ) -> _RawAtomPayload:
     """Validate and project one raw gemmi atom before variant selection."""
 
@@ -838,10 +875,18 @@ def _atom_payload_from_raw_site(
     )
     occupancy = _validated_raw_atom_occupancy(raw_atom, residue_id)
     b_factor = _validated_raw_atom_b_factor(raw_atom, residue_id)
+    source_identity = SourceAtomIdentity(
+        atom_ref=AtomRef(residue_id=residue_id, atom_name=raw_atom.name),
+        component_id=component_id,
+        altloc=altloc,
+    )
     return _RawAtomPayload(
         AtomSite(
             name=raw_atom.name,
-            element=raw_atom.element.name,
+            element=source_element_by_atom_identity.get(
+                source_identity,
+                raw_atom.element.name,
+            ),
         ),
         AtomGeometry(
             position=Vec3(

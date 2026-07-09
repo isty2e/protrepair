@@ -452,7 +452,7 @@ def _atom_requires_residue_atoms(
 
     normalized_atom_name = atom_name.strip().upper()
     atom_site = residue.atom_site(normalized_atom_name)
-    if atom_site.element != "H":
+    if not atom_site.is_hydrogen():
         return normalized_atom_name in POLYMER_BACKBONE_HEAVY_ATOM_NAMES
 
     anchor_atom_name = _hydrogen_anchor_atom_name(
@@ -492,7 +492,7 @@ def _hydrogen_anchor_atom_name(
     nearest_anchor_atom_name: str | None = None
     nearest_anchor_distance = float("inf")
     for atom_site in residue.atom_sites:
-        if atom_site.element == "H":
+        if atom_site.is_hydrogen():
             continue
 
         pair_distance = hydrogen_atom_geometry.distance_to(

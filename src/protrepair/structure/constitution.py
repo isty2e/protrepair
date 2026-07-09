@@ -10,6 +10,7 @@ from protrepair.errors import (
     ResidueNotFoundError,
 )
 from protrepair.structure.address_space import StructureAddressSpaceKey
+from protrepair.structure.element import ElementIdentity
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex, ChainIndex, ResidueIndex
 
@@ -20,24 +21,29 @@ class AtomSite:
 
     name: str
     element: str
+    element_identity: ElementIdentity = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         name = self.name.strip().upper()
-        element = self.element.strip().upper()
+        element_identity = ElementIdentity(self.element)
+        element = element_identity.source_symbol
 
         if not name:
             raise ValueError("atom-site name must not be blank")
 
-        if not element:
-            raise ValueError("atom-site element must not be blank")
-
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "element", element)
+        object.__setattr__(self, "element_identity", element_identity)
 
     def is_named(self, atom_name: str) -> bool:
         """Return whether this site matches the requested canonical atom name."""
 
         return self.name == atom_name.strip().upper()
+
+    def is_hydrogen(self) -> bool:
+        """Return whether this site has hydrogen chemical behavior."""
+
+        return self.element_identity.is_hydrogen()
 
     def with_name(self, atom_name: str) -> "AtomSite":
         """Return a copy with an updated canonical atom-site name."""

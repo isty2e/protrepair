@@ -144,7 +144,7 @@ def resolve_retained_non_polymer_chemistry(
     residue_index = structure.constitution.residue_index(residue.residue_id)
     residue_geometry = structure.residue_geometry(residue_index)
     present_hydrogen_atom_names = tuple(
-        atom_site.name for atom_site in residue.atom_sites if atom_site.element == "H"
+        atom_site.name for atom_site in residue.atom_sites if atom_site.is_hydrogen()
     )
     if evidence is not None:
         try:
@@ -216,7 +216,7 @@ def resolve_retained_non_polymer_chemistry(
             hydrogen_position_by_name={
                 atom_site.name: residue_geometry.position(atom_site.name)
                 for atom_site in residue.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             },
         )
     except (RuntimeError, ValueError) as error:

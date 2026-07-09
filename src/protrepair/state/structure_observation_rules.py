@@ -74,7 +74,7 @@ def backbone_heavy_atom_completeness_state(
         present_heavy_atom_names = {
             atom_site.name
             for atom_site in residue.atom_sites
-            if atom_site.element != "H"
+            if not atom_site.is_hydrogen()
         }
         missing_backbone_atom_names = tuple(
             atom_name
@@ -103,7 +103,7 @@ def sidechain_heavy_atom_completeness_state(
         present_heavy_atom_names = {
             atom_site.name
             for atom_site in residue.atom_sites
-            if atom_site.element != "H"
+            if not atom_site.is_hydrogen()
         }
         missing_sidechain_heavy_atom_names = tuple(
             atom_name
@@ -176,7 +176,7 @@ def hydrogen_coverage_state(
         present_hydrogen_atom_names = {
             atom_site.name
             for atom_site in residue.atom_sites
-            if atom_site.element == "H"
+            if atom_site.is_hydrogen()
         }
         if not present_hydrogen_atom_names:
             continue

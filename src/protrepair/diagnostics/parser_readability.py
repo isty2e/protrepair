@@ -3,7 +3,7 @@
 from collections import defaultdict
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
@@ -21,6 +21,7 @@ from protrepair.io.source_identity import (
     normalize_insertion_code,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.element import ElementIdentity
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import (
     BondProvenance,
@@ -91,6 +92,10 @@ class _RDKitAtom(Protocol):
         """Return the atomic element symbol."""
         ...
 
+    def GetAtomicNum(self) -> int:
+        """Return the canonical atomic number."""
+        ...
+
 
 class _RDKitMol(Protocol):
     """RDKit molecule surface needed for parser witnesses."""
@@ -121,10 +126,22 @@ class RDKitProximityBondWitness:
     element_1: str
     element_2: str
     is_known_component_bond: bool
+    element_1_is_hydrogen: bool = field(init=False, repr=False, compare=False)
+    element_2_is_hydrogen: bool = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "element_1", self.element_1.strip().upper())
         object.__setattr__(self, "element_2", self.element_2.strip().upper())
+        object.__setattr__(
+            self,
+            "element_1_is_hydrogen",
+            ElementIdentity(self.element_1).is_hydrogen(),
+        )
+        object.__setattr__(
+            self,
+            "element_2_is_hydrogen",
+            ElementIdentity(self.element_2).is_hydrogen(),
+        )
 
     def display_token(self) -> str:
         """Return a compact human-readable bond token."""
@@ -134,7 +151,7 @@ class RDKitProximityBondWitness:
     def is_heavy_heavy(self) -> bool:
         """Return whether both witness atoms are non-hydrogen atoms."""
 
-        return self.element_1 != "H" and self.element_2 != "H"
+        return not self.element_1_is_hydrogen and not self.element_2_is_hydrogen
 
     def residue_ids(self) -> tuple[ResidueId, ...]:
         """Return residue ids touched by this witness bond."""
@@ -528,7 +545,7 @@ def measure_rdkit_no_conect_extra_heavy_proximity_bond_count(
         for bond in atom.GetBonds():
             begin_atom = bond.GetBeginAtom()
             end_atom = bond.GetEndAtom()
-            if begin_atom.GetSymbol() == "H" or end_atom.GetSymbol() == "H":
+            if begin_atom.GetAtomicNum() == 1 or end_atom.GetAtomicNum() == 1:
                 continue
 
             begin_ref = _atom_ref_from_rdkit_atom(begin_atom)
@@ -700,7 +717,7 @@ def _structure_contains_hydrogens(structure: ProteinStructure) -> bool:
     """Return whether one canonical structure contains any hydrogen atoms."""
 
     return any(
-        atom_site.element == "H"
+        atom_site.is_hydrogen()
         for residue_site in structure.constitution.residue_slots
         for atom_site in residue_site.atom_sites
     )

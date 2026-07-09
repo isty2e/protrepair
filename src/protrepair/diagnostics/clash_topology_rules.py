@@ -340,7 +340,7 @@ def atom_to_atom_bond_hops_within_residue(
 def atom_is_hydrogen(residue_site: ResidueSite, atom_name: str) -> bool:
     """Return whether a named atom within a residue is a hydrogen."""
 
-    return residue_site.atom_site(atom_name).element == "H"
+    return residue_site.atom_site(atom_name).is_hydrogen()
 
 
 def direct_disulfide_bond(

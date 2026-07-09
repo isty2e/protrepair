@@ -106,7 +106,7 @@ def supported_component_hydrogen_atoms(
 
     hydrogen_atoms: list[IdealizedComponentAtom] = []
     for atom in idealized_component.atoms:
-        if atom.element != "H" or atom.ideal_position is None:
+        if not atom.is_hydrogen() or atom.ideal_position is None:
             continue
 
         anchor_atom_name = idealized_component.hydrogen_anchor_atom_name(atom.atom_name)
@@ -159,7 +159,7 @@ def _local_hydrogen_anchor_atom_names(
             neighbor_atom = idealized_component.atom_with_ideal_position(
                 neighbor_atom_name
             )
-            if neighbor_atom is None or neighbor_atom.element == "H":
+            if neighbor_atom is None or neighbor_atom.is_hydrogen():
                 continue
 
             anchor_candidates[neighbor_atom_name] = next_hop_distance

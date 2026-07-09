@@ -54,7 +54,7 @@ def cleanup_targets_from_report(
                 continue
 
             atom_site = residue_site.atom_site(atom_name)
-            if atom_site.element != "H":
+            if not atom_site.is_hydrogen():
                 continue
 
             template = component_library.get(residue_site.component_id)
@@ -179,7 +179,7 @@ def hydrogen_is_supported_cleanup_target(
         return False
 
     atom_site = residue_site.atom_site(atom_name)
-    if atom_site.element != "H":
+    if not atom_site.is_hydrogen():
         return False
 
     template = component_library.get(residue_site.component_id)

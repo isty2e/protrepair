@@ -343,7 +343,7 @@ def _rotatable_hydrogen_environment_sites(
             {} if template is None else template.forcefield_parameters
         )
         for atom_site in residue.atom_sites:
-            if atom_site.element == "H":
+            if atom_site.is_hydrogen():
                 continue
 
             atom_position = residue_geometry.position(atom_site.name)
@@ -417,7 +417,7 @@ def _rotatable_hydrogen_local_sites(
     residue_geometry = residue.residue_geometry
     local_sites: list[RotatableHydrogenLocalSite] = []
     for atom_site in residue.atom_sites:
-        if atom_site.element == "H":
+        if atom_site.is_hydrogen():
             continue
 
         atom_position = residue_geometry.position(atom_site.name)

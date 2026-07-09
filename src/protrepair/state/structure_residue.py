@@ -602,7 +602,7 @@ class ResidueProjectionFactRuntime:
             present_heavy_atom_names = {
                 atom_site.name
                 for atom_site in residue.atom_sites
-                if atom_site.element != "H"
+                if not atom_site.is_hydrogen()
             }
             expected_heavy_atom_elements = (
                 hydrogen_expectation_resolution.heavy_atom_elements
@@ -643,7 +643,7 @@ class ResidueProjectionFactRuntime:
             present_heavy_atom_names = {
                 atom_site.name
                 for atom_site in residue.atom_sites
-                if atom_site.element != "H"
+                if not atom_site.is_hydrogen()
             }
             expected_heavy_atom_names = set(template.expected_heavy_atom_names())
             heavy_atom_topology_availability_state = (

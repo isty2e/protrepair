@@ -425,11 +425,13 @@ def _inferred_hydrogen_bonds(
     """Infer residue-local hydrogen attachments when templates omit hydrogens."""
 
     heavy_atom_sites = tuple(
-        atom_site for atom_site in residue_site.atom_sites if atom_site.element != "H"
+        atom_site
+        for atom_site in residue_site.atom_sites
+        if not atom_site.is_hydrogen()
     )
     inferred_bonds: list[PlannedBond] = []
     for hydrogen_atom_site in residue_site.atom_sites:
-        if hydrogen_atom_site.element != "H":
+        if not hydrogen_atom_site.is_hydrogen():
             continue
 
         if hydrogen_atom_site.name in explicit_hydrogen_atom_names:
@@ -473,7 +475,7 @@ def _explicit_hydrogen_atom_names_in_bonds(
                 continue
 
             atom_site = constitution.atom_site_at(atom_index)
-            if atom_site.element == "H":
+            if atom_site.is_hydrogen():
                 hydrogen_atom_names.add(atom_site.name)
 
     return hydrogen_atom_names

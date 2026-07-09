@@ -63,6 +63,7 @@ def add_hydrogens(
     placement_result = materialize_hydrogens_core(
         prepared_structure,
         component_library=library,
+        source_isotope_structure=structure,
         target_residue_ids=target_residue_ids,
         histidine_protonation=histidine_protonation_request,
     )

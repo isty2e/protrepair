@@ -1,5 +1,6 @@
 """gemmi-backed canonical structure ingress for coordinate formats."""
 
+from collections.abc import Iterator
 from os import PathLike
 from pathlib import Path
 
@@ -40,20 +41,12 @@ def read_structure(
         _assert_structure_file_size(source_path)
         file_format = infer_file_format(source_path)
         active_policy = StructureNormalizationPolicy() if policy is None else policy
-        if file_format is FileFormat.PDB:
-            contents = source_path.read_text(encoding="utf-8")
-            raw_structure = read_raw_structure_string(contents, file_format)
-            pdb_conect_atom_identity_pairs = _pdb_conect_atom_identity_pairs(contents)
-        else:
-            raw_structure = read_raw_structure(source_path, file_format)
-            pdb_conect_atom_identity_pairs = ()
-
-        return normalize_raw_structure(
-            raw_structure,
+        contents = source_path.read_text(encoding="utf-8")
+        return _normalize_structure_text(
+            contents,
             file_format=file_format,
             policy=active_policy,
             source_name=source_path.name,
-            pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
         )
     except ProtrepairError:
         raise
@@ -103,19 +96,11 @@ def read_structure_string_with_policy(
     """
 
     try:
-        _assert_structure_text_size(contents, source_name=source_name)
-        raw_structure = read_raw_structure_string(contents, file_format)
-        pdb_conect_atom_identity_pairs = (
-            _pdb_conect_atom_identity_pairs(contents)
-            if file_format is FileFormat.PDB
-            else ()
-        )
-        return normalize_raw_structure(
-            raw_structure,
+        return _normalize_structure_text(
+            contents,
             file_format=file_format,
             policy=policy,
             source_name=source_name,
-            pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
         )
     except ProtrepairError:
         raise
@@ -126,43 +111,42 @@ def read_structure_string_with_policy(
         ) from error
 
 
-def read_raw_structure(path: Path, file_format: FileFormat) -> gemmi.Structure:
-    """Read one coordinate file with a format-specific gemmi ingress path.
-
-    The size guard is repeated here so direct raw-parser callers cannot bypass
-    the public ingress limit enforced by read_structure(). The returned gemmi
-    object can contain multiple source models; canonical normalization consumes
-    the first model only.
-    """
-
-    _assert_structure_file_size(path)
-    if file_format is FileFormat.PDB:
-        return gemmi.read_pdb(str(path))
-
-    return gemmi.read_structure(
-        str(path),
-        format=to_gemmi_coor_format(file_format),
-    )
-
-
-def read_raw_structure_string(
+def _normalize_structure_text(
     contents: str,
+    *,
     file_format: FileFormat,
-) -> gemmi.Structure:
-    """Read one coordinate payload with a format-specific gemmi ingress path.
+    policy: StructureNormalizationPolicy,
+    source_name: str | None,
+) -> ProteinStructure:
+    """Parse and normalize one coordinate payload through one boundary path."""
 
-    The returned gemmi object can contain multiple source models; canonical
-    normalization consumes the first model only.
-    """
-
-    _assert_structure_text_size(contents, source_name=None)
+    _assert_structure_text_size(contents, source_name=source_name)
     if file_format is FileFormat.PDB:
-        return gemmi.read_pdb_string(contents)
+        raw_structure = gemmi.read_pdb_string(contents)
+        pdb_conect_atom_identity_pairs = _pdb_conect_atom_identity_pairs(contents)
+        source_element_by_atom_identity = (
+            _pdb_source_isotope_element_by_atom_identity(contents)
+        )
+    else:
+        source_document = gemmi.cif.Document()
+        raw_structure = gemmi.read_structure_string(
+            contents,
+            True,
+            to_gemmi_coor_format(file_format),
+            source_document,
+        )
+        pdb_conect_atom_identity_pairs = ()
+        source_element_by_atom_identity = (
+            _mmcif_source_isotope_element_by_atom_identity(source_document)
+        )
 
-    return gemmi.read_structure_string(
-        contents,
-        True,
-        to_gemmi_coor_format(file_format),
+    return normalize_raw_structure(
+        raw_structure,
+        file_format=file_format,
+        policy=policy,
+        source_name=source_name,
+        pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
+        source_element_by_atom_identity=source_element_by_atom_identity,
     )
 
 
@@ -246,6 +230,217 @@ def _first_model_unambiguous_pdb_atom_identities(
     """
 
     records_by_serial: dict[int, list[SourceAtomIdentity]] = {}
+    for line in _first_model_pdb_atom_lines(contents):
+        atom_serial_and_identity = _pdb_atom_serial_and_identity(line)
+        if atom_serial_and_identity is None:
+            continue
+
+        serial, identity = atom_serial_and_identity
+        records_by_serial.setdefault(serial, []).append(identity)
+
+    return {
+        serial: records[0]
+        for serial, records in records_by_serial.items()
+        if len(records) == 1
+    }
+
+
+def _pdb_source_isotope_element_by_atom_identity(
+    contents: str,
+) -> dict[SourceAtomIdentity, str]:
+    """Return first-model PDB isotope symbols before Gemmi element projection."""
+
+    source_elements: dict[SourceAtomIdentity, str] = {}
+    for line in _first_model_pdb_atom_lines(contents):
+        atom_serial_and_identity = _pdb_atom_serial_and_identity(line)
+        if atom_serial_and_identity is None:
+            continue
+
+        source_symbol = line[76:78].strip().upper()
+        if source_symbol not in {"D", "T"}:
+            continue
+        _record_source_isotope_element(
+            source_elements,
+            atom_serial_and_identity[1],
+            source_symbol,
+        )
+
+    return source_elements
+
+
+def _mmcif_source_isotope_element_by_atom_identity(
+    document: gemmi.cif.Document,
+) -> dict[SourceAtomIdentity, str]:
+    """Return first-model mmCIF isotope symbols before Gemmi projection."""
+
+    if len(document) == 0:
+        return {}
+
+    block = document[0]
+    type_symbols = tuple(block.find_values("_atom_site.type_symbol"))
+    if not type_symbols:
+        return {}
+
+    row_count = len(type_symbols)
+    atom_names = _coalesced_mmcif_column(
+        block,
+        ("_atom_site.auth_atom_id", "_atom_site.label_atom_id"),
+        row_count=row_count,
+    )
+    component_ids = _coalesced_mmcif_column(
+        block,
+        ("_atom_site.auth_comp_id", "_atom_site.label_comp_id"),
+        row_count=row_count,
+    )
+    chain_ids = _coalesced_mmcif_column(
+        block,
+        ("_atom_site.auth_asym_id", "_atom_site.label_asym_id"),
+        row_count=row_count,
+    )
+    sequence_numbers = _coalesced_mmcif_column(
+        block,
+        ("_atom_site.auth_seq_id", "_atom_site.label_seq_id"),
+        row_count=row_count,
+    )
+    insertion_codes = _coalesced_mmcif_column(
+        block,
+        ("_atom_site.pdbx_PDB_ins_code",),
+        row_count=row_count,
+        required=False,
+    )
+    altlocs = _coalesced_mmcif_column(
+        block,
+        ("_atom_site.label_alt_id",),
+        row_count=row_count,
+        required=False,
+    )
+    model_numbers = _coalesced_mmcif_column(
+        block,
+        ("_atom_site.pdbx_PDB_model_num",),
+        row_count=row_count,
+        required=False,
+    )
+    first_model_number = next(
+        (
+            _non_null_cif_value(model_number)
+            for model_number in model_numbers
+            if _non_null_cif_value(model_number)
+        ),
+        "",
+    )
+
+    source_elements: dict[SourceAtomIdentity, str] = {}
+    for row_index, source_symbol in enumerate(type_symbols):
+        normalized_source_symbol = _non_null_cif_value(source_symbol).upper()
+        if normalized_source_symbol not in {"D", "T"}:
+            continue
+        if (
+            first_model_number
+            and _non_null_cif_value(model_numbers[row_index])
+            != first_model_number
+        ):
+            continue
+
+        atom_name = _non_null_cif_value(atom_names[row_index])
+        component_id = _non_null_cif_value(component_ids[row_index])
+        chain_id = _non_null_cif_value(chain_ids[row_index])
+        sequence_number = _non_null_cif_value(sequence_numbers[row_index])
+        if not atom_name or not component_id or not sequence_number:
+            continue
+        try:
+            seq_num = int(sequence_number)
+        except ValueError:
+            continue
+
+        identity = SourceAtomIdentity(
+            atom_ref=AtomRef(
+                residue_id=ResidueId(
+                    chain_id=normalize_chain_id(chain_id),
+                    seq_num=seq_num,
+                    insertion_code=normalize_insertion_code(
+                        _non_null_cif_value(insertion_codes[row_index])
+                    ),
+                ),
+                atom_name=atom_name,
+            ),
+            component_id=component_id,
+            altloc=normalize_altloc(_non_null_cif_value(altlocs[row_index])),
+        )
+        _record_source_isotope_element(
+            source_elements,
+            identity,
+            normalized_source_symbol,
+        )
+
+    return source_elements
+
+
+def _coalesced_mmcif_column(
+    block: gemmi.cif.Block,
+    tags: tuple[str, ...],
+    *,
+    row_count: int,
+    required: bool = True,
+) -> tuple[str, ...]:
+    """Coalesce atom-site columns by preference with validated row counts."""
+
+    columns: list[tuple[str, ...]] = []
+    for tag in tags:
+        values = tuple(block.find_values(tag))
+        if not values:
+            continue
+        if len(values) != row_count:
+            raise StructureNormalizationError(
+                f"mmCIF atom-site column {tag} has inconsistent row count"
+            )
+        columns.append(values)
+
+    if not columns and required:
+        raise StructureNormalizationError(
+            f"mmCIF atom-site data requires one of {', '.join(tags)}"
+        )
+    if not columns:
+        return ("",) * row_count
+
+    return tuple(
+        next(
+            (
+                value
+                for column in columns
+                if (value := _non_null_cif_value(column[row_index]))
+            ),
+            "",
+        )
+        for row_index in range(row_count)
+    )
+
+
+def _record_source_isotope_element(
+    source_elements: dict[SourceAtomIdentity, str],
+    identity: SourceAtomIdentity,
+    source_symbol: str,
+) -> None:
+    """Record one isotope symbol or reject contradictory duplicate identity."""
+
+    previous_symbol = source_elements.get(identity)
+    if previous_symbol is not None and previous_symbol != source_symbol:
+        raise StructureNormalizationError(
+            "source atom identity carries conflicting isotope symbols: "
+            f"{identity.atom_ref.display_token()}"
+        )
+    source_elements[identity] = source_symbol
+
+
+def _non_null_cif_value(value: str) -> str:
+    """Normalize CIF null markers into an absent source token."""
+
+    normalized_value = value.strip()
+    return "" if normalized_value in {".", "?"} else normalized_value
+
+
+def _first_model_pdb_atom_lines(contents: str) -> Iterator[str]:
+    """Yield coordinate records belonging unambiguously to the first PDB model."""
+
     current_model_index = 1
     explicit_model_count = 0
     first_model_closed = False
@@ -263,19 +458,8 @@ def _first_model_unambiguous_pdb_atom_identities(
             continue
         if first_model_closed or current_model_index != 1:
             continue
-
-        atom_serial_and_identity = _pdb_atom_serial_and_identity(line)
-        if atom_serial_and_identity is None:
-            continue
-
-        serial, identity = atom_serial_and_identity
-        records_by_serial.setdefault(serial, []).append(identity)
-
-    return {
-        serial: records[0]
-        for serial, records in records_by_serial.items()
-        if len(records) == 1
-    }
+        if line.startswith(("ATOM  ", "HETATM")):
+            yield line
 
 
 def _canonical_pdb_conect_identity_pair(

@@ -99,7 +99,7 @@ def retained_non_polymer_rdkit_fallback_expected_hydrogen_atom_names(
         present_hydrogen_atom_names=tuple(
             atom_site.name
             for atom_site in residue_site.atom_sites
-            if atom_site.element == "H"
+            if atom_site.is_hydrogen()
         ),
     )
 
@@ -142,7 +142,7 @@ def infer_retained_non_polymer_rdkit_fallback(
             present_hydrogen_atom_names = tuple(
                 atom_site.name
                 for atom_site in residue_site.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             )
         resolved_hydrogen_atom_names = (
             preferred_retained_non_polymer_expected_hydrogen_atom_names(
@@ -856,7 +856,7 @@ def _retained_non_polymer_heavy_atom_pdb_block(
     pdb_lines: list[str] = []
     atom_serial = 1
     for atom_site in residue_site.atom_sites:
-        if atom_site.element == "H":
+        if atom_site.is_hydrogen():
             continue
 
         atom_geometry = residue_geometry.atom_geometry(atom_site.name)

@@ -121,7 +121,9 @@ def resolve_local_bond_planning_support(
         )
 
     heavy_atom_sites = tuple(
-        atom_site for atom_site in residue_site.atom_sites if atom_site.element != "H"
+        atom_site
+        for atom_site in residue_site.atom_sites
+        if not atom_site.is_hydrogen()
     )
     if len(heavy_atom_sites) <= 1:
         return LocalBondPlanningSupportResolution(
@@ -272,7 +274,7 @@ def _passive_context_heavy_bond_definitions(
     heavy_atom_names = frozenset(
         atom_site.name
         for atom_site in residue_site.atom_sites
-        if atom_site.element != "H"
+        if not atom_site.is_hydrogen()
     )
     heavy_bond_definitions = tuple(
         bond_definition

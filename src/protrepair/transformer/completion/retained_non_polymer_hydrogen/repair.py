@@ -589,7 +589,7 @@ def _hydrogen_position_by_name(
     return {
         atom_site.name: payload.position(atom_site.name)
         for atom_site in payload.residue_site.atom_sites
-        if atom_site.element == "H"
+        if atom_site.is_hydrogen()
     }
 
 
@@ -834,9 +834,9 @@ def _source_explicit_hydrogen_anchor_by_name(
 
         atom_site_1 = structure.constitution.atom_site_at(bond.atom_index_1)
         atom_site_2 = structure.constitution.atom_site_at(bond.atom_index_2)
-        if atom_site_1.element == "H" and atom_site_2.element != "H":
+        if atom_site_1.is_hydrogen() and not atom_site_2.is_hydrogen():
             anchor_by_hydrogen_name[atom_ref_1.atom_name] = atom_ref_2.atom_name
-        elif atom_site_2.element == "H" and atom_site_1.element != "H":
+        elif atom_site_2.is_hydrogen() and not atom_site_1.is_hydrogen():
             anchor_by_hydrogen_name[atom_ref_2.atom_name] = atom_ref_1.atom_name
 
     return anchor_by_hydrogen_name
@@ -848,7 +848,7 @@ def _hydrogen_atom_names(payload: CompletionResiduePayload) -> tuple[str, ...]:
     return tuple(
         atom_site.name
         for atom_site in payload.residue_site.atom_sites
-        if atom_site.element == "H"
+        if atom_site.is_hydrogen()
     )
 
 
@@ -990,9 +990,9 @@ def _source_explicit_hydrogen_anchor_indices(
 
         atom_site_1 = target_structure.constitution.atom_site_at(bond.atom_index_1)
         atom_site_2 = target_structure.constitution.atom_site_at(bond.atom_index_2)
-        if atom_site_1.element == "H" and atom_site_2.element != "H":
+        if atom_site_1.is_hydrogen() and not atom_site_2.is_hydrogen():
             source_anchored_hydrogen_indices.add(bond.atom_index_1)
-        elif atom_site_2.element == "H" and atom_site_1.element != "H":
+        elif atom_site_2.is_hydrogen() and not atom_site_1.is_hydrogen():
             source_anchored_hydrogen_indices.add(bond.atom_index_2)
 
     return frozenset(source_anchored_hydrogen_indices)

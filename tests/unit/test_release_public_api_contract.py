@@ -51,6 +51,7 @@ RELEASE_PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "BondProvenance",
         "BondRelationshipType",
         "ChainSite",
+        "ElementIdentity",
         "FileFormat",
         "PolymerBlueprint",
         "PolymerChainBlueprint",

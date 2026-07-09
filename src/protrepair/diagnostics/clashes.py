@@ -28,6 +28,7 @@ from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.structure.address_space import StructureAddressSpaceKey
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.element import ElementIdentity
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.peptide import are_peptide_adjacent
@@ -73,7 +74,19 @@ class ClashPolicy:
     def required_overlap(self, left_element: str, right_element: str) -> float:
         """Return the minimum overlap required for a pair to count as a clash."""
 
-        if left_element == "H" or right_element == "H":
+        return self._required_overlap_for_hydrogen_pair(
+            ElementIdentity(left_element).is_hydrogen(),
+            ElementIdentity(right_element).is_hydrogen(),
+        )
+
+    def _required_overlap_for_hydrogen_pair(
+        self,
+        left_is_hydrogen: bool,
+        right_is_hydrogen: bool,
+    ) -> float:
+        """Return the overlap threshold for cached hydrogen classifications."""
+
+        if left_is_hydrogen or right_is_hydrogen:
             return self.hydrogen_overlap_tolerance_angstrom
 
         return self.heavy_overlap_tolerance_angstrom
@@ -213,7 +226,11 @@ class AtomSite:
                 cell_size_angstrom=self.grid_cell_size_angstrom,
             ),
         )
-        object.__setattr__(self, "is_hydrogen_atom", self.element == "H")
+        object.__setattr__(
+            self,
+            "is_hydrogen_atom",
+            ElementIdentity(self.element).is_hydrogen(),
+        )
 
     def is_hydrogen(self) -> bool:
         """Return whether the atom site is a hydrogen."""
@@ -733,9 +750,9 @@ def _clash_for_atom_site_pair(
     if probable_hydrogen_bond(left_site, right_site, pair_distance):
         return None
 
-    required_overlap = context.policy.required_overlap(
-        left_site.element,
-        right_site.element,
+    required_overlap = context.policy._required_overlap_for_hydrogen_pair(
+        left_site.is_hydrogen(),
+        right_site.is_hydrogen(),
     )
     return StericClash(
         left_residue_id=left_site.residue_id,
@@ -1063,7 +1080,7 @@ def build_atom_site_bases(
         residue_context_bases
     ):
         for atom_site in residue_context_basis.residue_site.atom_sites:
-            if not policy.include_hydrogens and atom_site.element == "H":
+            if not policy.include_hydrogens and atom_site.is_hydrogen():
                 continue
 
             atom_site_bases.append(
@@ -1193,11 +1210,11 @@ def infer_hydrogen_anchors(
             residue_geometry.atom_geometry(atom_site.name),
         )
         for atom_site in residue_site.atom_sites
-        if atom_site.element != "H"
+        if not atom_site.is_hydrogen()
     )
     hydrogen_anchor_by_name: dict[str, str] = {}
     for hydrogen_atom_site in residue_site.atom_sites:
-        if hydrogen_atom_site.element != "H":
+        if not hydrogen_atom_site.is_hydrogen():
             continue
 
         hydrogen_geometry = residue_geometry.atom_geometry(hydrogen_atom_site.name)
@@ -1231,7 +1248,7 @@ def build_atom_sites(
         residue_site = context.residue_site
         residue_geometry = context.residue_geometry
         for atom_site in residue_site.atom_sites:
-            if not policy.include_hydrogens and atom_site.element == "H":
+            if not policy.include_hydrogens and atom_site.is_hydrogen():
                 continue
 
             atom_sites.append(
@@ -1258,7 +1275,7 @@ def _atom_site_elements_from_residue_contexts(
         atom_site.element
         for context in residue_contexts
         for atom_site in context.residue_site.atom_sites
-        if policy.include_hydrogens or atom_site.element != "H"
+        if policy.include_hydrogens or not atom_site.is_hydrogen()
     )
 
 

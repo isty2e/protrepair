@@ -775,7 +775,7 @@ class ProteinStructure:
                 hydrogen_atom_names = {
                     atom_site.name
                     for atom_site in residue_site.atom_sites
-                    if atom_site.element == "H"
+                    if atom_site.is_hydrogen()
                 }
                 if not hydrogen_atom_names:
                     stripped_residue_sites.append(residue_site)
@@ -810,7 +810,7 @@ class ProteinStructure:
             hydrogen_atom_names = {
                 atom_site.name
                 for atom_site in current_payload.residue_site.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             }
             if not hydrogen_atom_names:
                 updated_entries_by_index.append(current_payload)
@@ -859,7 +859,7 @@ class ProteinStructure:
                 hydrogen_atom_names = {
                     atom_site.name
                     for atom_site in residue_site.atom_sites
-                    if atom_site.element == "H"
+                    if atom_site.is_hydrogen()
                 }
                 if not hydrogen_atom_names:
                     stripped_residues.append(residue_site)
@@ -885,7 +885,7 @@ class ProteinStructure:
             hydrogen_atom_names = {
                 atom_site.name
                 for atom_site in ligand.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             }
             if not hydrogen_atom_names:
                 stripped_ligands.append(ligand)
@@ -915,7 +915,7 @@ class ProteinStructure:
             hydrogen_atom_names = {
                 atom_site.name
                 for atom_site in current_payload.residue_site.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             }
             updated_entries_by_index.append(
                 current_payload.with_residue_site(stripped_residue_site).without_atoms(

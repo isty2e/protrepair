@@ -266,7 +266,7 @@ def _prepare_near_covalent_candidate_context(
             atom_site.element
             for residue_context in residue_contexts
             for atom_site in residue_context.residue_site.atom_sites
-            if active_pair_policy.include_hydrogens or atom_site.element != "H"
+            if active_pair_policy.include_hydrogens or not atom_site.is_hydrogen()
         )
     )
     covalent_radius_lookup = prepare_radius_lookup(elements, RadiusKind.COVALENT)
