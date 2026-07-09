@@ -14,7 +14,7 @@ from protrepair.transformer.completion.hydrogen.scoring import (
     RotatableHydrogenEnvironment,
     RotatableHydrogenLocalSite,
     RotatableHydrogenSearch,
-    max_rotatable_hydrogen_steric_cutoff_angstrom,
+    max_rotatable_hydrogen_interaction_horizon_angstrom,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
@@ -214,26 +214,48 @@ def build_rotatable_hydrogen_environments(
 ) -> tuple[RotatableHydrogenEnvironment, ...]:
     """Pack per-residue interaction environments for rotatable hydrogen search."""
 
-    environment_sites = _rotatable_hydrogen_environment_sites(
-        residues=residues,
-        templates=templates,
+    placement_specs = tuple(
+        None
+        if template is None
+        else rotatable_hydrogen_placement_spec(template.hydrogen_semantics)
+        for template in templates
     )
-    max_steric_scoring_radius = max_rotatable_hydrogen_steric_cutoff_angstrom(
-        site.element for site in environment_sites
+    eligible_donor_by_residue = tuple(
+        placement_spec is not None
+        and residue.has_atom(placement_spec.donor_atom_name)
+        for residue, placement_spec in zip(residues, placement_specs, strict=True)
     )
-    environments: list[RotatableHydrogenEnvironment] = []
-    for residue_index, (residue, residue_number, template) in enumerate(
-        zip(residues, residue_numbers, templates, strict=True)
-    ):
-        placement_spec = (
-            None
-            if template is None
-            else rotatable_hydrogen_placement_spec(template.hydrogen_semantics)
+    environment_sites: tuple[_RotatableHydrogenEnvironmentSite, ...] = ()
+    max_hydrogen_site_interaction_horizon_angstrom: float | None = None
+    if any(eligible_donor_by_residue):
+        environment_sites = _rotatable_hydrogen_environment_sites(
+            residues=residues,
+            templates=templates,
         )
-        if (
-            placement_spec is None
-            or not residue.has_atom(placement_spec.donor_atom_name)
-        ):
+        max_hydrogen_site_interaction_horizon_angstrom = (
+            max_rotatable_hydrogen_interaction_horizon_angstrom(
+                site.element for site in environment_sites
+            )
+        )
+
+    environments: list[RotatableHydrogenEnvironment] = []
+    for residue_index, (
+        residue,
+        residue_number,
+        template,
+        placement_spec,
+        eligible_donor,
+    ) in enumerate(
+        zip(
+            residues,
+            residue_numbers,
+            templates,
+            placement_specs,
+            eligible_donor_by_residue,
+            strict=True,
+        )
+    ):
+        if not eligible_donor:
             environments.append(
                 RotatableHydrogenEnvironment(
                     residue_number=residue_number,
@@ -248,6 +270,8 @@ def build_rotatable_hydrogen_environments(
             )
             continue
 
+        assert placement_spec is not None
+        assert max_hydrogen_site_interaction_horizon_angstrom is not None
         atom_x: list[float] = []
         atom_y: list[float] = []
         atom_z: list[float] = []
@@ -260,7 +284,9 @@ def build_rotatable_hydrogen_environments(
         )
         interaction_radius_sq = _rotatable_hydrogen_environment_radius_sq(
             placement_spec,
-            max_steric_scoring_radius_angstrom=max_steric_scoring_radius,
+            max_hydrogen_site_interaction_horizon_angstrom=(
+                max_hydrogen_site_interaction_horizon_angstrom
+            ),
         )
 
         for site in environment_sites:
@@ -347,16 +373,19 @@ def _rotatable_hydrogen_environment_sites(
 def _rotatable_hydrogen_environment_radius_sq(
     placement_spec: RotatableHydrogenPlacementSpec,
     *,
-    max_steric_scoring_radius_angstrom: float,
+    max_hydrogen_site_interaction_horizon_angstrom: float,
 ) -> float:
     """Return donor-centered radius squared that safely covers scored candidates."""
 
-    candidate_radius = max(
+    max_candidate_displacement_angstrom = max(
         placement_spec.build_bond_length,
         placement_spec.reproject_bond_length,
     )
-    environment_radius = max_steric_scoring_radius_angstrom + candidate_radius
-    return environment_radius * environment_radius
+    environment_radius_angstrom = (
+        max_hydrogen_site_interaction_horizon_angstrom
+        + max_candidate_displacement_angstrom
+    )
+    return environment_radius_angstrom * environment_radius_angstrom
 
 
 def _site_within_donor_radius(

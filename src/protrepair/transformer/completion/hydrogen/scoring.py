@@ -13,7 +13,10 @@ from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame,
 CoordinateLike = Vec3 | Sequence[float] | NDArray[np.float64]
 Vector = NDArray[np.float64]
 ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON = 1e-12
-ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM = 6.25
+_ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_HORIZON_ANGSTROM = 2.5
+ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM = (
+    _ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_HORIZON_ANGSTROM**2
+)
 ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE = 100.0
 ROTATABLE_HYDROGEN_HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 ROTATABLE_HYDROGEN_HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
@@ -428,6 +431,17 @@ def max_rotatable_hydrogen_steric_cutoff_angstrom(
     )
 
 
+def max_rotatable_hydrogen_interaction_horizon_angstrom(
+    site_elements: Iterable[str],
+) -> float:
+    """Return the maximum candidate-H horizon across every active score term."""
+
+    return max(
+        _ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_HORIZON_ANGSTROM,
+        max_rotatable_hydrogen_steric_cutoff_angstrom(site_elements),
+    )
+
+
 def recalculate_coordinate(
     atom_b: CoordinateLike,
     atom_c: CoordinateLike,
@@ -528,6 +542,7 @@ __all__ = [
     "hydrogen_potential_energy",
     "hydrogen_steric_penalty",
     "hydrogen_steric_penalty_against_site",
+    "max_rotatable_hydrogen_interaction_horizon_angstrom",
     "max_rotatable_hydrogen_steric_cutoff_angstrom",
     "probable_rotatable_hydrogen_bond",
     "recalculate_coordinate",
