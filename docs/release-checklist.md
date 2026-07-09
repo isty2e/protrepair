@@ -70,21 +70,31 @@ that verifier active in release CI.
 
 ## Build And Install Smoke
 
-Run the installed-wheel functional smoke from a clean worktree:
+Build wheel and sdist artifacts from a clean worktree, then smoke-test each exact
+artifact path:
 
 ```bash
-python scripts/run_installed_wheel_smoke.py
+python -m hatchling build
+python scripts/run_installed_artifact_smoke.py --artifact-path /absolute/path/to/protrepair-<version>-<tag>.whl \
+  --venv-path .tmp/release-wheel-smoke
+python scripts/run_installed_artifact_smoke.py --artifact-path /absolute/path/to/protrepair-<version>.tar.gz \
+  --venv-path .tmp/release-sdist-smoke
 ```
 
-The script builds a wheel with `hatchling`, installs it into a temporary
-virtual environment, and verifies installed-package imports, bundled chemistry
-resources, coordinate read/write, `process_structure()`, packaged FASPR
-execution, and RDKit local refinement. It installs the wheel under
-`constraints/release.txt` by default. Release CI runs the installed-wheel smoke
-on Python 3.12.
+The script requires one explicit built wheel or source distribution. It
+recreates a safe virtual environment under `.tmp`, force-installs that exact
+artifact under `constraints/release.txt`, and verifies that `protrepair` imports
+from the installed distribution rather than the source checkout. The install
+environment also exports an absolute `PIP_CONSTRAINT` so isolated PEP 517 sdist
+builds remain constrained with older pip versions, plus the dedicated
+`PIP_BUILD_CONSTRAINT` used by pip 25.3 and newer. The shared smoke covers
+bundled chemistry resources, coordinate read/write,
+`process_structure()`, packaged FASPR execution, and RDKit local refinement.
+Release CI builds wheel and sdist artifacts and runs this installed-artifact
+smoke for both on Python 3.12.
 
-Bundled FASPR assets are an installed-package/wheel contract. Source-tree
-execution may use an explicit FASPR `executable_path`, but release verification
+Bundled FASPR assets are an installed-package artifact contract. Source-tree
+execution may use an explicit FASPR `executable_path`, but artifact verification
 should not rely on speculative build-directory probing.
 
 Source installs and GitHub installs build the vendored FASPR executable through
@@ -113,7 +123,7 @@ Confirm that the sdist contains the release gate sources:
 - `constraints/release.txt`
 - `docs/release-checklist.md`
 - `docs/radius-policy.md`
-- `scripts/run_installed_wheel_smoke.py`
+- `scripts/run_installed_artifact_smoke.py`
 - `THIRD_PARTY_NOTICES.md`
 - `vendor/rdkit/LICENSE`
 

@@ -42,8 +42,8 @@ jobs:
       - name: Unit tests
         run: .venv/bin/pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q
 
-  installed-wheel-smoke:
-    name: Installed wheel FASPR/RDKit smoke (Python 3.12)
+  installed-artifact-smoke:
+    name: Installed wheel and sdist FASPR/RDKit smoke (Python 3.12)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -60,8 +60,14 @@ jobs:
       - name: Install constrained release build tools
         run: .venv/bin/python -m pip install -c constraints/release.txt hatchling hatch-vcs scikit-build-core
 
-      - name: Run installed-wheel FASPR smoke
-        run: .venv/bin/python scripts/run_installed_wheel_smoke.py
+      - name: Build release artifacts
+        run: .venv/bin/python -m hatchling build
+
+      - name: Smoke-test built wheel
+        run: .venv/bin/python scripts/run_installed_artifact_smoke.py --artifact-path dist/protrepair-*.whl --venv-path .tmp/release-wheel-smoke
+
+      - name: Smoke-test built sdist
+        run: .venv/bin/python scripts/run_installed_artifact_smoke.py --artifact-path dist/protrepair-*.tar.gz --venv-path .tmp/release-sdist-smoke
 
   artifact-content:
     name: Release artifact content (Python 3.12)

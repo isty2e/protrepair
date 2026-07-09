@@ -109,7 +109,7 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
     assert _has_suffix(names, "/constraints/release.txt")
     assert _has_suffix(names, "/docs/release-checklist.md")
     assert _has_suffix(names, "/docs/radius-policy.md")
-    assert _has_suffix(names, "/scripts/run_installed_wheel_smoke.py")
+    assert _has_suffix(names, "/scripts/run_installed_artifact_smoke.py")
     assert _has_suffix(names, "/THIRD_PARTY_NOTICES.md")
     assert _has_suffix(names, "/vendor/rdkit/LICENSE")
 
@@ -125,7 +125,7 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
     assert not any("/.tickets/" in name for name in names)
     assert not any("/.tmp/" in name for name in names)
     assert not any("/dist/" in name for name in names)
-    smoke_script = "/scripts/run_installed_wheel_smoke.py"
+    smoke_script = "/scripts/run_installed_artifact_smoke.py"
     assert not any(
         "/scripts/" in name and not name.endswith(smoke_script)
         for name in names

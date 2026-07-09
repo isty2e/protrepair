@@ -99,7 +99,7 @@ only-include = [
   "THIRD_PARTY_NOTICES.md",
   "docs",
   "pyproject.toml",
-  "scripts/run_installed_wheel_smoke.py",
+  "scripts/run_installed_artifact_smoke.py",
   "src/protrepair",
   "vendor/faspr",
   "vendor/rdkit",
