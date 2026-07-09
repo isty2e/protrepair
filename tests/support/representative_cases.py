@@ -92,7 +92,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:VAL:A:1",
             last_residue="ATOM:HIS:A:64",
-            semantic_digest="c50bf16242b0f8d2248b73e99d892e6325c30535ea4123d739e84e2ccce9180e",
+            semantic_digest="e59a7d3d1a2394c7cf248863c5c291431feb340e829f3126e82e25bb769ee986",
         ),
         hydrogen_direct_summary=StructureSummary(
             chain_ids=("A",),
@@ -248,7 +248,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:THR:A:6",
             last_residue="ATOM:HIS:A:460",
-            semantic_digest="bb27c1c826dadc8ca16ca0f287388114bad1cc4265381db7ae72f4e2da26e7c2",
+            semantic_digest="563d89c08b11a1335f8a742d37a115d75c1411a399464e3cde8e2337acaf8713",
         ),
         hydrogen_direct_summary=StructureSummary(
             chain_ids=("A",),
