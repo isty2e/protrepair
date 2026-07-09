@@ -13,7 +13,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     env:
-      PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS: "1"
+      PROTREPAIR_RELEASE_STRICT_RDKIT: "1"
     strategy:
       fail-fast: false
       matrix:

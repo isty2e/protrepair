@@ -1,6 +1,10 @@
 """Unit tests for literature-backed element radii ownership."""
 
 import pytest
+from tests.support.release_gate import (
+    STRICT_RDKIT_RELEASE_GATE_ENV,
+    strict_rdkit_release_gate_enabled,
+)
 
 from protrepair.chemistry import (
     COVALENT_RADII_SOURCE,
@@ -75,12 +79,7 @@ def test_radius_snapshot_matches_live_rdkit_release_periodic_table() -> None:
 
     from rdkit import Chem, rdBase
 
-    if rdBase.rdkitVersion != RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION:
-        pytest.skip(
-            "live RDKit PeriodicTable verifier requires release snapshot version "
-            f"{RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION}; got "
-            f"{rdBase.rdkitVersion}"
-        )
+    _require_live_radius_snapshot_version(str(rdBase.rdkitVersion))
 
     periodic_table = Chem.GetPeriodicTable()
     live_vdw_radii = {
@@ -110,6 +109,43 @@ def test_radius_snapshot_matches_live_rdkit_release_periodic_table() -> None:
         assert RDKIT_PERIODIC_TABLE_COVALENT_RADII_ANGSTROM[
             element_symbol
         ] == pytest.approx(radius_angstrom)
+
+
+def _require_live_radius_snapshot_version(actual_version: str) -> None:
+    """Require the snapshot backend version or apply local/strict gate policy."""
+
+    if actual_version == RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION:
+        return
+
+    message = (
+        "live RDKit PeriodicTable verifier requires release snapshot version "
+        f"{RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION}; got {actual_version}"
+    )
+    if strict_rdkit_release_gate_enabled():
+        pytest.fail(message)
+    pytest.skip(message)
+
+
+def test_radius_snapshot_version_mismatch_fails_release_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Release strict mode must not skip a mismatched live radius backend."""
+
+    monkeypatch.setenv(STRICT_RDKIT_RELEASE_GATE_ENV, "1")
+
+    with pytest.raises(pytest.fail.Exception):
+        _require_live_radius_snapshot_version("2099.99.9")
+
+
+def test_radius_snapshot_version_mismatch_skips_outside_release_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A local non-release backend may skip the version-bound live comparison."""
+
+    monkeypatch.delenv(STRICT_RDKIT_RELEASE_GATE_ENV, raising=False)
+
+    with pytest.raises(pytest.skip.Exception):
+        _require_live_radius_snapshot_version("2099.99.9")
 
 
 def test_unsupported_element_radii_resolve_explicitly_unknown() -> None:

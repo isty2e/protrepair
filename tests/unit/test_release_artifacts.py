@@ -73,7 +73,7 @@ def test_ci_exercises_required_rdkit_dependency_world() -> None:
     assert '".[dev,refinement]"' not in workflow
     assert "constraints/release.txt" in workflow
     full_checks_job = workflow.split("  installed-artifact-smoke:", maxsplit=1)[0]
-    assert 'PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS: "1"' in full_checks_job
+    assert 'PROTREPAIR_RELEASE_STRICT_RDKIT: "1"' in full_checks_job
     assert "Basedpyright" in full_checks_job
     assert "  lean:" not in workflow
     assert "Verify RDKit is outside the lean environment" not in workflow
@@ -184,11 +184,13 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert "CPython 3.10, 3.11, and 3.12" in checklist
     assert "Linux through GitHub Actions `ubuntu-latest`" in checklist
     assert "Python 3.13+, macOS, and Windows are not advertised" in checklist
-    assert "PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS=1" in checklist
+    assert "PROTREPAIR_RELEASE_STRICT_RDKIT=1" in checklist
     assert "rdkit==2026.3.2" in checklist
     assert "2026.03.2" in checklist
     assert "all atomic numbers 1 through 118" in normalized_checklist
     assert "live RDKit PeriodicTable verifier" in normalized_checklist
+    assert "byte-for-byte" in checklist
+    assert "SHA-256" in checklist
     assert "more than one known coordinate digest" in normalized_checklist
     assert "2026.03.3" in checklist
     assert "CMake 3.18 or newer" in normalized_checklist
@@ -265,6 +267,9 @@ def test_rdkit_radius_snapshot_provenance_is_documented() -> None:
     assert "BSD 3-Clause License" in rdkit_license
     assert "Redistribution and use in source and binary forms" in rdkit_license
     assert "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS" in rdkit_license
+    assert sha256_file(Path("vendor/rdkit/LICENSE")) == (
+        "daeb8d194502cbcf34c05c39541a0d02be65bc9bada5b891c1974cd24e9fca30"
+    )
     assert '"vendor/rdkit/LICENSE"' in pyproject
     assert "src/protrepair/chemistry/radii.py" in notices
     assert "rdkit==2026.3.2" in notices

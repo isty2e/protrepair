@@ -28,7 +28,8 @@ Run the permanent code-quality and unit surface:
 ```bash
 python -m ruff check
 python -m basedpyright
-python -m pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q
+PROTREPAIR_RELEASE_STRICT_RDKIT=1 python -m pytest \
+  tests/unit tests/corpus tests/workflow -m "not benchmark" -q
 ```
 
 Run the release-facing API and documentation smoke surface:
@@ -44,9 +45,10 @@ python -m pytest \
 ## RDKit Release Version Policy
 
 The full release CI lane installs RDKit through `constraints/release.txt` and
-runs representative RDKit coordinate-digest checks with
-`PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS=1`. Under that strict release gate, an
-unregistered RDKit backend version is a failure instead of a skip.
+runs all RDKit-version-bound scientific checks with
+`PROTREPAIR_RELEASE_STRICT_RDKIT=1`. Under that strict release gate, an
+unregistered RDKit backend version fails both coordinate-digest and live radius
+snapshot verification instead of skipping either contract.
 
 Local compatibility runs may still skip version-bound coordinate digests when
 RDKit is present but unregistered. Missing RDKit is a broken required-dependency
@@ -109,6 +111,11 @@ Run the fresh wheel/sdist archive content gate:
 ```bash
 python -m pytest tests/release/test_artifact_contents.py -q
 ```
+
+The archive gate compares packaged `radii.py`, `THIRD_PARTY_NOTICES.md`, the
+RDKit license, and the sdist radius policy byte-for-byte with their repository
+owners. The repository test also pins the complete chosen RDKit license payload
+by SHA-256, so a truncated local copy cannot become the new expected artifact.
 
 Confirm that the wheel contains these non-code assets:
 
