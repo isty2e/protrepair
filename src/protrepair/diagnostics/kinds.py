@@ -14,6 +14,7 @@ class RepairEventKind(str, Enum):
     COMPONENT_NORMALIZED = "component_normalized"
     STEREOCHEMISTRY_CORRECTED = "stereochemistry_corrected"
     DISULFIDE_TOPOLOGY_RESOLVED = "disulfide_topology_resolved"
+    HYDROGENS_REMOVED = "hydrogens_removed"
 
 
 class ValidationIssueKind(str, Enum):

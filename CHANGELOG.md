@@ -35,3 +35,7 @@ Initial public release candidate of the rewritten `protrepair` package.
   evidence, including separate absent-vs-unsupported workflow deficit fields
 - wrap public structure parsing and unsupported-format failures in project-owned
   errors so callers can catch `ProtrepairError` subclasses consistently
+- model thiol H/D/T atoms on canonical CYS disulfides as typed chemistry
+  contradictions, remove them through planner-selected topology-preserving
+  normalization, and report chemistry work under the broader
+  `CHEMISTRY_NORMALIZATION` workflow phase

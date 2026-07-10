@@ -22,7 +22,7 @@ class WorkflowPlanningPhase(str, Enum):
     """Closed workflow phases used by planning and reporting surfaces."""
 
     COVERAGE = "coverage"
-    CHEMISTRY_AUGMENTATION = "chemistry_augmentation"
+    CHEMISTRY_NORMALIZATION = "chemistry_normalization"
     INTRINSIC_GEOMETRY_CORRECTION = "intrinsic_geometry_correction"
     INTERACTION_AWARE_CORRECTION = "interaction_aware_correction"
 

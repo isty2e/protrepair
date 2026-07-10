@@ -198,12 +198,14 @@ def test_process_structure_reports_blocking_phase_for_matrix_blocked_scenario() 
     outcome = result.requested_goal_report.outcome_for(requested_state)
     assert outcome is not None
     assert outcome.status is RequestedGoalStatus.BLOCKED
-    assert outcome.blocking_phases == (WorkflowPlanningPhase.CHEMISTRY_AUGMENTATION,)
+    assert outcome.blocking_phases == (
+        WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION,
+    )
 
     assert result.terminal_branch_report is not None
     coverage_phase = (
         result.terminal_branch_report.preferred_outcome().phase_report.outcome_for(
-            WorkflowPlanningPhase.CHEMISTRY_AUGMENTATION
+            WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION
         )
     )
     assert coverage_phase is not None

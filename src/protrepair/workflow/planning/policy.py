@@ -25,6 +25,7 @@ class WorkflowPolicyFamily(str, Enum):
     COVERAGE_GAP = "coverage_gap"
     ATOM_COVERAGE = "atom_coverage"
     TOPOLOGY_RESOLUTION = "topology_resolution"
+    CHEMISTRY_CONTRADICTION = "chemistry_contradiction"
     CHEMISTRY_READINESS = "chemistry_readiness"
     BOUNDARY_GOAL_ONLY = "boundary_goal_only"
     BACKBONE_WINDOW_OPERATOR = "backbone_window_operator"
@@ -142,6 +143,10 @@ class WorkflowPlanningPolicy:
         ):
             return WorkflowPolicyFamily.TOPOLOGY_RESOLUTION
         if capability.can_reduce_deficit_family(
+            WorkflowCapabilityDeficitFamily.CHEMISTRY_CONTRADICTION
+        ):
+            return WorkflowPolicyFamily.CHEMISTRY_CONTRADICTION
+        if capability.can_reduce_deficit_family(
             WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS
         ):
             return WorkflowPolicyFamily.CHEMISTRY_READINESS
@@ -186,20 +191,21 @@ class WorkflowPlanningPolicy:
             WorkflowPolicyFamily.COVERAGE_GAP: 0,
             WorkflowPolicyFamily.ATOM_COVERAGE: 1,
             WorkflowPolicyFamily.TOPOLOGY_RESOLUTION: 2,
-            WorkflowPolicyFamily.CHEMISTRY_READINESS: 3,
-            WorkflowPolicyFamily.BOUNDARY_GOAL_ONLY: 4,
-            WorkflowPolicyFamily.BACKBONE_WINDOW_OPERATOR: 5,
-            WorkflowPolicyFamily.PARSER_COMPATIBILITY: 6,
-            WorkflowPolicyFamily.INTRINSIC_GEOMETRY: 7,
-            WorkflowPolicyFamily.INTERACTION: 8,
+            WorkflowPolicyFamily.CHEMISTRY_CONTRADICTION: 3,
+            WorkflowPolicyFamily.CHEMISTRY_READINESS: 4,
+            WorkflowPolicyFamily.BOUNDARY_GOAL_ONLY: 5,
+            WorkflowPolicyFamily.BACKBONE_WINDOW_OPERATOR: 6,
+            WorkflowPolicyFamily.PARSER_COMPATIBILITY: 7,
+            WorkflowPolicyFamily.INTRINSIC_GEOMETRY: 8,
+            WorkflowPolicyFamily.INTERACTION: 9,
         }
         if domain.burden.is_holo_context() and domain.burden.has_interaction_burden():
             family_order = {
                 **family_order,
-                WorkflowPolicyFamily.INTERACTION: 5,
-                WorkflowPolicyFamily.BACKBONE_WINDOW_OPERATOR: 6,
-                WorkflowPolicyFamily.PARSER_COMPATIBILITY: 7,
-                WorkflowPolicyFamily.INTRINSIC_GEOMETRY: 8,
+                WorkflowPolicyFamily.INTERACTION: 6,
+                WorkflowPolicyFamily.BACKBONE_WINDOW_OPERATOR: 7,
+                WorkflowPolicyFamily.PARSER_COMPATIBILITY: 8,
+                WorkflowPolicyFamily.INTRINSIC_GEOMETRY: 9,
             }
         return family_order[policy_family]
 
@@ -244,6 +250,13 @@ class WorkflowPlanningPolicy:
             return (
                 topology_resolution.disposition
                 if topology_resolution is not None
+                else None
+            )
+        if policy_family is WorkflowPolicyFamily.CHEMISTRY_CONTRADICTION:
+            disulfide_hydrogen = state_deficit.disulfide_hydrogen
+            return (
+                disulfide_hydrogen.disposition
+                if disulfide_hydrogen is not None
                 else None
             )
         if policy_family is WorkflowPolicyFamily.CHEMISTRY_READINESS:
@@ -322,7 +335,8 @@ class WorkflowPlanningPolicy:
 
         effect_class_order = {
             WorkflowActionEffectClass.AUGMENTS_ABSENCE: 0,
-            WorkflowActionEffectClass.REVISES_PRESENT_GEOMETRY: 1,
+            WorkflowActionEffectClass.REMOVES_PRESENT: 1,
+            WorkflowActionEffectClass.REVISES_PRESENT_GEOMETRY: 2,
         }
         return effect_class_order[capability.effect_class]
 

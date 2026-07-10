@@ -116,6 +116,21 @@ This follows the chemical distinction between reduced cysteine thiols and the
 oxidized covalent S-S linkage described in the protein-disulfide literature. It
 does not claim that proximity alone establishes oxidation state.
 
+If a canonical disulfide endpoint still contains an H, D, or T atom assigned to
+its thiol site, ProtRepair records a typed chemistry contradiction independently
+of missing-hydrogen coverage. Standard `HG`/`DG`/`TG` names are recognized;
+nonstandard names require an explicit covalent-like SG-H topology bond. The
+planner removes only the contradictory isotope atoms and their incident bonds,
+then re-observes the structure while preserving the S-S relationship, other
+hydrogens, formal charges, and source coordinates. It does not infer a thiolate
+or delete an SG-SG bond from metal coordination, proximity, or charge alone.
+
+The atom-identity rule deliberately covers mixed H/D models. Neutron structures
+can model H and D simultaneously at one exchangeable site and commonly use
+distinct names such as `HG` and `DG`; each explicitly present isotope is part of
+the canonical atom inventory and must be normalized when the same sulfur is in
+a canonical disulfide.
+
 Continuous relaxation likewise projects inter-residue disulfide constraints
 from canonical topology only. A likely geometry candidate must pass through an
 explicit topology-writing transformer before it becomes an execution bond; the
@@ -145,3 +160,10 @@ topology.
 - Marino and Gladyshev, "Redox Biology: Computational Approaches to the
   Investigation of Functional Cysteine Residues," *Antioxidants & Redox
   Signaling* 15 (2011), [DOI 10.1089/ars.2010.3561](https://doi.org/10.1089/ars.2010.3561).
+- Fass and Thorpe, "Chemistry and Enzymology of Disulfide Cross-Linking in
+  Proteins," *Chemical Reviews* 118 (2018),
+  [DOI 10.1021/acs.chemrev.7b00123](https://doi.org/10.1021/acs.chemrev.7b00123).
+- Liebschner et al., "Evaluation of models determined by neutron diffraction
+  and proposed improvements to their validation and deposition," *Acta
+  Crystallographica D* 74 (2018),
+  [DOI 10.1107/S2059798318004588](https://doi.org/10.1107/S2059798318004588).

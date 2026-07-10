@@ -9,12 +9,15 @@ from protrepair.diagnostics.topology import (
     detect_disulfide_topology,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.disulfide import disulfide_atom_ref_pairs
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
     TopologyBond,
     is_covalent_like_relationship,
 )
+
+_CYSTEINE_THIOL_HYDROGEN_ATOM_NAMES = frozenset(("HG", "DG", "TG"))
 
 
 class DisulfideTopologyConflictReason(str, Enum):
@@ -135,6 +138,180 @@ class StructureDisulfideTopologyFacts:
         """Return whether explicit topology resolution can make progress."""
 
         return bool(self.promotable_candidates)
+
+
+@dataclass(frozen=True, slots=True)
+class DisulfideHydrogenContradiction:
+    """Forbidden thiol hydrogens observed on one canonical disulfide pair."""
+
+    disulfide_atom_ref_pair: tuple[AtomRef, AtomRef]
+    forbidden_hydrogen_atom_refs: tuple[AtomRef, ...]
+
+    def __post_init__(self) -> None:
+        disulfide_pair = tuple(self.disulfide_atom_ref_pair)
+        raw_forbidden_atom_refs = tuple(self.forbidden_hydrogen_atom_refs)
+        if any(not isinstance(atom_ref, AtomRef) for atom_ref in disulfide_pair):
+            raise TypeError(
+                "disulfide hydrogen contradictions require AtomRef endpoints"
+            )
+        if any(
+            not isinstance(atom_ref, AtomRef) for atom_ref in raw_forbidden_atom_refs
+        ):
+            raise TypeError(
+                "disulfide hydrogen contradictions require AtomRef forbidden atoms"
+            )
+        forbidden_atom_refs = tuple(sorted(dict.fromkeys(raw_forbidden_atom_refs)))
+        if len(disulfide_pair) != 2 or disulfide_pair[0] >= disulfide_pair[1]:
+            raise ValueError(
+                "disulfide hydrogen contradictions require one canonical SG pair"
+            )
+        if any(atom_ref.atom_name != "SG" for atom_ref in disulfide_pair):
+            raise ValueError(
+                "disulfide hydrogen contradictions require CYS SG endpoints"
+            )
+        if not forbidden_atom_refs:
+            raise ValueError(
+                "disulfide hydrogen contradictions require forbidden atoms"
+            )
+        endpoint_residue_ids = {atom_ref.residue_id for atom_ref in disulfide_pair}
+        if any(
+            atom_ref.residue_id not in endpoint_residue_ids
+            for atom_ref in forbidden_atom_refs
+        ):
+            raise ValueError(
+                "forbidden disulfide hydrogens must belong to bond endpoints"
+            )
+        object.__setattr__(self, "disulfide_atom_ref_pair", disulfide_pair)
+        object.__setattr__(
+            self,
+            "forbidden_hydrogen_atom_refs",
+            forbidden_atom_refs,
+        )
+
+    def affected_residue_ids(self) -> tuple[ResidueId, ...]:
+        """Return disulfide endpoints that carry forbidden hydrogens."""
+
+        forbidden_residue_ids = {
+            atom_ref.residue_id for atom_ref in self.forbidden_hydrogen_atom_refs
+        }
+        return tuple(
+            atom_ref.residue_id
+            for atom_ref in self.disulfide_atom_ref_pair
+            if atom_ref.residue_id in forbidden_residue_ids
+        )
+
+    def present_endpoint_count(self) -> int:
+        """Return how many disulfide endpoints carry forbidden hydrogens."""
+
+        return len(self.affected_residue_ids())
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class StructureDisulfideHydrogenFacts:
+    """Structure-local forbidden hydrogen facts over canonical disulfides."""
+
+    carrier: ProteinStructure
+    contradictions: tuple[DisulfideHydrogenContradiction, ...]
+
+    def __init__(self, *, carrier: ProteinStructure) -> None:
+        if not isinstance(carrier, ProteinStructure):
+            raise TypeError("disulfide hydrogen facts require a ProteinStructure")
+        object.__setattr__(self, "carrier", carrier)
+        object.__setattr__(
+            self,
+            "contradictions",
+            type(self)._contradictions_for_structure(carrier),
+        )
+
+    @classmethod
+    def from_structure(
+        cls,
+        structure: ProteinStructure,
+    ) -> "StructureDisulfideHydrogenFacts":
+        """Derive forbidden thiol hydrogens from topology and atom inventory."""
+
+        return cls(carrier=structure)
+
+    @classmethod
+    def _contradictions_for_structure(
+        cls,
+        structure: ProteinStructure,
+    ) -> tuple[DisulfideHydrogenContradiction, ...]:
+        """Derive the complete canonical contradiction set."""
+
+        contradictions: list[DisulfideHydrogenContradiction] = []
+        for disulfide_pair in sorted(disulfide_atom_ref_pairs(structure)):
+            forbidden_atom_refs = tuple(
+                atom_ref
+                for sulfur_atom_ref in disulfide_pair
+                for atom_ref in cls._forbidden_atom_refs_for_sulfur(
+                    structure,
+                    sulfur_atom_ref,
+                )
+            )
+            if forbidden_atom_refs:
+                contradictions.append(
+                    DisulfideHydrogenContradiction(
+                        disulfide_atom_ref_pair=disulfide_pair,
+                        forbidden_hydrogen_atom_refs=forbidden_atom_refs,
+                    )
+                )
+
+        return tuple(contradictions)
+
+    @staticmethod
+    def _forbidden_atom_refs_for_sulfur(
+        structure: ProteinStructure,
+        sulfur_atom_ref: AtomRef,
+    ) -> tuple[AtomRef, ...]:
+        """Return thiol H/D/T atoms incompatible with one disulfide sulfur."""
+
+        residue_index = structure.constitution.residue_index(
+            sulfur_atom_ref.residue_id
+        )
+        residue_site = structure.constitution.residue_site_at(residue_index)
+        forbidden_atom_refs = {
+            AtomRef(residue_site.residue_id, atom_site.name)
+            for atom_site in residue_site.atom_sites
+            if atom_site.is_hydrogen()
+            and atom_site.name in _CYSTEINE_THIOL_HYDROGEN_ATOM_NAMES
+        }
+        sulfur_atom_index = structure.constitution.atom_index(sulfur_atom_ref)
+        for bond in structure.topology.bonds:
+            if not bond.involves(
+                sulfur_atom_index
+            ) or not is_covalent_like_relationship(bond):
+                continue
+            other_atom_index = (
+                bond.atom_index_2
+                if bond.atom_index_1 == sulfur_atom_index
+                else bond.atom_index_1
+            )
+            other_atom_ref = structure.constitution.atom_ref_at(other_atom_index)
+            if other_atom_ref.residue_id != sulfur_atom_ref.residue_id:
+                continue
+            if structure.constitution.atom_site_at(other_atom_index).is_hydrogen():
+                forbidden_atom_refs.add(other_atom_ref)
+
+        return tuple(sorted(forbidden_atom_refs))
+
+    def forbidden_hydrogen_atom_refs(self) -> tuple[AtomRef, ...]:
+        """Return all forbidden disulfide-bound hydrogen atom identities."""
+
+        return tuple(
+            sorted(
+                {
+                    atom_ref
+                    for contradiction in self.contradictions
+                    for atom_ref in contradiction.forbidden_hydrogen_atom_refs
+                }
+            )
+        )
+
+    def has_contradictions(self) -> bool:
+        """Return whether canonical disulfides retain thiol hydrogens."""
+
+        return bool(self.contradictions)
 
 
 def _candidate_topology_conflict(

@@ -24,7 +24,10 @@ from protrepair.state import (
     StructureBoundaryStateFacts,
     derive_structure_coverage_and_chemistry_readiness_facts,
 )
-from protrepair.state.structure_topology import StructureDisulfideTopologyFacts
+from protrepair.state.structure_topology import (
+    StructureDisulfideHydrogenFacts,
+    StructureDisulfideTopologyFacts,
+)
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.polymer_blueprint import (
     PolymerBlueprint,
@@ -457,10 +460,14 @@ def _workflow_action_domain(
     disulfide_topology_facts = StructureDisulfideTopologyFacts.from_structure(
         structure
     )
+    disulfide_hydrogen_facts = StructureDisulfideHydrogenFacts.from_structure(
+        structure
+    )
     state_deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
         disulfide_topology_facts=disulfide_topology_facts,
+        disulfide_hydrogen_facts=disulfide_hydrogen_facts,
         requested_goals=active_requested_goals,
         planning_context=active_planning_context,
     )
@@ -487,6 +494,7 @@ def _workflow_action_domain(
         chemistry_readiness_facts=chemistry_readiness_facts,
         boundary_facts=StructureBoundaryStateFacts.from_structure(structure),
         disulfide_topology_facts=disulfide_topology_facts,
+        disulfide_hydrogen_facts=disulfide_hydrogen_facts,
         explicit_repair_refinement_execution_projection=(
             explicit_repair_refinement_execution_projection
         ),

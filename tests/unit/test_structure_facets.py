@@ -8,11 +8,18 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
-from protrepair.errors import ModelInvariantError
+from protrepair.errors import AtomNotFoundError, ModelInvariantError
 from protrepair.geometry import Vec3
 from protrepair.structure import ResidueFacetPayload
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
 
 
 def test_residue_facet_payload_without_atoms_updates_all_facets() -> None:
@@ -51,6 +58,132 @@ def test_residue_facet_payload_without_atoms_updates_all_facets() -> None:
     assert not stripped.residue_site.has_atom_site("H")
     assert not stripped.residue_geometry.has_atom("H")
     assert stripped.formal_charge_by_atom_name == (("N", 1),)
+
+
+def test_without_atom_refs_remaps_geometry_charge_and_topology_atomically() -> None:
+    """Selective removal must preserve alignment across every structure facet."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="GLY",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload(
+                                "N", "N", Vec3(0.0, 0.0, 0.0), formal_charge=1
+                            ),
+                            atom_payload(
+                                "H", "H", Vec3(0.1, 0.0, 0.0), formal_charge=0
+                            ),
+                            atom_payload("CA", "C", Vec3(1.4, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="selective-atom-removal",
+    )
+    n_index = structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    h_index = structure.constitution.atom_index(AtomRef(residue_id, "H"))
+    ca_index = structure.constitution.atom_index(AtomRef(residue_id, "CA"))
+    structure = ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    n_index,
+                    h_index,
+                    relationship_type=BondRelationshipType.COVALENT,
+                    provenance=BondProvenance.SOURCE_EXPLICIT,
+                ),
+                TopologyBond(
+                    n_index,
+                    ca_index,
+                    relationship_type=BondRelationshipType.COVALENT,
+                    provenance=BondProvenance.TEMPLATE_RESOLVED,
+                ),
+            ),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
+
+    stripped = structure.without_atom_refs((AtomRef(residue_id, "H"),))
+
+    residue = stripped.constitution.residue_site_at(
+        stripped.constitution.residue_index(residue_id)
+    )
+    assert residue.atom_site_names() == ("N", "CA")
+    assert stripped.residue_geometry(
+        stripped.constitution.residue_index(residue_id)
+    ).atom_names() == ("N", "CA")
+    assert stripped.topology.residue_formal_charge_by_atom_name(
+        constitution=stripped.constitution,
+        residue_index=stripped.constitution.residue_index(residue_id),
+    ) == (("N", 1),)
+    assert len(stripped.topology.bonds) == 1
+    remaining_bond = stripped.topology.bonds[0]
+    assert {
+        stripped.constitution.atom_ref_at(remaining_bond.atom_index_1),
+        stripped.constitution.atom_ref_at(remaining_bond.atom_index_2),
+    } == {AtomRef(residue_id, "N"), AtomRef(residue_id, "CA")}
+
+
+def test_without_atom_refs_rejects_missing_ref_before_returning_partial_state() -> None:
+    """Selective atom removal should validate the full request atomically."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="GLY",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload("H", "H", Vec3(0.1, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="selective-atom-removal-missing-ref",
+    )
+
+    with pytest.raises(AtomNotFoundError):
+        structure.without_atom_refs(
+            (
+                AtomRef(residue_id, "H"),
+                AtomRef(residue_id, "MISSING"),
+            )
+        )
+
+    assert structure.constitution.residue_site_at(
+        structure.constitution.residue_index(residue_id)
+    ).has_atom_site("H")
+
+
+def test_without_atom_refs_empty_request_preserves_aggregate_identity() -> None:
+    """An empty selective-removal request should be a true no-op."""
+
+    structure = build_structure(
+        chains=(),
+        source_format=FileFormat.PDB,
+        source_name="empty-selective-atom-removal",
+    )
+
+    assert structure.without_atom_refs(()) is structure
 
 
 def test_with_updated_residue_facets_batch_matches_sequential_updates() -> None:

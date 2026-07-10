@@ -14,7 +14,10 @@ from protrepair.state import (
     StructureIntrinsicGeometryFacts,
     StructureParserCompatibilityFacts,
 )
-from protrepair.state.structure_topology import StructureDisulfideTopologyFacts
+from protrepair.state.structure_topology import (
+    StructureDisulfideHydrogenFacts,
+    StructureDisulfideTopologyFacts,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.local.projection import (
@@ -350,6 +353,7 @@ class WorkflowActionDomain:
     chemistry_readiness_facts: StructureChemistryReadinessFacts
     boundary_facts: StructureBoundaryStateFacts
     disulfide_topology_facts: StructureDisulfideTopologyFacts
+    disulfide_hydrogen_facts: StructureDisulfideHydrogenFacts
     intrinsic_geometry_facts: StructureIntrinsicGeometryFacts | None = None
     parser_compatibility_facts: StructureParserCompatibilityFacts | None = None
     interaction_facts: StructureInteractionFacts | None = None
@@ -374,6 +378,11 @@ class WorkflowActionDomain:
         if self.disulfide_topology_facts.carrier is not self.structure:
             raise ValueError(
                 "workflow action domains require disulfide topology facts for "
+                "the active structure"
+            )
+        if self.disulfide_hydrogen_facts.carrier is not self.structure:
+            raise ValueError(
+                "workflow action domains require disulfide hydrogen facts for "
                 "the active structure"
             )
         object.__setattr__(
