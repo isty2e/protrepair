@@ -3,7 +3,7 @@
 from collections import defaultdict
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from math import floor, sqrt
+from math import floor, isfinite, sqrt
 from types import MappingProxyType
 from typing import cast
 
@@ -61,9 +61,13 @@ class ClashPolicy:
     ignore_adjacent_polymer_bond_hops: int = 3
 
     def __post_init__(self) -> None:
+        if not isfinite(self.heavy_overlap_tolerance_angstrom):
+            raise ValueError("heavy overlap tolerance must be finite")
         if self.heavy_overlap_tolerance_angstrom < 0:
             raise ValueError("heavy overlap tolerance must be non-negative")
 
+        if not isfinite(self.hydrogen_overlap_tolerance_angstrom):
+            raise ValueError("hydrogen overlap tolerance must be finite")
         if self.hydrogen_overlap_tolerance_angstrom < 0:
             raise ValueError("hydrogen overlap tolerance must be non-negative")
 
@@ -72,14 +76,6 @@ class ClashPolicy:
 
         if self.ignore_adjacent_polymer_bond_hops < 0:
             raise ValueError("ignore_adjacent_polymer_bond_hops must be non-negative")
-
-    def required_overlap(self, left_element: str, right_element: str) -> float:
-        """Return the minimum overlap required for a pair to count as a clash."""
-
-        return self._required_overlap_for_hydrogen_pair(
-            ElementIdentity(left_element).is_hydrogen(),
-            ElementIdentity(right_element).is_hydrogen(),
-        )
 
     def _required_overlap_for_hydrogen_pair(
         self,
@@ -92,6 +88,26 @@ class ClashPolicy:
             return self.hydrogen_overlap_tolerance_angstrom
 
         return self.heavy_overlap_tolerance_angstrom
+
+    def allowed_distance_angstrom(
+        self,
+        *,
+        left_van_der_waals_radius_angstrom: float,
+        right_van_der_waals_radius_angstrom: float,
+        left_is_hydrogen: bool,
+        right_is_hydrogen: bool,
+    ) -> float:
+        """Return the nonnegative distance below which a pair may clash."""
+
+        return max(
+            0.0,
+            left_van_der_waals_radius_angstrom
+            + right_van_der_waals_radius_angstrom
+            - self._required_overlap_for_hydrogen_pair(
+                left_is_hydrogen,
+                right_is_hydrogen,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -775,6 +791,9 @@ def _clash_for_atom_site_pair(
     allowed_distance = context.allowed_distance_by_element_pair[
         (left_site.element, right_site.element)
     ]
+    if allowed_distance <= 0.0:
+        return None
+
     pair_distance_squared = _atom_site_distance_squared(left_site, right_site)
     if pair_distance_squared >= allowed_distance * allowed_distance:
         return None
@@ -812,11 +831,15 @@ def _allowed_distance_by_element_pair(
 ) -> dict[tuple[str, str], float]:
     """Return cached clash distance thresholds by ordered element pair."""
 
+    is_hydrogen_by_element = {
+        element: ElementIdentity(element).is_hydrogen() for element in radius_by_element
+    }
     return {
-        (left_element, right_element): (
-            left_radius
-            + right_radius
-            - policy.required_overlap(left_element, right_element)
+        (left_element, right_element): policy.allowed_distance_angstrom(
+            left_van_der_waals_radius_angstrom=left_radius,
+            right_van_der_waals_radius_angstrom=right_radius,
+            left_is_hydrogen=is_hydrogen_by_element[left_element],
+            right_is_hydrogen=is_hydrogen_by_element[right_element],
         )
         for left_element, left_radius in radius_by_element.items()
         for right_element, right_radius in radius_by_element.items()
@@ -836,7 +859,7 @@ def _clash_candidate_cell_size_angstrom(
     ).values()
     return max(
         MINIMUM_CLASH_GRID_CELL_SIZE_ANGSTROM,
-        *allowed_distances,
+        max(allowed_distances, default=0.0),
     )
 
 

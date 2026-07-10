@@ -17,7 +17,6 @@ from protrepair.geometry import (
 from protrepair.transformer.completion.hydrogen.scoring import (
     ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE,
     ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS,
-    ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM,
     ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM,
     CoordinateLike,
     RotatableHydrogenEnvironment,
@@ -182,7 +181,6 @@ def scale_bond(
 __all__ = [
     "ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE",
     "ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS",
-    "ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM",
     "ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM",
     "CoordinateLike",
     "RotatableHydrogenEnvironment",

@@ -12,6 +12,7 @@ from tests.support.canonical_builders import (
 
 from protrepair.chemistry import RotatableHydrogenKind, UnknownElementRadiusError
 from protrepair.chemistry.standard.components import build_standard_component_library
+from protrepair.diagnostics import ClashPolicy
 from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.completion.hydrogen.domain import (
@@ -32,6 +33,7 @@ from protrepair.transformer.completion.hydrogen.scoring import (
     hydrogen_steric_penalty_against_site,
     max_rotatable_hydrogen_interaction_horizon_angstrom,
     max_rotatable_hydrogen_steric_cutoff_angstrom,
+    rotatable_hydrogen_steric_cutoff_angstrom,
     rotatable_hydrogen_vdw_radius_angstrom,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
@@ -414,6 +416,29 @@ def test_rotatable_hydrogen_steric_penalty_uses_radius_derived_cutoff() -> None:
     )
 
     assert penalty > 0.0
+
+
+def test_rotatable_hydrogen_steric_cutoff_uses_default_clash_policy() -> None:
+    """Rotatable-H scoring should not carry a second overlap-tolerance truth."""
+
+    hydrogen_radius = rotatable_hydrogen_vdw_radius_angstrom("H")
+    carbon_radius = rotatable_hydrogen_vdw_radius_angstrom("C")
+
+    assert rotatable_hydrogen_steric_cutoff_angstrom(
+        hydrogen_vdw_radius=hydrogen_radius,
+        site_vdw_radius=carbon_radius,
+    ) == ClashPolicy().allowed_distance_angstrom(
+        left_van_der_waals_radius_angstrom=hydrogen_radius,
+        right_van_der_waals_radius_angstrom=carbon_radius,
+        left_is_hydrogen=True,
+        right_is_hydrogen=False,
+    )
+
+
+def test_rotatable_hydrogen_steric_cutoff_handles_empty_environment() -> None:
+    """An environment with no scored sites should have no steric horizon."""
+
+    assert max_rotatable_hydrogen_steric_cutoff_angstrom(()) == 0.0
 
 
 def test_rotatable_hydrogen_bond_exemption_requires_plausible_angle() -> None:

@@ -267,19 +267,24 @@ class _TargetedHydrogenClashScorer:
             ):
                 continue
 
-            required_overlap = self.clash_runtime.policy.required_overlap(
-                candidate_hydrogen_site.element,
-                other_site.element,
+            hydrogen_radius = self.clash_runtime.van_der_waals_radius(
+                candidate_hydrogen_site.element
             )
-            allowed_distance = (
-                self.clash_runtime.van_der_waals_radius(candidate_hydrogen_site.element)
-                + self.clash_runtime.van_der_waals_radius(other_site.element)
-                - required_overlap
+            other_radius = self.clash_runtime.van_der_waals_radius(
+                other_site.element
             )
+            allowed_distance = self.clash_runtime.policy.allowed_distance_angstrom(
+                left_van_der_waals_radius_angstrom=hydrogen_radius,
+                right_van_der_waals_radius_angstrom=other_radius,
+                left_is_hydrogen=candidate_hydrogen_site.is_hydrogen(),
+                right_is_hydrogen=other_site.is_hydrogen(),
+            )
+            if allowed_distance <= 0.0:
+                continue
             if pair_distance >= allowed_distance:
                 continue
 
-            overlaps.append(allowed_distance - pair_distance + required_overlap)
+            overlaps.append(hydrogen_radius + other_radius - pair_distance)
 
         if not overlaps:
             return (0, 0.0, 0.0)

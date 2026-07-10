@@ -11,6 +11,7 @@ from protrepair.chemistry import ElementRadiusLookup, RadiusKind, prepare_radius
 from protrepair.diagnostics.clash_topology_rules import (
     probable_hydrogen_bond_geometry,
 )
+from protrepair.diagnostics.clashes import ClashPolicy
 from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
 from protrepair.structure.labels import ResidueId
 
@@ -24,7 +25,7 @@ ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM = (
 )
 ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE = 100.0
 ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS = 1
-ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM = 0.90
+_ROTATABLE_HYDROGEN_CLASH_POLICY = ClashPolicy()
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,10 +411,11 @@ def rotatable_hydrogen_steric_cutoff_angstrom(
 ) -> float:
     """Return the H-heavy distance below which steric scoring can be non-zero."""
 
-    return (
-        hydrogen_vdw_radius
-        + site_vdw_radius
-        - ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM
+    return _ROTATABLE_HYDROGEN_CLASH_POLICY.allowed_distance_angstrom(
+        left_van_der_waals_radius_angstrom=hydrogen_vdw_radius,
+        right_van_der_waals_radius_angstrom=site_vdw_radius,
+        left_is_hydrogen=True,
+        right_is_hydrogen=False,
     )
 
 
@@ -430,14 +432,14 @@ def max_rotatable_hydrogen_steric_cutoff_angstrom(
     radius_lookup.require_complete("rotatable hydrogen scoring radius")
     hydrogen_vdw_radius = radius_lookup.radius_angstrom("H")
     return max(
-        0.0,
-        *(
+        (
             rotatable_hydrogen_steric_cutoff_angstrom(
                 hydrogen_vdw_radius=hydrogen_vdw_radius,
                 site_vdw_radius=radius_lookup.radius_angstrom(site_element),
             )
             for site_element in site_element_tuple
         ),
+        default=0.0,
     )
 
 
@@ -456,7 +458,6 @@ __all__ = [
     "CoordinateLike",
     "ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE",
     "ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS",
-    "ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM",
     "ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM",
     "RotatableHydrogenEnvironment",
     "RotatableHydrogenLocalSite",
