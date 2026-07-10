@@ -28,6 +28,7 @@ def test_release_metadata_declares_dependency_boundary() -> None:
     """Release metadata should make RDKit part of the default runtime."""
 
     pyproject = Path("pyproject.toml").read_text()
+    changelog = Path("CHANGELOG.md").read_text()
     project_dependencies, optional_dependencies = pyproject.split(
         "[project.optional-dependencies]",
         maxsplit=1,
@@ -50,6 +51,9 @@ def test_release_metadata_declares_dependency_boundary() -> None:
     assert "refinement = [" not in pyproject
     assert '"rdkit",' not in optional_dependencies
     assert "dev = [" in pyproject
+    assert "require RDKit at runtime" in changelog
+    assert "optional `refinement` dependency" not in changelog
+    assert "bundled RDKit PeriodicTable radius snapshot" in changelog
 
 
 def test_ci_exercises_required_rdkit_dependency_world() -> None:

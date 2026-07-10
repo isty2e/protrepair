@@ -16,8 +16,10 @@ Initial public release candidate of the rewritten `protrepair` package.
   side-chain packing, and local refinement actions
 - support standard residues, bundled polymer-like nonstandard components, and
   bundled retained non-polymer/cofactor component templates
-- support RDKit-backed local refinement and parser-readability diagnostics when
-  the optional `refinement` dependency is installed
+- require RDKit at runtime for hydrogenation, retained-ligand chemistry
+  fallback, local refinement, and parser-readability diagnostics
+- use a bundled RDKit PeriodicTable radius snapshot for deterministic vdW and
+  covalent-radius policy with explicit unknown-element handling
 - package the vendored FASPR source and rotamer library for the optional
   side-chain packing backend
 - include representative workflow regressions, fixture-backed refinement
