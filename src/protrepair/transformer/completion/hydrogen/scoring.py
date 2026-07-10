@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from math import isfinite, sqrt
+from math import inf, isfinite, isnan, sqrt
 
 import numpy as np
 from numpy.typing import NDArray
@@ -23,9 +23,92 @@ _COULOMB_CONSTANT_KJ_MOL_NM_E2 = 138.94
 ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM = (
     _ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_HORIZON_ANGSTROM**2
 )
-ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE = 100.0
 ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS = 1
 _ROTATABLE_HYDROGEN_CLASH_POLICY = ClashPolicy()
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class RotatableHydrogenClashBurden:
+    """Lexicographic steric burden for one candidate hydrogen position."""
+
+    clash_count: int
+    total_overlap_angstrom: float
+    worst_overlap_angstrom: float
+
+    def __post_init__(self) -> None:
+        if isinstance(self.clash_count, bool) or not isinstance(self.clash_count, int):
+            raise TypeError("rotatable-hydrogen clash count must be an integer")
+        if self.clash_count < 0:
+            raise ValueError("rotatable-hydrogen clash count must be non-negative")
+        if (
+            not isfinite(self.total_overlap_angstrom)
+            or self.total_overlap_angstrom < 0.0
+        ):
+            raise ValueError(
+                "rotatable-hydrogen total overlap must be finite and non-negative"
+            )
+        if (
+            not isfinite(self.worst_overlap_angstrom)
+            or self.worst_overlap_angstrom < 0.0
+        ):
+            raise ValueError(
+                "rotatable-hydrogen worst overlap must be finite and non-negative"
+            )
+        if self.clash_count == 0 and (
+            self.total_overlap_angstrom != 0.0
+            or self.worst_overlap_angstrom != 0.0
+        ):
+            raise ValueError("zero clash count requires zero overlap burden")
+        if self.clash_count > 0 and (
+            self.total_overlap_angstrom <= 0.0
+            or self.worst_overlap_angstrom <= 0.0
+        ):
+            raise ValueError("positive clash count requires positive overlap burden")
+        if self.worst_overlap_angstrom > self.total_overlap_angstrom:
+            raise ValueError("worst overlap cannot exceed total overlap")
+
+    @classmethod
+    def from_positive_overlaps(
+        cls,
+        overlaps_angstrom: Iterable[float],
+    ) -> "RotatableHydrogenClashBurden":
+        """Aggregate one iterable of finite positive clash overlaps."""
+
+        clash_count = 0
+        total_overlap_angstrom = 0.0
+        worst_overlap_angstrom = 0.0
+        for overlap in overlaps_angstrom:
+            if not isfinite(overlap) or overlap <= 0.0:
+                raise ValueError(
+                    "rotatable-hydrogen clash overlaps must be finite and positive"
+                )
+            clash_count += 1
+            total_overlap_angstrom += overlap
+            worst_overlap_angstrom = max(worst_overlap_angstrom, overlap)
+        return cls(
+            clash_count=clash_count,
+            total_overlap_angstrom=total_overlap_angstrom,
+            worst_overlap_angstrom=worst_overlap_angstrom,
+        )
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class RotatableHydrogenCandidateRank:
+    """Complete deterministic rank for one rotatable-hydrogen candidate."""
+
+    clash_burden: RotatableHydrogenClashBurden
+    potential_energy_kj_mol: float
+    scan_order: int
+
+    def __post_init__(self) -> None:
+        if isnan(self.potential_energy_kj_mol) or self.potential_energy_kj_mol == -inf:
+            raise ValueError(
+                "candidate potential energy must be finite or positive infinity"
+            )
+        if isinstance(self.scan_order, bool) or not isinstance(self.scan_order, int):
+            raise TypeError("candidate scan order must be an integer")
+        if self.scan_order < 0:
+            raise ValueError("candidate scan order must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,32 +250,38 @@ class RotatableHydrogenSearch:
             self,
         )
 
-    def steric_penalty(
+    def clash_burden(
         self,
         hydrogen: CoordinateLike,
         environment: RotatableHydrogenEnvironment,
-    ) -> float:
-        """Return clash-aware penalties for one rotatable-hydrogen candidate."""
+    ) -> RotatableHydrogenClashBurden:
+        """Return the steric burden for one rotatable-hydrogen candidate."""
 
-        return hydrogen_steric_penalty(
+        return hydrogen_clash_burden(
             hydrogen,
             environment,
             self,
         )
 
-    def candidate_score(
+    def candidate_rank(
         self,
         hydrogen: CoordinateLike,
         environment: RotatableHydrogenEnvironment,
-    ) -> float:
-        """Return the total score for one rotatable-hydrogen candidate."""
+        *,
+        scan_order: int,
+    ) -> RotatableHydrogenCandidateRank:
+        """Return the deterministic lexicographic rank for one candidate."""
 
-        return self.potential_energy(
+        potential_energy = self.potential_energy(
             hydrogen,
             environment,
-        ) + self.steric_penalty(
-            hydrogen,
-            environment,
+        )
+        if not isfinite(potential_energy):
+            potential_energy = inf
+        return RotatableHydrogenCandidateRank(
+            clash_burden=self.clash_burden(hydrogen, environment),
+            potential_energy_kj_mol=potential_energy,
+            scan_order=scan_order,
         )
 
     def optimized_coordinate(
@@ -203,12 +292,16 @@ class RotatableHydrogenSearch:
 
         candidate_hydrogens = self.candidate_positions()
         best_candidate: Vec3 | None = None
-        best_score: float | None = None
+        best_rank: RotatableHydrogenCandidateRank | None = None
 
-        for candidate in candidate_hydrogens:
-            candidate_score = self.candidate_score(candidate, environment)
-            if best_score is None or candidate_score < best_score:
-                best_score = candidate_score
+        for scan_order, candidate in enumerate(candidate_hydrogens):
+            candidate_rank = self.candidate_rank(
+                candidate,
+                environment,
+                scan_order=scan_order,
+            )
+            if best_rank is None or candidate_rank < best_rank:
+                best_rank = candidate_rank
                 best_candidate = candidate
 
         if best_candidate is None:
@@ -270,14 +363,14 @@ def hydrogen_potential_energy(
     return total_energy
 
 
-def hydrogen_steric_penalty(
+def hydrogen_clash_burden(
     hydrogen: CoordinateLike,
     environment: RotatableHydrogenEnvironment,
     search: RotatableHydrogenSearch,
-) -> float:
-    """Return clash-aware penalties for one rotatable-hydrogen candidate."""
+) -> RotatableHydrogenClashBurden:
+    """Return the physical vdW-overlap burden for one candidate hydrogen."""
 
-    penalty = 0.0
+    overlaps: list[float] = []
     hydrogen_position = Vec3.coerce(hydrogen)
     hydrogen_x = hydrogen_position.x
     hydrogen_y = hydrogen_position.y
@@ -293,7 +386,7 @@ def hydrogen_steric_penalty(
         ):
             continue
 
-        penalty += hydrogen_steric_penalty_against_site(
+        overlap = hydrogen_steric_overlap_against_site(
             hydrogen_x=hydrogen_x,
             hydrogen_y=hydrogen_y,
             hydrogen_z=hydrogen_z,
@@ -309,6 +402,8 @@ def hydrogen_steric_penalty(
             donor_element=search.donor_element,
             allow_hydrogen_bond=False,
         )
+        if overlap > 0.0:
+            overlaps.append(overlap)
 
     for site_x, site_y, site_z, site_element in zip(
         environment.atom_x,
@@ -317,7 +412,7 @@ def hydrogen_steric_penalty(
         environment.elements,
         strict=True,
     ):
-        penalty += hydrogen_steric_penalty_against_site(
+        overlap = hydrogen_steric_overlap_against_site(
             hydrogen_x=hydrogen_x,
             hydrogen_y=hydrogen_y,
             hydrogen_z=hydrogen_z,
@@ -333,11 +428,13 @@ def hydrogen_steric_penalty(
             donor_element=search.donor_element,
             allow_hydrogen_bond=True,
         )
+        if overlap > 0.0:
+            overlaps.append(overlap)
 
-    return penalty
+    return RotatableHydrogenClashBurden.from_positive_overlaps(overlaps)
 
 
-def hydrogen_steric_penalty_against_site(
+def hydrogen_steric_overlap_against_site(
     *,
     hydrogen_x: float,
     hydrogen_y: float,
@@ -354,7 +451,7 @@ def hydrogen_steric_penalty_against_site(
     donor_element: str,
     allow_hydrogen_bond: bool,
 ) -> float:
-    """Return the steric penalty for one H-heavy pair."""
+    """Return physical vdW overlap for one admitted H-heavy clash."""
 
     delta_x = hydrogen_x - site_x
     delta_y = hydrogen_y - site_y
@@ -392,8 +489,7 @@ def hydrogen_steric_penalty_against_site(
     if separation >= allowed_distance:
         return 0.0
 
-    overlap = allowed_distance - separation
-    return ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE * overlap * overlap
+    return hydrogen_vdw_radius + site_vdw_radius - separation
 
 
 def rotatable_hydrogen_vdw_radius_angstrom(element: str) -> float:
@@ -456,15 +552,16 @@ def max_rotatable_hydrogen_interaction_horizon_angstrom(
 
 __all__ = [
     "CoordinateLike",
-    "ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE",
     "ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS",
     "ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM",
+    "RotatableHydrogenCandidateRank",
+    "RotatableHydrogenClashBurden",
     "RotatableHydrogenEnvironment",
     "RotatableHydrogenLocalSite",
     "RotatableHydrogenSearch",
+    "hydrogen_clash_burden",
     "hydrogen_potential_energy",
-    "hydrogen_steric_penalty",
-    "hydrogen_steric_penalty_against_site",
+    "hydrogen_steric_overlap_against_site",
     "max_rotatable_hydrogen_interaction_horizon_angstrom",
     "max_rotatable_hydrogen_steric_cutoff_angstrom",
     "rotatable_hydrogen_steric_cutoff_angstrom",

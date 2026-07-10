@@ -248,7 +248,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:THR:A:6",
             last_residue="ATOM:HIS:A:460",
-            semantic_digest="f8f4d53cdb2867f6304f97ee82f5b3ab8ed7ea6265aa50d89298b96e112427ab",
+            semantic_digest="d1b4dc98e9369d438e25405cdb36cb82b543188048e8a2f732ff42e40551c0f5",
         ),
         hydrogen_direct_summary=StructureSummary(
             chain_ids=("A",),
@@ -286,7 +286,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:THR:A:6",
             last_residue="ATOM:HIS:A:460",
-            semantic_digest="a4a61c199f36ade6e0f8691b74f0f47bc2cc263cac7012120643dc01e223b8ae",
+            semantic_digest="cc756e6a414a0d451b12bf19975200e4f262d541c516a0fc110e7ae44642f6b0",
         ),
     ),
     "1afc-hydrogen-his-protonated": RepresentativeCase(
@@ -382,7 +382,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:LYS:A:10",
             last_residue="ATOM:PRO:H:136",
-            semantic_digest="3a0d6843127b88c74ee0e7b9a4badf8114551f99263f908f54aaa92dea6cdb1a",
+            semantic_digest="8f322c0461a4040278e1cef2963a1ddbc621f8fd996511c5563cd7f6ce2a64f2",
         ),
     ),
 }

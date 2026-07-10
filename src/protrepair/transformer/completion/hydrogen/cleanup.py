@@ -33,6 +33,9 @@ from protrepair.transformer.completion.hydrogen.cleanup_planning import (
 from protrepair.transformer.completion.hydrogen.rotatable import (
     build_rotatable_hydrogen_search,
 )
+from protrepair.transformer.completion.hydrogen.scoring import (
+    RotatableHydrogenClashBurden,
+)
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
 
@@ -144,14 +147,14 @@ def _cleanup_targeted_hydrogen(
     current_hydrogen_site = current_residue.atom_site(target.hydrogen_atom_name)
     current_hydrogen_geometry = current_residue.atom_geometry(target.hydrogen_atom_name)
     hydrogen_formal_charge = current_residue.formal_charge(target.hydrogen_atom_name)
-    best_score = scorer.score(current_hydrogen_geometry.position)
+    best_burden = scorer.clash_burden(current_hydrogen_geometry.position)
     best_residue: CompletionResiduePayload | None = None
 
     for candidate in search.candidate_positions():
         candidate_position = current_hydrogen_geometry.position.coerce(candidate)
-        candidate_score = scorer.score(candidate_position)
-        if candidate_score < best_score:
-            best_score = candidate_score
+        candidate_burden = scorer.clash_burden(candidate_position)
+        if candidate_burden < best_burden:
+            best_burden = candidate_burden
             best_residue = current_residue.with_atom_payload(
                 current_hydrogen_site,
                 atom_geometry=current_hydrogen_geometry.with_position(
@@ -224,8 +227,11 @@ class _TargetedHydrogenClashScorer:
     hydrogen_site: DiagnosticAtomSite
     clash_runtime: _HydrogenCleanupClashRuntime
 
-    def score(self, candidate_position: Vec3) -> tuple[int, float, float]:
-        """Return the clash score for one candidate hydrogen position."""
+    def clash_burden(
+        self,
+        candidate_position: Vec3,
+    ) -> RotatableHydrogenClashBurden:
+        """Return the steric burden for one candidate hydrogen position."""
 
         candidate_hydrogen_site = DiagnosticAtomSite(
             atom_name=self.hydrogen_site.atom_name,
@@ -286,14 +292,7 @@ class _TargetedHydrogenClashScorer:
 
             overlaps.append(hydrogen_radius + other_radius - pair_distance)
 
-        if not overlaps:
-            return (0, 0.0, 0.0)
-
-        return (
-            len(overlaps),
-            sum(overlaps),
-            max(overlaps),
-        )
+        return RotatableHydrogenClashBurden.from_positive_overlaps(overlaps)
 
 
 def _build_hydrogen_cleanup_clash_runtime(

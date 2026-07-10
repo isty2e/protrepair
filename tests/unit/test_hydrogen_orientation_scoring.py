@@ -10,6 +10,7 @@ from tests.support.canonical_builders import (
     completion_payload,
 )
 
+import protrepair.transformer.completion.hydrogen.scoring as hydrogen_scoring
 from protrepair.chemistry import RotatableHydrogenKind, UnknownElementRadiusError
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import ClashPolicy
@@ -30,7 +31,7 @@ from protrepair.transformer.completion.hydrogen.rotatable import (
     rotatable_hydrogen_placement_spec,
 )
 from protrepair.transformer.completion.hydrogen.scoring import (
-    hydrogen_steric_penalty_against_site,
+    hydrogen_steric_overlap_against_site,
     max_rotatable_hydrogen_interaction_horizon_angstrom,
     max_rotatable_hydrogen_steric_cutoff_angstrom,
     rotatable_hydrogen_steric_cutoff_angstrom,
@@ -148,6 +149,219 @@ def test_optimize_rotatable_hydrogen_selects_least_bad_candidate(
     )
 
     assert result == Vec3(1.8, 0.0, 0.0)
+
+
+def test_clash_free_candidate_outranks_arbitrarily_favorable_clashed_energy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No finite energy magnitude may outrank elimination of a steric clash."""
+
+    clashed_candidate = Vec3(0.5, 0.0, 0.0)
+    clear_candidate = Vec3(4.0, 0.0, 0.0)
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_positions",
+        lambda self: (clashed_candidate, clear_candidate),
+    )
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "potential_energy",
+        lambda self, hydrogen, environment: (
+            -1e300 if Vec3.coerce(hydrogen) == clashed_candidate else 1e300
+        ),
+    )
+    environment = RotatableHydrogenEnvironment(
+        residue_id=ResidueId("A", 19),
+        atom_x=(0.0,),
+        atom_y=(0.0,),
+        atom_z=(0.0,),
+        elements=("C",),
+        charges=(0.0,),
+        sigmas_nm=(0.0,),
+        epsilons_kj_mol=(0.0,),
+    )
+
+    assert search_template().optimized_coordinate(environment) == clear_candidate
+
+
+def test_rotatable_hydrogen_rank_prioritizes_clash_count() -> None:
+    """One clash must outrank two regardless of overlap and energy magnitudes."""
+
+    one_clash = hydrogen_scoring.RotatableHydrogenCandidateRank(
+        clash_burden=hydrogen_scoring.RotatableHydrogenClashBurden(
+            clash_count=1,
+            total_overlap_angstrom=2.0,
+            worst_overlap_angstrom=2.0,
+        ),
+        potential_energy_kj_mol=1e300,
+        scan_order=1,
+    )
+    two_clashes = hydrogen_scoring.RotatableHydrogenCandidateRank(
+        clash_burden=hydrogen_scoring.RotatableHydrogenClashBurden(
+            clash_count=2,
+            total_overlap_angstrom=0.2,
+            worst_overlap_angstrom=0.1,
+        ),
+        potential_energy_kj_mol=-1e300,
+        scan_order=0,
+    )
+
+    assert one_clash < two_clashes
+
+
+def test_rotatable_hydrogen_rank_orders_overlap_before_energy() -> None:
+    """Total then worst overlap should precede potential energy in the rank."""
+
+    lower_total = hydrogen_scoring.RotatableHydrogenCandidateRank(
+        clash_burden=hydrogen_scoring.RotatableHydrogenClashBurden(
+            clash_count=2,
+            total_overlap_angstrom=1.0,
+            worst_overlap_angstrom=0.8,
+        ),
+        potential_energy_kj_mol=1e300,
+        scan_order=1,
+    )
+    higher_total = hydrogen_scoring.RotatableHydrogenCandidateRank(
+        clash_burden=hydrogen_scoring.RotatableHydrogenClashBurden(
+            clash_count=2,
+            total_overlap_angstrom=1.1,
+            worst_overlap_angstrom=0.6,
+        ),
+        potential_energy_kj_mol=-1e300,
+        scan_order=0,
+    )
+    lower_worst = hydrogen_scoring.RotatableHydrogenCandidateRank(
+        clash_burden=hydrogen_scoring.RotatableHydrogenClashBurden(
+            clash_count=2,
+            total_overlap_angstrom=1.0,
+            worst_overlap_angstrom=0.5,
+        ),
+        potential_energy_kj_mol=1e300,
+        scan_order=1,
+    )
+
+    assert lower_total < higher_total
+    assert lower_worst < lower_total
+
+
+def test_rotatable_hydrogen_rank_uses_scan_order_only_for_exact_ties() -> None:
+    """Stable torsion order should be the explicit final tie-break axis."""
+
+    burden = hydrogen_scoring.RotatableHydrogenClashBurden(
+        clash_count=0,
+        total_overlap_angstrom=0.0,
+        worst_overlap_angstrom=0.0,
+    )
+    first = hydrogen_scoring.RotatableHydrogenCandidateRank(
+        clash_burden=burden,
+        potential_energy_kj_mol=-1.0,
+        scan_order=0,
+    )
+    second = hydrogen_scoring.RotatableHydrogenCandidateRank(
+        clash_burden=burden,
+        potential_energy_kj_mol=-1.0,
+        scan_order=1,
+    )
+
+    assert first < second
+
+
+def test_rotatable_hydrogen_clash_burden_aggregates_positive_overlaps() -> None:
+    """Burden aggregation should preserve count, total, and worst overlap axes."""
+
+    burden = hydrogen_scoring.RotatableHydrogenClashBurden.from_positive_overlaps(
+        (0.3, 0.7)
+    )
+
+    assert burden == hydrogen_scoring.RotatableHydrogenClashBurden(
+        clash_count=2,
+        total_overlap_angstrom=1.0,
+        worst_overlap_angstrom=0.7,
+    )
+
+
+@pytest.mark.parametrize(
+    "overlaps",
+    ((0.0,), (-0.1,), (float("nan"),), (float("inf"),)),
+)
+def test_rotatable_hydrogen_clash_burden_rejects_invalid_overlaps(
+    overlaps: tuple[float, ...],
+) -> None:
+    """Only finite positive contacts may enter a clash burden."""
+
+    with pytest.raises(ValueError, match="finite and positive"):
+        hydrogen_scoring.RotatableHydrogenClashBurden.from_positive_overlaps(
+            overlaps
+        )
+
+
+@pytest.mark.parametrize(
+    ("clash_count", "total_overlap", "worst_overlap"),
+    (
+        (-1, 0.0, 0.0),
+        (0, 1.0, 1.0),
+        (1, 0.0, 0.0),
+        (2, 1.0, 1.1),
+    ),
+)
+def test_rotatable_hydrogen_clash_burden_rejects_incoherent_state(
+    clash_count: int,
+    total_overlap: float,
+    worst_overlap: float,
+) -> None:
+    """The burden value object should reject contradictory metric combinations."""
+
+    with pytest.raises((TypeError, ValueError)):
+        hydrogen_scoring.RotatableHydrogenClashBurden(
+            clash_count=clash_count,
+            total_overlap_angstrom=total_overlap,
+            worst_overlap_angstrom=worst_overlap,
+        )
+
+
+@pytest.mark.parametrize("invalid_energy", (float("nan"), -float("inf")))
+def test_rotatable_hydrogen_rank_rejects_nonorderable_energy(
+    invalid_energy: float,
+) -> None:
+    """Direct rank construction must reject energies without a total ordering."""
+
+    with pytest.raises(ValueError, match="finite or positive infinity"):
+        hydrogen_scoring.RotatableHydrogenCandidateRank(
+            clash_burden=hydrogen_scoring.RotatableHydrogenClashBurden(
+                clash_count=0,
+                total_overlap_angstrom=0.0,
+                worst_overlap_angstrom=0.0,
+            ),
+            potential_energy_kj_mol=invalid_energy,
+            scan_order=0,
+        )
+
+
+def test_rotatable_hydrogen_candidate_ranking_demotes_nonfinite_energy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NaN and negative infinity should become worst-case energy, not win."""
+
+    candidates = (
+        Vec3(3.0, 0.0, 0.0),
+        Vec3(4.0, 0.0, 0.0),
+        Vec3(5.0, 0.0, 0.0),
+    )
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "candidate_positions",
+        lambda self: candidates,
+    )
+    energy_by_x = {3.0: float("nan"), 4.0: -float("inf"), 5.0: 0.0}
+    monkeypatch.setattr(
+        RotatableHydrogenSearch,
+        "potential_energy",
+        lambda self, hydrogen, environment: energy_by_x[Vec3.coerce(hydrogen).x],
+    )
+
+    assert search_template().optimized_coordinate(
+        minimal_environment(19, marker=100.0)
+    ) == Vec3(5.0, 0.0, 0.0)
 
 
 def test_rotatable_hydrogen_scan_covers_six_evenly_spaced_torsions() -> None:
@@ -395,10 +609,10 @@ def test_rotatable_hydrogen_coincident_site_has_infinite_potential() -> None:
     )
 
 
-def test_rotatable_hydrogen_steric_penalty_uses_radius_derived_cutoff() -> None:
-    """Broad-radius sites beyond the legacy fixed cutoff should still be scored."""
+def test_rotatable_hydrogen_steric_overlap_uses_radius_derived_cutoff() -> None:
+    """Broad-radius sites beyond the legacy fixed cutoff should still overlap."""
 
-    penalty = hydrogen_steric_penalty_against_site(
+    overlap = hydrogen_steric_overlap_against_site(
         hydrogen_x=0.0,
         hydrogen_y=0.0,
         hydrogen_z=0.0,
@@ -415,7 +629,34 @@ def test_rotatable_hydrogen_steric_penalty_uses_radius_derived_cutoff() -> None:
         allow_hydrogen_bond=True,
     )
 
-    assert penalty > 0.0
+    assert overlap > 0.0
+
+
+def test_rotatable_hydrogen_steric_overlap_reports_physical_vdw_overlap() -> None:
+    """Overlap severity should use radius sum minus separation, not score weight."""
+
+    hydrogen_radius = rotatable_hydrogen_vdw_radius_angstrom("H")
+    carbon_radius = rotatable_hydrogen_vdw_radius_angstrom("C")
+    separation = 1.5
+
+    overlap = hydrogen_steric_overlap_against_site(
+        hydrogen_x=0.0,
+        hydrogen_y=0.0,
+        hydrogen_z=0.0,
+        site_x=separation,
+        site_y=0.0,
+        site_z=0.0,
+        site_element="C",
+        hydrogen_vdw_radius=hydrogen_radius,
+        site_vdw_radius=carbon_radius,
+        donor_x=-1.0,
+        donor_y=0.0,
+        donor_z=0.0,
+        donor_element="O",
+        allow_hydrogen_bond=False,
+    )
+
+    assert overlap == pytest.approx(hydrogen_radius + carbon_radius - separation)
 
 
 def test_rotatable_hydrogen_steric_cutoff_uses_default_clash_policy() -> None:
@@ -458,27 +699,27 @@ def test_rotatable_hydrogen_bond_exemption_requires_plausible_angle() -> None:
         "allow_hydrogen_bond": True,
     }
 
-    linear_penalty = hydrogen_steric_penalty_against_site(
+    linear_overlap = hydrogen_steric_overlap_against_site(
         **common,
         site_x=2.8,
         site_y=0.0,
         site_z=0.0,
     )
-    acute_penalty = hydrogen_steric_penalty_against_site(
+    acute_overlap = hydrogen_steric_overlap_against_site(
         **common,
         site_x=0.1,
         site_y=1.55,
         site_z=0.0,
     )
 
-    assert linear_penalty == 0.0
-    assert acute_penalty > 0.0
+    assert linear_overlap == 0.0
+    assert acute_overlap > 0.0
 
 
 def test_rotatable_hydrogen_bond_exemption_rejects_degenerate_donor_vector() -> None:
     """A donor coincident with H has no defensible hydrogen-bond angle."""
 
-    penalty = hydrogen_steric_penalty_against_site(
+    overlap = hydrogen_steric_overlap_against_site(
         hydrogen_x=0.0,
         hydrogen_y=0.0,
         hydrogen_z=0.0,
@@ -495,7 +736,7 @@ def test_rotatable_hydrogen_bond_exemption_rejects_degenerate_donor_vector() -> 
         allow_hydrogen_bond=True,
     )
 
-    assert penalty > 0.0
+    assert overlap > 0.0
 
 
 def test_optimize_rotatable_hydrogen_preserves_candidate_identity(
@@ -511,9 +752,19 @@ def test_optimize_rotatable_hydrogen_preserves_candidate_identity(
     )
     monkeypatch.setattr(
         RotatableHydrogenSearch,
-        "candidate_score",
-        lambda self, hydrogen, environment: (
-            1.0 if Vec3.coerce(hydrogen).x == 2.0 else 5.0
+        "candidate_rank",
+        lambda self, hydrogen, environment, *, scan_order: (
+            hydrogen_scoring.RotatableHydrogenCandidateRank(
+                clash_burden=hydrogen_scoring.RotatableHydrogenClashBurden(
+                    clash_count=0,
+                    total_overlap_angstrom=0.0,
+                    worst_overlap_angstrom=0.0,
+                ),
+                potential_energy_kj_mol=(
+                    1.0 if Vec3.coerce(hydrogen).x == 2.0 else 5.0
+                ),
+                scan_order=scan_order,
+            )
         ),
     )
 
@@ -535,8 +786,18 @@ def test_optimize_rotatable_hydrogen_keeps_first_candidate_on_score_tie(
     )
     monkeypatch.setattr(
         RotatableHydrogenSearch,
-        "candidate_score",
-        lambda self, hydrogen, environment: 1.0,
+        "candidate_rank",
+        lambda self, hydrogen, environment, *, scan_order: (
+            hydrogen_scoring.RotatableHydrogenCandidateRank(
+                clash_burden=hydrogen_scoring.RotatableHydrogenClashBurden(
+                    clash_count=0,
+                    total_overlap_angstrom=0.0,
+                    worst_overlap_angstrom=0.0,
+                ),
+                potential_energy_kj_mol=1.0,
+                scan_order=scan_order,
+            )
+        ),
     )
 
     result = search_template().optimized_coordinate(minimal_environment(19, marker=1.0))
@@ -555,13 +816,13 @@ def test_optimize_rotatable_hydrogen_does_not_score_empty_candidate_scan(
         lambda self: (),
     )
 
-    def score_empty_candidate_scan(self, hydrogen, environment) -> float:
-        pytest.fail("empty candidate scans must not call candidate_score")
+    def rank_empty_candidate_scan(self, hydrogen, environment, *, scan_order):
+        pytest.fail("empty candidate scans must not call candidate_rank")
 
     monkeypatch.setattr(
         RotatableHydrogenSearch,
-        "candidate_score",
-        score_empty_candidate_scan,
+        "candidate_rank",
+        rank_empty_candidate_scan,
     )
 
     result = search_template().optimized_coordinate(minimal_environment(1, marker=1.0))

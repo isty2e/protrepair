@@ -15,7 +15,6 @@ from protrepair.geometry import (
     Vec3,
 )
 from protrepair.transformer.completion.hydrogen.scoring import (
-    ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE,
     ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS,
     ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM,
     CoordinateLike,
@@ -23,8 +22,6 @@ from protrepair.transformer.completion.hydrogen.scoring import (
     RotatableHydrogenLocalSite,
     RotatableHydrogenSearch,
     hydrogen_potential_energy,
-    hydrogen_steric_penalty,
-    hydrogen_steric_penalty_against_site,
     max_rotatable_hydrogen_steric_cutoff_angstrom,
     rotatable_hydrogen_steric_cutoff_angstrom,
     rotatable_hydrogen_vdw_radius_angstrom,
@@ -179,7 +176,6 @@ def scale_bond(
 
 
 __all__ = [
-    "ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE",
     "ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS",
     "ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM",
     "CoordinateLike",
@@ -189,8 +185,6 @@ __all__ = [
     "backbone_hydrogen",
     "cysteine_thiol",
     "hydrogen_potential_energy",
-    "hydrogen_steric_penalty",
-    "hydrogen_steric_penalty_against_site",
     "hydroxyl_hydrogen",
     "max_rotatable_hydrogen_steric_cutoff_angstrom",
     "n_terminal_hydrogens",

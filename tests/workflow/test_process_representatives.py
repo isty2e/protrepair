@@ -64,12 +64,12 @@ WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, frozenset[str]]] = {
     "1afc-hydrogen-his-protonated": {
         "2026.03.2": frozenset(
             {
-                "7c6878597c371d5688f87e70dc64081a7d7de9eb7011e60d9569b86e932c01d9",
+                "222fcdf1b738d90a5ef2762a82317b0fcabbfc78210ed3eeb9f54847e0522834",
             }
         ),
         "2026.03.3": frozenset(
             {
-                "7c6878597c371d5688f87e70dc64081a7d7de9eb7011e60d9569b86e932c01d9",
+                "222fcdf1b738d90a5ef2762a82317b0fcabbfc78210ed3eeb9f54847e0522834",
             }
         ),
     },
@@ -177,7 +177,7 @@ def test_registered_rdkit_coordinate_digest_accepts_current_contract(
         _patch_rdkit_version(monkeypatch, rdkit_version)
         _assert_rdkit_coordinate_digest_matches(
             "1afc-hydrogen-his-protonated",
-            "7c6878597c371d5688f87e70dc64081a7d7de9eb7011e60d9569b86e932c01d9",
+            "222fcdf1b738d90a5ef2762a82317b0fcabbfc78210ed3eeb9f54847e0522834",
         )
 
 
