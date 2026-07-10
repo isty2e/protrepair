@@ -139,6 +139,63 @@ def test_refine_local_region_moves_selected_atom_and_keeps_context_fixed() -> No
     assert refined_observer.position == original_observer.position
 
 
+def test_rdkit_refinement_preserves_movable_and_fixed_hydrogen_isotopes() -> None:
+    """RDKit should lower D/T as explicit hydrogen isotopes without source loss."""
+
+    structure = build_toy_structure(
+        movable_hydrogen_element="D",
+        context_hydrogen_elements=("T", "H"),
+    )
+    component_library = build_toy_component_library()
+    scope_spec = LocalScopeSpec.from_atoms(
+        (AtomRef(ResidueId(chain_id="A", seq_num=1), "H1"),)
+    )
+    plan = build_continuous_relaxation_problem(
+        structure,
+        scope_spec=scope_spec,
+        context_radius_angstrom=2.5,
+        component_library=component_library,
+    )
+
+    molecule, rdkit_atom_index_by_structure_atom_index = (
+        continuous_rdkit.build_rdkit_molecule(plan)
+    )
+    for atom_ref, source_symbol, isotope_mass_number in (
+        (AtomRef(ResidueId("A", 1), "H1"), "D", 2),
+        (AtomRef(ResidueId("L", 1), "H2"), "T", 3),
+        (AtomRef(ResidueId("L", 1), "H3"), "H", 0),
+    ):
+        atom_index = structure.constitution.atom_index(atom_ref)
+        rdkit_atom = molecule.GetAtomWithIdx(
+            rdkit_atom_index_by_structure_atom_index[atom_index]
+        )
+
+        assert rdkit_atom.GetSymbol() == "H"
+        assert rdkit_atom.GetAtomicNum() == 1
+        assert rdkit_atom.GetIsotope() == isotope_mass_number
+        assert structure.constitution.atom_site_at(atom_index).element == source_symbol
+
+    refined = transform_local_region(
+        structure,
+        DirectRegionTransformationSpec(
+            scope_spec=scope_spec,
+            force_field=ContinuousRelaxationForceField.UFF,
+            config=ContinuousRelaxationConfig(
+                context_radius_angstrom=2.5,
+                max_iterations=50,
+            ),
+        ),
+        component_library=component_library,
+    ).refined_structure
+
+    assert refined.constitution.atom_site_at(
+        refined.constitution.atom_index(AtomRef(ResidueId("A", 1), "H1"))
+    ).element == "D"
+    assert refined.constitution.atom_site_at(
+        refined.constitution.atom_index(AtomRef(ResidueId("L", 1), "H2"))
+    ).element == "T"
+
+
 @pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_supports_mmff_on_benchmark_fixture() -> None:
     """MMFF should run on one chemistry-valid literature-backed benchmark fixture."""
@@ -1498,7 +1555,11 @@ def build_chiral_component_library() -> ComponentLibrary:
     )
 
 
-def build_toy_structure() -> ProteinStructure:
+def build_toy_structure(
+    *,
+    movable_hydrogen_element: str = "H",
+    context_hydrogen_elements: tuple[str, str] = ("H", "H"),
+) -> ProteinStructure:
     """Return one tiny local environment with one hydrogen clash."""
 
     structure = build_canonical_structure(
@@ -1511,7 +1572,11 @@ def build_toy_structure() -> ProteinStructure:
                         residue_id=ResidueId(chain_id="A", seq_num=1),
                         atoms=(
                             atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),
-                            atom_payload("H1", "H", Vec3(1.0, 0.0, 0.0)),
+                            atom_payload(
+                                "H1",
+                                movable_hydrogen_element,
+                                Vec3(1.0, 0.0, 0.0),
+                            ),
                         ),
                     ),
                 ),
@@ -1523,8 +1588,16 @@ def build_toy_structure() -> ProteinStructure:
                 residue_id=ResidueId(chain_id="L", seq_num=1),
                 atoms=(
                     atom_payload("O1", "O", Vec3(1.9, 0.0, 0.0)),
-                    atom_payload("H2", "H", Vec3(2.5, 0.75, 0.0)),
-                    atom_payload("H3", "H", Vec3(2.5, -0.75, 0.0)),
+                    atom_payload(
+                        "H2",
+                        context_hydrogen_elements[0],
+                        Vec3(2.5, 0.75, 0.0),
+                    ),
+                    atom_payload(
+                        "H3",
+                        context_hydrogen_elements[1],
+                        Vec3(2.5, -0.75, 0.0),
+                    ),
                 ),
                 is_hetero=True,
             ),

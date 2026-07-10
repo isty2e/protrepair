@@ -309,32 +309,30 @@ def _heavy_heavy_clashes(
     return tuple(
         clash
         for clash in clashes
-        if _clash_endpoint_element(
+        if not _clash_endpoint_is_hydrogen(
             structure,
             residue_id=clash.left_residue_id,
             atom_name=clash.left_atom_name,
         )
-        != "H"
-        and _clash_endpoint_element(
+        and not _clash_endpoint_is_hydrogen(
             structure,
             residue_id=clash.right_residue_id,
             atom_name=clash.right_atom_name,
         )
-        != "H"
     )
 
 
-def _clash_endpoint_element(
+def _clash_endpoint_is_hydrogen(
     structure: ProteinStructure,
     *,
     residue_id: ResidueId,
     atom_name: str,
-) -> str:
-    """Return the element symbol for one clash endpoint."""
+) -> bool:
+    """Return whether one clash endpoint has hydrogen chemical behavior."""
 
     return structure.constitution.atom_site_at(
         structure.constitution.atom_index_in_residue(
             structure.constitution.residue_index(residue_id),
             atom_name,
         )
-    ).element
+    ).is_hydrogen()

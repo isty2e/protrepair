@@ -1,5 +1,7 @@
 """Cross-path regressions for hydrogen isotope element semantics."""
 
+from dataclasses import replace
+
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
@@ -17,10 +19,17 @@ from protrepair.errors import StructureNormalizationError
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat, read_structure_string, write_structure_string
 from protrepair.io.gemmi_normalization import gemmi
-from protrepair.state import HydrogenCoverageState, StructureChemistryReadinessFacts
+from protrepair.state import (
+    HydrogenCoverageState,
+    StructureChemistryReadinessFacts,
+    StructureIntrinsicGeometryFacts,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.completion.hydrogen import add_hydrogens
+from protrepair.transformer.discrete.axis_rotation import (
+    score_discrete_correction_candidate,
+)
 
 HYDROGEN_ISOTOPE_SYMBOLS = ("H", "D", "T")
 
@@ -48,6 +57,58 @@ def test_hydrogen_isotopes_share_clash_scope_and_overlap() -> None:
         included_overlaps.append(included.clashes[0].overlap_angstrom)
 
     assert included_overlaps == pytest.approx((1.9, 1.9, 1.9))
+
+
+def test_hydrogen_isotopes_share_discrete_candidate_clash_ranking() -> None:
+    """Heavy-clash candidate axes should exclude H, D, and T identically."""
+
+    component_library = build_default_component_library()
+    scores = tuple(
+        score_discrete_correction_candidate(
+            structure=_inter_residue_isotope_contact(isotope_symbol),
+            residue_id=ResidueId("A", 1),
+            component_library=component_library,
+            moved_atom_indices=(),
+        ).score
+        for isotope_symbol in HYDROGEN_ISOTOPE_SYMBOLS
+    )
+
+    assert scores[0].focus_clash_count == 1
+    assert scores[0].focus_heavy_clash_count == 0
+    assert scores[0].focus_heavy_fractional_clash_overlap_sum == 0.0
+    assert scores[0].focus_heavy_clash_overlap_sum_angstrom == 0.0
+    assert scores[1:] == scores[:1] * 2
+
+
+def test_hydrogen_isotopes_share_aggregate_heavy_clash_projection() -> None:
+    """All-atom aggregate facts should project H, D, and T out of heavy clashes."""
+
+    component_library = build_default_component_library()
+    observed_counts = []
+    for isotope_symbol in HYDROGEN_ISOTOPE_SYMBOLS:
+        structure = _inter_residue_isotope_contact(isotope_symbol)
+        readiness = StructureChemistryReadinessFacts.from_structure(
+            structure,
+            component_library=component_library,
+        )
+        facts = StructureIntrinsicGeometryFacts.from_structure(
+            structure,
+            component_library=component_library,
+            chemistry_readiness_facts=replace(
+                readiness,
+                hydrogen_coverage_state=HydrogenCoverageState.COMPLETE,
+            ),
+        )
+
+        observed_counts.append(
+            (
+                facts.protein_self_clash_count,
+                facts.observed_hydrogen_inclusive_self_clash_count,
+                facts.observed_heavy_atom_self_clash_count,
+            )
+        )
+
+    assert observed_counts == [(1, 1, 0)] * 3
 
 
 @pytest.mark.parametrize("isotope_symbol", HYDROGEN_ISOTOPE_SYMBOLS)

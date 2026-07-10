@@ -426,7 +426,12 @@ def build_rdkit_molecule(
     for atom_index in problem.region.included_atom_indices():
         atom_site = problem.region.atom_site(atom_index)
         atom_geometry = problem.region.atom_geometry(atom_index)
-        rdkit_atom = Chem.Atom(_rdkit_element_symbol(atom_site.element))
+        element_identity = atom_site.element_identity
+        rdkit_atom = Chem.Atom(
+            _rdkit_element_symbol(element_identity.chemical_symbol)
+        )
+        if element_identity.isotope_mass_number is not None:
+            rdkit_atom.SetIsotope(element_identity.isotope_mass_number)
         rdkit_atom.SetNoImplicit(True)
         formal_charge = problem.region.formal_charge(atom_index)
         if formal_charge is not None:
