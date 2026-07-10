@@ -13,7 +13,11 @@ from tests.support.canonical_builders import (
 
 from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
-from protrepair.diagnostics.kinds import RepairEventKind
+from protrepair.diagnostics.kinds import (
+    IssueSeverity,
+    RepairEventKind,
+    ValidationIssueKind,
+)
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure_string, write_structure_string
 from protrepair.state import (
@@ -385,36 +389,9 @@ def test_retained_disulfide_uses_the_same_normalization_action() -> None:
 def test_shared_disulfide_endpoint_keeps_pair_facts_but_deduplicates_action() -> None:
     """Malformed source topology stays observable without duplicate atom work."""
 
-    residue_specs = (
-        (ResidueId("A", 1), 0.0),
-        (ResidueId("B", 1), 2.1),
-        (ResidueId("C", 1), -2.1),
+    structure = _shared_disulfide_endpoint_structure(
+        thiol_hydrogen=("HG", "H"),
     )
-    structure = build_structure(
-        chains=tuple(
-            chain_payload(
-                residue_id.chain_id,
-                (
-                    _complete_cys_payload(
-                        residue_id,
-                        sg_x=sg_x,
-                        direction=-1.0 if index == 0 else 1.0,
-                        thiol_hydrogen=("HG", "H") if index == 0 else None,
-                    ),
-                ),
-            )
-            for index, (residue_id, sg_x) in enumerate(residue_specs)
-        ),
-        source_format=FileFormat.PDB,
-        source_name="shared-disulfide-endpoint",
-    )
-    for partner_id in (ResidueId("B", 1), ResidueId("C", 1)):
-        structure = _append_bond(
-            structure,
-            AtomRef(ResidueId("A", 1), "SG"),
-            AtomRef(partner_id, "SG"),
-            relationship_type=BondRelationshipType.DISULFIDE,
-        )
 
     facts = StructureDisulfideHydrogenFacts.from_structure(structure)
 
@@ -430,6 +407,51 @@ def test_shared_disulfide_endpoint_keeps_pair_facts_but_deduplicates_action() ->
         context=_execution_context(structure),
     ).structure
     assert len(disulfide_atom_ref_pairs(normalized)) == 2
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    (BondProvenance.SOURCE_EXPLICIT, BondProvenance.EVIDENCE_RESOLVED),
+)
+@pytest.mark.parametrize("thiol_hydrogen", (None, ("HG", "H")))
+def test_workflow_blocks_multiply_bonded_disulfide_endpoint_before_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    provenance: BondProvenance,
+    thiol_hydrogen: tuple[str, str] | None,
+) -> None:
+    """Malformed S-S topology must terminate as a typed error, not an FF crash."""
+
+    structure = _shared_disulfide_endpoint_structure(
+        thiol_hydrogen=thiol_hydrogen,
+        provenance=provenance,
+    )
+    backend_resolution_calls: list[str] = []
+
+    def reject_backend_resolution(backend_name: str):
+        backend_resolution_calls.append(backend_name)
+        raise AssertionError("continuous backend must not be resolved")
+
+    monkeypatch.setattr(
+        "protrepair.transformer.refinement.local_pipeline.backend."
+        "resolve_continuous_relaxation_backend",
+        reject_backend_resolution,
+    )
+
+    result = process_structure(structure)
+
+    assert backend_resolution_calls == []
+    assert result.has_errors()
+    assert len(disulfide_atom_ref_pairs(result.structure)) == 2
+    assert not any(
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
+        for issue in result.issues
+    )
+    assert any(
+        issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
+        and issue.severity is IssueSeverity.ERROR
+        and "multiple" in issue.message
+        for issue in result.issues
+    )
 
 
 def test_topology_resolution_exposes_hydrogen_contradiction_on_reobservation() -> None:
@@ -592,6 +614,49 @@ def _disulfide_structure(
         relationship_type=relationship_type,
         provenance=provenance,
     )
+
+
+def _shared_disulfide_endpoint_structure(
+    *,
+    thiol_hydrogen: tuple[str, str] | None,
+    provenance: BondProvenance = BondProvenance.SOURCE_EXPLICIT,
+) -> ProteinStructure:
+    """Build three complete CYS residues with one shared disulfide sulfur."""
+
+    residue_specs = (
+        (ResidueId("A", 1), 0.0),
+        (ResidueId("B", 1), 2.1),
+        (ResidueId("C", 1), -2.1),
+    )
+    structure = build_structure(
+        chains=tuple(
+            chain_payload(
+                residue_id.chain_id,
+                (
+                    _complete_cys_payload(
+                        residue_id,
+                        sg_x=sg_x,
+                        direction=-1.0 if index == 0 else 1.0,
+                        thiol_hydrogen=(
+                            thiol_hydrogen if index == 0 else None
+                        ),
+                    ),
+                ),
+            )
+            for index, (residue_id, sg_x) in enumerate(residue_specs)
+        ),
+        source_format=FileFormat.PDB,
+        source_name="shared-disulfide-endpoint",
+    )
+    for partner_id in (ResidueId("B", 1), ResidueId("C", 1)):
+        structure = _append_bond(
+            structure,
+            AtomRef(ResidueId("A", 1), "SG"),
+            AtomRef(partner_id, "SG"),
+            relationship_type=BondRelationshipType.DISULFIDE,
+            provenance=provenance,
+        )
+    return structure
 
 
 def _complete_cys_payload(

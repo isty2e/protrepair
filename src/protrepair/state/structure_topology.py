@@ -69,18 +69,158 @@ class DisulfideTopologyConflict:
 
 
 @dataclass(frozen=True, slots=True)
+class DisulfideEndpointMultiplicityContradiction:
+    """One cysteine sulfur assigned to multiple canonical disulfide pairs."""
+
+    sulfur_atom_ref: AtomRef
+    disulfide_atom_ref_pairs: tuple[tuple[AtomRef, AtomRef], ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sulfur_atom_ref, AtomRef):
+            raise TypeError(
+                "disulfide endpoint contradictions require an AtomRef endpoint"
+            )
+        if self.sulfur_atom_ref.atom_name != "SG":
+            raise ValueError(
+                "disulfide endpoint contradictions require an SG endpoint"
+            )
+
+        raw_pairs = tuple(self.disulfide_atom_ref_pairs)
+        if any(not isinstance(pair, tuple) or len(pair) != 2 for pair in raw_pairs):
+            raise TypeError(
+                "disulfide endpoint contradictions require two-AtomRef tuples"
+            )
+        if any(
+            not all(isinstance(atom_ref, AtomRef) for atom_ref in pair)
+            for pair in raw_pairs
+        ):
+            raise TypeError(
+                "disulfide endpoint contradictions require AtomRef relationships"
+            )
+
+        pairs = tuple(sorted(dict.fromkeys(raw_pairs)))
+        if len(pairs) < 2:
+            raise ValueError(
+                "disulfide endpoint contradictions require multiple relationships"
+            )
+        if any(
+            pair[0] >= pair[1]
+            for pair in pairs
+        ):
+            raise ValueError(
+                "disulfide endpoint contradictions require canonical AtomRef pairs"
+            )
+        if any(self.sulfur_atom_ref not in pair for pair in pairs):
+            raise ValueError(
+                "every disulfide relationship must involve the contradictory endpoint"
+            )
+        if any(atom_ref.atom_name != "SG" for pair in pairs for atom_ref in pair):
+            raise ValueError(
+                "disulfide endpoint contradictions require SG-SG relationships"
+            )
+
+        object.__setattr__(self, "disulfide_atom_ref_pairs", pairs)
+
+    @classmethod
+    def all_from_structure(
+        cls,
+        structure: ProteinStructure,
+    ) -> tuple["DisulfideEndpointMultiplicityContradiction", ...]:
+        """Derive all endpoint-multiplicity contradictions from canonical topology."""
+
+        pairs_by_endpoint: dict[AtomRef, list[tuple[AtomRef, AtomRef]]] = {}
+        for atom_ref_pair in sorted(disulfide_atom_ref_pairs(structure)):
+            for atom_ref in atom_ref_pair:
+                pairs_by_endpoint.setdefault(atom_ref, []).append(atom_ref_pair)
+
+        return tuple(
+            cls(
+                sulfur_atom_ref=sulfur_atom_ref,
+                disulfide_atom_ref_pairs=tuple(atom_ref_pairs),
+            )
+            for sulfur_atom_ref, atom_ref_pairs in sorted(pairs_by_endpoint.items())
+            if len(atom_ref_pairs) > 1
+        )
+
+    def partner_atom_refs(self) -> tuple[AtomRef, ...]:
+        """Return the distinct SG partners attached to the shared endpoint."""
+
+        return tuple(
+            sorted(
+                {
+                    atom_ref
+                    for pair in self.disulfide_atom_ref_pairs
+                    for atom_ref in pair
+                    if atom_ref != self.sulfur_atom_ref
+                }
+            )
+        )
+
+    def residue_ids(self) -> tuple[ResidueId, ...]:
+        """Return the shared endpoint residue followed by partner residues."""
+
+        return (
+            self.sulfur_atom_ref.residue_id,
+            *(atom_ref.residue_id for atom_ref in self.partner_atom_refs()),
+        )
+
+    def projected_pair_count(
+        self,
+        residue_ids: frozenset[ResidueId],
+    ) -> int:
+        """Return how many contradictory pairs survive one residue projection."""
+
+        return sum(
+            1
+            for pair in self.disulfide_atom_ref_pairs
+            if all(atom_ref.residue_id in residue_ids for atom_ref in pair)
+        )
+
+    def is_contradictory_in_residue_projection(
+        self,
+        residue_ids: frozenset[ResidueId],
+    ) -> bool:
+        """Return whether endpoint multiplicity survives one residue projection."""
+
+        return self.projected_pair_count(residue_ids) > 1
+
+
+@dataclass(frozen=True, slots=True)
 class StructureDisulfideTopologyFacts:
-    """Planner-readable disulfide evidence resolved against canonical topology."""
+    """Planner-readable disulfide evidence and canonical contradictions."""
 
     carrier: ProteinStructure
     promotable_candidates: tuple[LikelyDisulfideBond, ...]
     conflicts: tuple[DisulfideTopologyConflict, ...]
     ambiguous_findings: tuple[AmbiguousDisulfideFinding, ...]
+    endpoint_multiplicity_contradictions: tuple[
+        DisulfideEndpointMultiplicityContradiction,
+        ...,
+    ] = ()
 
     def __post_init__(self) -> None:
         promotable_candidates = tuple(self.promotable_candidates)
         conflicts = tuple(self.conflicts)
         ambiguous_findings = tuple(self.ambiguous_findings)
+        raw_endpoint_multiplicity_contradictions = tuple(
+            self.endpoint_multiplicity_contradictions
+        )
+        if any(
+            not isinstance(
+                contradiction,
+                DisulfideEndpointMultiplicityContradiction,
+            )
+            for contradiction in raw_endpoint_multiplicity_contradictions
+        ):
+            raise TypeError(
+                "endpoint multiplicity contradictions require typed values"
+            )
+        endpoint_multiplicity_contradictions = tuple(
+            sorted(
+                raw_endpoint_multiplicity_contradictions,
+                key=lambda contradiction: contradiction.sulfur_atom_ref,
+            )
+        )
         promotable_pairs = tuple(
             candidate.residue_pair() for candidate in promotable_candidates
         )
@@ -104,9 +244,22 @@ class StructureDisulfideTopologyFacts:
             raise ValueError(
                 "disulfide candidates cannot be both promotable and conflicting"
             )
+        contradictory_endpoints = tuple(
+            contradiction.sulfur_atom_ref
+            for contradiction in endpoint_multiplicity_contradictions
+        )
+        if len(set(contradictory_endpoints)) != len(contradictory_endpoints):
+            raise ValueError(
+                "disulfide endpoint multiplicity contradictions must not repeat"
+            )
         object.__setattr__(self, "promotable_candidates", promotable_candidates)
         object.__setattr__(self, "conflicts", conflicts)
         object.__setattr__(self, "ambiguous_findings", ambiguous_findings)
+        object.__setattr__(
+            self,
+            "endpoint_multiplicity_contradictions",
+            endpoint_multiplicity_contradictions,
+        )
 
     @classmethod
     def from_structure(
@@ -132,12 +285,22 @@ class StructureDisulfideTopologyFacts:
             promotable_candidates=tuple(promotable_candidates),
             conflicts=tuple(conflicts),
             ambiguous_findings=ambiguous_findings,
+            endpoint_multiplicity_contradictions=(
+                DisulfideEndpointMultiplicityContradiction.all_from_structure(
+                    structure
+                )
+            ),
         )
 
     def has_promotable_candidates(self) -> bool:
         """Return whether explicit topology resolution can make progress."""
 
         return bool(self.promotable_candidates)
+
+    def has_endpoint_multiplicity_contradictions(self) -> bool:
+        """Return whether any canonical disulfide endpoint has multiple partners."""
+
+        return bool(self.endpoint_multiplicity_contradictions)
 
 
 @dataclass(frozen=True, slots=True)

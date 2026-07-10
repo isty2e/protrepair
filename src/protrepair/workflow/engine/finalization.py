@@ -15,6 +15,7 @@ from protrepair.diagnostics.parser_topology import (
 )
 from protrepair.io.pdb_projection import prepare_rdkit_no_conect_pdb_block_projector
 from protrepair.state.structure_topology import (
+    DisulfideEndpointMultiplicityContradiction,
     DisulfideTopologyConflict,
     DisulfideTopologyConflictReason,
     StructureDisulfideTopologyFacts,
@@ -82,9 +83,39 @@ def _final_disulfide_topology_issues(
     """Return unresolved contradictions between S-S evidence and topology."""
 
     facts = StructureDisulfideTopologyFacts.from_structure(structure)
-    return tuple(
-        _disulfide_topology_conflict_issue(conflict)
-        for conflict in facts.conflicts
+    return (
+        *tuple(
+            _disulfide_topology_conflict_issue(conflict)
+            for conflict in facts.conflicts
+        ),
+        *tuple(
+            _disulfide_endpoint_multiplicity_issue(contradiction)
+            for contradiction in facts.endpoint_multiplicity_contradictions
+        ),
+    )
+
+
+def _disulfide_endpoint_multiplicity_issue(
+    contradiction: DisulfideEndpointMultiplicityContradiction,
+) -> ValidationIssue:
+    """Project one over-assigned disulfide sulfur into a terminal error."""
+
+    partner_tokens = ", ".join(
+        partner_atom_ref.display_token()
+        for partner_atom_ref in contradiction.partner_atom_refs()
+    )
+    return ValidationIssue(
+        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+        severity=IssueSeverity.ERROR,
+        scope=EventScope.for_residue_set(contradiction.residue_ids()),
+        message=(
+            f"{contradiction.sulfur_atom_ref.display_token()} participates in multiple "
+            f"canonical disulfide relationships "
+            f"({len(contradiction.disulfide_atom_ref_pairs)}) with {partner_tokens}; "
+            "canonical topology was preserved, "
+            "but continuous refinement over the contradictory region was blocked "
+            "rather than choosing a partner"
+        ),
     )
 
 

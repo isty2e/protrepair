@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING
 
 from protrepair.chemistry import BondDefinition, HydrogenSemantics, ResidueTemplate
 from protrepair.chemistry.component.library import ComponentLibrary
+from protrepair.errors import RefinementError
+from protrepair.state.structure_topology import (
+    DisulfideEndpointMultiplicityContradiction,
+)
 from protrepair.structure.constitution import (
     AtomSite as ConstitutionAtomSite,
 )
@@ -166,13 +170,18 @@ def plan_continuous_region_bonds(
 ) -> tuple[PlannedBond, ...]:
     """Return all planned bonds inside one included region."""
 
+    constitution = region.snapshot.structure.constitution
+    included_residue_index_set = set(region.included_residue_indices)
+    _require_disulfide_endpoint_multiplicity_realizability(
+        region,
+        included_residue_index_set=included_residue_index_set,
+    )
+
     if support_by_residue_index is None:
         support_by_residue_index = region.require_local_bond_planning_support(
             component_library
         )
 
-    constitution = region.snapshot.structure.constitution
-    included_residue_index_set = set(region.included_residue_indices)
     bond_set: set[PlannedBond] = set(
         _topology_local_bonds(
             region,
@@ -268,6 +277,41 @@ def plan_continuous_region_bonds(
         in included_residue_index_set
     )
     return tuple(sorted(bond_set, key=lambda bond: bond.sort_key()))
+
+
+def _require_disulfide_endpoint_multiplicity_realizability(
+    region: "ContinuousRelaxationRegion",
+    *,
+    included_residue_index_set: set[ResidueIndex],
+) -> None:
+    """Reject projected bond graphs with multiply assigned disulfide sulfur."""
+
+    structure = region.snapshot.structure
+    included_residue_ids = frozenset(
+        structure.constitution.residue_site_at(residue_index).residue_id
+        for residue_index in included_residue_index_set
+    )
+    contradictions = tuple(
+        contradiction
+        for contradiction in (
+            DisulfideEndpointMultiplicityContradiction.all_from_structure(structure)
+        )
+        if contradiction.is_contradictory_in_residue_projection(
+            included_residue_ids
+        )
+    )
+    if not contradictions:
+        return
+
+    contradiction_details = "; ".join(
+        f"{contradiction.sulfur_atom_ref.display_token()} has "
+        f"{contradiction.projected_pair_count(included_residue_ids)} relationships"
+        for contradiction in contradictions
+    )
+    raise RefinementError(
+        "continuous relaxation cannot realize multiple canonical disulfide "
+        f"relationships at one CYS SG endpoint: {contradiction_details}"
+    )
 
 
 def _topology_inter_residue_bonds(
