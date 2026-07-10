@@ -7,6 +7,7 @@ from protrepair.diagnostics.topology import (
     AmbiguousDisulfideFinding,
     LikelyDisulfideBond,
     detect_disulfide_topology,
+    detect_unassigned_disulfide_evidence,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.disulfide import disulfide_atom_ref_pairs
@@ -268,13 +269,26 @@ class StructureDisulfideTopologyFacts:
     ) -> "StructureDisulfideTopologyFacts":
         """Resolve geometric disulfide evidence against canonical topology."""
 
-        likely_candidates, ambiguous_findings = detect_disulfide_topology(structure)
+        raw_likely_candidates, _ = detect_disulfide_topology(structure)
+        likely_candidates, ambiguous_findings = (
+            detect_unassigned_disulfide_evidence(structure)
+        )
         promotable_candidates: list[LikelyDisulfideBond] = []
-        conflicts: list[DisulfideTopologyConflict] = []
-        for candidate in likely_candidates:
+        conflicts_by_pair: dict[
+            tuple[ResidueId, ResidueId],
+            DisulfideTopologyConflict,
+        ] = {}
+        candidates_by_pair = {
+            candidate.residue_pair(): candidate
+            for candidate in (*raw_likely_candidates, *likely_candidates)
+        }
+        for candidate in candidates_by_pair.values():
             conflict = _candidate_topology_conflict(structure, candidate)
             if conflict is not None:
-                conflicts.append(conflict)
+                conflicts_by_pair[candidate.residue_pair()] = conflict
+
+        for candidate in likely_candidates:
+            if candidate.residue_pair() in conflicts_by_pair:
                 continue
             if _candidate_is_already_resolved(structure, candidate):
                 continue
@@ -283,7 +297,7 @@ class StructureDisulfideTopologyFacts:
         return cls(
             carrier=structure,
             promotable_candidates=tuple(promotable_candidates),
-            conflicts=tuple(conflicts),
+            conflicts=tuple(conflicts_by_pair.values()),
             ambiguous_findings=ambiguous_findings,
             endpoint_multiplicity_contradictions=(
                 DisulfideEndpointMultiplicityContradiction.all_from_structure(

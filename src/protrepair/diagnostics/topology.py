@@ -17,6 +17,9 @@ from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.geometry import InternalCoordinateFrame
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.disulfide import (
+    disulfide_bonded_cysteine_residue_ids,
+)
 from protrepair.structure.labels import AtomRef, ResidueId
 
 CIS_PEPTIDE_ABS_OMEGA_MAX_DEGREES = 30.0
@@ -234,9 +237,37 @@ def detect_cis_peptides(
 def detect_disulfide_topology(
     structure: ProteinStructure,
 ) -> tuple[tuple[LikelyDisulfideBond, ...], tuple[AmbiguousDisulfideFinding, ...]]:
-    """Return likely and ambiguous disulfide relationships across one structure."""
+    """Return raw geometric disulfide evidence across all CYS SG sites."""
 
-    cysteine_sites = cysteine_sulfur_sites(structure)
+    return _classify_disulfide_evidence(
+        structure,
+        cysteine_sites=cysteine_sulfur_sites(structure),
+    )
+
+
+def detect_unassigned_disulfide_evidence(
+    structure: ProteinStructure,
+) -> tuple[tuple[LikelyDisulfideBond, ...], tuple[AmbiguousDisulfideFinding, ...]]:
+    """Return planning evidence over canonically unassigned CYS SG sites."""
+
+    assigned_residue_ids = disulfide_bonded_cysteine_residue_ids(structure)
+    return _classify_disulfide_evidence(
+        structure,
+        cysteine_sites=tuple(
+            site
+            for site in cysteine_sulfur_sites(structure)
+            if site.residue_id not in assigned_residue_ids
+        ),
+    )
+
+
+def _classify_disulfide_evidence(
+    structure: ProteinStructure,
+    *,
+    cysteine_sites: tuple[ResidueSite, ...],
+) -> tuple[tuple[LikelyDisulfideBond, ...], tuple[AmbiguousDisulfideFinding, ...]]:
+    """Classify geometric disulfide evidence over one explicit CYS projection."""
+
     candidate_pairs: list[tuple[int, int, float]] = []
     adjacency: dict[int, list[tuple[int, float]]] = defaultdict(list)
     for left_index, left_site in enumerate(cysteine_sites):

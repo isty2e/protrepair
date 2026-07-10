@@ -23,10 +23,19 @@ from protrepair.diagnostics.kinds import (
     ValidationIssueKind,
 )
 from protrepair.diagnostics.near_covalent import detect_near_covalent_contacts
+from protrepair.diagnostics.parser_readability import (
+    RDKitProximityBondCluster,
+    RDKitProximityBondWitness,
+)
+from protrepair.diagnostics.parser_topology import (
+    ambiguous_disulfide_parser_witness_blockers,
+    ambiguous_disulfide_partner_residue_ids_by_residue,
+)
 from protrepair.diagnostics.topology import (
     AmbiguousDisulfideFinding,
     DisulfideCandidate,
     LikelyDisulfideBond,
+    detect_disulfide_topology,
 )
 from protrepair.errors import RefinementError
 from protrepair.geometry import Vec3
@@ -377,6 +386,231 @@ def test_existing_covalent_pair_is_already_resolved_not_promotable() -> None:
 
     assert not facts.promotable_candidates
     assert not facts.conflicts
+
+
+@pytest.mark.parametrize(
+    "relationship_type",
+    (BondRelationshipType.COVALENT, BondRelationshipType.DISULFIDE),
+)
+@pytest.mark.parametrize("provenance", tuple(BondProvenance))
+def test_canonical_disulfide_endpoints_are_removed_from_planning_ambiguity(
+    relationship_type: BondRelationshipType,
+    provenance: BondProvenance,
+) -> None:
+    """Canonical assignment outranks nearby geometry for planning evidence."""
+
+    left_id = ResidueId("A", 1)
+    bonded_id = ResidueId("B", 1)
+    distractor_id = ResidueId("C", 1)
+    structure = cysteine_sulfur_structure(
+        ((left_id, 0.0), (bonded_id, 2.0), (distractor_id, -2.1))
+    )
+    structure = with_sg_relationship_pairs(
+        structure,
+        ((AtomRef(left_id, "SG"), AtomRef(bonded_id, "SG")),),
+        relationship_type=relationship_type,
+        provenance=provenance,
+    )
+
+    _, raw_ambiguities = detect_disulfide_topology(structure)
+    facts = StructureDisulfideTopologyFacts.from_structure(structure)
+
+    assert tuple(finding.residue_id for finding in raw_ambiguities) == (left_id,)
+    assert not facts.promotable_candidates
+    assert not facts.ambiguous_findings
+    assert not ambiguous_disulfide_partner_residue_ids_by_residue(structure)
+
+
+def test_canonical_disulfide_does_not_hide_free_promotable_pair() -> None:
+    """Filtering assigned endpoints must expose an independent free S-S pair."""
+
+    assigned_left_id = ResidueId("A", 1)
+    assigned_right_id = ResidueId("B", 1)
+    free_left_id = ResidueId("C", 1)
+    free_right_id = ResidueId("D", 1)
+    structure = cysteine_sulfur_structure(
+        (
+            (assigned_left_id, 0.0),
+            (assigned_right_id, 2.0),
+            (free_left_id, -2.1),
+            (free_right_id, -4.2),
+        )
+    )
+    structure = with_sg_relationship_pairs(
+        structure,
+        (
+            (
+                AtomRef(assigned_left_id, "SG"),
+                AtomRef(assigned_right_id, "SG"),
+            ),
+        ),
+    )
+
+    raw_candidates, raw_ambiguities = detect_disulfide_topology(structure)
+    facts = StructureDisulfideTopologyFacts.from_structure(structure)
+
+    assert not raw_candidates
+    assert {finding.residue_id for finding in raw_ambiguities} == {
+        assigned_left_id,
+        free_left_id,
+    }
+    assert tuple(
+        candidate.residue_pair() for candidate in facts.promotable_candidates
+    ) == ((free_left_id, free_right_id),)
+    assert not facts.ambiguous_findings
+
+
+@pytest.mark.parametrize(
+    "relationship_type",
+    (
+        BondRelationshipType.UNKNOWN,
+        BondRelationshipType.METAL_COORDINATION,
+        BondRelationshipType.HYDROGEN_BOND,
+    ),
+)
+def test_noncovalent_relationship_does_not_assign_disulfide_endpoint(
+    relationship_type: BondRelationshipType,
+) -> None:
+    """Noncovalent topology must leave nearby CYS sites in ambiguity evidence."""
+
+    left_id = ResidueId("A", 1)
+    related_id = ResidueId("B", 1)
+    distractor_id = ResidueId("C", 1)
+    structure = cysteine_sulfur_structure(
+        ((left_id, 0.0), (related_id, 2.0), (distractor_id, -2.1))
+    )
+    structure = with_sg_relationship_pairs(
+        structure,
+        ((AtomRef(left_id, "SG"), AtomRef(related_id, "SG")),),
+        relationship_type=relationship_type,
+    )
+
+    facts = StructureDisulfideTopologyFacts.from_structure(structure)
+
+    assert tuple(finding.residue_id for finding in facts.ambiguous_findings) == (
+        left_id,
+    )
+    assert ambiguous_disulfide_partner_residue_ids_by_residue(structure) == {
+        left_id: frozenset((left_id, related_id, distractor_id)),
+        related_id: frozenset((left_id, related_id, distractor_id)),
+        distractor_id: frozenset((left_id, related_id, distractor_id)),
+    }
+
+
+def test_canonical_disulfide_releases_unbonded_parser_witness() -> None:
+    """An unbonded close contact must remain eligible for ordinary FF repair."""
+
+    assigned_left_id = ResidueId("A", 1)
+    assigned_right_id = ResidueId("B", 1)
+    unbonded_id = ResidueId("C", 1)
+    structure = cysteine_sulfur_structure(
+        (
+            (assigned_left_id, 0.0),
+            (assigned_right_id, 2.0),
+            (unbonded_id, -2.1),
+        )
+    )
+    structure = with_sg_relationship_pairs(
+        structure,
+        (
+            (
+                AtomRef(assigned_left_id, "SG"),
+                AtomRef(assigned_right_id, "SG"),
+            ),
+        ),
+    )
+    witness = RDKitProximityBondWitness(
+        atom_ref_1=AtomRef(assigned_left_id, "SG"),
+        atom_ref_2=AtomRef(unbonded_id, "SG"),
+        element_1="S",
+        element_2="S",
+        is_known_component_bond=False,
+    )
+    cluster = RDKitProximityBondCluster(
+        residue_ids=(assigned_left_id, unbonded_id),
+        bonds=(witness,),
+    )
+
+    assert not ambiguous_disulfide_parser_witness_blockers(
+        structure,
+        clusters=(cluster,),
+    )
+
+
+def test_far_canonical_disulfide_still_releases_close_parser_witness() -> None:
+    """Canonical assignment remains authoritative at non-ideal S-S distance."""
+
+    assigned_left_id = ResidueId("A", 1)
+    assigned_right_id = ResidueId("B", 1)
+    unbonded_id = ResidueId("C", 1)
+    structure = cysteine_sulfur_structure(
+        (
+            (assigned_left_id, 0.0),
+            (assigned_right_id, 8.0),
+            (unbonded_id, 2.1),
+        )
+    )
+    structure = with_sg_relationship_pairs(
+        structure,
+        (
+            (
+                AtomRef(assigned_left_id, "SG"),
+                AtomRef(assigned_right_id, "SG"),
+            ),
+        ),
+    )
+
+    raw_candidates, _ = detect_disulfide_topology(structure)
+    facts = StructureDisulfideTopologyFacts.from_structure(structure)
+
+    assert tuple(candidate.residue_pair() for candidate in raw_candidates) == (
+        (assigned_left_id, unbonded_id),
+    )
+    assert not facts.promotable_candidates
+    assert not facts.ambiguous_findings
+    assert len(facts.conflicts) == 1
+    assert not ambiguous_disulfide_partner_residue_ids_by_residue(structure)
+
+
+def test_retained_canonical_disulfide_endpoints_leave_planning_ambiguity() -> None:
+    """Retained CYS uses the same assigned-endpoint evidence projection."""
+
+    assigned_left_id = ResidueId("L", 1)
+    assigned_right_id = ResidueId("R", 1)
+    distractor_id = ResidueId("X", 1)
+    structure = build_structure(
+        chains=(),
+        ligands=tuple(
+            residue_payload(
+                component_id="CYS",
+                residue_id=residue_id,
+                atoms=(atom_payload("SG", "S", Vec3(x, 0.0, 0.0)),),
+                is_hetero=True,
+            )
+            for residue_id, x in (
+                (assigned_left_id, 0.0),
+                (assigned_right_id, 2.0),
+                (distractor_id, -2.1),
+            )
+        ),
+        source_format=FileFormat.PDB,
+        source_name="retained-disulfide-with-close-distractor",
+    )
+    structure = with_sg_relationship_pairs(
+        structure,
+        (
+            (
+                AtomRef(assigned_left_id, "SG"),
+                AtomRef(assigned_right_id, "SG"),
+            ),
+        ),
+    )
+
+    facts = StructureDisulfideTopologyFacts.from_structure(structure)
+
+    assert not facts.promotable_candidates
+    assert not facts.ambiguous_findings
+    assert not ambiguous_disulfide_partner_residue_ids_by_residue(structure)
 
 
 def test_other_inter_residue_covalent_partner_blocks_disulfide_promotion() -> None:
