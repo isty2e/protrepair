@@ -19,6 +19,7 @@ from protrepair.state import (
     StructureParserCompatibilityFacts,
     derive_structure_coverage_and_chemistry_readiness_facts,
 )
+from protrepair.state.structure_topology import StructureDisulfideTopologyFacts
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.local.projection import (
@@ -385,6 +386,9 @@ def plan_workflow_actions(
         )
     )
     boundary_facts = StructureBoundaryStateFacts.from_structure(structure)
+    disulfide_topology_facts = StructureDisulfideTopologyFacts.from_structure(
+        structure
+    )
     intrinsic_geometry_facts: StructureIntrinsicGeometryFacts | None = None
     parser_compatibility_facts: StructureParserCompatibilityFacts | None = None
     interaction_facts: StructureInteractionFacts | None = None
@@ -428,6 +432,7 @@ def plan_workflow_actions(
     state_deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
+        disulfide_topology_facts=disulfide_topology_facts,
         requested_goals=requested_goals,
         planning_context=active_planning_context,
         intrinsic_geometry_facts=intrinsic_geometry_facts,
@@ -459,6 +464,7 @@ def plan_workflow_actions(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
         boundary_facts=boundary_facts,
+        disulfide_topology_facts=disulfide_topology_facts,
         intrinsic_geometry_facts=intrinsic_geometry_facts,
         parser_compatibility_facts=parser_compatibility_facts,
         interaction_facts=interaction_facts,

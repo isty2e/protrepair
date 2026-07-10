@@ -14,6 +14,7 @@ from protrepair.state import (
     StructureIntrinsicGeometryFacts,
     StructureParserCompatibilityFacts,
 )
+from protrepair.state.structure_topology import StructureDisulfideTopologyFacts
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.local.projection import (
@@ -348,6 +349,7 @@ class WorkflowActionDomain:
     coverage_facts: StructureCoverageFacts
     chemistry_readiness_facts: StructureChemistryReadinessFacts
     boundary_facts: StructureBoundaryStateFacts
+    disulfide_topology_facts: StructureDisulfideTopologyFacts
     intrinsic_geometry_facts: StructureIntrinsicGeometryFacts | None = None
     parser_compatibility_facts: StructureParserCompatibilityFacts | None = None
     interaction_facts: StructureInteractionFacts | None = None
@@ -368,6 +370,11 @@ class WorkflowActionDomain:
                 "workflow action domains require explicit repair refinement "
                 "execution projection to be a "
                 "LocalContinuousExecutionResidueProjection or None"
+            )
+        if self.disulfide_topology_facts.carrier is not self.structure:
+            raise ValueError(
+                "workflow action domains require disulfide topology facts for "
+                "the active structure"
             )
         object.__setattr__(
             self,

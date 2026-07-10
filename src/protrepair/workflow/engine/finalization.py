@@ -5,7 +5,8 @@ from dataclasses import replace
 from protrepair.analysis.kinds import AnalysisKind
 from protrepair.analysis.runtime import build_analysis_bundle
 from protrepair.chemistry import ComponentLibrary
-from protrepair.diagnostics.events import ValidationIssue
+from protrepair.diagnostics.events import EventScope, ValidationIssue
+from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.diagnostics.parser_readability import (
     probe_rdkit_no_conect_parser_readability,
 )
@@ -13,6 +14,11 @@ from protrepair.diagnostics.parser_topology import (
     ambiguous_disulfide_parser_witness_blocker_issues,
 )
 from protrepair.io.pdb_projection import prepare_rdkit_no_conect_pdb_block_projector
+from protrepair.state.structure_topology import (
+    DisulfideTopologyConflict,
+    DisulfideTopologyConflictReason,
+    StructureDisulfideTopologyFacts,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.workflow.contracts.planning import WorkflowPlanningContext
 from protrepair.workflow.contracts.request import RequestedGoalSet, WorkflowGoal
@@ -59,11 +65,57 @@ def finalize_workflow_result(
     )
     if parser_readability_issues:
         result = result.with_appended_issues(parser_readability_issues)
+    disulfide_topology_issues = _final_disulfide_topology_issues(result.structure)
+    if disulfide_topology_issues:
+        result = result.with_appended_issues(disulfide_topology_issues)
     if preliminary_issues:
         result = result.with_appended_issues(preliminary_issues)
     return _attach_requested_analyses(
         result,
         requested_analyses=requested_analyses,
+    )
+
+
+def _final_disulfide_topology_issues(
+    structure: ProteinStructure,
+) -> tuple[ValidationIssue, ...]:
+    """Return unresolved contradictions between S-S evidence and topology."""
+
+    facts = StructureDisulfideTopologyFacts.from_structure(structure)
+    return tuple(
+        _disulfide_topology_conflict_issue(conflict)
+        for conflict in facts.conflicts
+    )
+
+
+def _disulfide_topology_conflict_issue(
+    conflict: DisulfideTopologyConflict,
+) -> ValidationIssue:
+    """Project one typed disulfide topology conflict into a validation issue."""
+
+    candidate = conflict.candidate
+    if (
+        conflict.reason
+        is DisulfideTopologyConflictReason.EXISTING_PAIR_RELATIONSHIP
+    ):
+        reason = (
+            "the candidate endpoint pair already has a noncovalent or unknown "
+            "relationship"
+        )
+    else:
+        reason = (
+            "one candidate sulfur already has another inter-residue covalent partner"
+        )
+    return ValidationIssue(
+        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+        severity=IssueSeverity.WARNING,
+        scope=EventScope.for_residue_set(conflict.residue_ids()),
+        message=(
+            f"{candidate.left_residue_id.display_token()}-"
+            f"{candidate.right_residue_id.display_token()} has unique SG-SG "
+            f"evidence at {candidate.sg_distance_angstrom:.2f} A, but {reason}; "
+            "canonical topology was preserved"
+        ),
     )
 
 

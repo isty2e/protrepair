@@ -23,6 +23,7 @@ from protrepair.state import (
     SidechainHeavyAtomCompletenessState,
     derive_structure_coverage_and_chemistry_readiness_facts,
 )
+from protrepair.state.structure_topology import StructureDisulfideTopologyFacts
 from protrepair.structure.labels import ResidueId
 from protrepair.workflow.contracts import (
     RequestedGoalSet,
@@ -97,6 +98,9 @@ def test_blocked_goal_projection_marks_heavy_support_blockers() -> None:
     state_deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            coverage_facts.carrier
+        ),
         requested_goals=RequestedGoalSet(
             (
                 requested_process_goal(
@@ -204,6 +208,9 @@ def test_blocked_goal_projection_marks_chemistry_blockers() -> None:
     state_deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            coverage_facts.carrier
+        ),
         requested_goals=RequestedGoalSet((requested_goal,)),
         planning_context=WorkflowPlanningContext(),
     )

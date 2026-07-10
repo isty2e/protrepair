@@ -3,6 +3,9 @@
 from protrepair.workflow.actions.backbone_window_refinement import (
     BackboneWindowRefinementTransformer,
 )
+from protrepair.workflow.actions.disulfide_topology import (
+    DisulfideTopologyResolutionTransformer,
+)
 from protrepair.workflow.actions.external_span_reconstruction import (
     ExternalSpanReconstructionTransformer,
 )
@@ -26,6 +29,7 @@ from protrepair.workflow.planning.action.registry import WorkflowActionRegistryE
 from protrepair.workflow.planning.default_action_registry.capabilities import (
     BACKBONE_WINDOW_REFINEMENT_CAPABILITY,
     COMMITTED_PACKING_CAPABILITY,
+    DISULFIDE_TOPOLOGY_RESOLUTION_CAPABILITY,
     EXTERNAL_SPAN_RECONSTRUCTION_CAPABILITY,
     HEAVY_ATOM_COMPLETION_CAPABILITY,
     HYDROGEN_COMPLETION_CAPABILITY,
@@ -39,6 +43,8 @@ from protrepair.workflow.planning.default_action_registry.proposals import (
     backbone_window_refinement_proposals,
     committed_packing_is_admissible,
     committed_packing_proposals,
+    disulfide_topology_resolution_is_admissible,
+    disulfide_topology_resolution_proposals,
     external_span_reconstruction_is_admissible,
     external_span_reconstruction_proposals,
     heavy_atom_completion_is_admissible,
@@ -64,6 +70,12 @@ REQUEST_DRIVEN_WORKFLOW_ACTION_REGISTRY: tuple[
         capability=HEAVY_ATOM_COMPLETION_CAPABILITY,
         is_admissible_for_domain=heavy_atom_completion_is_admissible,
         proposals_for_domain=heavy_atom_completion_proposals,
+    ),
+    WorkflowActionRegistryEntry(
+        action_type=DisulfideTopologyResolutionTransformer,
+        capability=DISULFIDE_TOPOLOGY_RESOLUTION_CAPABILITY,
+        is_admissible_for_domain=disulfide_topology_resolution_is_admissible,
+        proposals_for_domain=disulfide_topology_resolution_proposals,
     ),
     WorkflowActionRegistryEntry(
         action_type=HydrogenCompletionTransformer,

@@ -10,6 +10,7 @@ The 3.0 A ambiguity cutoff matches HTMD's permissive disulfide candidate search.
 
 from collections import defaultdict
 from dataclasses import dataclass
+from math import isfinite
 
 from protrepair.diagnostics.events import EventScope, ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
@@ -40,6 +41,26 @@ class LikelyDisulfideBond:
     right_residue_id: ResidueId
     sg_distance_angstrom: float
 
+    def __post_init__(self) -> None:
+        if self.left_residue_id == self.right_residue_id:
+            raise ValueError("likely disulfide evidence requires two residues")
+        if self.right_residue_id < self.left_residue_id:
+            left_residue_id = self.left_residue_id
+            object.__setattr__(self, "left_residue_id", self.right_residue_id)
+            object.__setattr__(self, "right_residue_id", left_residue_id)
+        if (
+            not isfinite(self.sg_distance_angstrom)
+            or self.sg_distance_angstrom <= 0.0
+        ):
+            raise ValueError(
+                "likely disulfide evidence requires a finite positive distance"
+            )
+
+    def residue_pair(self) -> tuple[ResidueId, ResidueId]:
+        """Return the canonically ordered candidate residue pair."""
+
+        return (self.left_residue_id, self.right_residue_id)
+
 
 @dataclass(frozen=True, slots=True)
 class DisulfideCandidate:
@@ -48,6 +69,15 @@ class DisulfideCandidate:
     residue_id: ResidueId
     sg_distance_angstrom: float
 
+    def __post_init__(self) -> None:
+        if (
+            not isfinite(self.sg_distance_angstrom)
+            or self.sg_distance_angstrom <= 0.0
+        ):
+            raise ValueError(
+                "disulfide candidates require a finite positive distance"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class AmbiguousDisulfideFinding:
@@ -55,6 +85,21 @@ class AmbiguousDisulfideFinding:
 
     residue_id: ResidueId
     candidates: tuple[DisulfideCandidate, ...]
+
+    def __post_init__(self) -> None:
+        candidates = tuple(self.candidates)
+        if len(candidates) < 2:
+            raise ValueError(
+                "ambiguous disulfide findings require multiple candidates"
+            )
+        candidate_residue_ids = tuple(
+            candidate.residue_id for candidate in candidates
+        )
+        if self.residue_id in candidate_residue_ids:
+            raise ValueError("ambiguous disulfide candidates must be distinct")
+        if len(set(candidate_residue_ids)) != len(candidate_residue_ids):
+            raise ValueError("ambiguous disulfide candidates must not repeat")
+        object.__setattr__(self, "candidates", candidates)
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,7 +253,10 @@ def detect_disulfide_topology(
                 )
             )
             pair_distance = left_geometry.distance_to(right_geometry)
-            if pair_distance > AMBIGUOUS_DISULFIDE_DISTANCE_MAX_ANGSTROM:
+            if (
+                pair_distance <= 0.0
+                or pair_distance > AMBIGUOUS_DISULFIDE_DISTANCE_MAX_ANGSTROM
+            ):
                 continue
 
             candidate_pairs.append((left_index, right_index, pair_distance))

@@ -41,6 +41,16 @@ HEAVY_ATOM_COMPLETION_CAPABILITY = WorkflowActionCapability(
     ),
 )
 
+DISULFIDE_TOPOLOGY_RESOLUTION_CAPABILITY = WorkflowActionCapability(
+    reducible_deficit_families=(
+        WorkflowCapabilityDeficitFamily.TOPOLOGY_RESOLUTION,
+    ),
+    read_fact_families=(WorkflowCapabilityFactFamily.TOPOLOGY_EVIDENCE,),
+    activation_mode=WorkflowActionActivationMode.AUTOMATIC_OR_GOAL_DRIVEN,
+    effect_class=WorkflowActionEffectClass.AUGMENTS_ABSENCE,
+    supported_localities=(WorkflowActionLocality.RESIDUE_SET,),
+)
+
 HYDROGEN_COMPLETION_CAPABILITY = WorkflowActionCapability(
     reducible_deficit_families=(WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,),
     read_fact_families=(

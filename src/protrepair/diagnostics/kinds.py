@@ -13,6 +13,7 @@ class RepairEventKind(str, Enum):
     C_TERMINAL_OXT_ADDED = "c_terminal_oxt_added"
     COMPONENT_NORMALIZED = "component_normalized"
     STEREOCHEMISTRY_CORRECTED = "stereochemistry_corrected"
+    DISULFIDE_TOPOLOGY_RESOLVED = "disulfide_topology_resolved"
 
 
 class ValidationIssueKind(str, Enum):

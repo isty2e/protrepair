@@ -121,6 +121,15 @@ from canonical topology only. A likely geometry candidate must pass through an
 explicit topology-writing transformer before it becomes an execution bond; the
 continuous backend does not maintain a hidden geometry-derived bond graph.
 
+ProtRepair uses an SG-SG distance of at most 2.5 angstrom as candidate evidence,
+not as direct oxidation-state truth. Marino and Gladyshev describe 2.5 angstrom
+as a commonly employed structure-screening cutoff, while broader disulfide
+modeling work also considers bond geometry, torsions, energetics, and steric
+context. A unique candidate may therefore be promoted only by the explicit
+topology-resolution action, after ambiguity and conflicting canonical
+relationships have been excluded. Source-explicit or otherwise conflicting
+topology is preserved and reported rather than overwritten by proximity.
+
 Retained non-polymer readiness uses the same expected H atom naming policy as
 hydrogen coverage. When RDKit fallback infers generated hydrogens for a residue
 that already has complete H names, the generated anchor graph is projected onto
@@ -133,3 +142,6 @@ topology.
   including the `SSBOND` altloc limitation and `LINK` endpoint fields.
 - Dombkowski, Sultana, and Craig, "Protein disulfide engineering," *FEBS
   Letters* 588 (2014), [DOI 10.1016/j.febslet.2013.11.024](https://doi.org/10.1016/j.febslet.2013.11.024).
+- Marino and Gladyshev, "Redox Biology: Computational Approaches to the
+  Investigation of Functional Cysteine Residues," *Antioxidants & Redox
+  Signaling* 15 (2011), [DOI 10.1089/ars.2010.3561](https://doi.org/10.1089/ars.2010.3561).
