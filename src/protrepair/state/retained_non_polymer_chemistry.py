@@ -1,6 +1,7 @@
 """Retained non-polymer chemistry resolution facts."""
 
-from dataclasses import dataclass
+from collections.abc import Collection
+from dataclasses import dataclass, replace
 from enum import Enum
 
 from protrepair.chemistry.component.graph import BondDefinition
@@ -25,6 +26,8 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
+from protrepair.structure.labels import ResidueId
 
 
 class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
@@ -130,6 +133,42 @@ class RetainedNonPolymerChemistryResolution:
                 "fallback chemistry"
             )
 
+    def without_hydrogens_anchored_to(
+        self,
+        anchor_atom_names: Collection[str],
+    ) -> "RetainedNonPolymerChemistryResolution":
+        """Return chemistry facts without H atoms bonded to selected anchors."""
+
+        normalized_anchor_names = {
+            atom_name.strip().upper() for atom_name in anchor_atom_names
+        }
+        excluded_hydrogen_names = {
+            bonded_atom_name
+            for bond_definition in self.hydrogen_bond_definitions
+            for anchor_atom_name, bonded_atom_name in (
+                (bond_definition.atom_name_1, bond_definition.atom_name_2),
+                (bond_definition.atom_name_2, bond_definition.atom_name_1),
+            )
+            if anchor_atom_name in normalized_anchor_names
+        }
+        if not excluded_hydrogen_names:
+            return self
+
+        return replace(
+            self,
+            expected_hydrogen_atom_names=tuple(
+                atom_name
+                for atom_name in self.expected_hydrogen_atom_names
+                if atom_name not in excluded_hydrogen_names
+            ),
+            hydrogen_bond_definitions=tuple(
+                bond_definition
+                for bond_definition in self.hydrogen_bond_definitions
+                if bond_definition.atom_name_1 not in excluded_hydrogen_names
+                and bond_definition.atom_name_2 not in excluded_hydrogen_names
+            ),
+        )
+
 
 def resolve_retained_non_polymer_chemistry(
     structure: ProteinStructure,
@@ -138,8 +177,37 @@ def resolve_retained_non_polymer_chemistry(
     component_library: ComponentLibrary,
     evidence: RetainedNonPolymerChemistryEvidence | None = None,
     allow_rdkit_fallback: bool = True,
+    disulfide_residue_ids: frozenset[ResidueId] | None = None,
 ) -> RetainedNonPolymerChemistryResolution:
     """Resolve coordinate-free chemistry facts for one retained non-polymer."""
+
+    resolution = _resolve_retained_non_polymer_chemistry_source(
+        structure,
+        residue,
+        component_library=component_library,
+        evidence=evidence,
+        allow_rdkit_fallback=allow_rdkit_fallback,
+    )
+    active_disulfide_residue_ids = (
+        disulfide_bonded_cysteine_residue_ids(structure)
+        if disulfide_residue_ids is None
+        else disulfide_residue_ids
+    )
+    if residue.residue_id not in active_disulfide_residue_ids:
+        return resolution
+
+    return resolution.without_hydrogens_anchored_to(("SG",))
+
+
+def _resolve_retained_non_polymer_chemistry_source(
+    structure: ProteinStructure,
+    residue: ResidueSite,
+    *,
+    component_library: ComponentLibrary,
+    evidence: RetainedNonPolymerChemistryEvidence | None = None,
+    allow_rdkit_fallback: bool = True,
+) -> RetainedNonPolymerChemistryResolution:
+    """Resolve retained chemistry from its template, override, or fallback source."""
 
     residue_index = structure.constitution.residue_index(residue.residue_id)
     residue_geometry = structure.residue_geometry(residue_index)

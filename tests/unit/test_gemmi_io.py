@@ -2705,6 +2705,37 @@ def test_read_structure_string_link_takes_precedence_over_conect() -> None:
         assert bond.source_metadata.record_type is SourceBondRecordType.PDB_LINK
 
 
+def test_pdb_ssbond_ignores_gemmi_altloc_and_takes_precedence_over_conect() -> None:
+    """PDB SSBOND is residue-level truth even when SG has alternate locations."""
+
+    structure = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
+    disulfide_bonds = tuple(
+        bond
+        for bond in structure.topology.bonds
+        if bond.relationship_type is BondRelationshipType.DISULFIDE
+    )
+
+    assert len(disulfide_bonds) == 4
+    altloc_disulfide = next(
+        bond
+        for bond in disulfide_bonds
+        if {
+            structure.constitution.atom_ref_at(bond.atom_index_1),
+            structure.constitution.atom_ref_at(bond.atom_index_2),
+        }
+        == {
+            AtomRef(ResidueId("A", 12), "SG"),
+            AtomRef(ResidueId("A", 63), "SG"),
+        }
+    )
+    assert altloc_disulfide.source_metadata is not None
+    assert (
+        altloc_disulfide.source_metadata.record_type
+        is SourceBondRecordType.PDB_SSBOND
+    )
+    assert altloc_disulfide.source_metadata.reported_distance_angstrom == 2.01
+
+
 def test_write_pdb_emits_conect_from_source_explicit_topology_bonds() -> None:
     """PDB egress should serialize source-explicit topology bonds as CONECT."""
 

@@ -10,7 +10,6 @@ from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import ResidueId
 
-DISULFIDE_BOND_DISTANCE_CUTOFF_ANGSTROM = 3.0
 HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
 # Baker-Hubbard-style diagnostic cutoff: DOI 10.1016/0079-6107(84)90007-5.
@@ -78,15 +77,6 @@ class ClashTopologyPositionedGeometry(Protocol):
         ...
 
 
-class ClashTopologyAtomGeometry(ClashTopologyPositionedGeometry, Protocol):
-    """Atom geometry surface required by direct topology rules."""
-
-    def distance_to(self, other: "ClashTopologyAtomGeometry") -> float:
-        """Return distance to another atom geometry."""
-
-        ...
-
-
 class ClashTopologyVector(Protocol):
     """Coordinate vector surface required by angle-based topology rules."""
 
@@ -137,7 +127,7 @@ class ClashTopologyAtomSite(Protocol):
         ...
 
     @property
-    def geometry(self) -> ClashTopologyAtomGeometry:
+    def geometry(self) -> ClashTopologyPositionedGeometry:
         """Return geometry."""
 
         ...
@@ -190,9 +180,6 @@ def should_ignore_pair(
         return (
             bond_hops is not None and bond_hops <= policy.ignore_same_residue_bond_hops
         )
-
-    if direct_disulfide_bond(left_site, right_site):
-        return True
 
     if left_site.context.is_adjacent_polymer_residue(right_site.context):
         bond_hops = adjacent_polymer_bond_hops(left_site, right_site)
@@ -341,22 +328,6 @@ def atom_is_hydrogen(residue_site: ResidueSite, atom_name: str) -> bool:
     """Return whether a named atom within a residue is a hydrogen."""
 
     return residue_site.atom_site(atom_name).is_hydrogen()
-
-
-def direct_disulfide_bond(
-    left_site: ClashTopologyAtomSite,
-    right_site: ClashTopologyAtomSite,
-) -> bool:
-    """Return whether one atom pair looks like a bonded disulfide sulfur pair."""
-
-    return (
-        left_site.component_id == "CYS"
-        and right_site.component_id == "CYS"
-        and left_site.atom_name == "SG"
-        and right_site.atom_name == "SG"
-        and left_site.geometry.distance_to(right_site.geometry)
-        <= DISULFIDE_BOND_DISTANCE_CUTOFF_ANGSTROM
-    )
 
 
 def probable_hydrogen_bond(

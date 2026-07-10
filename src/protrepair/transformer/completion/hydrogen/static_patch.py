@@ -111,7 +111,7 @@ def cysteine_sidechain_hydrogens(
     """Return ordered sidechain hydrogens for a cysteine residue."""
 
     atom_coordinates = patch.position_map()
-    if site.has_disulfide_partner(atom_coordinates["SG"]):
+    if site.is_disulfide_bonded():
         return evaluate_plan(DISULFIDE_CYSTEINE_PLAN, atom_coordinates)
 
     hydrogen = cysteine_thiol(

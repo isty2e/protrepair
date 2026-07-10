@@ -1,6 +1,6 @@
 """Hydrogen-placement geometry helpers for completion transformers."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from math import pi
 
 import numpy as np
@@ -112,18 +112,6 @@ def tyrosine_hydroxyl(
     return hydroxyl_hydrogen(oh, cz, ce2, rotation_degrees=-220.2, bond_length=0.96)
 
 
-def is_disulfide_bonded(
-    sg_coordinate: CoordinateLike,
-    all_sg_coordinates: Sequence[CoordinateLike],
-) -> bool:
-    """Return whether a cysteine sulfur is within disulfide-bond distance."""
-
-    return any(
-        0.0 < InternalCoordinateFrame.distance(sg_coordinate, candidate) <= 3.0
-        for candidate in all_sg_coordinates
-    )
-
-
 def n_terminal_hydrogens(
     residue_name: str,
     atom_coordinates: Mapping[str, CoordinateLike],
@@ -206,7 +194,6 @@ __all__ = [
     "hydrogen_steric_penalty",
     "hydrogen_steric_penalty_against_site",
     "hydroxyl_hydrogen",
-    "is_disulfide_bonded",
     "max_rotatable_hydrogen_steric_cutoff_angstrom",
     "n_terminal_hydrogens",
     "rotatable_hydrogen_steric_cutoff_angstrom",

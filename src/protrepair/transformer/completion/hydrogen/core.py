@@ -21,6 +21,7 @@ from protrepair.diagnostics.kinds import RepairEventKind
 from protrepair.geometry import GeometryPlacementError
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite, ChainSite, StructureConstitution
+from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import ChainIndex, ResidueIndex
@@ -171,6 +172,7 @@ def _hydrogenate_chain_stage(
     histidine_protonation: HistidineProtonationRequest,
     component_library: ComponentLibrary,
     source_structure: ProteinStructure,
+    disulfide_bonded_residue_ids: frozenset[ResidueId],
     target_residue_ids: frozenset[ResidueId] | None = None,
 ) -> _HydrogenChainStageResult:
     """Hydrogenate one chain and return chain-local repairs and issues."""
@@ -191,6 +193,11 @@ def _hydrogenate_chain_stage(
     environment = HydrogenCompletionEnvironment.from_payloads(
         chain_residues,
         templates=tuple(templates),
+        disulfide_bonded_residue_ids=frozenset(
+            residue.residue_id
+            for residue in chain_residues
+            if residue.residue_id in disulfide_bonded_residue_ids
+        ),
     )
     working_residues = list(chain_residues)
 
@@ -342,6 +349,7 @@ def _execute_hydrogen_placement_stage(
         )
 
     placement_input = prepared_result.structure.without_hydrogens()
+    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(placement_input)
     repaired_chain_results: list[_HydrogenChainStageResult] = []
     repairs = list(prepared_result.repairs)
     issues = list(prepared_result.issues)
@@ -356,6 +364,7 @@ def _execute_hydrogen_placement_stage(
             histidine_protonation=histidine_protonation,
             component_library=component_library,
             source_structure=placement_input,
+            disulfide_bonded_residue_ids=disulfide_residue_ids,
             target_residue_ids=target_residue_ids,
         )
         chain_result = _with_matching_source_isotope_elements(
@@ -391,6 +400,7 @@ def _execute_targeted_polymer_hydrogen_placement_stage(
     """Execute hydrogen placement only on polymer chains containing target residues."""
 
     source_structure = prepared_result.structure
+    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(source_structure)
     target_chain_ids = _target_polymer_chain_ids(
         source_structure,
         target_residue_ids=target_residue_ids,
@@ -416,6 +426,7 @@ def _execute_targeted_polymer_hydrogen_placement_stage(
             histidine_protonation=histidine_protonation,
             component_library=component_library,
             source_structure=source_structure,
+            disulfide_bonded_residue_ids=disulfide_residue_ids,
             target_residue_ids=target_residue_ids,
         )
         chain_result = _with_matching_source_isotope_elements(

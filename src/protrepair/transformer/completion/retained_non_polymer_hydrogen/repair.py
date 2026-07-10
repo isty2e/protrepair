@@ -36,6 +36,7 @@ from protrepair.diagnostics.kinds import (
 from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.topology import (
@@ -113,6 +114,42 @@ class _RdkitFallbackHydrogenationResult:
     rdkit_backend_version: str
     heavy_bond_definitions: tuple[BondDefinition, ...]
     hydrogen_bond_definitions: tuple[BondDefinition, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _HydrogenatedPayloadProjection:
+    """Hydrogenated payload aligned with its residue-local hydrogen bonds."""
+
+    payload: CompletionResiduePayload
+    hydrogen_bond_definitions: tuple[BondDefinition, ...]
+
+    def without_hydrogens_anchored_to(
+        self,
+        anchor_atom_names: frozenset[str],
+    ) -> "_HydrogenatedPayloadProjection":
+        """Return this projection without H atoms on selected heavy anchors."""
+
+        excluded_hydrogen_names = {
+            bonded_atom_name
+            for bond_definition in self.hydrogen_bond_definitions
+            for anchor_atom_name, bonded_atom_name in (
+                (bond_definition.atom_name_1, bond_definition.atom_name_2),
+                (bond_definition.atom_name_2, bond_definition.atom_name_1),
+            )
+            if anchor_atom_name in anchor_atom_names
+        }
+        if not excluded_hydrogen_names:
+            return self
+
+        return type(self)(
+            payload=self.payload.without_atom_sites(excluded_hydrogen_names),
+            hydrogen_bond_definitions=tuple(
+                bond_definition
+                for bond_definition in self.hydrogen_bond_definitions
+                if bond_definition.atom_name_1 not in excluded_hydrogen_names
+                and bond_definition.atom_name_2 not in excluded_hydrogen_names
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +252,9 @@ def _execute_retained_non_polymer_hydrogen_stage(
 ) -> _RetainedNonPolymerHydrogenStageResult:
     """Apply hydrogen patches to targeted retained non-polymer components."""
 
+    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(
+        topology_source_structure
+    )
     hydrogenated_payloads: list[CompletionResiduePayload] = []
     topology_plans: list[_RetainedNonPolymerTopologyPlan] = []
     repairs: list[RepairEvent] = []
@@ -237,6 +277,7 @@ def _execute_retained_non_polymer_hydrogen_stage(
                     ligand.residue_id,
                 )
             ),
+            is_disulfide_bonded=ligand.residue_id in disulfide_residue_ids,
             allow_retained_non_polymer_rdkit_fallback=(
                 allow_retained_non_polymer_rdkit_fallback
             ),
@@ -280,6 +321,7 @@ def _hydrogenate_retained_non_polymer_payload(
     chemistry_evidence: RetainedNonPolymerChemistryEvidence | None = None,
     source_payload: CompletionResiduePayload | None = None,
     source_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
+    is_disulfide_bonded: bool,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
 ) -> _RetainedNonPolymerHydrogenPayloadResult:
     """Hydrogenate one retained non-polymer residue when supported."""
@@ -304,13 +346,23 @@ def _hydrogenate_retained_non_polymer_payload(
                 ),
             )
 
-        hydrogenated_payload = hydrogenation_result.payload
+        projection = _HydrogenatedPayloadProjection(
+            payload=hydrogenation_result.payload,
+            hydrogen_bond_definitions=(
+                hydrogenation_result.hydrogen_bond_definitions
+            ),
+        )
+        if is_disulfide_bonded:
+            projection = projection.without_hydrogens_anchored_to(
+                frozenset(("SG",))
+            )
+        hydrogenated_payload = projection.payload
         reconciliation = _reconcile_source_hydrogens(
             hydrogenated_payload,
             source_payload=source_payload,
             source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
             generated_hydrogen_anchor_by_name=_hydrogen_anchor_by_name(
-                hydrogenation_result.hydrogen_bond_definitions,
+                projection.hydrogen_bond_definitions,
                 hydrogenated_payload,
             ),
         )
@@ -339,7 +391,7 @@ def _hydrogenate_retained_non_polymer_payload(
                 residue_id=payload.residue_id,
                 bond_definitions=reconciliation.project_bond_definitions(
                     hydrogenation_result.heavy_bond_definitions
-                    + hydrogenation_result.hydrogen_bond_definitions,
+                    + projection.hydrogen_bond_definitions,
                 ),
                 provenance=BondProvenance.EVIDENCE_RESOLVED,
             ),
@@ -366,6 +418,7 @@ def _hydrogenate_retained_non_polymer_payload(
                 payload,
                 template=template,
                 placement_directive=placement_directive,
+                is_disulfide_bonded=is_disulfide_bonded,
             )
             if hydrogenated_payload is None:
                 return _RetainedNonPolymerHydrogenPayloadResult(
@@ -468,13 +521,19 @@ def _hydrogenate_retained_non_polymer_payload(
             ),
         )
 
-    ordered_payload = hydrogenated_payload
+    projection = _HydrogenatedPayloadProjection(
+        payload=hydrogenated_payload,
+        hydrogen_bond_definitions=hydrogenation_result.hydrogen_bond_definitions,
+    )
+    if is_disulfide_bonded:
+        projection = projection.without_hydrogens_anchored_to(frozenset(("SG",)))
+    ordered_payload = projection.payload
     reconciliation = _reconcile_source_hydrogens(
         ordered_payload,
         source_payload=source_payload,
         source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
         generated_hydrogen_anchor_by_name=_hydrogen_anchor_by_name(
-            hydrogenation_result.hydrogen_bond_definitions,
+            projection.hydrogen_bond_definitions,
             ordered_payload,
         ),
     )
@@ -511,7 +570,7 @@ def _hydrogenate_retained_non_polymer_payload(
             residue_id=payload.residue_id,
             bond_definitions=reconciliation.project_bond_definitions(
                 hydrogenation_result.heavy_bond_definitions
-                + hydrogenation_result.hydrogen_bond_definitions,
+                + projection.hydrogen_bond_definitions,
             ),
             provenance=BondProvenance.REPAIR_INFERRED,
         ),
@@ -1022,12 +1081,18 @@ def _apply_retained_non_polymer_hydrogen_directive(
     template: ResidueTemplate,
     placement_directive: StaticHydrogenPlacementDirective
     | RigidHydrogenPlacementDirective,
+    is_disulfide_bonded: bool,
 ) -> CompletionResiduePayload | None:
     """Return one hydrogenated retained non-polymer payload."""
 
     environment = HydrogenCompletionEnvironment.from_payloads(
         (payload,),
         templates=(template,),
+        disulfide_bonded_residue_ids=(
+            frozenset((payload.residue_id,))
+            if is_disulfide_bonded
+            else frozenset()
+        ),
     )
     if isinstance(placement_directive, StaticHydrogenPlacementDirective):
         site = HydrogenResidueSite(

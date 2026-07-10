@@ -31,7 +31,14 @@ from protrepair.state.hydrogen_expectation import (
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
 )
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
 
 try:
     from rdkit import Chem
@@ -132,6 +139,28 @@ def test_hydrogen_expectation_model_suppresses_disulfide_hg() -> None:
         ligands=(),
         source_format=FileFormat.PDB,
         source_name="disulfide-hydrogen-suppression",
+    )
+    structure = ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    atom_index_1=structure.constitution.atom_index(
+                        AtomRef(ResidueId("A", 1), "SG")
+                    ),
+                    atom_index_2=structure.constitution.atom_index(
+                        AtomRef(ResidueId("A", 2), "SG")
+                    ),
+                    relationship_type=BondRelationshipType.DISULFIDE,
+                    provenance=BondProvenance.SOURCE_EXPLICIT,
+                ),
+            ),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
     )
 
     model = derive_structure_hydrogen_expectation_model(

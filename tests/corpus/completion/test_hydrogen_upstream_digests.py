@@ -6,6 +6,7 @@ import pytest
 from tests.support.structure_summary import summarize_structure
 
 from protrepair.io import read_structure
+from protrepair.structure import ResidueId
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.workflow.contracts import StructureIngressOptions
 
@@ -28,6 +29,7 @@ pytestmark = pytest.mark.corpus
                     "8c845fc012e27c3a99c6ed4e406d0ab2aee7cbb2fa28ce876f1fc2093c0a5620",
                     "4e251e1af03e2a985b07100bdb346d4b210aa93b88daeecfbf97d8932cf1ea7b",
                     "a141aee6f97e69f3e006e6acd470421056b18f102ffe4316fb744793833ec036",
+                    "40c8b3a84fb3204ba8539a9d4623664ae00a2c0548ad7724a2305aa0c9e1c710",
                 }
             ),
             id="pdb2a1d",
@@ -59,3 +61,25 @@ def test_add_hydrogens_matches_known_upstream_hydrogen_digests(
     result = add_hydrogens(structure)
 
     assert summarize_structure(result.structure).semantic_digest in expected_digests
+
+
+def test_add_hydrogens_omits_hg_from_cross_chain_source_disulfides() -> None:
+    """Cross-chain SSBOND cysteines should remain oxidized after completion."""
+
+    structure = read_structure(
+        Path("tests/fixtures/corpus/pdb2a1d.ent"),
+        policy=StructureIngressOptions().structure_normalization_policy(),
+    )
+    repaired = add_hydrogens(structure).structure
+
+    for residue_id in (
+        ("A", 1),
+        ("B", 122),
+        ("E", 1),
+        ("F", 122),
+    ):
+        residue = repaired.constitution.residue_or_ligand(
+            ResidueId(residue_id[0], residue_id[1])
+        )
+        assert residue is not None
+        assert not residue.has_atom_site("HG")

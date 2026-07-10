@@ -28,14 +28,16 @@ from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.structure.address_space import StructureAddressSpaceKey
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.disulfide import (
+    disulfide_atom_ref_pairs as topology_disulfide_atom_ref_pairs,
+)
 from protrepair.structure.element import ElementIdentity
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.peptide import are_peptide_adjacent
 from protrepair.structure.slots import ResidueIndex
 
 HYDROGEN_ANCHOR_DISTANCE_CUTOFF_ANGSTROM = 1.45
-DISULFIDE_BOND_DISTANCE_CUTOFF_ANGSTROM = 3.0
 MINIMUM_CLASH_GRID_CELL_SIZE_ANGSTROM = 1.0
 HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
@@ -237,6 +239,11 @@ class AtomSite:
 
         return self.is_hydrogen_atom
 
+    def atom_ref(self) -> AtomRef:
+        """Return the constitution-native identity of this diagnostic atom."""
+
+        return AtomRef(self.residue_id, self.atom_name)
+
 
 @dataclass(frozen=True, slots=True)
 class ClashDetectionFrame:
@@ -252,10 +259,11 @@ class ClashDetectionFrame:
 class ClashDetectionContext:
     """Prepared computational context for repeated clash diagnostics.
 
-    This context caches representation and scalar lookup work for one immutable
-    structure view plus one clash policy. It is not a chemistry authority: bonded
-    topology still comes from residue templates and residue-local inferred
-    hydrogen anchors.
+    This context caches representation, scalar lookups, and derived topology
+    projections for one immutable structure view plus one clash policy. It does
+    not construct chemistry truth: canonical inter-residue relationships come
+    from ``StructureTopology``, while residue-local exclusions come from
+    component templates and inferred hydrogen anchors.
     """
 
     atom_sites: tuple[AtomSite, ...]
@@ -263,6 +271,7 @@ class ClashDetectionContext:
     constitution_address_space_key: StructureAddressSpaceKey
     van_der_waals_radius_by_element: Mapping[str, float]
     candidate_cell_size_angstrom: float
+    disulfide_atom_ref_pairs: frozenset[tuple[AtomRef, AtomRef]]
     allowed_distance_by_element_pair: Mapping[tuple[str, str], float] = field(
         init=False,
         repr=False,
@@ -279,6 +288,12 @@ class ClashDetectionContext:
             "constitution_address_space_key",
             tuple(self.constitution_address_space_key),
         )
+        disulfide_pairs = frozenset(self.disulfide_atom_ref_pairs)
+        if any(left_ref >= right_ref for left_ref, right_ref in disulfide_pairs):
+            raise ValueError(
+                "disulfide atom-ref pairs must be distinct and canonically ordered"
+            )
+        object.__setattr__(self, "disulfide_atom_ref_pairs", disulfide_pairs)
         radius_by_element = dict(self.van_der_waals_radius_by_element)
         object.__setattr__(
             self, "van_der_waals_radius_by_element", MappingProxyType(radius_by_element)
@@ -311,6 +326,20 @@ class ClashDetectionContext:
             focus_residue_ids=focus_residue_ids,
             policy=self.policy,
         )
+
+    def topology_expects_disulfide(
+        self,
+        left_site: AtomSite,
+        right_site: AtomSite,
+    ) -> bool:
+        """Return whether canonical topology bonds this CYS SG atom pair."""
+
+        left_ref = left_site.atom_ref()
+        right_ref = right_site.atom_ref()
+        endpoint_pair = (
+            (right_ref, left_ref) if right_ref < left_ref else (left_ref, right_ref)
+        )
+        return endpoint_pair in self.disulfide_atom_ref_pairs
 
     def detect_clashes(
         self,
@@ -437,6 +466,7 @@ class ClashDetectionBasis:
             constitution_address_space_key=self.constitution_address_space_key,
             van_der_waals_radius_by_element=self.van_der_waals_radius_by_element,
             candidate_cell_size_angstrom=self.candidate_cell_size_angstrom,
+            disulfide_atom_ref_pairs=topology_disulfide_atom_ref_pairs(structure),
         )
 
 
@@ -696,6 +726,7 @@ def prepare_projected_clash_detection_context(
         constitution_address_space_key=structure.constitution.address_space_key,
         van_der_waals_radius_by_element=radius_by_element,
         candidate_cell_size_angstrom=candidate_cell_size_angstrom,
+        disulfide_atom_ref_pairs=topology_disulfide_atom_ref_pairs(structure),
     )
 
 
@@ -716,6 +747,7 @@ def _clash_detection_context_from_atom_sites(
     constitution_address_space_key: StructureAddressSpaceKey,
     van_der_waals_radius_by_element: Mapping[str, float],
     candidate_cell_size_angstrom: float,
+    disulfide_atom_ref_pairs: frozenset[tuple[AtomRef, AtomRef]],
 ) -> ClashDetectionContext:
     """Build one prepared clash context from precomputed atom sites."""
 
@@ -725,6 +757,7 @@ def _clash_detection_context_from_atom_sites(
         constitution_address_space_key=constitution_address_space_key,
         van_der_waals_radius_by_element=van_der_waals_radius_by_element,
         candidate_cell_size_angstrom=candidate_cell_size_angstrom,
+        disulfide_atom_ref_pairs=disulfide_atom_ref_pairs,
     )
 
 
@@ -735,6 +768,9 @@ def _clash_for_atom_site_pair(
     context: ClashDetectionContext,
 ) -> StericClash | None:
     """Return a steric clash for one pair, if policy and geometry admit it."""
+
+    if context.topology_expects_disulfide(left_site, right_site):
+        return None
 
     allowed_distance = context.allowed_distance_by_element_pair[
         (left_site.element, right_site.element)
@@ -1374,15 +1410,6 @@ def atom_is_hydrogen(residue_site: ResidueSite, atom_name: str) -> bool:
     """Return whether a named atom within a residue is a hydrogen."""
 
     return clash_topology_rules.atom_is_hydrogen(residue_site, atom_name)
-
-
-def direct_disulfide_bond(left_site: AtomSite, right_site: AtomSite) -> bool:
-    """Return whether one atom pair looks like a bonded disulfide sulfur pair."""
-
-    return clash_topology_rules.direct_disulfide_bond(
-        cast(clash_topology_rules.ClashTopologyAtomSite, left_site),
-        cast(clash_topology_rules.ClashTopologyAtomSite, right_site),
-    )
 
 
 def probable_hydrogen_bond(

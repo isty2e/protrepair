@@ -360,7 +360,17 @@ def test_hydrogen_completion_environment_rejects_duplicate_residue_identity() ->
     with pytest.raises(ValueError, match="must not repeat residue identities"):
         HydrogenCompletionEnvironment(
             rotatable_environments=(environment, environment),
-            sg_positions=(),
+            disulfide_bonded_residue_ids=frozenset(),
+        )
+
+
+def test_hydrogen_completion_environment_rejects_foreign_disulfide_identity() -> None:
+    """Disulfide membership must refer to a residue in the chain environment."""
+
+    with pytest.raises(ValueError, match="must belong to the environment"):
+        HydrogenCompletionEnvironment(
+            rotatable_environments=(minimal_environment(11, marker=1.0),),
+            disulfide_bonded_residue_ids=frozenset((ResidueId("B", 11),)),
         )
 
 

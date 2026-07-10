@@ -39,6 +39,16 @@ This policy is intentionally separate from RDKit force-field behavior. UFF and
 RDKit PDB proximity bonding are algorithm-specific mechanisms, not the canonical
 per-element diagnostic radius table.
 
+The snapshot is selected for deterministic lookup, broad element coverage, and
+consistency with the required RDKit interoperability boundary. It is not a
+global scientific ranking oracle. RDKit readability and valence checks answer
+whether downstream RDKit consumers can interpret an output; protein-specific
+quality evidence such as topology completeness, steric contacts, bond and angle
+geometry, Ramachandran behavior, and realistic repair regressions remains on
+independent axes. PRAS-derived protein repair behavior and its empirical lineage
+therefore remain relevant evidence rather than being overridden by UFF or a
+PeriodicTable radius value.
+
 The copied RDKit radius snapshot is distributed with the complete pinned RDKit
 BSD 3-Clause text in `vendor/rdkit/LICENSE`. `THIRD_PARTY_NOTICES.md` records
 the runtime and snapshot provenance separately from the underlying scientific

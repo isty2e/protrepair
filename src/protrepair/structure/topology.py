@@ -64,6 +64,7 @@ class BondRelationshipType(str, Enum):
 class SourceBondRecordType(str, Enum):
     """Boundary format that originated a source-explicit topology bond."""
 
+    PDB_SSBOND = "pdb_ssbond"
     PDB_LINK = "pdb_link"
     PDB_CONECT = "pdb_conect"
     MMCIF_STRUCT_CONN = "mmcif_struct_conn"

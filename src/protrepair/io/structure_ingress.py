@@ -92,6 +92,7 @@ class _SourceExplicitInterResidueConnection:
     endpoint_1: SourceAtomIdentity
     endpoint_2: SourceAtomIdentity
     relationship_type: BondRelationshipType
+    record_type: SourceBondRecordType
     source_id: str | None = None
     reported_distance_angstrom: float | None = None
 
@@ -106,6 +107,10 @@ class _SourceExplicitInterResidueConnection:
         if not isinstance(self.relationship_type, BondRelationshipType):
             raise TypeError(
                 "source connection relationship_type must be a BondRelationshipType"
+            )
+        if not isinstance(self.record_type, SourceBondRecordType):
+            raise TypeError(
+                "source connection record_type must be a SourceBondRecordType"
             )
 
         source_id = None if self.source_id is None else self.source_id.strip() or None
@@ -224,18 +229,13 @@ def normalize_raw_structure(
     )
     source_connections = _source_inter_residue_connections_from_raw_structure(
         raw_structure,
+        file_format=file_format,
         constitution=constitution,
         geometry=geometry,
-    )
-    connection_record_type = (
-        SourceBondRecordType.PDB_LINK
-        if file_format is FileFormat.PDB
-        else SourceBondRecordType.MMCIF_STRUCT_CONN
     )
     connection_bonds = _topology_bonds_from_source_connections(
         source_connections,
         constitution=constitution,
-        record_type=connection_record_type,
     )
     conect_bonds = _topology_bonds_from_conect_pairs(
         pdb_conect_atom_identity_pairs,
@@ -446,6 +446,7 @@ def apply_structure_normalization_policy(
 def _source_inter_residue_connections_from_raw_structure(
     raw_structure: gemmi.Structure,
     *,
+    file_format: FileFormat,
     constitution: StructureConstitution,
     geometry: StructureGeometry,
 ) -> tuple[_SourceExplicitInterResidueConnection, ...]:
@@ -453,15 +454,29 @@ def _source_inter_residue_connections_from_raw_structure(
 
     connections: list[_SourceExplicitInterResidueConnection] = []
     for connection in raw_structure.connections:
+        relationship_type = _relationship_type_from_connection(connection.type)
+        record_type = _source_connection_record_type(
+            file_format=file_format,
+            relationship_type=relationship_type,
+        )
         endpoint_1 = _source_atom_identity_from_connection_partner(connection.partner1)
         endpoint_2 = _source_atom_identity_from_connection_partner(connection.partner2)
         if endpoint_1 is None or endpoint_2 is None:
             continue
         if endpoint_1.atom_ref.residue_id == endpoint_2.atom_ref.residue_id:
             continue
+        require_altloc_match = record_type is not SourceBondRecordType.PDB_SSBOND
         if not _source_endpoint_survived(
-            endpoint_1, constitution, geometry=geometry
-        ) or not _source_endpoint_survived(endpoint_2, constitution, geometry=geometry):
+            endpoint_1,
+            constitution,
+            geometry=geometry,
+            require_altloc_match=require_altloc_match,
+        ) or not _source_endpoint_survived(
+            endpoint_2,
+            constitution,
+            geometry=geometry,
+            require_altloc_match=require_altloc_match,
+        ):
             continue
 
         reported_distance = _normalize_reported_connection_distance(
@@ -471,13 +486,28 @@ def _source_inter_residue_connections_from_raw_structure(
             _SourceExplicitInterResidueConnection(
                 endpoint_1=endpoint_1,
                 endpoint_2=endpoint_2,
-                relationship_type=_relationship_type_from_connection(connection.type),
+                relationship_type=relationship_type,
+                record_type=record_type,
                 source_id=connection.link_id or connection.name,
                 reported_distance_angstrom=reported_distance,
             )
         )
 
     return tuple(dict.fromkeys(connections))
+
+
+def _source_connection_record_type(
+    *,
+    file_format: FileFormat,
+    relationship_type: BondRelationshipType,
+) -> SourceBondRecordType:
+    """Return the source record contract for one parsed connection."""
+
+    if file_format is FileFormat.MMCIF:
+        return SourceBondRecordType.MMCIF_STRUCT_CONN
+    if relationship_type is BondRelationshipType.DISULFIDE:
+        return SourceBondRecordType.PDB_SSBOND
+    return SourceBondRecordType.PDB_LINK
 
 
 def _source_atom_identity_from_connection_partner(
@@ -1021,7 +1051,6 @@ def _topology_bonds_from_source_connections(
     connections: tuple[_SourceExplicitInterResidueConnection, ...],
     *,
     constitution: StructureConstitution,
-    record_type: SourceBondRecordType,
 ) -> tuple[TopologyBond, ...]:
     """Project source-explicit inter-residue connections into topology bonds."""
 
@@ -1035,7 +1064,7 @@ def _topology_bonds_from_source_connections(
                 relationship_type=link.relationship_type,
                 provenance=BondProvenance.SOURCE_EXPLICIT,
                 source_metadata=SourceBondMetadata(
-                    record_type=record_type,
+                    record_type=link.record_type,
                     source_id=link.source_id,
                     reported_distance_angstrom=link.reported_distance_angstrom,
                 ),
@@ -1082,6 +1111,7 @@ def _source_endpoint_survived(
     constitution: StructureConstitution,
     *,
     geometry: StructureGeometry,
+    require_altloc_match: bool = True,
 ) -> bool:
     """Return whether one source endpoint survived canonical normalization."""
 
@@ -1093,7 +1123,10 @@ def _source_endpoint_survived(
     if atom_index is None:
         return False
 
-    return geometry.atom_geometry(atom_index).altloc == endpoint.altloc
+    return bool(
+        not require_altloc_match
+        or geometry.atom_geometry(atom_index).altloc == endpoint.altloc
+    )
 
 
 def _sequence_inferred_topology_bonds(

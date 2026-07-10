@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from protrepair.chemistry import BondDefinition, HydrogenSemantics, ResidueTemplate
 from protrepair.chemistry.component.library import ComponentLibrary
-from protrepair.diagnostics.topology import detect_disulfide_topology
 from protrepair.structure.constitution import (
     AtomSite as ConstitutionAtomSite,
 )
@@ -25,7 +24,6 @@ if TYPE_CHECKING:
     from protrepair.transformer.continuous.domain import ContinuousRelaxationRegion
 
 PEPTIDE_BOND_ORDER = 1
-DISULFIDE_BOND_ORDER = 1
 HYDROGEN_ATTACHMENT_DISTANCE_MAX_ANGSTROM = 1.35
 EXECUTION_ADMISSIBLE_TOPOLOGY_BOND_RELATIONSHIPS: frozenset[BondRelationshipType] = (
     frozenset(
@@ -129,7 +127,6 @@ def inter_residue_bonds(
     """Return inter-residue bonds across one whole snapshot."""
 
     bond_set = set(_peptide_bonds(snapshot))
-    bond_set.update(_disulfide_bonds(snapshot))
     bond_set.update(_topology_inter_residue_bonds(snapshot))
     return tuple(sorted(bond_set, key=lambda bond: bond.sort_key()))
 
@@ -333,29 +330,6 @@ def _peptide_bonds(
             )
 
     return tuple(bonds)
-
-
-def _disulfide_bonds(
-    snapshot: ProteinStructureSnapshot,
-) -> tuple[PlannedBond, ...]:
-    """Return geometry-candidate disulfide SG-SG bonds for execution only."""
-
-    constitution = snapshot.structure.constitution
-    likely_disulfides, _ = detect_disulfide_topology(snapshot.structure)
-    return tuple(
-        PlannedBond(
-            atom_index_1=constitution.atom_index_in_residue(
-                constitution.residue_index(finding.left_residue_id),
-                "SG",
-            ),
-            atom_index_2=constitution.atom_index_in_residue(
-                constitution.residue_index(finding.right_residue_id),
-                "SG",
-            ),
-            order=DISULFIDE_BOND_ORDER,
-        )
-        for finding in likely_disulfides
-    )
 
 
 def _topology_local_bonds(

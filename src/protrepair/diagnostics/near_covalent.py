@@ -160,8 +160,8 @@ class _NearCovalentCandidateContext:
         """Return whether canonical topology explains this close atom pair."""
 
         endpoint_pair = _canonical_atom_ref_pair(
-            _atom_ref_for_site(left_site),
-            _atom_ref_for_site(right_site),
+            left_site.atom_ref(),
+            right_site.atom_ref(),
         )
         return endpoint_pair in self.expected_topology_endpoint_pairs
 
@@ -426,12 +426,6 @@ def _expected_topology_endpoint_pairs(
         for bond in structure.topology.bonds
         if bond.relationship_type in _EXPECTED_CLOSE_CONTACT_RELATIONSHIP_TYPES
     )
-
-
-def _atom_ref_for_site(site: AtomSite) -> AtomRef:
-    """Return canonical identity for one prepared diagnostic atom site."""
-
-    return AtomRef(residue_id=site.residue_id, atom_name=site.atom_name)
 
 
 def _canonical_atom_ref_pair(
