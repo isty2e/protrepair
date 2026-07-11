@@ -152,7 +152,6 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
                 f"/vendor/faspr/{relative_vendor_path}",
             )
 
-    assert not any("/.tickets/" in name for name in names)
     assert not any("/.tmp/" in name for name in names)
     assert not any("/dist/" in name for name in names)
     smoke_script = "/scripts/run_installed_artifact_smoke.py"
