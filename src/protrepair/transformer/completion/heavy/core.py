@@ -39,6 +39,9 @@ from protrepair.transformer.completion.atom.rigid_frame import (
 from protrepair.transformer.completion.atom.terminal import (
     TerminalAtomPlacementTransformer,
 )
+from protrepair.transformer.completion.diagnostics import (
+    skipped_geometry_placement_issue,
+)
 from protrepair.transformer.completion.fragment_matching import (
     ResidueFragmentMatch,
     match_residue_fragment,
@@ -80,6 +83,7 @@ class _ResidueRepairStageResult:
 
     residue: CompletionResiduePayload
     added_atom_names: tuple[str, ...]
+    issues: tuple[ValidationIssue, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +521,7 @@ def _repair_heavy_atom_chain(
                     atom_names=residue_result.added_atom_names,
                 )
             )
+        issues.extend(residue_result.issues)
 
     repaired_residues = _chain_residue_payloads_from_snapshot(
         working_snapshot,
@@ -537,14 +542,26 @@ def _repair_heavy_atom_chain(
             template=terminal_template,
             original_payload=repaired_residues[-1],
         )
-        working_snapshot = TerminalAtomPlacementTransformer(terminal_site).transform(
+        terminal_outcome = TerminalAtomPlacementTransformer(
+            terminal_site
+        ).placement_outcome(
             ProteinTransformationContext.from_snapshot_atom_input(
                 working_snapshot,
                 terminal_site.atom_input(working_snapshot),
             )
         )
+        working_snapshot = terminal_outcome.snapshot
         repaired_terminal_residue = terminal_site.payload(working_snapshot)
         assert repaired_terminal_residue is not None
+        if terminal_outcome.has_skipped_atoms():
+            assert terminal_outcome.failure_reason is not None
+            issues.append(
+                skipped_geometry_placement_issue(
+                    repaired_terminal_residue,
+                    atom_names=terminal_outcome.skipped_atom_names,
+                    reason=terminal_outcome.failure_reason,
+                )
+            )
         if repaired_terminal_residue.has_atom_site("OXT"):
             repairs.append(
                 RepairEvent.for_residue(
@@ -673,12 +690,15 @@ def _repair_standard_residue(
             finalized_snapshot,
         )
 
-    repaired_snapshot = InternalCoordinatePlacementTransformer(site).transform(
+    placement_outcome = InternalCoordinatePlacementTransformer(
+        site
+    ).placement_outcome(
         ProteinTransformationContext.from_snapshot_atom_input(
             guided_snapshot,
             atom_input,
         )
     )
+    repaired_snapshot = placement_outcome.snapshot
     repaired_residue = site.payload(repaired_snapshot)
     assert repaired_residue is not None
     finalized_residue = _apply_fragment_policy(
@@ -692,6 +712,16 @@ def _repair_standard_residue(
         if finalized_residue == repaired_residue
         else _snapshot_with_residue_payload(repaired_snapshot, finalized_residue)
     )
+    placement_issues: tuple[ValidationIssue, ...] = ()
+    if placement_outcome.has_skipped_atoms():
+        assert placement_outcome.failure_reason is not None
+        placement_issues = (
+            skipped_geometry_placement_issue(
+                finalized_residue,
+                atom_names=placement_outcome.skipped_atom_names,
+                reason=placement_outcome.failure_reason,
+            ),
+        )
     return (
         _ResidueRepairStageResult(
             residue=finalized_residue,
@@ -699,6 +729,7 @@ def _repair_standard_residue(
                 finalized_residue,
                 original_atom_name_set=original_atom_name_set,
             ),
+            issues=placement_issues,
         ),
         finalized_snapshot,
     )

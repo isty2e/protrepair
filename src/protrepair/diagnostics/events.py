@@ -213,11 +213,15 @@ class RepairEvent:
             kind=kind,
             scope=EventScope.for_residue(residue_id),
             residue_impacts=(
-                ResidueAtomImpact(
-                    residue_id=residue_id,
-                    component_id=component_id,
-                    atom_names=atom_names,
-                ),
+                ()
+                if component_id is None and not atom_names
+                else (
+                    ResidueAtomImpact(
+                        residue_id=residue_id,
+                        component_id=component_id,
+                        atom_names=atom_names,
+                    ),
+                )
             ),
             provenance_origins=provenance_origins,
             details=details,
@@ -295,6 +299,7 @@ class ValidationIssue:
     message: str
     scope: EventScope = field(default_factory=EventScope.for_structure)
     provenance_origins: tuple[StructureProvenanceOrigin, ...] = ()
+    residue_impacts: tuple[ResidueAtomImpact, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, ValidationIssueKind):
@@ -305,6 +310,20 @@ class ValidationIssue:
             raise TypeError("validation issues require an IssueSeverity value")
         if not isinstance(self.scope, EventScope):
             raise TypeError("validation issues require an EventScope value")
+        residue_impacts = tuple(self.residue_impacts)
+        for residue_impact in residue_impacts:
+            if not isinstance(residue_impact, ResidueAtomImpact):
+                raise TypeError(
+                    "validation issues require ResidueAtomImpact values"
+                )
+        if self.scope.kind is not EventScopeKind.STRUCTURE:
+            scope_residue_ids = set(self.scope.residue_ids)
+            for residue_impact in residue_impacts:
+                if residue_impact.residue_id not in scope_residue_ids:
+                    raise ValueError(
+                        "validation issue residue impacts must fall inside the "
+                        "event scope"
+                    )
         provenance_origins = tuple(dict.fromkeys(self.provenance_origins))
         for provenance_origin in provenance_origins:
             if not isinstance(provenance_origin, StructureProvenanceOrigin):
@@ -312,7 +331,7 @@ class ValidationIssue:
                     "validation issue provenance origins must be "
                     "StructureProvenanceOrigin values"
                 )
-
+        object.__setattr__(self, "residue_impacts", residue_impacts)
         object.__setattr__(self, "provenance_origins", provenance_origins)
 
     @classmethod
@@ -324,6 +343,8 @@ class ValidationIssue:
         message: str,
         residue_id: ResidueId,
         provenance_origins: tuple[StructureProvenanceOrigin, ...] = (),
+        component_id: str | None = None,
+        atom_names: tuple[str, ...] = (),
     ) -> "ValidationIssue":
         """Return one residue-local validation issue."""
 
@@ -333,6 +354,13 @@ class ValidationIssue:
             message=message,
             scope=EventScope.for_residue(residue_id),
             provenance_origins=provenance_origins,
+            residue_impacts=(
+                ResidueAtomImpact(
+                    residue_id=residue_id,
+                    component_id=component_id,
+                    atom_names=atom_names,
+                ),
+            ),
         )
 
     @property
@@ -340,6 +368,33 @@ class ValidationIssue:
         """Return the sole residue id when this issue is residue-local."""
 
         return self.scope.single_residue_id()
+
+    @property
+    def component_id(self) -> str | None:
+        """Return the single impacted component id when residue-local."""
+
+        if len(self.residue_impacts) != 1:
+            return None
+
+        return self.residue_impacts[0].component_id
+
+    @property
+    def atom_names(self) -> tuple[str, ...]:
+        """Return impacted atom names when this issue is residue-local."""
+
+        if len(self.residue_impacts) != 1:
+            return ()
+
+        return self.residue_impacts[0].atom_names
+
+    def affects_atom(self, atom_name: str) -> bool:
+        """Return whether the issue references a specific atom."""
+
+        normalized_atom_name = atom_name.strip().upper()
+        return any(
+            normalized_atom_name in residue_impact.atom_names
+            for residue_impact in self.residue_impacts
+        )
 
     def is_error(self) -> bool:
         """Return whether the issue is error-severity."""

@@ -359,6 +359,8 @@ def test_template_backed_retained_non_polymer_hydrogenation_reports_noop() -> No
         issue.kind is ValidationIssueKind.UNSUPPORTED_HYDROGENATION
         and issue.severity is IssueSeverity.WARNING
         and issue.residue_id == residue_id
+        and issue.component_id == "LIG"
+        and issue.atom_names == ("H1",)
         and "template-backed hydrogen placement failed" in issue.message
         and "leaving residue unchanged" in issue.message
         for issue in result.issues
@@ -405,6 +407,8 @@ def test_template_backed_retained_non_polymer_noop_preserves_source_h() -> None:
     assert any(
         issue.kind is ValidationIssueKind.UNSUPPORTED_HYDROGENATION
         and issue.residue_id == residue_id
+        and issue.component_id == "LIG"
+        and issue.atom_names == ("H1",)
         and "template-backed hydrogen placement failed" in issue.message
         for issue in result.issues
     )

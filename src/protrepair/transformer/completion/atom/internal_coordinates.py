@@ -17,6 +17,7 @@ from protrepair.transformer.completion.atom.backbone import (
     backbone_psi_degrees,
 )
 from protrepair.transformer.completion.atom.geometry_state import AtomGeometryState
+from protrepair.transformer.completion.atom.outcome import GeometryPlacementOutcome
 from protrepair.transformer.completion.shared.domain import (
     CompletionResiduePayload,
     ResidueCompletionSite,
@@ -228,6 +229,14 @@ class InternalCoordinatePlacementTransformer(
     ) -> ProteinStructureSnapshot:
         """Return one snapshot after internal-coordinate atom placement."""
 
+        return self.placement_outcome(context).snapshot
+
+    def placement_outcome(
+        self,
+        context: ProteinTransformationContext,
+    ) -> GeometryPlacementOutcome:
+        """Return the snapshot and any atoms skipped after placement failed."""
+
         semantics = self.site.template.heavy_atom_semantics
         residue = self.site.payload(context.source_snapshot)
         _, next_residue = self.site.neighbor_payloads(
@@ -242,7 +251,7 @@ class InternalCoordinatePlacementTransformer(
                 missing_atom_names=missing_atom_names,
             )
         ):
-            return context.source_snapshot
+            return GeometryPlacementOutcome(context.source_snapshot)
 
         environment = InternalCoordinateEnvironment.from_payloads(
             residue=residue,
@@ -255,17 +264,32 @@ class InternalCoordinatePlacementTransformer(
         )
         try:
             semantics.program.apply(environment)
-        except GeometryPlacementError:
+        except GeometryPlacementError as error:
             partial_patch = environment.build_successful_partial_patch(
                 semantics.atom_order
             )
-            if partial_patch is None:
-                return context.source_snapshot
-
-            return self.site.apply_patch(context.source_snapshot, partial_patch)
+            placed_snapshot = (
+                context.source_snapshot
+                if partial_patch is None
+                else self.site.apply_patch(context.source_snapshot, partial_patch)
+            )
+            remaining_missing_atom_names = frozenset(
+                self.site.missing_atom_names(placed_snapshot)
+            )
+            return GeometryPlacementOutcome(
+                snapshot=placed_snapshot,
+                skipped_atom_names=tuple(
+                    atom_name
+                    for atom_name in missing_atom_names
+                    if atom_name in remaining_missing_atom_names
+                ),
+                failure_reason=str(error),
+            )
 
         patch = environment.build_patch(semantics.atom_order)
-        return self.site.apply_patch(context.source_snapshot, patch)
+        return GeometryPlacementOutcome(
+            self.site.apply_patch(context.source_snapshot, patch)
+        )
 
 
 def _has_required_backbone_oxygen_context(

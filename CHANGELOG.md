@@ -16,6 +16,9 @@
 
 ### Changed
 
+- report recoverable heavy-atom, terminal OXT, and polymer-hydrogen geometry
+  placement failures as atom-scoped validation issues while preserving any
+  successfully placed partial repair
 - harden ingress normalization by selecting coherent residue-level altloc
   cohorts by mean occupancy with lexical tie-breaks, validating non-finite atom
   coordinates/occupancy/B-factors at the boundary, preserving first-model PDB

@@ -31,6 +31,9 @@ from protrepair.structure.topology import (
     StructureTopology,
     TopologyBond,
 )
+from protrepair.transformer.completion.diagnostics import (
+    skipped_geometry_placement_issue,
+)
 from protrepair.transformer.completion.hydrogen.component_patch import (
     generate_component_hydrogen_patch,
 )
@@ -263,11 +266,13 @@ def _hydrogenate_chain_stage(
             target_residue_ids=target_residue_ids,
         ):
             continue
-        _apply_hydrogen_directive(
+        placement_issue = _apply_hydrogen_directive(
             directive,
             chain_residues_by_index=working_residues,
             environment=environment,
         )
+        if placement_issue is not None:
+            issues.append(placement_issue)
 
     hydrogenated_residues = tuple(working_residues)
     ordered_residues = tuple(
@@ -821,8 +826,8 @@ def _apply_hydrogen_directive(
     *,
     chain_residues_by_index: list[CompletionResiduePayload],
     environment: HydrogenCompletionEnvironment,
-) -> None:
-    """Apply one hydrogen directive onto the current chain-local payload state."""
+) -> ValidationIssue | None:
+    """Apply one hydrogen directive and return recoverable skip evidence."""
 
     if isinstance(directive, StaticHydrogenPlacementDirective):
         current_residue = chain_residues_by_index[directive.residue_index.value]
@@ -842,13 +847,20 @@ def _apply_hydrogen_directive(
                 patch=patch,
                 semantics=directive.semantics,
             )
-        except GeometryPlacementError:
-            return
+        except GeometryPlacementError as error:
+            return skipped_geometry_placement_issue(
+                current_residue,
+                atom_names=_missing_template_hydrogen_atom_names(
+                    directive,
+                    current_residue,
+                ),
+                reason=str(error),
+            )
 
         chain_residues_by_index[directive.residue_index.value] = (
             current_residue.apply_patch(hydrogen_patch)
         )
-        return
+        return None
 
     if isinstance(directive, RigidHydrogenPlacementDirective):
         current_residue = chain_residues_by_index[directive.residue_index.value]
@@ -861,17 +873,24 @@ def _apply_hydrogen_directive(
             semantics=directive.semantics,
         )
         if patch is None:
-            return
+            return skipped_geometry_placement_issue(
+                current_residue,
+                atom_names=_missing_template_hydrogen_atom_names(
+                    directive,
+                    current_residue,
+                ),
+                reason="insufficient heavy-atom anchors for rigid placement",
+            )
 
         chain_residues_by_index[directive.residue_index.value] = (
             current_residue.apply_patch(patch)
         )
-        return
+        return None
 
     if isinstance(directive, HistidineDeltaProtonationDirective):
         current_residue = chain_residues_by_index[directive.residue_index.value]
         if current_residue.component_id != "HIS" or current_residue.has_atom("HD1"):
-            return
+            return None
 
         current_patch = OrderedAtomPatch.from_residue_payload(
             current_residue.residue_site,
@@ -882,24 +901,28 @@ def _apply_hydrogen_directive(
                 ("HD1",),
                 (histidine_delta_hydrogen(current_patch),),
             )
-        except GeometryPlacementError:
-            return
+        except GeometryPlacementError as error:
+            return skipped_geometry_placement_issue(
+                current_residue,
+                atom_names=("HD1",),
+                reason=str(error),
+            )
 
         chain_residues_by_index[directive.residue_index.value] = (
             current_residue.apply_patch(hydrogen_patch)
         )
-        return
+        return None
 
     if isinstance(directive, BackboneHydrogenPropagationDirective):
         current_residue = chain_residues_by_index[directive.residue_index.value]
         next_residue = chain_residues_by_index[directive.next_residue_index.value]
         if next_residue.has_atom("H"):
-            return
+            return None
 
         if not current_residue.has_atom("C") or not all(
             next_residue.has_atom(atom_name) for atom_name in ("CA", "N")
         ):
-            return
+            return None
 
         try:
             position = backbone_hydrogen(
@@ -907,8 +930,12 @@ def _apply_hydrogen_directive(
                 next_residue.residue_geometry.position("N"),
                 current_residue.residue_geometry.position("C"),
             )
-        except GeometryPlacementError:
-            return
+        except GeometryPlacementError as error:
+            return skipped_geometry_placement_issue(
+                next_residue,
+                atom_names=("H",),
+                reason=str(error),
+            )
 
         next_patch = OrderedAtomPatch.from_residue_payload(
             next_residue.residue_site,
@@ -917,7 +944,7 @@ def _apply_hydrogen_directive(
         chain_residues_by_index[directive.next_residue_index.value] = (
             next_residue.apply_patch(next_patch.append_atoms(("H",), (position,)))
         )
-        return
+        return None
 
     if isinstance(directive, NTerminalHydrogenPlacementDirective):
         current_residue = chain_residues_by_index[directive.residue_index.value]
@@ -932,8 +959,17 @@ def _apply_hydrogen_directive(
                     directive.backbone_family_component_id,
                 )
             )
-        except GeometryPlacementError:
-            return
+        except GeometryPlacementError as error:
+            atom_names = (
+                ("H1", "H2")
+                if directive.backbone_family_component_id == "PRO"
+                else ("H1", "H2", "H3")
+            )
+            return skipped_geometry_placement_issue(
+                current_residue,
+                atom_names=atom_names,
+                reason=str(error),
+            )
 
         atom_names = (
             ("H1", "H2")
@@ -945,6 +981,19 @@ def _apply_hydrogen_directive(
                 current_patch.append_atoms(atom_names, atom_coordinates)
             )
         )
-        return
+        return None
 
     raise TypeError(f"unsupported hydrogen directive type {type(directive)!r}")
+
+
+def _missing_template_hydrogen_atom_names(
+    directive: StaticHydrogenPlacementDirective | RigidHydrogenPlacementDirective,
+    residue: CompletionResiduePayload,
+) -> tuple[str, ...]:
+    """Return template hydrogen targets absent from the current residue."""
+
+    return tuple(
+        atom_name
+        for atom_name in directive.template.expected_hydrogen_atom_names()
+        if not residue.has_atom(atom_name)
+    )

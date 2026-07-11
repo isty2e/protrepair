@@ -1,7 +1,7 @@
 """Terminal heavy-atom augmentation over canonical protein structures."""
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
-from protrepair.diagnostics.events import RepairEvent
+from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.diagnostics.kinds import RepairEventKind
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ChainSite
@@ -12,6 +12,9 @@ from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.structure.topology import AtomTopology, StructureTopology
 from protrepair.transformer.completion.atom.terminal import (
     TerminalAtomPlacementTransformer,
+)
+from protrepair.transformer.completion.diagnostics import (
+    skipped_geometry_placement_issue,
 )
 from protrepair.transformer.completion.heavy.policy import should_add_terminal_oxt
 from protrepair.transformer.completion.shared.domain import (
@@ -37,6 +40,7 @@ def augment_c_terminal_oxt(
     )
     augmented_structure = structure
     repairs: list[RepairEvent] = []
+    issues: list[ValidationIssue] = []
     for chain_offset, chain_site in enumerate(structure.constitution.chains):
         if not chain_site.residues:
             continue
@@ -102,16 +106,26 @@ def augment_c_terminal_oxt(
             chain_residues=tuple(chain_residue_payloads),
             source_structure=augmented_structure,
         )
-        augmented_terminal_snapshot = TerminalAtomPlacementTransformer(
+        placement_outcome = TerminalAtomPlacementTransformer(
             terminal_site
-        ).transform(
+        ).placement_outcome(
             ProteinTransformationContext.from_snapshot_atom_input(
                 terminal_snapshot,
                 terminal_site.atom_input(terminal_snapshot),
             )
         )
+        augmented_terminal_snapshot = placement_outcome.snapshot
         augmented_terminal_residue = terminal_site.payload(augmented_terminal_snapshot)
         assert augmented_terminal_residue is not None
+        if placement_outcome.has_skipped_atoms():
+            assert placement_outcome.failure_reason is not None
+            issues.append(
+                skipped_geometry_placement_issue(
+                    augmented_terminal_residue,
+                    atom_names=placement_outcome.skipped_atom_names,
+                    reason=placement_outcome.failure_reason,
+                )
+            )
         if not augmented_terminal_residue.has_atom_site("OXT"):
             continue
 
@@ -131,7 +145,7 @@ def augment_c_terminal_oxt(
             )
         )
 
-    if not repairs:
+    if not repairs and not issues:
         return TransformationResult(
             structure=structure,
             repairs=(),
@@ -141,7 +155,7 @@ def augment_c_terminal_oxt(
     return TransformationResult(
         structure=augmented_structure,
         repairs=tuple(repairs),
-        issues=(),
+        issues=tuple(issues),
     )
 
 

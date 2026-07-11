@@ -6,6 +6,7 @@ from protrepair.geometry import GeometryPlacementError
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.base import DeterministicContextOperation
 from protrepair.transformer.completion.atom.backbone import PeptideCarbonylFrame
+from protrepair.transformer.completion.atom.outcome import GeometryPlacementOutcome
 from protrepair.transformer.completion.shared.domain import ResidueCompletionSite
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 from protrepair.transformer.context import ProteinTransformationContext
@@ -46,9 +47,17 @@ class TerminalAtomPlacementTransformer(
     ) -> ProteinStructureSnapshot:
         """Return one snapshot after terminal atom placement."""
 
+        return self.placement_outcome(context).snapshot
+
+    def placement_outcome(
+        self,
+        context: ProteinTransformationContext,
+    ) -> GeometryPlacementOutcome:
+        """Return the snapshot and OXT skip evidence from terminal placement."""
+
         payload = self.site.payload(context.source_snapshot)
         if payload is None:
-            return context.source_snapshot
+            return GeometryPlacementOutcome(context.source_snapshot)
 
         residue_geometry = payload.residue_geometry
         try:
@@ -57,8 +66,12 @@ class TerminalAtomPlacementTransformer(
                 alpha_carbon=residue_geometry.position("CA"),
                 carbonyl_carbon=residue_geometry.position("C"),
             ).terminal_oxygen(residue_geometry.position("O"))
-        except GeometryPlacementError:
-            return context.source_snapshot
+        except GeometryPlacementError as error:
+            return GeometryPlacementOutcome(
+                snapshot=context.source_snapshot,
+                skipped_atom_names=("OXT",),
+                failure_reason=str(error),
+            )
 
         patch = OrderedAtomPatch.from_atom_coordinates(
             atom_names=(*payload.atom_names(), "OXT"),
@@ -70,4 +83,6 @@ class TerminalAtomPlacementTransformer(
                 oxt_position,
             ),
         )
-        return self.site.apply_patch(context.source_snapshot, patch)
+        return GeometryPlacementOutcome(
+            self.site.apply_patch(context.source_snapshot, patch)
+        )

@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from protrepair.chemistry import ResidueTemplate
-from protrepair.geometry import GeometryPlacementError, Vec3
+from protrepair.geometry import Vec3
 from protrepair.scope import ResidueSetScope
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
@@ -12,7 +12,6 @@ from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import ResidueIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
-from protrepair.transformer.completion.hydrogen.geometry import backbone_hydrogen
 from protrepair.transformer.completion.hydrogen.rotatable import (
     RotatableHydrogenEnvironment,
     RotatableHydrogenSearch,
@@ -159,61 +158,6 @@ class HydrogenResidueSite:
 
         return snapshot.structure.residue_geometry(self.residue_index)
 
-    def next_payload(
-        self,
-        snapshot: ProteinStructureSnapshot,
-    ) -> CompletionResiduePayload | None:
-        """Resolve the next residue payload for backbone propagation."""
-
-        residue_constitution = self.next_residue_constitution(snapshot)
-        residue_geometry = self.next_residue_geometry(snapshot)
-        if (
-            self.next_residue_index is None
-            or residue_constitution is None
-            or residue_geometry is None
-        ):
-            return None
-
-        return CompletionResiduePayload(
-            residue_site=residue_constitution,
-            residue_geometry=residue_geometry,
-            formal_charge_by_atom_name=(
-                snapshot.structure.residue_formal_charge_by_atom_name(
-                    self.next_residue_index
-                )
-            ),
-        )
-
-    def next_residue_constitution(
-        self,
-        snapshot: ProteinStructureSnapshot,
-    ) -> ResidueSite | None:
-        """Resolve the next residue constitution for backbone propagation."""
-
-        if self.next_residue_index is None:
-            return None
-
-        if self.next_residue_index.value >= len(
-            snapshot.structure.constitution.residue_slots
-        ):
-            return None
-
-        return snapshot.structure.constitution.residue_site_at(self.next_residue_index)
-
-    def next_residue_geometry(
-        self,
-        snapshot: ProteinStructureSnapshot,
-    ) -> ResidueGeometry | None:
-        """Resolve the next residue geometry for backbone propagation."""
-
-        if self.next_residue_index is None:
-            return None
-
-        if self.next_residue_constitution(snapshot) is None:
-            return None
-
-        return snapshot.structure.residue_geometry(self.next_residue_index)
-
     def patch(
         self,
         snapshot: ProteinStructureSnapshot,
@@ -227,22 +171,6 @@ class HydrogenResidueSite:
                 "hydrogen site residue "
                 f"{self.template.component_id}@{self.residue_index.value} is missing"
             )
-
-        return OrderedAtomPatch.from_residue_payload(
-            residue_constitution,
-            residue_geometry=residue_geometry,
-        )
-
-    def next_patch(
-        self,
-        snapshot: ProteinStructureSnapshot,
-    ) -> OrderedAtomPatch | None:
-        """Project the next residue into one canonical completion patch if present."""
-
-        residue_constitution = self.next_residue_constitution(snapshot)
-        residue_geometry = self.next_residue_geometry(snapshot)
-        if residue_constitution is None or residue_geometry is None:
-            return None
 
         return OrderedAtomPatch.from_residue_payload(
             residue_constitution,
@@ -279,48 +207,6 @@ class HydrogenResidueSite:
             ),
         )
 
-    def backbone_atom_input(
-        self,
-        snapshot: ProteinStructureSnapshot,
-    ) -> AtomInput:
-        """Derive the atom domain touched by backbone-hydrogen propagation."""
-
-        residue_constitution = self.residue_constitution(snapshot)
-        if residue_constitution is None:
-            raise ValueError(
-                "hydrogen site residue "
-                f"{self.template.component_id}@{self.residue_index.value} is missing"
-            )
-
-        atom_indices = list(
-            snapshot.structure.constitution.atom_indices_for_residue_index(
-                self.residue_index
-            )
-        )
-        next_residue_constitution = self.next_residue_constitution(snapshot)
-        if next_residue_constitution is not None:
-            assert self.next_residue_index is not None
-            atom_indices.extend(
-                snapshot.structure.constitution.atom_indices_for_residue_index(
-                    self.next_residue_index
-                )
-            )
-
-        return AtomInput(
-            atom_indices=tuple(atom_indices),
-            basis=AtomInputBasis.RESIDUEWISE,
-            selected_scope=ResidueSetScope(
-                residue_ids=(
-                    (residue_constitution.residue_id,)
-                    if next_residue_constitution is None
-                    else (
-                        residue_constitution.residue_id,
-                        next_residue_constitution.residue_id,
-                    )
-                )
-            ),
-        )
-
     def optimize_rotatable(
         self,
         search: RotatableHydrogenSearch,
@@ -334,30 +220,6 @@ class HydrogenResidueSite:
 
         return self.environment.is_disulfide_bonded(self.residue_index)
 
-    def backbone_hydrogen_position(
-        self,
-        snapshot: ProteinStructureSnapshot,
-    ) -> Vec3 | None:
-        """Return the propagated backbone-hydrogen position for the next residue."""
-
-        if not self.includes_backbone_hydrogen():
-            return None
-
-        next_patch = self.next_patch(snapshot)
-        if next_patch is None:
-            return None
-
-        try:
-            return Vec3.from_iterable(
-                backbone_hydrogen(
-                    list(next_patch.position("CA")),
-                    list(next_patch.position("N")),
-                    list(self.patch(snapshot).position("C")),
-                )
-            )
-        except GeometryPlacementError:
-            return None
-
     def apply_patch(
         self,
         snapshot: ProteinStructureSnapshot,
@@ -369,31 +231,3 @@ class HydrogenResidueSite:
             return snapshot
 
         return patch.apply_to_snapshot(snapshot, self.residue_index)
-
-    def propagate_backbone_hydrogen(
-        self,
-        snapshot: ProteinStructureSnapshot,
-        position: Vec3,
-    ) -> ProteinStructureSnapshot:
-        """Materialize one propagated backbone hydrogen onto the next residue."""
-
-        if self.next_residue_index is None:
-            return snapshot
-
-        next_residue_constitution = self.next_residue_constitution(snapshot)
-        next_residue_geometry = self.next_residue_geometry(snapshot)
-        if (
-            next_residue_constitution is None
-            or next_residue_geometry is None
-            or next_residue_constitution.has_atom_site("H")
-        ):
-            return snapshot
-
-        next_patch = OrderedAtomPatch.from_residue_payload(
-            next_residue_constitution,
-            residue_geometry=next_residue_geometry,
-        ).append_atoms(("H",), (position,))
-        return next_patch.apply_to_snapshot(
-            snapshot,
-            self.next_residue_index,
-        )

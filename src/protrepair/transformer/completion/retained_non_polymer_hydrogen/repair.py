@@ -427,7 +427,12 @@ def _hydrogenate_retained_non_polymer_payload(
                     issues=contradiction_issues
                     + (
                         _retained_non_polymer_template_hydrogen_placement_issue(
-                            payload.residue_site
+                            payload.residue_site,
+                            atom_names=tuple(
+                                atom_name
+                                for atom_name in template.expected_hydrogen_atom_names()
+                                if not payload.has_atom(atom_name)
+                            ),
                         ),
                     ),
                 )
@@ -1300,6 +1305,8 @@ def _rdkit_fallback_visibility_details(rdkit_backend_version: str) -> str:
 
 def _retained_non_polymer_template_hydrogen_placement_issue(
     residue_site: ResidueSite,
+    *,
+    atom_names: tuple[str, ...],
 ) -> ValidationIssue:
     """Return one warning for failed template-backed ligand H placement."""
 
@@ -1312,6 +1319,8 @@ def _retained_non_polymer_template_hydrogen_placement_issue(
             "failed; leaving residue unchanged"
         ),
         residue_id=residue_site.residue_id,
+        component_id=residue_site.component_id,
+        atom_names=atom_names,
     )
 
 
