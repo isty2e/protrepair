@@ -159,5 +159,3 @@ Before tagging:
 - Release-facing documentation contains no stale historical-plan, old import-root,
   or removed package-path references.
 - `git status --short` is empty.
-- No `tk ready`, `tk list --status=open`, or `tk list --status=in_progress`
-  tickets remain for the release scope.

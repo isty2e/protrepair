@@ -3,8 +3,7 @@
 *.db
 .tmp/
 
-# Local project management notes
-.tickets/
+# Local interpreter selection
 .python-version
 
 # Local development scripts, except release-gate tooling
