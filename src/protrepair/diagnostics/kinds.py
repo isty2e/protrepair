@@ -29,6 +29,7 @@ class ValidationIssueKind(str, Enum):
     UNEXPECTED_ATOMS = "unexpected_atoms"
     INVALID_BACKBONE = "invalid_backbone"
     INVALID_GEOMETRY = "invalid_geometry"
+    GEOMETRY_PLACEMENT_SKIPPED = "geometry_placement_skipped"
     INVALID_STEREOCHEMISTRY = "invalid_stereochemistry"
     REFINEMENT_REJECTED = "refinement_rejected"
     UNSUPPORTED_TEMPLATE_REPAIR = "unsupported_template_repair"

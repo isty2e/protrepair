@@ -248,3 +248,40 @@ def test_validation_issue_rejects_raw_kind_and_severity_strings() -> None:
             severity=cast(IssueSeverity, IssueSeverity.ERROR.value),
             message="clash",
         )
+
+
+def test_validation_issue_exposes_atom_scoped_residue_evidence() -> None:
+    """Residue-local issues should expose optional atom impacts structurally."""
+
+    residue_id = ResidueId("A", 1)
+    issue = ValidationIssue.for_residue(
+        kind=ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED,
+        severity=IssueSeverity.WARNING,
+        message="placement skipped",
+        residue_id=residue_id,
+        component_id="SER",
+        atom_names=(" og ",),
+    )
+
+    assert issue.residue_id == residue_id
+    assert issue.component_id == "SER"
+    assert issue.atom_names == ("OG",)
+    assert issue.affects_atom("og")
+
+
+def test_validation_issue_rejects_impacts_outside_its_scope() -> None:
+    """Issue atom impacts must remain inside the owning event scope."""
+
+    with pytest.raises(ValueError, match="inside the event scope"):
+        ValidationIssue(
+            kind=ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED,
+            severity=IssueSeverity.WARNING,
+            message="placement skipped",
+            scope=EventScope.for_residue(ResidueId("A", 1)),
+            residue_impacts=(
+                ResidueAtomImpact(
+                    residue_id=ResidueId("A", 2),
+                    atom_names=("OG",),
+                ),
+            ),
+        )

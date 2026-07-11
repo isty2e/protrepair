@@ -19,7 +19,7 @@ from tests.support.structure_summary import summarize_structure
 from protrepair.diagnostics import (
     ValidationIssueKind,
 )
-from protrepair.geometry import Vec3
+from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.io import read_structure, read_structure_string
 from protrepair.io.ingress_policy import (
     LigandHandling,
@@ -64,6 +64,55 @@ def test_single_residue_chain_gets_only_n_terminal_backbone_hydrogens() -> None:
 
     assert {"H1", "H2", "H3"}.issubset(set(residue.atom_site_names()))
     assert "H" not in residue.atom_site_names()
+
+
+def test_polymer_hydrogen_geometry_failure_reports_skipped_atoms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recoverable polymer-H placement failure should remain observable."""
+
+    structure = build_canonical_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (_alanine_residue(ResidueId("A", 1), x_offset=0.0),),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="polymer-hydrogen-placement-failure",
+    )
+
+    def fail_hydrogen_patch(
+        *args: object,
+        **kwargs: object,
+    ) -> OrderedAtomPatch:
+        del args, kwargs
+        raise GeometryPlacementError("synthetic degenerate hydrogen frame")
+
+    monkeypatch.setattr(
+        hydrogen_core,
+        "generate_hydrogen_patch",
+        fail_hydrogen_patch,
+    )
+
+    result = materialize_hydrogens_core(structure)
+
+    issue = next(
+        issue
+        for issue in result.issues
+        if issue.kind is ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED
+    )
+    assert issue.residue_id == ResidueId("A", 1)
+    assert issue.component_id == "ALA"
+    assert issue.atom_names
+    repaired_residue = result.structure.constitution.residue_or_ligand(
+        ResidueId("A", 1)
+    )
+    assert repaired_residue is not None
+    assert all(
+        not repaired_residue.has_atom_site(atom_name)
+        for atom_name in issue.atom_names
+    )
 
 
 def test_proline_does_not_receive_backbone_hydrogen_from_previous_residue() -> None:
@@ -610,6 +659,10 @@ def test_hydrogen_placement_is_stable_on_already_hydrogenated_input() -> None:
 
     assert summarize_structure(second_pass.structure) == summarize_structure(
         first_pass.structure
+    )
+    assert not any(
+        issue.kind is ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED
+        for issue in second_pass.issues
     )
 
 

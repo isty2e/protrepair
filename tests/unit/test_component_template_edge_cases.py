@@ -476,6 +476,10 @@ def test_heavy_repair_adds_topology_for_terminal_oxt() -> None:
 
     assert has_atom(result.structure, residue_id, "OXT")
     assert has_template_topology_bond(result.structure, residue_id, "C", "OXT")
+    assert not any(
+        issue.kind is ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED
+        for issue in result.issues
+    )
 
 
 def test_integer_hydrogen_plan_arguments_are_accepted_end_to_end() -> None:
@@ -701,7 +705,7 @@ def test_repair_heavy_atoms_does_not_duplicate_existing_oxt() -> None:
 
 
 def test_terminal_oxt_augmentation_skips_degenerate_terminal_frame() -> None:
-    """Undefined terminal geometry should be a no-op, not a false repair event."""
+    """Undefined terminal geometry should report OXT as skipped, not repaired."""
 
     structure = build_test_structure(
         residues=(
@@ -726,10 +730,16 @@ def test_terminal_oxt_augmentation_skips_degenerate_terminal_frame() -> None:
     assert not any(
         event.kind is RepairEventKind.C_TERMINAL_OXT_ADDED for event in result.repairs
     )
+    assert any(
+        issue.kind is ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED
+        and issue.atom_names == ("OXT",)
+        and issue.affects_atom("oxt")
+        for issue in result.issues
+    )
 
 
 def test_repair_heavy_atoms_skips_degenerate_terminal_oxt_frame() -> None:
-    """Direct heavy repair should not report OXT when terminal placement no-ops."""
+    """Direct heavy repair should report skipped OXT without a repair event."""
 
     structure = build_test_structure(
         residues=(
@@ -754,10 +764,15 @@ def test_repair_heavy_atoms_skips_degenerate_terminal_oxt_frame() -> None:
     assert not any(
         event.kind is RepairEventKind.C_TERMINAL_OXT_ADDED for event in result.repairs
     )
+    assert any(
+        issue.kind is ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED
+        and issue.atom_names == ("OXT",)
+        for issue in result.issues
+    )
 
 
 def test_repair_heavy_atoms_keeps_backbone_o_when_sidechain_placement_fails() -> None:
-    """A later side-chain placement failure should not discard a valid O repair."""
+    """Partial placement should report repaired O separately from skipped OG."""
 
     structure = build_test_structure(
         residues=(
@@ -784,6 +799,12 @@ def test_repair_heavy_atoms_keeps_backbone_o_when_sidechain_placement_fails() ->
         event.kind is RepairEventKind.HEAVY_ATOMS_ADDED
         and event.atom_names == ("O",)
         for event in result.repairs
+    )
+    assert any(
+        issue.kind is ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED
+        and issue.atom_names == ("OG",)
+        and issue.component_id == "SER"
+        for issue in result.issues
     )
 
 

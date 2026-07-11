@@ -231,6 +231,7 @@ class RotatableHydrogenSearch:
                     dihedral_degrees=self.dihedral + increment,
                 )
             except GeometryPlacementError:
+                # A torsion slot is an internal probe; later candidates remain valid.
                 continue
 
             candidates.append(candidate)
