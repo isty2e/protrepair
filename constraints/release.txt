@@ -2,7 +2,7 @@
 #
 # Keep public dependency ranges in pyproject.toml. This file pins the
 # release-gate environment used by CI, local release verification, and
-# installed-wheel smoke tests.
+# installed-artifact smoke tests.
 basedpyright==1.39.9
 gemmi==0.7.5
 hatch-vcs==0.5.0

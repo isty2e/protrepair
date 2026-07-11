@@ -14,6 +14,31 @@ against the upstream PRAS implementation during migration. The legacy source
 trees have been removed from the repository working tree; provenance now lives
 in git history and the upstream project.
 
+## RDKit
+
+- Runtime dependency: `rdkit`
+- PyPI package: `rdkit`
+- Upstream project: `rdkit/rdkit`
+- RDKit source license: BSD 3-Clause
+- PyPI package license: BSD 3-Clause
+- Bundled snapshot license text: [vendor/rdkit/LICENSE](vendor/rdkit/LICENSE)
+
+ProtRepair uses RDKit as a required runtime dependency for retained-ligand
+chemistry and local refinement. It also includes a static element-radius
+snapshot in `src/protrepair/chemistry/radii.py` generated from
+`rdkit==2026.3.2` (`rdBase.rdkitVersion=2026.03.2`) via
+`rdkit.Chem.GetPeriodicTable().GetRvdw` and `GetRcovalent` for atomic numbers
+1 through 118. The snapshot is committed so diagnostics do not import RDKit at
+radius-lookup time.
+
+The pinned RDKit source attributes covalent radii to Cordero et al.
+(DOI `10.1039/B801115J`) and states that `1.9` is used when a covalent radius is
+unknown. It attributes van der Waals radii to BODR v10.1 and explicitly uses
+`2.0` for listed superheavy elements missing BODR values. ProtRepair preserves
+those upstream source-default distinctions in its radius resolution metadata.
+The complete RDKit BSD 3-Clause copyright notice, conditions, and disclaimer
+are reproduced in `vendor/rdkit/LICENSE` and included in release artifacts.
+
 ## FASPR
 
 - Upstream project: `tommyhuangthu/FASPR`

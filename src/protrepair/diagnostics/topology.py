@@ -10,12 +10,16 @@ The 3.0 A ambiguity cutoff matches HTMD's permissive disulfide candidate search.
 
 from collections import defaultdict
 from dataclasses import dataclass
+from math import isfinite
 
 from protrepair.diagnostics.events import EventScope, ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.geometry import InternalCoordinateFrame
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.disulfide import (
+    disulfide_bonded_cysteine_residue_ids,
+)
 from protrepair.structure.labels import AtomRef, ResidueId
 
 CIS_PEPTIDE_ABS_OMEGA_MAX_DEGREES = 30.0
@@ -40,6 +44,26 @@ class LikelyDisulfideBond:
     right_residue_id: ResidueId
     sg_distance_angstrom: float
 
+    def __post_init__(self) -> None:
+        if self.left_residue_id == self.right_residue_id:
+            raise ValueError("likely disulfide evidence requires two residues")
+        if self.right_residue_id < self.left_residue_id:
+            left_residue_id = self.left_residue_id
+            object.__setattr__(self, "left_residue_id", self.right_residue_id)
+            object.__setattr__(self, "right_residue_id", left_residue_id)
+        if (
+            not isfinite(self.sg_distance_angstrom)
+            or self.sg_distance_angstrom <= 0.0
+        ):
+            raise ValueError(
+                "likely disulfide evidence requires a finite positive distance"
+            )
+
+    def residue_pair(self) -> tuple[ResidueId, ResidueId]:
+        """Return the canonically ordered candidate residue pair."""
+
+        return (self.left_residue_id, self.right_residue_id)
+
 
 @dataclass(frozen=True, slots=True)
 class DisulfideCandidate:
@@ -48,6 +72,15 @@ class DisulfideCandidate:
     residue_id: ResidueId
     sg_distance_angstrom: float
 
+    def __post_init__(self) -> None:
+        if (
+            not isfinite(self.sg_distance_angstrom)
+            or self.sg_distance_angstrom <= 0.0
+        ):
+            raise ValueError(
+                "disulfide candidates require a finite positive distance"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class AmbiguousDisulfideFinding:
@@ -55,6 +88,21 @@ class AmbiguousDisulfideFinding:
 
     residue_id: ResidueId
     candidates: tuple[DisulfideCandidate, ...]
+
+    def __post_init__(self) -> None:
+        candidates = tuple(self.candidates)
+        if len(candidates) < 2:
+            raise ValueError(
+                "ambiguous disulfide findings require multiple candidates"
+            )
+        candidate_residue_ids = tuple(
+            candidate.residue_id for candidate in candidates
+        )
+        if self.residue_id in candidate_residue_ids:
+            raise ValueError("ambiguous disulfide candidates must be distinct")
+        if len(set(candidate_residue_ids)) != len(candidate_residue_ids):
+            raise ValueError("ambiguous disulfide candidates must not repeat")
+        object.__setattr__(self, "candidates", candidates)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,9 +237,37 @@ def detect_cis_peptides(
 def detect_disulfide_topology(
     structure: ProteinStructure,
 ) -> tuple[tuple[LikelyDisulfideBond, ...], tuple[AmbiguousDisulfideFinding, ...]]:
-    """Return likely and ambiguous disulfide relationships across one structure."""
+    """Return raw geometric disulfide evidence across all CYS SG sites."""
 
-    cysteine_sites = cysteine_sulfur_sites(structure)
+    return _classify_disulfide_evidence(
+        structure,
+        cysteine_sites=cysteine_sulfur_sites(structure),
+    )
+
+
+def detect_unassigned_disulfide_evidence(
+    structure: ProteinStructure,
+) -> tuple[tuple[LikelyDisulfideBond, ...], tuple[AmbiguousDisulfideFinding, ...]]:
+    """Return planning evidence over canonically unassigned CYS SG sites."""
+
+    assigned_residue_ids = disulfide_bonded_cysteine_residue_ids(structure)
+    return _classify_disulfide_evidence(
+        structure,
+        cysteine_sites=tuple(
+            site
+            for site in cysteine_sulfur_sites(structure)
+            if site.residue_id not in assigned_residue_ids
+        ),
+    )
+
+
+def _classify_disulfide_evidence(
+    structure: ProteinStructure,
+    *,
+    cysteine_sites: tuple[ResidueSite, ...],
+) -> tuple[tuple[LikelyDisulfideBond, ...], tuple[AmbiguousDisulfideFinding, ...]]:
+    """Classify geometric disulfide evidence over one explicit CYS projection."""
+
     candidate_pairs: list[tuple[int, int, float]] = []
     adjacency: dict[int, list[tuple[int, float]]] = defaultdict(list)
     for left_index, left_site in enumerate(cysteine_sites):
@@ -208,7 +284,10 @@ def detect_disulfide_topology(
                 )
             )
             pair_distance = left_geometry.distance_to(right_geometry)
-            if pair_distance > AMBIGUOUS_DISULFIDE_DISTANCE_MAX_ANGSTROM:
+            if (
+                pair_distance <= 0.0
+                or pair_distance > AMBIGUOUS_DISULFIDE_DISTANCE_MAX_ANGSTROM
+            ):
                 continue
 
             candidate_pairs.append((left_index, right_index, pair_distance))

@@ -18,6 +18,7 @@ from protrepair.chemistry import (
 from protrepair.chemistry.inference import (
     retained_non_polymer_evidence as evidence_inference,
 )
+from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
@@ -30,11 +31,18 @@ from protrepair.state.hydrogen_expectation import (
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
 )
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
 
 try:
     from rdkit import Chem
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - required dependency import guard
     Chem = None
 
 RDKIT_AVAILABLE = Chem is not None
@@ -132,6 +140,28 @@ def test_hydrogen_expectation_model_suppresses_disulfide_hg() -> None:
         source_format=FileFormat.PDB,
         source_name="disulfide-hydrogen-suppression",
     )
+    structure = ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    atom_index_1=structure.constitution.atom_index(
+                        AtomRef(ResidueId("A", 1), "SG")
+                    ),
+                    atom_index_2=structure.constitution.atom_index(
+                        AtomRef(ResidueId("A", 2), "SG")
+                    ),
+                    relationship_type=BondRelationshipType.DISULFIDE,
+                    provenance=BondProvenance.SOURCE_EXPLICIT,
+                ),
+            ),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
 
     model = derive_structure_hydrogen_expectation_model(
         structure,
@@ -192,10 +222,10 @@ def test_hydrogen_expectation_model_uses_override_for_unknown_ligand() -> None:
     assert not resolution.failure_reason
 
 
-def test_hydrogen_expectation_model_degrades_no_rdkit_override(
+def test_hydrogen_expectation_model_propagates_no_rdkit_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No-RDKit evidence expectation should become unresolved, not leak."""
+    """Required RDKit capability failure should not become unresolved chemistry."""
 
     monkeypatch.setattr(evidence_inference, "Chem", None)
     structure = build_structure(
@@ -215,24 +245,55 @@ def test_hydrogen_expectation_model_degrades_no_rdkit_override(
         source_name="no-rdkit-override-hydrogen-expectation",
     )
 
-    model = derive_structure_hydrogen_expectation_model(
-        structure,
-        component_library=build_default_component_library(),
-        retained_non_polymer_chemistry_evidence=(
-            RetainedNonPolymerChemistryOverride(
-                residue_id=ResidueId("L", 1),
-                smiles="CO",
-                heavy_atom_names=("C1", "O1"),
-            ).to_evidence(),
-        ),
-    )
-    resolution = model.resolution_for_retained_non_polymer(ResidueId("L", 1))
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
+        derive_structure_hydrogen_expectation_model(
+            structure,
+            component_library=build_default_component_library(),
+            retained_non_polymer_chemistry_evidence=(
+                RetainedNonPolymerChemistryOverride(
+                    residue_id=ResidueId("L", 1),
+                    smiles="CO",
+                    heavy_atom_names=("C1", "O1"),
+                ).to_evidence(),
+            ),
+        )
 
-    assert resolution.source is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
-    assert resolution.expected_hydrogen_atom_names == ()
-    assert not resolution.heavy_bond_definitions
-    assert not resolution.hydrogen_bond_definitions
-    assert resolution.failure_reason
+
+def test_hydrogen_expectation_model_propagates_no_rdkit_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fallback capability failure should not become unresolved chemistry."""
+
+    def fail_infer_fallback(*args, **kwargs):
+        raise RdkitUnavailableError("operational RDKit installation is unavailable")
+
+    monkeypatch.setattr(
+        retained_non_polymer_chemistry,
+        "infer_retained_non_polymer_rdkit_fallback",
+        fail_infer_fallback,
+    )
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("O1", "O", Vec3(1.4, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="no-rdkit-fallback-hydrogen-expectation",
+    )
+
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
+        derive_structure_hydrogen_expectation_model(
+            structure,
+            component_library=build_default_component_library(),
+        )
 
 
 def test_hydrogen_expectation_model_respects_disabled_rdkit_fallback(
@@ -279,7 +340,6 @@ def test_hydrogen_expectation_model_respects_disabled_rdkit_fallback(
     assert resolution.failure_reason == "RDKit fallback is disabled"
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_hydrogen_expectation_model_marks_metal_context_not_applicable() -> None:
     """Single-center retained metals should resolve as fallback with no Hs."""
 
@@ -312,7 +372,6 @@ def test_hydrogen_expectation_model_marks_metal_context_not_applicable() -> None
     assert resolution.expected_hydrogen_atom_names == ()
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_retained_fallback_resolution_owns_topology_and_projection_facts() -> None:
     """Fallback resolution should own coordinate-free topology facts."""
 
@@ -366,7 +425,6 @@ def test_retained_fallback_resolution_owns_topology_and_projection_facts() -> No
     assert not resolution.failure_reason
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_retained_readiness_reuses_single_fallback_resolution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1,13 +1,15 @@
 """Scoring context and ranking for parser-witness pre-untangle search."""
 
-from protrepair.chemistry import covalent_radius_angstrom
+from protrepair.chemistry import ElementRadiusLookup, RadiusKind, prepare_radius_lookup
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.diagnostics.clashes import (
     ClashDetectionBasis,
     detect_clashes_from_context,
     prepare_clash_detection_context,
 )
-from protrepair.diagnostics.near_covalent import detect_near_covalent_contacts
+from protrepair.diagnostics.near_covalent import (
+    detect_near_covalent_contacts_from_context,
+)
 from protrepair.diagnostics.parser_readability import (
     RDKitKnownBondLookup,
     RDKitProximityBondCluster,
@@ -118,9 +120,10 @@ def parser_witness_pre_untangle_candidate_rank(
         clash_context,
         focus_residue_ids=frozenset(cluster.residue_ids),
     ).clashes
-    near_covalent_contacts = detect_near_covalent_contacts(
+    near_covalent_contacts = detect_near_covalent_contacts_from_context(
         structure,
-        clashes=focus_clashes,
+        clash_context,
+        focus_residue_ids=frozenset(cluster.residue_ids),
     )
     return ParserWitnessPreUntangleCandidateRank(
         parser_extra_heavy_proximity_bond_count=(
@@ -160,6 +163,11 @@ def parser_witness_scoring_context(
 ) -> ParserWitnessScoringContext:
     """Return cached geometry and target distances for one witness cluster."""
 
+    covalent_radius_lookup = prepare_radius_lookup(
+        _cluster_witness_elements(cluster),
+        RadiusKind.COVALENT,
+    )
+    covalent_radius_lookup.require_complete("parser-witness pre-untangle scoring")
     return ParserWitnessScoringContext(
         cluster=cluster,
         position_by_atom_ref={
@@ -167,7 +175,10 @@ def parser_witness_scoring_context(
             for atom_ref in _ordered_cluster_endpoint_atom_refs(cluster)
         },
         target_distance_by_witness={
-            witness: parser_witness_target_distance_angstrom(witness)
+            witness: parser_witness_target_distance_angstrom(
+                witness,
+                covalent_radius_lookup=covalent_radius_lookup,
+            )
             for witness in cluster.bonds
         },
     )
@@ -205,13 +216,38 @@ def materialized_atom_ref_position(
 
 def parser_witness_target_distance_angstrom(
     witness: RDKitProximityBondWitness,
+    *,
+    covalent_radius_lookup: ElementRadiusLookup | None = None,
 ) -> float:
     """Return the clearance target for one RDKit false-proximity witness."""
 
+    active_radius_lookup = (
+        prepare_radius_lookup(
+            (witness.element_1, witness.element_2),
+            RadiusKind.COVALENT,
+        )
+        if covalent_radius_lookup is None
+        else covalent_radius_lookup
+    )
+    active_radius_lookup.require_kind(
+        RadiusKind.COVALENT,
+        "parser-witness target distance",
+    )
+    active_radius_lookup.require_complete("parser-witness target distance")
     return (
-        covalent_radius_angstrom(witness.element_1)
-        + covalent_radius_angstrom(witness.element_2)
+        active_radius_lookup.radius_angstrom(witness.element_1)
+        + active_radius_lookup.radius_angstrom(witness.element_2)
         + PARSER_WITNESS_PRE_UNTANGLE_COVALENT_MARGIN_ANGSTROM
+    )
+
+
+def _cluster_witness_elements(cluster: RDKitProximityBondCluster) -> tuple[str, ...]:
+    """Return witness elements used by one parser-witness cluster."""
+
+    return tuple(
+        element
+        for witness in cluster.bonds
+        for element in (witness.element_1, witness.element_2)
     )
 
 

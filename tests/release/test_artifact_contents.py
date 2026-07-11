@@ -54,9 +54,22 @@ def test_built_wheel_contains_runtime_assets_and_notices(
 
     with ZipFile(built_release_artifacts.wheel_path) as archive:
         names = frozenset(archive.namelist())
+        notices_bytes = _zip_member_bytes(
+            archive,
+            ".dist-info/licenses/THIRD_PARTY_NOTICES.md",
+        )
+        rdkit_license_bytes = _zip_member_bytes(
+            archive,
+            ".dist-info/licenses/vendor/rdkit/LICENSE",
+        )
+        radii_source_bytes = _zip_member_bytes(
+            archive,
+            "protrepair/chemistry/radii.py",
+        )
 
     assert {
         "protrepair/py.typed",
+        "protrepair/chemistry/radii.py",
         "protrepair/chemistry/resources/nonstandard_components.json.gz",
         "protrepair/chemistry/resources/retained_non_polymer_components.json.gz",
         "protrepair/packing/faspr/bin/FASPR",
@@ -64,6 +77,7 @@ def test_built_wheel_contains_runtime_assets_and_notices(
     } <= names
     assert _has_suffix(names, ".dist-info/licenses/LICENSE")
     assert _has_suffix(names, ".dist-info/licenses/THIRD_PARTY_NOTICES.md")
+    assert _has_suffix(names, ".dist-info/licenses/vendor/rdkit/LICENSE")
     assert _has_suffix(names, ".dist-info/licenses/vendor/faspr/LICENSE")
     assert _has_suffix(
         names,
@@ -71,6 +85,24 @@ def test_built_wheel_contains_runtime_assets_and_notices(
     )
     assert _has_suffix(names, ".dist-info/licenses/vendor/faspr/PROVENANCE.md")
     assert _has_suffix(names, ".dist-info/licenses/vendor/faspr/README.upstream.md")
+
+    notices = notices_bytes.decode("utf-8")
+
+    assert "src/protrepair/chemistry/radii.py" in notices
+    assert "rdkit==2026.3.2" in notices
+    assert "GetRvdw" in notices
+    assert "GetRcovalent" in notices
+    assert notices_bytes == (REPOSITORY_ROOT / "THIRD_PARTY_NOTICES.md").read_bytes()
+    assert (
+        rdkit_license_bytes
+        == (REPOSITORY_ROOT / "vendor" / "rdkit" / "LICENSE").read_bytes()
+    )
+    assert (
+        radii_source_bytes
+        == (
+            REPOSITORY_ROOT / "src" / "protrepair" / "chemistry" / "radii.py"
+        ).read_bytes()
+    )
 
 
 def test_built_sdist_contains_release_sources_and_vendor_snapshot(
@@ -80,8 +112,22 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
 
     with tarfile.open(built_release_artifacts.sdist_path) as archive:
         names = frozenset(archive.getnames())
+        notices_bytes = _tar_member_bytes(archive, "/THIRD_PARTY_NOTICES.md")
+        rdkit_license_bytes = _tar_member_bytes(
+            archive,
+            "/vendor/rdkit/LICENSE",
+        )
+        radius_policy_bytes = _tar_member_bytes(
+            archive,
+            "/docs/radius-policy.md",
+        )
+        radii_source_bytes = _tar_member_bytes(
+            archive,
+            "/src/protrepair/chemistry/radii.py",
+        )
 
     assert _has_suffix(names, "/src/protrepair/py.typed")
+    assert _has_suffix(names, "/src/protrepair/chemistry/radii.py")
     assert _has_suffix(
         names,
         "/src/protrepair/chemistry/resources/nonstandard_components.json.gz",
@@ -92,8 +138,10 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
     )
     assert _has_suffix(names, "/constraints/release.txt")
     assert _has_suffix(names, "/docs/release-checklist.md")
-    assert _has_suffix(names, "/scripts/run_installed_wheel_smoke.py")
+    assert _has_suffix(names, "/docs/radius-policy.md")
+    assert _has_suffix(names, "/scripts/run_installed_artifact_smoke.py")
     assert _has_suffix(names, "/THIRD_PARTY_NOTICES.md")
+    assert _has_suffix(names, "/vendor/rdkit/LICENSE")
 
     vendor_root = REPOSITORY_ROOT / "vendor/faspr"
     for vendor_path in sorted(vendor_root.rglob("*")):
@@ -107,11 +155,48 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
     assert not any("/.tickets/" in name for name in names)
     assert not any("/.tmp/" in name for name in names)
     assert not any("/dist/" in name for name in names)
-    smoke_script = "/scripts/run_installed_wheel_smoke.py"
+    smoke_script = "/scripts/run_installed_artifact_smoke.py"
     assert not any(
         "/scripts/" in name and not name.endswith(smoke_script)
         for name in names
     )
+    assert notices_bytes == (REPOSITORY_ROOT / "THIRD_PARTY_NOTICES.md").read_bytes()
+    assert (
+        rdkit_license_bytes
+        == (REPOSITORY_ROOT / "vendor" / "rdkit" / "LICENSE").read_bytes()
+    )
+    assert (
+        radius_policy_bytes
+        == (REPOSITORY_ROOT / "docs" / "radius-policy.md").read_bytes()
+    )
+    assert (
+        radii_source_bytes
+        == (
+            REPOSITORY_ROOT / "src" / "protrepair" / "chemistry" / "radii.py"
+        ).read_bytes()
+    )
+
+
+def _tar_member_bytes(archive: tarfile.TarFile, suffix: str) -> bytes:
+    """Return one uniquely identified sdist member payload by path suffix."""
+
+    matching_members = tuple(
+        member for member in archive.getmembers() if member.name.endswith(suffix)
+    )
+    assert len(matching_members) == 1
+    extracted = archive.extractfile(matching_members[0])
+    assert extracted is not None
+    return extracted.read()
+
+
+def _zip_member_bytes(archive: ZipFile, suffix: str) -> bytes:
+    """Return one uniquely identified wheel member payload by path suffix."""
+
+    matching_members = tuple(
+        member for member in archive.infolist() if member.filename.endswith(suffix)
+    )
+    assert len(matching_members) == 1
+    return archive.read(matching_members[0])
 
 
 def _has_suffix(names: frozenset[str], suffix: str) -> bool:

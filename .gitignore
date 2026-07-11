@@ -9,7 +9,7 @@
 
 # Local development scripts, except release-gate tooling
 scripts/*
-!scripts/run_installed_wheel_smoke.py
+!scripts/run_installed_artifact_smoke.py
 
 # Python caches and environments
 __pycache__/

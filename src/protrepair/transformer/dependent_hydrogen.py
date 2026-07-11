@@ -162,7 +162,7 @@ def _heavy_moved_polymer_residue_ids(
             continue
 
         atom_site = constitution.atom_site_at(atom_index)
-        if atom_site.element == "H":
+        if atom_site.is_hydrogen():
             continue
 
         residue_index = constitution.residue_index_for_atom_index(atom_index)
@@ -192,7 +192,7 @@ def _supports_dependent_hydrogen_revalidation(
     if template is None or not template.can_add_hydrogens():
         return False
 
-    return any(site.element == "H" for site in residue_site.atom_sites)
+    return any(site.is_hydrogen() for site in residue_site.atom_sites)
 
 
 def _is_coordinate_only_hydrogen_rematerialization(
@@ -220,7 +220,7 @@ def _is_coordinate_only_hydrogen_rematerialization(
             continue
 
         atom_site = current_structure.constitution.atom_site_at(atom_index)
-        if atom_site.element != "H":
+        if not atom_site.is_hydrogen():
             return False
 
     return True
@@ -238,7 +238,7 @@ def _hydrogen_atom_indices_with_changed_positions(
         for index in range(current_structure.geometry.atom_count())
     ):
         atom_site = current_structure.constitution.atom_site_at(atom_index)
-        if atom_site.element != "H":
+        if not atom_site.is_hydrogen():
             continue
 
         current_position = current_structure.geometry.atom_geometry(

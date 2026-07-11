@@ -26,6 +26,7 @@ from protrepair.state import (
     StructureIntrinsicGeometryFacts,
     StructureParserCompatibilityFacts,
 )
+from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.refinement.speculative_planning import (
@@ -157,6 +158,9 @@ def evaluate_workflow_phase_outcomes(
         structure,
         component_library=component_library,
     )
+    disulfide_hydrogen_facts = StructureDisulfideHydrogenFacts.from_structure(
+        structure
+    )
     intrinsic_geometry_facts = derive_structure_intrinsic_geometry_facts(
         structure,
         component_library=component_library,
@@ -182,6 +186,7 @@ def evaluate_workflow_phase_outcomes(
         ),
         _chemistry_phase_outcome(
             chemistry_readiness_facts=chemistry_readiness_facts,
+            disulfide_hydrogen_facts=disulfide_hydrogen_facts,
             blockers=blockers,
         ),
         _intrinsic_geometry_phase_outcome(
@@ -494,24 +499,31 @@ def _coverage_phase_outcome(
 def _chemistry_phase_outcome(
     *,
     chemistry_readiness_facts: StructureChemistryReadinessFacts,
+    disulfide_hydrogen_facts: StructureDisulfideHydrogenFacts,
     blockers: tuple[WorkflowBlocker, ...],
 ) -> WorkflowPhaseOutcome:
-    """Return final reporting outcome for chemistry augmentation."""
+    """Return final reporting outcome for chemistry normalization."""
 
     blocking_scopes = _blocking_scopes_for_phase(
         blockers,
-        phase=WorkflowPlanningPhase.CHEMISTRY_AUGMENTATION,
+        phase=WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION,
     )
     if blocking_scopes:
         return WorkflowPhaseOutcome(
-            phase=WorkflowPlanningPhase.CHEMISTRY_AUGMENTATION,
+            phase=WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION,
             status=WorkflowPhaseStatus.BLOCKED,
             blocking_scopes=blocking_scopes,
-            details="chemistry augmentation stopped on unresolved readiness support",
+            details="chemistry normalization stopped on unresolved support",
+        )
+    if disulfide_hydrogen_facts.has_contradictions():
+        return WorkflowPhaseOutcome(
+            phase=WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION,
+            status=WorkflowPhaseStatus.UNRESOLVED,
+            details="disulfide-incompatible thiol hydrogens remain present",
         )
     if not chemistry_readiness_facts.component_support_state.is_fully_supported():
         return WorkflowPhaseOutcome(
-            phase=WorkflowPlanningPhase.CHEMISTRY_AUGMENTATION,
+            phase=WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION,
             status=WorkflowPhaseStatus.UNRESOLVED,
             details="chemistry readiness remains unsupported",
         )
@@ -520,13 +532,13 @@ def _chemistry_phase_outcome(
         is not HydrogenCoverageState.COMPLETE
     ):
         return WorkflowPhaseOutcome(
-            phase=WorkflowPlanningPhase.CHEMISTRY_AUGMENTATION,
+            phase=WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION,
             status=WorkflowPhaseStatus.UNRESOLVED,
-            details="hydrogen augmentation remains incomplete",
+            details="hydrogen completion remains incomplete",
         )
 
     return WorkflowPhaseOutcome(
-        phase=WorkflowPlanningPhase.CHEMISTRY_AUGMENTATION,
+        phase=WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION,
         status=WorkflowPhaseStatus.CLEAR,
     )
 

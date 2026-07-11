@@ -270,7 +270,7 @@ def _selected_residue_sidechain_atom_names(
     present_heavy_atom_names = {
         atom_site.name
         for atom_site in residue.atom_sites
-        if atom_site.element != "H"
+        if not atom_site.is_hydrogen()
     }
     sidechain_heavy_atom_names = {
         atom_name
@@ -282,7 +282,7 @@ def _selected_residue_sidechain_atom_names(
 
     selected_atom_names = set(sidechain_heavy_atom_names)
     for atom_site in residue.atom_sites:
-        if atom_site.element != "H":
+        if not atom_site.is_hydrogen():
             continue
 
         anchor_atom_name = explicit_anchor_by_name.get(atom_site.name)

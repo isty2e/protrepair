@@ -20,6 +20,10 @@ from protrepair.state import (
     StructureParserCompatibilityFacts,
     derive_structure_coverage_and_chemistry_readiness_facts,
 )
+from protrepair.state.structure_topology import (
+    StructureDisulfideHydrogenFacts,
+    StructureDisulfideTopologyFacts,
+)
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.polymer_blueprint import (
     PolymerBlueprint,
@@ -88,6 +92,12 @@ def test_internal_gap_deficit_becomes_required_with_donor_context(
     deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            coverage_facts.carrier
+        ),
+        disulfide_hydrogen_facts=StructureDisulfideHydrogenFacts.from_structure(
+            coverage_facts.carrier
+        ),
         requested_goals=RequestedGoalSet(),
         planning_context=WorkflowPlanningContext(
             span_donor_availability=WorkflowSpanDonorAvailability.AVAILABLE,
@@ -146,6 +156,12 @@ def test_workflow_state_deficit_keeps_prefix_terminal_gap_optional_by_default() 
     deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            coverage_facts.carrier
+        ),
+        disulfide_hydrogen_facts=StructureDisulfideHydrogenFacts.from_structure(
+            coverage_facts.carrier
+        ),
         requested_goals=RequestedGoalSet(),
         planning_context=WorkflowPlanningContext(
             span_donor_availability=WorkflowSpanDonorAvailability.AVAILABLE,
@@ -244,6 +260,12 @@ def test_workflow_state_deficit_marks_unsupported_hydrogen_burden_blocked() -> N
     deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            coverage_facts.carrier
+        ),
+        disulfide_hydrogen_facts=StructureDisulfideHydrogenFacts.from_structure(
+            coverage_facts.carrier
+        ),
         requested_goals=RequestedGoalSet(
             goals=(
                 requested_process_goal(
@@ -309,6 +331,12 @@ def test_workflow_state_deficit_records_unsupported_topology_when_optional() -> 
     deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            coverage_facts.carrier
+        ),
+        disulfide_hydrogen_facts=StructureDisulfideHydrogenFacts.from_structure(
+            coverage_facts.carrier
+        ),
         requested_goals=RequestedGoalSet(),
         planning_context=WorkflowPlanningContext(),
     )
@@ -368,6 +396,12 @@ def test_parser_visible_proximity_burden_becomes_parser_compatibility_deficit(
     deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            coverage_facts.carrier
+        ),
+        disulfide_hydrogen_facts=StructureDisulfideHydrogenFacts.from_structure(
+            coverage_facts.carrier
+        ),
         requested_goals=RequestedGoalSet(),
         planning_context=WorkflowPlanningContext(),
         parser_compatibility_facts=parser_facts,
@@ -426,6 +460,12 @@ def test_parser_chemistry_failure_without_extra_proximity_is_not_geometry_defici
     deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            coverage_facts.carrier
+        ),
+        disulfide_hydrogen_facts=StructureDisulfideHydrogenFacts.from_structure(
+            coverage_facts.carrier
+        ),
         requested_goals=RequestedGoalSet(),
         planning_context=WorkflowPlanningContext(),
         parser_compatibility_facts=parser_facts,
@@ -520,6 +560,12 @@ def test_deficits_distinguish_optional_intrinsic_from_required_holo_interaction(
     optional_intrinsic = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            coverage_facts.carrier
+        ),
+        disulfide_hydrogen_facts=StructureDisulfideHydrogenFacts.from_structure(
+            coverage_facts.carrier
+        ),
         requested_goals=RequestedGoalSet(),
         planning_context=WorkflowPlanningContext(),
         intrinsic_geometry_facts=StructureIntrinsicGeometryFacts.from_structure(
@@ -544,6 +590,12 @@ def test_deficits_distinguish_optional_intrinsic_from_required_holo_interaction(
     required_interaction = WorkflowStateDeficit.from_facts(
         coverage_facts=holo_coverage_facts,
         chemistry_readiness_facts=holo_chemistry_readiness_facts,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            holo_coverage_facts.carrier
+        ),
+        disulfide_hydrogen_facts=StructureDisulfideHydrogenFacts.from_structure(
+            holo_coverage_facts.carrier
+        ),
         requested_goals=RequestedGoalSet(),
         planning_context=WorkflowPlanningContext(
             ligand_context_mode=WorkflowLigandContextMode.CONSIDER_IF_PRESENT,

@@ -33,6 +33,9 @@ from protrepair.transformer.completion.hydrogen.cleanup_planning import (
 from protrepair.transformer.completion.hydrogen.rotatable import (
     build_rotatable_hydrogen_search,
 )
+from protrepair.transformer.completion.hydrogen.scoring import (
+    RotatableHydrogenClashBurden,
+)
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
 
@@ -144,14 +147,14 @@ def _cleanup_targeted_hydrogen(
     current_hydrogen_site = current_residue.atom_site(target.hydrogen_atom_name)
     current_hydrogen_geometry = current_residue.atom_geometry(target.hydrogen_atom_name)
     hydrogen_formal_charge = current_residue.formal_charge(target.hydrogen_atom_name)
-    best_score = scorer.score(current_hydrogen_geometry.position)
+    best_burden = scorer.clash_burden(current_hydrogen_geometry.position)
     best_residue: CompletionResiduePayload | None = None
 
     for candidate in search.candidate_positions():
         candidate_position = current_hydrogen_geometry.position.coerce(candidate)
-        candidate_score = scorer.score(candidate_position)
-        if candidate_score < best_score:
-            best_score = candidate_score
+        candidate_burden = scorer.clash_burden(candidate_position)
+        if candidate_burden < best_burden:
+            best_burden = candidate_burden
             best_residue = current_residue.with_atom_payload(
                 current_hydrogen_site,
                 atom_geometry=current_hydrogen_geometry.with_position(
@@ -171,6 +174,7 @@ class _HydrogenCleanupClashRuntime:
     hydrogen_sites_by_key: Mapping[tuple[ResidueId, str], DiagnosticAtomSite]
     atom_sites_by_cell: Mapping[tuple[int, int, int], tuple[DiagnosticAtomSite, ...]]
     van_der_waals_radius_by_element: Mapping[str, float]
+    candidate_cell_size_angstrom: float
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -223,14 +227,20 @@ class _TargetedHydrogenClashScorer:
     hydrogen_site: DiagnosticAtomSite
     clash_runtime: _HydrogenCleanupClashRuntime
 
-    def score(self, candidate_position: Vec3) -> tuple[int, float, float]:
-        """Return the clash score for one candidate hydrogen position."""
+    def clash_burden(
+        self,
+        candidate_position: Vec3,
+    ) -> RotatableHydrogenClashBurden:
+        """Return the steric burden for one candidate hydrogen position."""
 
         candidate_hydrogen_site = DiagnosticAtomSite(
             atom_name=self.hydrogen_site.atom_name,
             element=self.hydrogen_site.element,
             geometry=self.hydrogen_site.geometry.with_position(candidate_position),
             context=self.hydrogen_site.context,
+            grid_cell_size_angstrom=(
+                self.clash_runtime.candidate_cell_size_angstrom
+            ),
         )
         overlaps: list[float] = []
         for other_site in self.clash_runtime.neighboring_atom_sites(
@@ -263,28 +273,26 @@ class _TargetedHydrogenClashScorer:
             ):
                 continue
 
-            required_overlap = self.clash_runtime.policy.required_overlap(
-                candidate_hydrogen_site.element,
-                other_site.element,
+            hydrogen_radius = self.clash_runtime.van_der_waals_radius(
+                candidate_hydrogen_site.element
             )
-            allowed_distance = (
-                self.clash_runtime.van_der_waals_radius(candidate_hydrogen_site.element)
-                + self.clash_runtime.van_der_waals_radius(other_site.element)
-                - required_overlap
+            other_radius = self.clash_runtime.van_der_waals_radius(
+                other_site.element
             )
+            allowed_distance = self.clash_runtime.policy.allowed_distance_angstrom(
+                left_van_der_waals_radius_angstrom=hydrogen_radius,
+                right_van_der_waals_radius_angstrom=other_radius,
+                left_is_hydrogen=candidate_hydrogen_site.is_hydrogen(),
+                right_is_hydrogen=other_site.is_hydrogen(),
+            )
+            if allowed_distance <= 0.0:
+                continue
             if pair_distance >= allowed_distance:
                 continue
 
-            overlaps.append(allowed_distance - pair_distance + required_overlap)
+            overlaps.append(hydrogen_radius + other_radius - pair_distance)
 
-        if not overlaps:
-            return (0, 0.0, 0.0)
-
-        return (
-            len(overlaps),
-            sum(overlaps),
-            max(overlaps),
-        )
+        return RotatableHydrogenClashBurden.from_positive_overlaps(overlaps)
 
 
 def _build_hydrogen_cleanup_clash_runtime(
@@ -313,6 +321,7 @@ def _build_hydrogen_cleanup_clash_runtime(
             cell: tuple(atom_sites) for cell, atom_sites in atom_sites_by_cell.items()
         },
         van_der_waals_radius_by_element=context.van_der_waals_radius_by_element,
+        candidate_cell_size_angstrom=context.candidate_cell_size_angstrom,
     )
 
 

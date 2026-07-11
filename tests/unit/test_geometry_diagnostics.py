@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     CanonicalResiduePayload,
@@ -19,6 +20,7 @@ from protrepair.chemistry import (
     ComponentLibrary,
     ResidueTemplate,
     RestraintLibrary,
+    UnknownElementRadiusError,
     build_default_component_library,
 )
 from protrepair.chemistry.nonstandard.ingestion import (
@@ -349,6 +351,49 @@ def test_detect_heavy_geometry_does_not_false_flag_fe_n_fallback() -> None:
     )
 
     assert report.is_empty()
+
+
+def test_detect_heavy_geometry_reports_unknown_fallback_bond_radii_once() -> None:
+    """Fallback bond-length checks should aggregate unknown covalent radii."""
+
+    component_library = ComponentLibrary(
+        templates={
+            "UNX": ResidueTemplate(
+                definition=ChemicalComponentDefinition(
+                    component_id="UNX",
+                    atom_names=("X1", "Y1"),
+                    bonds=(
+                        BondDefinition("X1", "Y1"),
+                        BondDefinition("X1", "Y1"),
+                    ),
+                )
+            )
+        }
+    )
+    structure = build_structure(
+        (
+            build_residue(
+                component_id="UNX",
+                residue_id=ResidueId(chain_id="A", seq_num=1),
+                atoms=(
+                    atom_payload("X1", "XX", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("Y1", "C1", Vec3(1.4, 0.0, 0.0)),
+                ),
+            ),
+        )
+    )
+
+    with pytest.raises(UnknownElementRadiusError) as error_info:
+        detect_heavy_geometry(
+            structure,
+            component_library=component_library,
+            restraint_library=RestraintLibrary(),
+        )
+
+    message = str(error_info.value)
+    assert "heavy geometry fallback bonds for A:1" in message
+    assert message.count("XX") == 1
+    assert "C1" in message
 
 
 def test_detect_heavy_geometry_accepts_external_ingested_restraints(

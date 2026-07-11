@@ -77,7 +77,7 @@ def attached_hydrogen_atom_names(
     return tuple(
         atom_site.name
         for atom_site in residue_site.atom_sites
-        if atom_site.element == "H"
+        if atom_site.is_hydrogen()
         and any(
             residue_geometry.atom_geometry(atom_site.name).distance_to(anchor_atom)
             <= ATTACHED_HYDROGEN_DISTANCE_MAX_ANGSTROM

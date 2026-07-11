@@ -9,7 +9,10 @@ from protrepair.diagnostics.parser_readability import (
     RDKitProximityBondCluster,
     RDKitProximityBondWitness,
 )
-from protrepair.diagnostics.topology import detect_disulfide_topology, residue_sort_key
+from protrepair.diagnostics.topology import (
+    detect_unassigned_disulfide_evidence,
+    residue_sort_key,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 
@@ -49,7 +52,7 @@ def ambiguous_disulfide_partner_residue_ids_by_residue(
 ) -> dict[ResidueId, frozenset[ResidueId]]:
     """Return ambiguous disulfide neighborhoods keyed by member residue."""
 
-    _, ambiguous_disulfides = detect_disulfide_topology(structure)
+    _, ambiguous_disulfides = detect_unassigned_disulfide_evidence(structure)
     partner_residue_ids_by_residue: dict[ResidueId, frozenset[ResidueId]] = {}
     for finding in ambiguous_disulfides:
         finding_residue_ids = frozenset(

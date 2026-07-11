@@ -8,6 +8,8 @@ class WorkflowCapabilityDeficitFamily(str, Enum):
 
     COVERAGE_GAP = "coverage_gap"
     ATOM_COVERAGE = "atom_coverage"
+    TOPOLOGY_RESOLUTION = "topology_resolution"
+    CHEMISTRY_CONTRADICTION = "chemistry_contradiction"
     CHEMISTRY_READINESS = "chemistry_readiness"
     BACKBONE_WINDOW_OPERATOR = "backbone_window_operator"
     INTRINSIC_GEOMETRY = "intrinsic_geometry"
@@ -19,6 +21,8 @@ class WorkflowCapabilityFactFamily(str, Enum):
     """One canonical fact family read by a workflow action."""
 
     COVERAGE = "coverage"
+    TOPOLOGY_EVIDENCE = "topology_evidence"
+    CHEMISTRY_CONTRADICTION = "chemistry_contradiction"
     CHEMISTRY_READINESS = "chemistry_readiness"
     BOUNDARY = "boundary"
     INTRINSIC_GEOMETRY = "intrinsic_geometry"
@@ -38,6 +42,7 @@ class WorkflowActionEffectClass(str, Enum):
     """What kind of structural effect one action family applies."""
 
     AUGMENTS_ABSENCE = "augments_absence"
+    REMOVES_PRESENT = "removes_present"
     REVISES_PRESENT_GEOMETRY = "revises_present_geometry"
 
 

@@ -1,26 +1,114 @@
 """Neutral rotatable-hydrogen search and scoring primitives."""
 
-from collections.abc import Sequence
-from dataclasses import dataclass
-from math import acos, degrees, pi, sqrt
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+from math import inf, isfinite, isnan, sqrt
 
 import numpy as np
 from numpy.typing import NDArray
 
-from protrepair.chemistry import van_der_waals_radius_angstrom
+from protrepair.chemistry import ElementRadiusLookup, RadiusKind, prepare_radius_lookup
+from protrepair.diagnostics.clash_topology_rules import (
+    probable_hydrogen_bond_geometry,
+)
+from protrepair.diagnostics.clashes import ClashPolicy
 from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
+from protrepair.structure.labels import ResidueId
 
 CoordinateLike = Vec3 | Sequence[float] | NDArray[np.float64]
-Vector = NDArray[np.float64]
-ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON = 1e-12
-ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM = 6.25
-ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE = 100.0
-ROTATABLE_HYDROGEN_HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
-ROTATABLE_HYDROGEN_HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
+# PRAS Server 1.2.1 limits its AMBER nonbonded scan to 2.5 angstrom.
+_ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_HORIZON_ANGSTROM = 2.5
+_ROTATABLE_HYDROGEN_MIN_SEPARATION_SQ_ANGSTROM = 1e-12
+_COULOMB_CONSTANT_KJ_MOL_NM_E2 = 138.94
+ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM = (
+    _ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_HORIZON_ANGSTROM**2
+)
 ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS = 1
-ROTATABLE_HYDROGEN_DONOR_ELEMENTS = frozenset({"N", "O", "S"})
-ROTATABLE_HYDROGEN_ACCEPTOR_ELEMENTS = frozenset({"N", "O", "S"})
-ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM = 0.90
+_ROTATABLE_HYDROGEN_CLASH_POLICY = ClashPolicy()
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class RotatableHydrogenClashBurden:
+    """Lexicographic steric burden for one candidate hydrogen position."""
+
+    clash_count: int
+    total_overlap_angstrom: float
+    worst_overlap_angstrom: float
+
+    def __post_init__(self) -> None:
+        if isinstance(self.clash_count, bool) or not isinstance(self.clash_count, int):
+            raise TypeError("rotatable-hydrogen clash count must be an integer")
+        if self.clash_count < 0:
+            raise ValueError("rotatable-hydrogen clash count must be non-negative")
+        if (
+            not isfinite(self.total_overlap_angstrom)
+            or self.total_overlap_angstrom < 0.0
+        ):
+            raise ValueError(
+                "rotatable-hydrogen total overlap must be finite and non-negative"
+            )
+        if (
+            not isfinite(self.worst_overlap_angstrom)
+            or self.worst_overlap_angstrom < 0.0
+        ):
+            raise ValueError(
+                "rotatable-hydrogen worst overlap must be finite and non-negative"
+            )
+        if self.clash_count == 0 and (
+            self.total_overlap_angstrom != 0.0
+            or self.worst_overlap_angstrom != 0.0
+        ):
+            raise ValueError("zero clash count requires zero overlap burden")
+        if self.clash_count > 0 and (
+            self.total_overlap_angstrom <= 0.0
+            or self.worst_overlap_angstrom <= 0.0
+        ):
+            raise ValueError("positive clash count requires positive overlap burden")
+        if self.worst_overlap_angstrom > self.total_overlap_angstrom:
+            raise ValueError("worst overlap cannot exceed total overlap")
+
+    @classmethod
+    def from_positive_overlaps(
+        cls,
+        overlaps_angstrom: Iterable[float],
+    ) -> "RotatableHydrogenClashBurden":
+        """Aggregate one iterable of finite positive clash overlaps."""
+
+        clash_count = 0
+        total_overlap_angstrom = 0.0
+        worst_overlap_angstrom = 0.0
+        for overlap in overlaps_angstrom:
+            if not isfinite(overlap) or overlap <= 0.0:
+                raise ValueError(
+                    "rotatable-hydrogen clash overlaps must be finite and positive"
+                )
+            clash_count += 1
+            total_overlap_angstrom += overlap
+            worst_overlap_angstrom = max(worst_overlap_angstrom, overlap)
+        return cls(
+            clash_count=clash_count,
+            total_overlap_angstrom=total_overlap_angstrom,
+            worst_overlap_angstrom=worst_overlap_angstrom,
+        )
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class RotatableHydrogenCandidateRank:
+    """Complete deterministic rank for one rotatable-hydrogen candidate."""
+
+    clash_burden: RotatableHydrogenClashBurden
+    potential_energy_kj_mol: float
+    scan_order: int
+
+    def __post_init__(self) -> None:
+        if isnan(self.potential_energy_kj_mol) or self.potential_energy_kj_mol == -inf:
+            raise ValueError(
+                "candidate potential energy must be finite or positive infinity"
+            )
+        if isinstance(self.scan_order, bool) or not isinstance(self.scan_order, int):
+            raise TypeError("candidate scan order must be an integer")
+        if self.scan_order < 0:
+            raise ValueError("candidate scan order must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,9 +129,9 @@ class RotatableHydrogenLocalSite:
 
 @dataclass(frozen=True, slots=True)
 class RotatableHydrogenEnvironment:
-    """Packed heavy-atom interaction data for one residue-number environment."""
+    """Packed heavy-atom interaction data for one canonical residue."""
 
-    residue_number: str
+    residue_id: ResidueId
     atom_x: tuple[float, ...]
     atom_y: tuple[float, ...]
     atom_z: tuple[float, ...]
@@ -52,6 +140,49 @@ class RotatableHydrogenEnvironment:
     sigmas_nm: tuple[float, ...]
     epsilons_kj_mol: tuple[float, ...]
     local_sites: tuple[RotatableHydrogenLocalSite, ...] = ()
+    van_der_waals_radius_lookup: ElementRadiusLookup = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.residue_id, ResidueId):
+            raise TypeError("rotatable hydrogen environment requires a ResidueId")
+
+        packed_field_lengths = {
+            len(self.atom_x),
+            len(self.atom_y),
+            len(self.atom_z),
+            len(self.elements),
+            len(self.charges),
+            len(self.sigmas_nm),
+            len(self.epsilons_kj_mol),
+        }
+        if len(packed_field_lengths) != 1:
+            raise ValueError(
+                "rotatable hydrogen environment packed fields must have equal lengths"
+            )
+
+        radius_lookup = prepare_radius_lookup(
+            (
+                "H",
+                *self.elements,
+                *(local_site.element for local_site in self.local_sites),
+            ),
+            RadiusKind.VAN_DER_WAALS,
+        )
+        if radius_lookup.has_unresolved_elements():
+            raise radius_lookup.unresolved_radius_error(
+                "rotatable hydrogen scoring environment"
+            )
+
+        object.__setattr__(self, "van_der_waals_radius_lookup", radius_lookup)
+
+    def van_der_waals_radius(self, element: str) -> float:
+        """Return a prepared vdW radius for one scoring element."""
+
+        return self.van_der_waals_radius_lookup.radius_angstrom(element)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,8 +193,8 @@ class RotatableHydrogenSearch:
     inner_anchor: CoordinateLike
     donor: CoordinateLike
     hydrogen: CoordinateLike
-    build_bond_length: float
-    reproject_bond_length: float
+    bond_length: float
+    bond_angle_degrees: float
     dihedral: float
     partial_charge: float
     sigma: float
@@ -71,38 +202,38 @@ class RotatableHydrogenSearch:
     donor_element: str = "O"
 
     def __post_init__(self) -> None:
+        if not isfinite(self.bond_length) or self.bond_length <= 0.0:
+            raise ValueError("bond_length must be finite and positive")
+        if (
+            not isfinite(self.bond_angle_degrees)
+            or self.bond_angle_degrees <= 0.0
+            or self.bond_angle_degrees >= 180.0
+        ):
+            raise ValueError("bond_angle_degrees must be between 0 and 180 degrees")
+        if not isfinite(self.dihedral):
+            raise ValueError("dihedral must be finite")
         object.__setattr__(self, "donor_element", self.donor_element.strip().upper())
 
     def candidate_positions(self) -> tuple[Vec3, ...]:
         """Return the six candidate coordinates from the hydroxyl torsion scan."""
 
+        frame = InternalCoordinateFrame(
+            self.outer_anchor,
+            self.inner_anchor,
+            self.donor,
+        )
         candidates: list[Vec3] = []
-        current_dihedral = self.dihedral
         for increment in range(0, 360, 60):
-            # The legacy rotatable-H scan uses the potential-energy helper's
-            # parameter ordering: dihedral first, scanned torsion second.
             try:
-                candidate = InternalCoordinateFrame(
-                    self.outer_anchor,
-                    self.inner_anchor,
-                    self.donor,
-                ).place(
-                    bond_length=self.build_bond_length,
-                    bond_angle_degrees=current_dihedral,
-                    dihedral_degrees=109.5,
-                )
-                adjusted = recalculate_coordinate(
-                    self.inner_anchor,
-                    self.donor,
-                    candidate,
-                    self.reproject_bond_length,
+                candidate = frame.place(
+                    bond_length=self.bond_length,
+                    bond_angle_degrees=self.bond_angle_degrees,
+                    dihedral_degrees=self.dihedral + increment,
                 )
             except GeometryPlacementError:
-                current_dihedral += increment
                 continue
 
-            candidates.append(adjusted)
-            current_dihedral += increment
+            candidates.append(candidate)
 
         return tuple(candidates)
 
@@ -119,55 +250,59 @@ class RotatableHydrogenSearch:
             self,
         )
 
-    def steric_penalty(
+    def clash_burden(
         self,
         hydrogen: CoordinateLike,
         environment: RotatableHydrogenEnvironment,
-    ) -> float:
-        """Return clash-aware penalties for one rotatable-hydrogen candidate."""
+    ) -> RotatableHydrogenClashBurden:
+        """Return the steric burden for one rotatable-hydrogen candidate."""
 
-        return hydrogen_steric_penalty(
+        return hydrogen_clash_burden(
             hydrogen,
             environment,
             self,
         )
 
-    def candidate_score(
+    def candidate_rank(
         self,
         hydrogen: CoordinateLike,
         environment: RotatableHydrogenEnvironment,
-    ) -> float:
-        """Return the total score for one rotatable-hydrogen candidate."""
+        *,
+        scan_order: int,
+    ) -> RotatableHydrogenCandidateRank:
+        """Return the deterministic lexicographic rank for one candidate."""
 
-        return self.potential_energy(
+        potential_energy = self.potential_energy(
             hydrogen,
             environment,
-        ) + self.steric_penalty(
-            hydrogen,
-            environment,
+        )
+        if not isfinite(potential_energy):
+            potential_energy = inf
+        return RotatableHydrogenCandidateRank(
+            clash_burden=self.clash_burden(hydrogen, environment),
+            potential_energy_kj_mol=potential_energy,
+            scan_order=scan_order,
         )
 
     def optimized_coordinate(
         self,
-        *,
-        residue_number: str,
-        environments: Sequence[RotatableHydrogenEnvironment],
+        environment: RotatableHydrogenEnvironment,
     ) -> Vec3:
         """Return the lowest-energy hydrogen coordinate from a six-step scan."""
 
         candidate_hydrogens = self.candidate_positions()
         best_candidate: Vec3 | None = None
-        best_score: float | None = None
+        best_rank: RotatableHydrogenCandidateRank | None = None
 
-        for environment in environments:
-            if environment.residue_number != residue_number:
-                continue
-
-            for candidate in candidate_hydrogens:
-                candidate_score = self.candidate_score(candidate, environment)
-                if best_score is None or candidate_score < best_score:
-                    best_score = candidate_score
-                    best_candidate = candidate
+        for scan_order, candidate in enumerate(candidate_hydrogens):
+            candidate_rank = self.candidate_rank(
+                candidate,
+                environment,
+                scan_order=scan_order,
+            )
+            if best_rank is None or candidate_rank < best_rank:
+                best_rank = candidate_rank
+                best_candidate = candidate
 
         if best_candidate is None:
             return Vec3.coerce(self.hydrogen)
@@ -183,14 +318,13 @@ def hydrogen_potential_energy(
     """Return the nonbonded energy between a candidate H and nearby heavy atoms."""
 
     total_energy = 0.0
-    hydrogen_vector = Vec3.coerce(hydrogen).to_array()
-    hydrogen_x = float(hydrogen_vector[0])
-    hydrogen_y = float(hydrogen_vector[1])
-    hydrogen_z = float(hydrogen_vector[2])
+    hydrogen_position = Vec3.coerce(hydrogen)
+    hydrogen_x = hydrogen_position.x
+    hydrogen_y = hydrogen_position.y
+    hydrogen_z = hydrogen_position.z
     hydrogen_charge = search.partial_charge
     hydrogen_sigma = search.sigma
     hydrogen_epsilon = search.epsilon
-    electrostatic_constant = 138.94
 
     for atom_x, atom_y, atom_z, atom_charge, atom_sigma, atom_epsilon in zip(
         environment.atom_x,
@@ -205,16 +339,19 @@ def hydrogen_potential_energy(
         delta_y = hydrogen_y - atom_y
         delta_z = hydrogen_z - atom_z
         separation_sq_angstrom = (
-            (delta_x * delta_x)
-            + (delta_y * delta_y)
-            + (delta_z * delta_z)
+            (delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z)
         )
-        if separation_sq_angstrom > 6.25:
+        if (
+            separation_sq_angstrom
+            > ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM
+        ):
             continue
+        if separation_sq_angstrom <= _ROTATABLE_HYDROGEN_MIN_SEPARATION_SQ_ANGSTROM:
+            return float("inf")
 
         separation = sqrt(separation_sq_angstrom) / 10.0
         coulomb = (
-            electrostatic_constant * (hydrogen_charge * atom_charge)
+            _COULOMB_CONSTANT_KJ_MOL_NM_E2 * (hydrogen_charge * atom_charge)
         ) / separation
         mixed_epsilon = 4 * sqrt(hydrogen_epsilon * atom_epsilon)
         mixed_sigma = ((hydrogen_sigma + atom_sigma) * 0.5) / separation
@@ -226,18 +363,20 @@ def hydrogen_potential_energy(
     return total_energy
 
 
-def hydrogen_steric_penalty(
+def hydrogen_clash_burden(
     hydrogen: CoordinateLike,
     environment: RotatableHydrogenEnvironment,
     search: RotatableHydrogenSearch,
-) -> float:
-    """Return clash-aware penalties for one rotatable-hydrogen candidate."""
+) -> RotatableHydrogenClashBurden:
+    """Return the physical vdW-overlap burden for one candidate hydrogen."""
 
-    penalty = 0.0
-    hydrogen_vector = Vec3.coerce(hydrogen).to_array()
-    hydrogen_x = float(hydrogen_vector[0])
-    hydrogen_y = float(hydrogen_vector[1])
-    hydrogen_z = float(hydrogen_vector[2])
+    overlaps: list[float] = []
+    hydrogen_position = Vec3.coerce(hydrogen)
+    hydrogen_x = hydrogen_position.x
+    hydrogen_y = hydrogen_position.y
+    hydrogen_z = hydrogen_position.z
+    donor_vector = Vec3.coerce(search.donor)
+    hydrogen_vdw_radius = environment.van_der_waals_radius("H")
 
     for local_site in environment.local_sites:
         if (
@@ -247,7 +386,7 @@ def hydrogen_steric_penalty(
         ):
             continue
 
-        penalty += hydrogen_steric_penalty_against_site(
+        overlap = hydrogen_steric_overlap_against_site(
             hydrogen_x=hydrogen_x,
             hydrogen_y=hydrogen_y,
             hydrogen_z=hydrogen_z,
@@ -255,9 +394,16 @@ def hydrogen_steric_penalty(
             site_y=local_site.y,
             site_z=local_site.z,
             site_element=local_site.element,
+            hydrogen_vdw_radius=hydrogen_vdw_radius,
+            site_vdw_radius=environment.van_der_waals_radius(local_site.element),
+            donor_x=donor_vector.x,
+            donor_y=donor_vector.y,
+            donor_z=donor_vector.z,
             donor_element=search.donor_element,
             allow_hydrogen_bond=False,
         )
+        if overlap > 0.0:
+            overlaps.append(overlap)
 
     for site_x, site_y, site_z, site_element in zip(
         environment.atom_x,
@@ -266,7 +412,7 @@ def hydrogen_steric_penalty(
         environment.elements,
         strict=True,
     ):
-        penalty += hydrogen_steric_penalty_against_site(
+        overlap = hydrogen_steric_overlap_against_site(
             hydrogen_x=hydrogen_x,
             hydrogen_y=hydrogen_y,
             hydrogen_z=hydrogen_z,
@@ -274,14 +420,21 @@ def hydrogen_steric_penalty(
             site_y=site_y,
             site_z=site_z,
             site_element=site_element,
+            hydrogen_vdw_radius=hydrogen_vdw_radius,
+            site_vdw_radius=environment.van_der_waals_radius(site_element),
+            donor_x=donor_vector.x,
+            donor_y=donor_vector.y,
+            donor_z=donor_vector.z,
             donor_element=search.donor_element,
             allow_hydrogen_bond=True,
         )
+        if overlap > 0.0:
+            overlaps.append(overlap)
 
-    return penalty
+    return RotatableHydrogenClashBurden.from_positive_overlaps(overlaps)
 
 
-def hydrogen_steric_penalty_against_site(
+def hydrogen_steric_overlap_against_site(
     *,
     hydrogen_x: float,
     hydrogen_y: float,
@@ -290,166 +443,128 @@ def hydrogen_steric_penalty_against_site(
     site_y: float,
     site_z: float,
     site_element: str,
+    hydrogen_vdw_radius: float,
+    site_vdw_radius: float,
+    donor_x: float,
+    donor_y: float,
+    donor_z: float,
     donor_element: str,
     allow_hydrogen_bond: bool,
 ) -> float:
-    """Return the steric penalty for one H-heavy pair."""
+    """Return physical vdW overlap for one admitted H-heavy clash."""
 
     delta_x = hydrogen_x - site_x
     delta_y = hydrogen_y - site_y
     delta_z = hydrogen_z - site_z
-    separation_sq_angstrom = (
-        (delta_x * delta_x)
-        + (delta_y * delta_y)
-        + (delta_z * delta_z)
+    allowed_distance = rotatable_hydrogen_steric_cutoff_angstrom(
+        hydrogen_vdw_radius=hydrogen_vdw_radius,
+        site_vdw_radius=site_vdw_radius,
     )
-    if separation_sq_angstrom > ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM:
+    if allowed_distance <= 0.0:
+        return 0.0
+
+    separation_sq_angstrom = (
+        (delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z)
+    )
+    if separation_sq_angstrom >= allowed_distance * allowed_distance:
         return 0.0
 
     separation = sqrt(separation_sq_angstrom)
-    if allow_hydrogen_bond and probable_rotatable_hydrogen_bond(
+    if allow_hydrogen_bond and probable_hydrogen_bond_geometry(
         donor_element=donor_element,
         acceptor_element=site_element,
-        separation_angstrom=separation,
+        hydrogen_acceptor_distance_angstrom=separation,
+        donor_x=donor_x,
+        donor_y=donor_y,
+        donor_z=donor_z,
+        hydrogen_x=hydrogen_x,
+        hydrogen_y=hydrogen_y,
+        hydrogen_z=hydrogen_z,
+        acceptor_x=site_x,
+        acceptor_y=site_y,
+        acceptor_z=site_z,
     ):
         return 0.0
 
-    allowed_distance = (
-        rotatable_hydrogen_vdw_radius_angstrom("H")
-        + rotatable_hydrogen_vdw_radius_angstrom(site_element)
-        - ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM
-    )
+    # Preserve the exact-distance boundary after square-root rounding.
     if separation >= allowed_distance:
         return 0.0
 
-    overlap = allowed_distance - separation
-    return ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE * overlap * overlap
-
-
-def probable_rotatable_hydrogen_bond(
-    *,
-    donor_element: str,
-    acceptor_element: str,
-    separation_angstrom: float,
-) -> bool:
-    """Return whether one H-heavy contact is plausibly a hydrogen bond."""
-
-    return (
-        donor_element in ROTATABLE_HYDROGEN_DONOR_ELEMENTS
-        and acceptor_element in ROTATABLE_HYDROGEN_ACCEPTOR_ELEMENTS
-        and ROTATABLE_HYDROGEN_HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM
-        <= separation_angstrom
-        <= ROTATABLE_HYDROGEN_HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM
-    )
+    return hydrogen_vdw_radius + site_vdw_radius - separation
 
 
 def rotatable_hydrogen_vdw_radius_angstrom(element: str) -> float:
     """Return the van der Waals radius used by rotatable-H scoring."""
 
-    return van_der_waals_radius_angstrom(element)
-
-
-def recalculate_coordinate(
-    atom_b: CoordinateLike,
-    atom_c: CoordinateLike,
-    atom_d: CoordinateLike,
-    bond_length: float,
-) -> Vec3:
-    """Re-normalize a rotated hydrogen coordinate to the expected bond length."""
-
-    point_b = Vec3.coerce(atom_b).to_array()
-    point_c = Vec3.coerce(atom_c).to_array()
-    point_d = Vec3.coerce(atom_d).to_array()
-    theta = 107.0
-
-    bond_cb = point_b - point_c
-    bond_dc = point_d - point_c
-    angle_bcd = _angle_between_vectors_radians(bond_cb, bond_dc)
-    rotate = theta - degrees(angle_bcd)
-
-    normal = np.asarray(np.cross(bond_cb, bond_dc), dtype=np.float64)
-    unit_normal = _unit_vector(
-        normal,
-        error_message="rotatable-hydrogen reprojection requires a rotation plane",
-    )
-    rotated = (
-        point_c
-        + bond_dc * np.cos(rotate * pi / 180.0)
-        + np.cross(unit_normal, bond_dc) * np.sin(rotate * pi / 180.0)
-        + unit_normal
-        * np.dot(unit_normal, bond_dc)
-        * (1 - np.cos(rotate * pi / 180.0))
+    return prepare_radius_lookup((element,), RadiusKind.VAN_DER_WAALS).radius_angstrom(
+        element
     )
 
-    scaled = _scale_from_origin(point_c, rotated, bond_length)
-    return Vec3.from_iterable(scaled)
+
+def rotatable_hydrogen_steric_cutoff_angstrom(
+    *,
+    hydrogen_vdw_radius: float,
+    site_vdw_radius: float,
+) -> float:
+    """Return the H-heavy distance below which steric scoring can be non-zero."""
+
+    return _ROTATABLE_HYDROGEN_CLASH_POLICY.allowed_distance_angstrom(
+        left_van_der_waals_radius_angstrom=hydrogen_vdw_radius,
+        right_van_der_waals_radius_angstrom=site_vdw_radius,
+        left_is_hydrogen=True,
+        right_is_hydrogen=False,
+    )
 
 
-def _angle_between_vectors_radians(left_vector: Vector, right_vector: Vector) -> float:
-    """Return the finite angle between two non-zero vectors in radians."""
+def max_rotatable_hydrogen_steric_cutoff_angstrom(
+    site_elements: Iterable[str],
+) -> float:
+    """Return the maximum H-heavy steric scoring horizon for site elements."""
 
-    left_norm = _vector_norm(left_vector)
-    right_norm = _vector_norm(right_vector)
-    if (
-        left_norm <= ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON
-        or right_norm <= ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON
-    ):
-        raise GeometryPlacementError(
-            "rotatable-hydrogen reprojection requires non-zero vectors"
-        )
-
-    cosine = float(np.dot(left_vector, right_vector)) / (left_norm * right_norm)
-    clamped = min(1.0, max(-1.0, cosine))
-    return acos(clamped)
-
-
-def _unit_vector(vector: Vector, *, error_message: str) -> Vector:
-    """Return one unit vector or raise when the vector is degenerate."""
-
-    norm = _vector_norm(vector)
-    if norm <= ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON:
-        raise GeometryPlacementError(error_message)
-
-    return np.asarray(vector / norm, dtype=np.float64)
+    site_element_tuple = tuple(site_elements)
+    radius_lookup = prepare_radius_lookup(
+        ("H", *site_element_tuple),
+        RadiusKind.VAN_DER_WAALS,
+    )
+    radius_lookup.require_complete("rotatable hydrogen scoring radius")
+    hydrogen_vdw_radius = radius_lookup.radius_angstrom("H")
+    return max(
+        (
+            rotatable_hydrogen_steric_cutoff_angstrom(
+                hydrogen_vdw_radius=hydrogen_vdw_radius,
+                site_vdw_radius=radius_lookup.radius_angstrom(site_element),
+            )
+            for site_element in site_element_tuple
+        ),
+        default=0.0,
+    )
 
 
-def _scale_from_origin(origin: Vector, candidate: Vector, bond_length: float) -> Vector:
-    """Return a candidate scaled to the requested distance from the origin."""
+def max_rotatable_hydrogen_interaction_horizon_angstrom(
+    site_elements: Iterable[str],
+) -> float:
+    """Return the maximum candidate-H horizon across every active score term."""
 
-    direction = candidate - origin
-    direction_norm = _vector_norm(direction)
-    if direction_norm <= ROTATABLE_HYDROGEN_DEGENERATE_NORM_EPSILON:
-        raise GeometryPlacementError(
-            "rotatable-hydrogen reprojection produced a degenerate bond vector"
-        )
-
-    return origin + (direction * (bond_length / direction_norm))
-
-
-def _vector_norm(vector: Vector) -> float:
-    """Return the Euclidean norm for one vector."""
-
-    return float(np.linalg.norm(vector))
+    return max(
+        _ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_HORIZON_ANGSTROM,
+        max_rotatable_hydrogen_steric_cutoff_angstrom(site_elements),
+    )
 
 
 __all__ = [
     "CoordinateLike",
-    "ROTATABLE_HYDROGEN_ACCEPTOR_ELEMENTS",
-    "ROTATABLE_HYDROGEN_CLASH_PENALTY_SCALE",
-    "ROTATABLE_HYDROGEN_DONOR_ELEMENTS",
-    "ROTATABLE_HYDROGEN_HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM",
-    "ROTATABLE_HYDROGEN_HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM",
     "ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS",
-    "ROTATABLE_HYDROGEN_OVERLAP_TOLERANCE_ANGSTROM",
-    "ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM",
+    "ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM",
+    "RotatableHydrogenCandidateRank",
+    "RotatableHydrogenClashBurden",
     "RotatableHydrogenEnvironment",
     "RotatableHydrogenLocalSite",
     "RotatableHydrogenSearch",
-    "Vector",
+    "hydrogen_clash_burden",
     "hydrogen_potential_energy",
-    "hydrogen_steric_penalty",
-    "hydrogen_steric_penalty_against_site",
-    "probable_rotatable_hydrogen_bond",
-    "recalculate_coordinate",
+    "hydrogen_steric_overlap_against_site",
+    "max_rotatable_hydrogen_interaction_horizon_angstrom",
+    "max_rotatable_hydrogen_steric_cutoff_angstrom",
+    "rotatable_hydrogen_steric_cutoff_angstrom",
     "rotatable_hydrogen_vdw_radius_angstrom",
 ]

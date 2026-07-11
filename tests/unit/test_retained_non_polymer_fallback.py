@@ -24,7 +24,7 @@ from protrepair.structure.labels import ResidueId
 
 try:
     from rdkit import Chem
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - required dependency import guard
     Chem = None
 
 RDKIT_AVAILABLE = Chem is not None
@@ -55,7 +55,6 @@ def test_fallback_cross_layer_helpers_raise_typed_rdkit_unavailable(
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_inference_result_owns_pose_bonds_names_and_bounds() -> None:
     """Canonical fallback result should carry all full-inference projections."""
 
@@ -95,7 +94,6 @@ def test_fallback_inference_result_owns_pose_bonds_names_and_bounds() -> None:
     assert inference_result.hydrogen_name_projection_candidate_limit >= 4
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_inference_bounds_hydrogen_name_projection_candidates() -> None:
     """Large source/generated H matching should fail before quadratic allocation."""
 
@@ -122,7 +120,6 @@ def test_fallback_inference_bounds_hydrogen_name_projection_candidates() -> None
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_perceives_carbonyl_bond_order_before_hydrogenation() -> None:
     """Carbonyl geometry should not be hydrogenated as an all-single alcohol."""
 
@@ -160,7 +157,6 @@ def test_fallback_perceives_carbonyl_bond_order_before_hydrogenation() -> None:
     ) == ("H001", "H002", "H003", "H004")
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_perceives_aromatic_carbon_ring_before_hydrogenation() -> None:
     """Benzene-like geometry should not be hydrogenated as all-single cyclohexane."""
 
@@ -191,7 +187,6 @@ def test_fallback_perceives_aromatic_carbon_ring_before_hydrogenation() -> None:
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_rejects_ambiguous_double_carbonyl_geometry() -> None:
     """Symmetric short C-O geometry should not silently choose one double bond."""
 
@@ -211,7 +206,6 @@ def test_fallback_rejects_ambiguous_double_carbonyl_geometry() -> None:
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_rejects_charged_short_carbonyl_geometry() -> None:
     """Known charge evidence should prevent silent neutral carbonyl promotion."""
 
@@ -231,7 +225,6 @@ def test_fallback_rejects_charged_short_carbonyl_geometry() -> None:
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_rejects_diatomic_carbonyl_like_geometry() -> None:
     """A short isolated C-O pair lacks enough evidence for safe hydrogenation."""
 
@@ -249,7 +242,6 @@ def test_fallback_rejects_diatomic_carbonyl_like_geometry() -> None:
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_keeps_saturated_carbon_ring_non_aromatic() -> None:
     """Long C-C ring bonds should not be promoted to aromatic chemistry."""
 
@@ -272,7 +264,6 @@ def test_fallback_keeps_saturated_carbon_ring_non_aromatic() -> None:
     assert sum(_hydrogen_anchor_counts(hydrogenated_molecule).values()) == 12
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_rejects_hetero_aromatic_like_ring_geometry() -> None:
     """Aromatic-like hetero rings need stronger evidence than fallback geometry."""
 
@@ -295,7 +286,6 @@ def test_fallback_rejects_hetero_aromatic_like_ring_geometry() -> None:
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_rejects_distorted_aromatic_like_carbon_ring_geometry() -> None:
     """Near-aromatic carbon rings outside the strict window should not be guessed."""
 
@@ -311,7 +301,6 @@ def test_fallback_rejects_distorted_aromatic_like_carbon_ring_geometry() -> None
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_rejects_five_member_aromatic_like_ring_geometry() -> None:
     """Five-member aromatic-like rings are not covered by the carbon-ring rule."""
 
@@ -327,7 +316,6 @@ def test_fallback_rejects_five_member_aromatic_like_ring_geometry() -> None:
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 @pytest.mark.parametrize(
     ("atoms", "message"),
     (
@@ -383,7 +371,6 @@ def test_fallback_rejects_unsupported_hetero_multiple_bond_motifs(
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_fallback_rejects_hydrogenation_stereo_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

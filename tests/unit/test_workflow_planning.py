@@ -143,7 +143,7 @@ from protrepair.workflow.planning.planner import (
 
 try:
     from rdkit import Chem
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - required dependency import guard
     Chem = None
 
 RDKIT_AVAILABLE = Chem is not None
@@ -591,7 +591,6 @@ def test_plan_workflow_actions_emits_override_backed_retained_non_polymer_h_comp
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_plan_workflow_actions_emits_rdkit_fallback_retained_non_polymer_h_completion(
 ) -> None:
     """Fallback-hydrogenatable retained non-polymers should plan completion."""

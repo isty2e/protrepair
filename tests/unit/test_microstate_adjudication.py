@@ -1,5 +1,6 @@
 """Focused tests for source-microstate adjudication."""
 
+import pytest
 from tests.support.canonical_builders import (
     atom_payload,
     build_structure,
@@ -10,6 +11,7 @@ from tests.support.request_builders import ingress_options
 from tests.support.whole_structure_sources import WHOLE_STRUCTURE_CORPUS_SOURCES
 
 from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry.inference import retained_non_polymer_fallback
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.diagnostics.source_microstate import (
     MicrostateApplicability,
@@ -21,6 +23,7 @@ from protrepair.diagnostics.source_microstate import (
     collect_microstate_evidence,
     validation_issue_from_microstate_decision,
 )
+from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, write_structure_string
 from protrepair.structure.labels import ResidueId
@@ -469,6 +472,45 @@ def test_unknown_retained_non_polymer_contradiction_is_marked_ambiguous() -> Non
     )
     assert issue is not None
     assert "unknown retained non-polymer chemistry" in issue.message
+
+
+def test_unknown_retained_microstate_propagates_no_rdkit_capability_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Microstate diagnostics must not hide a broken required RDKit install."""
+
+    monkeypatch.setattr(retained_non_polymer_fallback, "Chem", None)
+    structure = build_structure(
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("L", 7),
+                atoms=(
+                    atom_payload("C1", "C", Vec3(4.0, 0.0, 0.0)),
+                    atom_payload(
+                        "O1",
+                        "O",
+                        Vec3(5.2, 0.0, 0.0),
+                        formal_charge=-1,
+                    ),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        chains=(),
+        source_format=FileFormat.PDB,
+    )
+
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
+        collect_microstate_evidence(
+            structure.constitution.ligands[0],
+            residue_geometry=structure.residue_geometry(ResidueIndex(0)),
+            source_formal_charge_by_atom_name=dict(
+                structure.residue_formal_charge_by_atom_name(ResidueIndex(0))
+            ),
+            standard_component_library=build_default_component_library(),
+            component_library=build_default_component_library(),
+        )
 
 
 def test_unknown_retained_non_polymer_without_contradiction_preserves_source() -> None:

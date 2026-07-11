@@ -15,7 +15,7 @@ from protrepair.structure.constitution import (
     StructureConstitution,
 )
 from protrepair.structure.geometry import ResidueGeometry, StructureGeometry
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.polymer_blueprint import PolymerBlueprint
 from protrepair.structure.provenance import StructureProvenance
 from protrepair.structure.slots import ResidueIndex
@@ -775,7 +775,7 @@ class ProteinStructure:
                 hydrogen_atom_names = {
                     atom_site.name
                     for atom_site in residue_site.atom_sites
-                    if atom_site.element == "H"
+                    if atom_site.is_hydrogen()
                 }
                 if not hydrogen_atom_names:
                     stripped_residue_sites.append(residue_site)
@@ -810,7 +810,7 @@ class ProteinStructure:
             hydrogen_atom_names = {
                 atom_site.name
                 for atom_site in current_payload.residue_site.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             }
             if not hydrogen_atom_names:
                 updated_entries_by_index.append(current_payload)
@@ -833,6 +833,42 @@ class ProteinStructure:
                 target_constitution=stripped_constitution,
             ),
         )
+
+    def without_atom_refs(self, atom_refs: Collection[AtomRef]) -> Self:
+        """Return a copy without selected atoms across all canonical facets."""
+
+        raw_atom_refs = tuple(atom_refs)
+        if not raw_atom_refs:
+            return self
+        if any(not isinstance(atom_ref, AtomRef) for atom_ref in raw_atom_refs):
+            raise TypeError("selective atom removal requires AtomRef values")
+        normalized_atom_refs = tuple(dict.fromkeys(raw_atom_refs))
+
+        atom_names_by_residue_id: dict[ResidueId, set[str]] = {}
+        for atom_ref in normalized_atom_refs:
+            self.constitution.atom_index(atom_ref)
+            atom_names_by_residue_id.setdefault(atom_ref.residue_id, set()).add(
+                atom_ref.atom_name
+            )
+
+        residue_entries = _residue_entries_by_index(self)
+        updated_residue_facets: list[
+            tuple[ResidueSite, ResidueGeometry, tuple[tuple[str, int | None], ...]]
+        ] = []
+        for residue_id, atom_names in atom_names_by_residue_id.items():
+            residue_index = self.constitution.residue_index(residue_id)
+            updated_payload = residue_entries[residue_index.value].without_atoms(
+                atom_names
+            )
+            updated_residue_facets.append(
+                (
+                    updated_payload.residue_site,
+                    updated_payload.residue_geometry,
+                    updated_payload.formal_charge_by_atom_name,
+                )
+            )
+
+        return self.with_updated_residue_facets_batch(updated_residue_facets)
 
     def without_hydrogens_in_residues(
         self,
@@ -859,7 +895,7 @@ class ProteinStructure:
                 hydrogen_atom_names = {
                     atom_site.name
                     for atom_site in residue_site.atom_sites
-                    if atom_site.element == "H"
+                    if atom_site.is_hydrogen()
                 }
                 if not hydrogen_atom_names:
                     stripped_residues.append(residue_site)
@@ -885,7 +921,7 @@ class ProteinStructure:
             hydrogen_atom_names = {
                 atom_site.name
                 for atom_site in ligand.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             }
             if not hydrogen_atom_names:
                 stripped_ligands.append(ligand)
@@ -915,7 +951,7 @@ class ProteinStructure:
             hydrogen_atom_names = {
                 atom_site.name
                 for atom_site in current_payload.residue_site.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             }
             updated_entries_by_index.append(
                 current_payload.with_residue_site(stripped_residue_site).without_atoms(

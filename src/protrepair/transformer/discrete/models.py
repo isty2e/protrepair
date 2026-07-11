@@ -14,8 +14,12 @@ from protrepair.transformer.discrete.orientation import attached_hydrogen_atom_n
 class DiscreteCorrectionScore:
     """Lexicographic score for one residue-local discrete correction candidate."""
 
-    focus_clash_count: int
+    focus_heavy_clash_count: int
     focus_geometry_outlier_count: int
+    focus_heavy_fractional_clash_overlap_sum: float
+    focus_clash_count: int
+    focus_fractional_clash_overlap_sum: float
+    focus_heavy_clash_overlap_sum_angstrom: float
     focus_clash_overlap_sum_angstrom: float
 
 

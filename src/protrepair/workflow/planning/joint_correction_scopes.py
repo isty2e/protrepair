@@ -8,13 +8,13 @@ from enum import Enum
 from protrepair.chemistry import ComponentLibrary
 from protrepair.diagnostics.clashes import (
     ClashPolicy,
-    StericClash,
-    detect_clashes_involving_residues,
+    prepare_clash_detection_context,
 )
 from protrepair.diagnostics.geometry import residue_sort_key
 from protrepair.diagnostics.near_covalent import (
+    NearCovalentContact,
     NearCovalentContactPolicy,
-    detect_near_covalent_contacts,
+    detect_near_covalent_contacts_from_context,
 )
 from protrepair.geometry import Vec3
 from protrepair.scope import ResidueSetScope
@@ -62,14 +62,14 @@ class JointCorrectionMotionClass(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class JointCorrectionScopePolicy:
-    """Policy for promoting severe contacts into joint correction scopes."""
+    """Policy for promoting near-covalent contacts into joint scopes."""
 
-    minimum_overlap_angstrom: float = 1.0
+    minimum_overlap_angstrom: float = 0.0
     covalent_distance_margin_angstrom: float = 0.45
 
     def __post_init__(self) -> None:
-        if self.minimum_overlap_angstrom <= 0.0:
-            raise ValueError("minimum_overlap_angstrom must be positive")
+        if self.minimum_overlap_angstrom < 0.0:
+            raise ValueError("minimum_overlap_angstrom must be non-negative")
         if self.covalent_distance_margin_angstrom < 0.0:
             raise ValueError(
                 "covalent_distance_margin_angstrom must be non-negative"
@@ -78,10 +78,10 @@ class JointCorrectionScopePolicy:
 
 @dataclass(frozen=True, slots=True)
 class JointCorrectionBatchingPolicy:
-    """Policy for batching severe joint-correction clusters into local scopes."""
+    """Policy for batching near-covalent clusters into local scopes."""
 
-    minimum_cluster_worst_overlap_angstrom: float = 1.75
-    minimum_cluster_total_overlap_angstrom: float = 5.0
+    minimum_cluster_worst_overlap_angstrom: float = 0.25
+    minimum_cluster_total_overlap_angstrom: float = 0.75
     compatibility_context_distance_angstrom: float = 6.0
 
     def __post_init__(self) -> None:
@@ -101,7 +101,7 @@ class JointCorrectionBatchingPolicy:
 
 @dataclass(frozen=True, slots=True)
 class JointCorrectionScopeProposal:
-    """One multi-residue refinement scope proposed from severe contacts."""
+    """One multi-residue refinement scope proposed from near-covalent contacts."""
 
     residue_ids: tuple[ResidueId, ...]
     contact_pair_count: int
@@ -172,7 +172,7 @@ def propose_joint_correction_scopes(
     include_ligands: bool = False,
     policy: JointCorrectionScopePolicy | None = None,
 ) -> tuple[JointCorrectionScopeProposal, ...]:
-    """Return multi-residue correction scopes for severe focus-connected contacts."""
+    """Return correction scopes for near-covalent focus-connected contacts."""
 
     if not focus_residue_ids:
         return ()
@@ -182,9 +182,8 @@ def propose_joint_correction_scopes(
         if policy is None
         else policy
     )
-    clash_report = detect_clashes_involving_residues(
+    clash_context = prepare_clash_detection_context(
         structure,
-        residue_ids=frozenset(focus_residue_ids),
         component_library=component_library,
         policy=ClashPolicy(
             include_hydrogens=(
@@ -194,10 +193,12 @@ def propose_joint_correction_scopes(
             include_ligands=include_ligands,
         ),
     )
-    severe_contacts = tuple(
-        detect_near_covalent_contacts(
+    focus_residue_id_set = frozenset(focus_residue_ids)
+    near_covalent_contacts = tuple(
+        detect_near_covalent_contacts_from_context(
             structure,
-            clashes=clash_report.clashes,
+            clash_context,
+            focus_residue_ids=focus_residue_id_set,
             policy=NearCovalentContactPolicy(
                 minimum_overlap_angstrom=active_policy.minimum_overlap_angstrom,
                 covalent_distance_margin_angstrom=(
@@ -206,19 +207,19 @@ def propose_joint_correction_scopes(
             ),
         )
     )
-    if not severe_contacts:
+    if not near_covalent_contacts:
         return ()
 
     proposals: list[JointCorrectionScopeProposal] = []
     for residue_cluster in _contact_connected_residue_clusters(
-        severe_contacts,
+        near_covalent_contacts,
         focus_residue_ids=focus_residue_ids,
     ):
         cluster_contacts = tuple(
-            clash
-            for clash in severe_contacts
-            if clash.left_residue_id in residue_cluster
-            and clash.right_residue_id in residue_cluster
+            contact
+            for contact in near_covalent_contacts
+            if contact.left_residue_id in residue_cluster
+            and contact.right_residue_id in residue_cluster
         )
         if not cluster_contacts:
             continue
@@ -230,10 +231,10 @@ def propose_joint_correction_scopes(
                 ),
                 contact_pair_count=len(cluster_contacts),
                 worst_overlap_angstrom=max(
-                    clash.overlap_angstrom for clash in cluster_contacts
+                    contact.overlap_angstrom for contact in cluster_contacts
                 ),
                 total_overlap_angstrom=sum(
-                    clash.overlap_angstrom for clash in cluster_contacts
+                    contact.overlap_angstrom for contact in cluster_contacts
                 ),
                 motion_class=_cluster_motion_class(
                     structure,
@@ -288,7 +289,7 @@ def batch_joint_correction_scope_proposals(
                 residue.residue_id
             )
         )
-        for residue in structure.constitution.iter_residues(include_ligands=False)
+        for residue in structure.constitution.iter_residues(include_ligands=True)
     }
     context_residue_ids_by_index = {
         proposal_index: _proposal_context_residue_ids(
@@ -356,18 +357,18 @@ def batch_joint_correction_scope_proposals(
 def _cluster_motion_class(
     structure: ProteinStructure,
     *,
-    cluster_contacts: tuple[StericClash, ...],
+    cluster_contacts: tuple[NearCovalentContact, ...],
     component_library: ComponentLibrary,
 ) -> JointCorrectionMotionClass:
-    """Return the minimum motion class required by one severe contact cluster."""
+    """Return the minimum motion class required by one contact cluster."""
 
     if any(
-        _clash_requires_residue_atoms(
+        _contact_requires_residue_atoms(
             structure,
-            clash=clash,
+            contact=contact,
             component_library=component_library,
         )
-        for clash in cluster_contacts
+        for contact in cluster_contacts
     ):
         return JointCorrectionMotionClass.RESIDUE_ATOMS
 
@@ -415,23 +416,23 @@ def _execution_residue_ids_for_backbone_motion(
     return tuple(sorted(widened_residue_ids, key=residue_sort_key))
 
 
-def _clash_requires_residue_atoms(
+def _contact_requires_residue_atoms(
     structure: ProteinStructure,
     *,
-    clash: StericClash,
+    contact: NearCovalentContact,
     component_library: ComponentLibrary,
 ) -> bool:
-    """Return whether one clash involves polymer-backbone-local motion."""
+    """Return whether one contact involves polymer-backbone-local motion."""
 
     return _atom_requires_residue_atoms(
         structure,
-        residue_id=clash.left_residue_id,
-        atom_name=clash.left_atom_name,
+        residue_id=contact.left_residue_id,
+        atom_name=contact.left_atom_name,
         component_library=component_library,
     ) or _atom_requires_residue_atoms(
         structure,
-        residue_id=clash.right_residue_id,
-        atom_name=clash.right_atom_name,
+        residue_id=contact.right_residue_id,
+        atom_name=contact.right_atom_name,
         component_library=component_library,
     )
 
@@ -451,7 +452,7 @@ def _atom_requires_residue_atoms(
 
     normalized_atom_name = atom_name.strip().upper()
     atom_site = residue.atom_site(normalized_atom_name)
-    if atom_site.element != "H":
+    if not atom_site.is_hydrogen():
         return normalized_atom_name in POLYMER_BACKBONE_HEAVY_ATOM_NAMES
 
     anchor_atom_name = _hydrogen_anchor_atom_name(
@@ -491,7 +492,7 @@ def _hydrogen_anchor_atom_name(
     nearest_anchor_atom_name: str | None = None
     nearest_anchor_distance = float("inf")
     for atom_site in residue.atom_sites:
-        if atom_site.element == "H":
+        if atom_site.is_hydrogen():
             continue
 
         pair_distance = hydrogen_atom_geometry.distance_to(
@@ -507,11 +508,11 @@ def _hydrogen_anchor_atom_name(
 
 
 def _contact_connected_residue_clusters(
-    contacts: Iterable[StericClash],
+    contacts: Iterable[NearCovalentContact],
     *,
     focus_residue_ids: tuple[ResidueId, ...],
 ) -> tuple[frozenset[ResidueId], ...]:
-    """Return focus-connected residue clusters from severe inter-residue contacts."""
+    """Return focus-connected clusters from near-covalent inter-residue contacts."""
 
     adjacency: dict[ResidueId, set[ResidueId]] = defaultdict(set)
     for clash in contacts:
@@ -550,7 +551,7 @@ def _proposal_passes_batching_threshold(
     *,
     policy: JointCorrectionBatchingPolicy,
 ) -> bool:
-    """Return whether one raw proposal is severe enough for automatic batching."""
+    """Return whether one raw proposal has enough near-covalent burden."""
 
     return (
         proposal.worst_overlap_angstrom

@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING
 
 from protrepair.chemistry import BondDefinition, HydrogenSemantics, ResidueTemplate
 from protrepair.chemistry.component.library import ComponentLibrary
-from protrepair.diagnostics.topology import detect_disulfide_topology
+from protrepair.errors import RefinementError
+from protrepair.state.structure_topology import (
+    DisulfideEndpointMultiplicityContradiction,
+)
 from protrepair.structure.constitution import (
     AtomSite as ConstitutionAtomSite,
 )
@@ -25,7 +28,6 @@ if TYPE_CHECKING:
     from protrepair.transformer.continuous.domain import ContinuousRelaxationRegion
 
 PEPTIDE_BOND_ORDER = 1
-DISULFIDE_BOND_ORDER = 1
 HYDROGEN_ATTACHMENT_DISTANCE_MAX_ANGSTROM = 1.35
 EXECUTION_ADMISSIBLE_TOPOLOGY_BOND_RELATIONSHIPS: frozenset[BondRelationshipType] = (
     frozenset(
@@ -129,7 +131,6 @@ def inter_residue_bonds(
     """Return inter-residue bonds across one whole snapshot."""
 
     bond_set = set(_peptide_bonds(snapshot))
-    bond_set.update(_disulfide_bonds(snapshot))
     bond_set.update(_topology_inter_residue_bonds(snapshot))
     return tuple(sorted(bond_set, key=lambda bond: bond.sort_key()))
 
@@ -169,13 +170,18 @@ def plan_continuous_region_bonds(
 ) -> tuple[PlannedBond, ...]:
     """Return all planned bonds inside one included region."""
 
+    constitution = region.snapshot.structure.constitution
+    included_residue_index_set = set(region.included_residue_indices)
+    _require_disulfide_endpoint_multiplicity_realizability(
+        region,
+        included_residue_index_set=included_residue_index_set,
+    )
+
     if support_by_residue_index is None:
         support_by_residue_index = region.require_local_bond_planning_support(
             component_library
         )
 
-    constitution = region.snapshot.structure.constitution
-    included_residue_index_set = set(region.included_residue_indices)
     bond_set: set[PlannedBond] = set(
         _topology_local_bonds(
             region,
@@ -273,6 +279,41 @@ def plan_continuous_region_bonds(
     return tuple(sorted(bond_set, key=lambda bond: bond.sort_key()))
 
 
+def _require_disulfide_endpoint_multiplicity_realizability(
+    region: "ContinuousRelaxationRegion",
+    *,
+    included_residue_index_set: set[ResidueIndex],
+) -> None:
+    """Reject projected bond graphs with multiply assigned disulfide sulfur."""
+
+    structure = region.snapshot.structure
+    included_residue_ids = frozenset(
+        structure.constitution.residue_site_at(residue_index).residue_id
+        for residue_index in included_residue_index_set
+    )
+    contradictions = tuple(
+        contradiction
+        for contradiction in (
+            DisulfideEndpointMultiplicityContradiction.all_from_structure(structure)
+        )
+        if contradiction.is_contradictory_in_residue_projection(
+            included_residue_ids
+        )
+    )
+    if not contradictions:
+        return
+
+    contradiction_details = "; ".join(
+        f"{contradiction.sulfur_atom_ref.display_token()} has "
+        f"{contradiction.projected_pair_count(included_residue_ids)} relationships"
+        for contradiction in contradictions
+    )
+    raise RefinementError(
+        "continuous relaxation cannot realize multiple canonical disulfide "
+        f"relationships at one CYS SG endpoint: {contradiction_details}"
+    )
+
+
 def _topology_inter_residue_bonds(
     snapshot: ProteinStructureSnapshot,
 ) -> tuple[PlannedBond, ...]:
@@ -333,29 +374,6 @@ def _peptide_bonds(
             )
 
     return tuple(bonds)
-
-
-def _disulfide_bonds(
-    snapshot: ProteinStructureSnapshot,
-) -> tuple[PlannedBond, ...]:
-    """Return geometry-candidate disulfide SG-SG bonds for execution only."""
-
-    constitution = snapshot.structure.constitution
-    likely_disulfides, _ = detect_disulfide_topology(snapshot.structure)
-    return tuple(
-        PlannedBond(
-            atom_index_1=constitution.atom_index_in_residue(
-                constitution.residue_index(finding.left_residue_id),
-                "SG",
-            ),
-            atom_index_2=constitution.atom_index_in_residue(
-                constitution.residue_index(finding.right_residue_id),
-                "SG",
-            ),
-            order=DISULFIDE_BOND_ORDER,
-        )
-        for finding in likely_disulfides
-    )
 
 
 def _topology_local_bonds(
@@ -425,11 +443,13 @@ def _inferred_hydrogen_bonds(
     """Infer residue-local hydrogen attachments when templates omit hydrogens."""
 
     heavy_atom_sites = tuple(
-        atom_site for atom_site in residue_site.atom_sites if atom_site.element != "H"
+        atom_site
+        for atom_site in residue_site.atom_sites
+        if not atom_site.is_hydrogen()
     )
     inferred_bonds: list[PlannedBond] = []
     for hydrogen_atom_site in residue_site.atom_sites:
-        if hydrogen_atom_site.element != "H":
+        if not hydrogen_atom_site.is_hydrogen():
             continue
 
         if hydrogen_atom_site.name in explicit_hydrogen_atom_names:
@@ -473,7 +493,7 @@ def _explicit_hydrogen_atom_names_in_bonds(
                 continue
 
             atom_site = constitution.atom_site_at(atom_index)
-            if atom_site.element == "H":
+            if atom_site.is_hydrogen():
                 hydrogen_atom_names.add(atom_site.name)
 
     return hydrogen_atom_names

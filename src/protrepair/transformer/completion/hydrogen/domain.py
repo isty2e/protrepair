@@ -8,18 +8,15 @@ from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.scope import ResidueSetScope
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
+from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import ResidueIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
-from protrepair.transformer.completion.hydrogen.geometry import (
-    backbone_hydrogen,
-    is_disulfide_bonded,
-)
+from protrepair.transformer.completion.hydrogen.geometry import backbone_hydrogen
 from protrepair.transformer.completion.hydrogen.rotatable import (
     RotatableHydrogenEnvironment,
     RotatableHydrogenSearch,
     build_rotatable_hydrogen_environments,
-    optimization_residue_number,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
@@ -29,9 +26,27 @@ from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 class HydrogenCompletionEnvironment:
     """Chain-local environment shared by residue-local hydrogen sites."""
 
-    residue_numbers: tuple[str, ...]
     rotatable_environments: tuple[RotatableHydrogenEnvironment, ...]
-    sg_positions: tuple[Vec3, ...]
+    disulfide_bonded_residue_ids: frozenset[ResidueId]
+
+    def __post_init__(self) -> None:
+        residue_ids = tuple(
+            environment.residue_id for environment in self.rotatable_environments
+        )
+        if len(residue_ids) != len(set(residue_ids)):
+            raise ValueError(
+                "hydrogen completion environments must not repeat residue identities"
+            )
+        disulfide_residue_ids = frozenset(self.disulfide_bonded_residue_ids)
+        if not disulfide_residue_ids.issubset(residue_ids):
+            raise ValueError(
+                "hydrogen completion disulfide ids must belong to the environment"
+            )
+        object.__setattr__(
+            self,
+            "disulfide_bonded_residue_ids",
+            disulfide_residue_ids,
+        )
 
     @classmethod
     def from_payloads(
@@ -39,33 +54,17 @@ class HydrogenCompletionEnvironment:
         residues: tuple[CompletionResiduePayload, ...],
         *,
         templates: Sequence[ResidueTemplate | None],
+        disulfide_bonded_residue_ids: frozenset[ResidueId],
     ) -> "HydrogenCompletionEnvironment":
         """Build the shared hydrogen environment for one chain residue tuple."""
 
-        residue_numbers = tuple(
-            optimization_residue_number(residue) for residue in residues
-        )
         return cls(
-            residue_numbers=residue_numbers,
             rotatable_environments=build_rotatable_hydrogen_environments(
                 residues=residues,
-                residue_numbers=list(residue_numbers),
                 templates=templates,
             ),
-            sg_positions=tuple(
-                residue.residue_geometry.position("SG")
-                for residue in residues
-                if residue.has_atom("SG")
-            ),
+            disulfide_bonded_residue_ids=disulfide_bonded_residue_ids,
         )
-
-    def residue_number(
-        self,
-        residue_index: ResidueIndex,
-    ) -> str:
-        """Return the legacy ProtRepair residue-number token for one residue slot."""
-
-        return self.residue_numbers[residue_index.value]
 
     def optimize_rotatable(
         self,
@@ -75,17 +74,17 @@ class HydrogenCompletionEnvironment:
         """Return the optimized rotatable-hydrogen coordinate for one residue."""
 
         return search.optimized_coordinate(
-            residue_number=self.residue_number(residue_index),
-            environments=self.rotatable_environments,
+            self.rotatable_environments[residue_index.value]
         )
 
-    def has_disulfide_partner(
+    def is_disulfide_bonded(
         self,
-        sg_position: Vec3,
+        residue_index: ResidueIndex,
     ) -> bool:
-        """Return whether the given SG position participates in a disulfide bond."""
+        """Return whether one environment residue has canonical disulfide topology."""
 
-        return is_disulfide_bonded(sg_position, self.sg_positions)
+        residue_id = self.rotatable_environments[residue_index.value].residue_id
+        return residue_id in self.disulfide_bonded_residue_ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,13 +321,6 @@ class HydrogenResidueSite:
             ),
         )
 
-    def residue_number(
-        self,
-    ) -> str:
-        """Return the legacy ProtRepair residue-number token for this site."""
-
-        return self.environment.residue_number(self.residue_index)
-
     def optimize_rotatable(
         self,
         search: RotatableHydrogenSearch,
@@ -337,13 +329,10 @@ class HydrogenResidueSite:
 
         return self.environment.optimize_rotatable(self.residue_index, search)
 
-    def has_disulfide_partner(
-        self,
-        sg_position: Vec3,
-    ) -> bool:
-        """Return whether this site sulfur is disulfide-bonded within the chain."""
+    def is_disulfide_bonded(self) -> bool:
+        """Return whether this site has canonical disulfide topology."""
 
-        return self.environment.has_disulfide_partner(sg_position)
+        return self.environment.is_disulfide_bonded(self.residue_index)
 
     def backbone_hydrogen_position(
         self,

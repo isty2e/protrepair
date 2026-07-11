@@ -24,13 +24,20 @@ from protrepair.chemistry.component.semantics import (
 )
 from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.radii import (
-    BONDI_VAN_DER_WAALS_RADII_ANGSTROM,
-    CORDERO_COVALENT_RADII_ANGSTROM,
     COVALENT_RADII_SOURCE,
-    DEFAULT_COVALENT_RADIUS_ANGSTROM,
-    DEFAULT_VAN_DER_WAALS_RADIUS_ANGSTROM,
+    RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE,
+    RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION,
     VAN_DER_WAALS_RADII_SOURCE,
+    ElementRadiusDataQuality,
+    ElementRadiusLookup,
+    ElementRadiusResolution,
+    ElementRadiusResolutionStatus,
+    RadiusKind,
     covalent_radius_angstrom,
+    element_radius_angstrom,
+    normalize_radius_element_symbol,
+    prepare_radius_lookup,
+    resolve_element_radius,
     van_der_waals_radius_angstrom,
 )
 from protrepair.chemistry.restraint.defaults import build_default_restraint_library
@@ -45,14 +52,17 @@ from protrepair.chemistry.retained_non_polymer.registry import (
     build_bundled_retained_non_polymer_restraint_library,
     bundled_retained_non_polymer_asset_path,
 )
+from protrepair.errors import UnknownElementRadiusError
 
 __all__ = [
     "BondDefinition",
     "ChemicalComponentDefinition",
     "ComponentLibrary",
-    "BONDI_VAN_DER_WAALS_RADII_ANGSTROM",
-    "CORDERO_COVALENT_RADII_ANGSTROM",
     "COVALENT_RADII_SOURCE",
+    "ElementRadiusDataQuality",
+    "ElementRadiusLookup",
+    "ElementRadiusResolution",
+    "ElementRadiusResolutionStatus",
     "ForceFieldAtomParams",
     "HeavyAtomSemantics",
     "HydrogenOperation",
@@ -68,9 +78,11 @@ __all__ = [
     "ResidueTemplate",
     "RotatableHydrogenKind",
     "TetrahedralCenterSemantics",
-    "DEFAULT_COVALENT_RADIUS_ANGSTROM",
-    "DEFAULT_VAN_DER_WAALS_RADIUS_ANGSTROM",
+    "RadiusKind",
+    "RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE",
+    "RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION",
     "VAN_DER_WAALS_RADII_SOURCE",
+    "UnknownElementRadiusError",
     "build_default_component_library",
     "build_default_restraint_library",
     "build_bundled_retained_non_polymer_component_library",
@@ -78,6 +90,10 @@ __all__ = [
     "build_bundled_retained_non_polymer_restraint_library",
     "bundled_retained_non_polymer_asset_path",
     "covalent_radius_angstrom",
+    "element_radius_angstrom",
     "evidence_by_residue_id",
+    "normalize_radius_element_symbol",
+    "prepare_radius_lookup",
+    "resolve_element_radius",
     "van_der_waals_radius_angstrom",
 ]

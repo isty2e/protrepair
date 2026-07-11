@@ -81,8 +81,8 @@ def retained_non_polymer_rdkit_fallback_expected_hydrogen_atom_names(
     chem = Chem
     if chem is None:
         raise RdkitUnavailableError(
-            "retained non-polymer RDKit fallback hydrogen expectation requires the "
-            "optional rdkit dependency"
+            "retained non-polymer RDKit fallback hydrogen expectation requires an "
+            "operational RDKit installation"
         )
 
     heavy_atom_molecule = _retained_non_polymer_rdkit_pose_molecule(
@@ -99,7 +99,7 @@ def retained_non_polymer_rdkit_fallback_expected_hydrogen_atom_names(
         present_hydrogen_atom_names=tuple(
             atom_site.name
             for atom_site in residue_site.atom_sites
-            if atom_site.element == "H"
+            if atom_site.is_hydrogen()
         ),
     )
 
@@ -117,8 +117,8 @@ def infer_retained_non_polymer_rdkit_fallback(
 
     if Chem is None:
         raise RdkitUnavailableError(
-            "retained non-polymer RDKit fallback hydrogenation requires the "
-            "optional rdkit dependency"
+            "retained non-polymer RDKit fallback hydrogenation requires an "
+            "operational RDKit installation"
         )
     if rdBase is None:
         raise RdkitUnavailableError(
@@ -142,7 +142,7 @@ def infer_retained_non_polymer_rdkit_fallback(
             present_hydrogen_atom_names = tuple(
                 atom_site.name
                 for atom_site in residue_site.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             )
         resolved_hydrogen_atom_names = (
             preferred_retained_non_polymer_expected_hydrogen_atom_names(
@@ -187,8 +187,8 @@ def retained_non_polymer_rdkit_fallback_hydrogenated_molecule(
 
     if Chem is None:
         raise RdkitUnavailableError(
-            "retained non-polymer RDKit fallback hydrogenation requires the "
-            "optional rdkit dependency"
+            "retained non-polymer RDKit fallback hydrogenation requires an "
+            "operational RDKit installation"
         )
 
     inference_result = infer_retained_non_polymer_rdkit_fallback(
@@ -213,8 +213,8 @@ def retained_non_polymer_rdkit_fallback_heavy_bond_definitions(
 
     if Chem is None:
         raise RdkitUnavailableError(
-            "retained non-polymer RDKit fallback bond inference requires the "
-            "optional rdkit dependency"
+            "retained non-polymer RDKit fallback bond inference requires an "
+            "operational RDKit installation"
         )
 
     heavy_atom_molecule = _retained_non_polymer_rdkit_pose_molecule(
@@ -403,8 +403,8 @@ def retained_non_polymer_rdkit_fallback_passive_heavy_bond_definitions(
     chem = Chem
     if chem is None:
         raise RdkitUnavailableError(
-            "retained non-polymer RDKit fallback passive context requires the "
-            "optional rdkit dependency"
+            "retained non-polymer RDKit fallback passive context requires an "
+            "operational RDKit installation"
         )
 
     heavy_atom_molecule = _retained_non_polymer_rdkit_pose_molecule(
@@ -856,7 +856,7 @@ def _retained_non_polymer_heavy_atom_pdb_block(
     pdb_lines: list[str] = []
     atom_serial = 1
     for atom_site in residue_site.atom_sites:
-        if atom_site.element == "H":
+        if atom_site.is_hydrogen():
             continue
 
         atom_geometry = residue_geometry.atom_geometry(atom_site.name)

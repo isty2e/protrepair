@@ -1,6 +1,5 @@
 """Unit tests for retained non-polymer RDKit evidence inference."""
 
-import pytest
 
 from protrepair.chemistry.inference import (
     retained_non_polymer_evidence as evidence_inference,
@@ -17,13 +16,12 @@ from protrepair.structure.labels import ResidueId
 
 try:
     from rdkit import Chem
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - required dependency import guard
     Chem = None
 
 RDKIT_AVAILABLE = Chem is not None
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_evidence_template_without_hydrogens_returns_defensive_copy() -> None:
     """Caller mutation of one returned heavy template must not poison caches."""
 
@@ -39,7 +37,6 @@ def test_evidence_template_without_hydrogens_returns_defensive_copy() -> None:
     assert not second_template.GetAtomWithIdx(0).HasProp("poisoned")
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_evidence_template_with_hydrogens_returns_defensive_copy() -> None:
     """Caller mutation of one returned H template must not affect inference."""
 
@@ -66,7 +63,6 @@ def test_evidence_template_with_hydrogens_returns_defensive_copy() -> None:
     ) == ("H001", "H002", "H003", "H004")
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_mutated_heavy_template_does_not_affect_hydrogenated_template() -> None:
     """A mutated heavy-template projection must not change later H inference."""
 
@@ -85,7 +81,6 @@ def test_mutated_heavy_template_does_not_affect_hydrogenated_template() -> None:
     ) == ("H001", "H002", "H003", "H004")
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_evidence_template_caches_are_bounded() -> None:
     """Arbitrary evidence SMILES must not grow RDKit template caches unbounded."""
 

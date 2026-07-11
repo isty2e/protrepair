@@ -89,8 +89,8 @@ def test_apply_discrete_pre_refinement_corrections_prefers_fixture_asn_flip() ->
         candidate.score.focus_clash_count == original_candidate.score.focus_clash_count
     )
     assert (
-        candidate.score.focus_clash_overlap_sum_angstrom
-        < original_candidate.score.focus_clash_overlap_sum_angstrom
+        candidate.score.focus_heavy_fractional_clash_overlap_sum
+        < original_candidate.score.focus_heavy_fractional_clash_overlap_sum
     )
 
     corrected_snapshot = apply_discrete_pre_refinement_corrections(

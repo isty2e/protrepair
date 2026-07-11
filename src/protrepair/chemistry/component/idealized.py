@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry.component.graph import BondDefinition
+from protrepair.structure.element import ElementIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +50,7 @@ class IdealizedComponentAtom:
     def is_hydrogen(self) -> bool:
         """Return whether this atom belongs to the hydrogen inventory."""
 
-        return self.element == "H"
+        return ElementIdentity(self.element).is_hydrogen()
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from math import sqrt
+from math import isfinite
 
 from protrepair.chemistry import (
     HydrogenSemantics,
@@ -12,10 +12,10 @@ from protrepair.chemistry import (
 )
 from protrepair.geometry import InternalCoordinateFrame, Vec3
 from protrepair.transformer.completion.hydrogen.scoring import (
-    ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM,
     RotatableHydrogenEnvironment,
     RotatableHydrogenLocalSite,
     RotatableHydrogenSearch,
+    max_rotatable_hydrogen_interaction_horizon_angstrom,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
@@ -27,10 +27,10 @@ __all__ = [
     "RotatableHydrogenSearch",
     "build_rotatable_hydrogen_environments",
     "build_rotatable_hydrogen_search",
-    "optimization_residue_number",
     "rotatable_hydrogen_donor_atom_name",
     "rotatable_hydrogen_placement_spec",
 ]
+
 
 @dataclass(frozen=True, slots=True)
 class _RotatableHydrogenEnvironmentSite:
@@ -55,13 +55,21 @@ class RotatableHydrogenPlacementSpec:
     inner_anchor_atom_name: str
     outer_anchor_atom_name: str
     donor_element: str
-    build_bond_length: float
-    reproject_bond_length: float
+    bond_length: float
+    bond_angle_degrees: float
     partial_charge: float
     sigma: float
     epsilon: float
 
     def __post_init__(self) -> None:
+        if not isfinite(self.bond_length) or self.bond_length <= 0.0:
+            raise ValueError("bond_length must be finite and positive")
+        if (
+            not isfinite(self.bond_angle_degrees)
+            or self.bond_angle_degrees <= 0.0
+            or self.bond_angle_degrees >= 180.0
+        ):
+            raise ValueError("bond_angle_degrees must be between 0 and 180 degrees")
         object.__setattr__(
             self,
             "hydrogen_atom_name",
@@ -88,7 +96,37 @@ class RotatableHydrogenPlacementSpec:
             self.donor_element.strip().upper(),
         )
 
+    def search(
+        self,
+        *,
+        outer_anchor: Vec3,
+        inner_anchor: Vec3,
+        donor: Vec3,
+        hydrogen: Vec3,
+    ) -> RotatableHydrogenSearch:
+        """Build a rotatable search using this chemistry family's parameters."""
 
+        return RotatableHydrogenSearch(
+            outer_anchor=outer_anchor,
+            inner_anchor=inner_anchor,
+            donor=donor,
+            hydrogen=hydrogen,
+            bond_length=self.bond_length,
+            bond_angle_degrees=self.bond_angle_degrees,
+            dihedral=InternalCoordinateFrame.torsion(
+                outer_anchor,
+                inner_anchor,
+                donor,
+                hydrogen,
+            ),
+            partial_charge=self.partial_charge,
+            sigma=self.sigma,
+            epsilon=self.epsilon,
+            donor_element=self.donor_element,
+        )
+
+
+# Donor-H angles use AMBER protein equilibrium geometry; DOI 10.1021/acs.jctc.5b00255.
 ROTATABLE_HYDROGEN_SPECS: dict[
     RotatableHydrogenKind, RotatableHydrogenPlacementSpec
 ] = {
@@ -98,8 +136,8 @@ ROTATABLE_HYDROGEN_SPECS: dict[
         inner_anchor_atom_name="CB",
         outer_anchor_atom_name="CA",
         donor_element="S",
-        build_bond_length=1.34,
-        reproject_bond_length=0.96,
+        bond_length=1.34,
+        bond_angle_degrees=96.0,
         partial_charge=0.19,
         sigma=0.11,
         epsilon=0.07,
@@ -110,8 +148,8 @@ ROTATABLE_HYDROGEN_SPECS: dict[
         inner_anchor_atom_name="CB",
         outer_anchor_atom_name="CA",
         donor_element="O",
-        build_bond_length=0.96,
-        reproject_bond_length=0.96,
+        bond_length=0.96,
+        bond_angle_degrees=108.5,
         partial_charge=0.41,
         sigma=0.0,
         epsilon=0.0,
@@ -122,8 +160,8 @@ ROTATABLE_HYDROGEN_SPECS: dict[
         inner_anchor_atom_name="CB",
         outer_anchor_atom_name="CA",
         donor_element="O",
-        build_bond_length=0.96,
-        reproject_bond_length=0.96,
+        bond_length=0.96,
+        bond_angle_degrees=108.5,
         partial_charge=0.41,
         sigma=0.0,
         epsilon=0.0,
@@ -134,8 +172,8 @@ ROTATABLE_HYDROGEN_SPECS: dict[
         inner_anchor_atom_name="CZ",
         outer_anchor_atom_name="CE2",
         donor_element="O",
-        build_bond_length=0.96,
-        reproject_bond_length=0.96,
+        bond_length=0.96,
+        bond_angle_degrees=113.0,
         partial_charge=0.37,
         sigma=0.0,
         epsilon=0.0,
@@ -156,14 +194,6 @@ def rotatable_hydrogen_placement_spec(
         return None
 
     return ROTATABLE_HYDROGEN_SPECS[hydrogen_semantics.rotatable_kind]
-
-
-def optimization_residue_number(
-    residue: CompletionResiduePayload,
-) -> str:
-    """Return the legacy ProtRepair residue-number token for rotatable-H refinement."""
-
-    return str(residue.residue_id.seq_num)
 
 
 def build_rotatable_hydrogen_search(
@@ -187,54 +217,63 @@ def build_rotatable_hydrogen_search(
     inner_anchor = residue_geometry.position(spec.inner_anchor_atom_name)
     donor = residue_geometry.position(spec.donor_atom_name)
     hydrogen = residue_geometry.position(spec.hydrogen_atom_name)
-    return RotatableHydrogenSearch(
-        outer_anchor=list(outer_anchor),
-        inner_anchor=list(inner_anchor),
-        donor=list(donor),
-        hydrogen=list(hydrogen),
-        build_bond_length=spec.build_bond_length,
-        reproject_bond_length=spec.reproject_bond_length,
-        dihedral=InternalCoordinateFrame.torsion(
-            outer_anchor,
-            inner_anchor,
-            donor,
-            hydrogen,
-        ),
-        partial_charge=spec.partial_charge,
-        sigma=spec.sigma,
-        epsilon=spec.epsilon,
-        donor_element=spec.donor_element,
+    return spec.search(
+        outer_anchor=outer_anchor,
+        inner_anchor=inner_anchor,
+        donor=donor,
+        hydrogen=hydrogen,
     )
 
 
 def build_rotatable_hydrogen_environments(
     *,
     residues: tuple[CompletionResiduePayload, ...],
-    residue_numbers: list[str],
     templates: Sequence[ResidueTemplate | None],
 ) -> tuple[RotatableHydrogenEnvironment, ...]:
     """Pack per-residue interaction environments for rotatable hydrogen search."""
 
-    environment_sites = _rotatable_hydrogen_environment_sites(
-        residues=residues,
-        templates=templates,
+    placement_specs = tuple(
+        None
+        if template is None
+        else rotatable_hydrogen_placement_spec(template.hydrogen_semantics)
+        for template in templates
     )
-    environments: list[RotatableHydrogenEnvironment] = []
-    for residue_index, (residue, residue_number, template) in enumerate(
-        zip(residues, residue_numbers, templates, strict=True)
-    ):
-        placement_spec = (
-            None
-            if template is None
-            else rotatable_hydrogen_placement_spec(template.hydrogen_semantics)
+    eligible_donor_by_residue = tuple(
+        placement_spec is not None and residue.has_atom(placement_spec.donor_atom_name)
+        for residue, placement_spec in zip(residues, placement_specs, strict=True)
+    )
+    environment_sites: tuple[_RotatableHydrogenEnvironmentSite, ...] = ()
+    max_hydrogen_site_interaction_horizon_angstrom: float | None = None
+    if any(eligible_donor_by_residue):
+        environment_sites = _rotatable_hydrogen_environment_sites(
+            residues=residues,
+            templates=templates,
         )
-        if (
-            placement_spec is None
-            or not residue.has_atom(placement_spec.donor_atom_name)
-        ):
+        max_hydrogen_site_interaction_horizon_angstrom = (
+            max_rotatable_hydrogen_interaction_horizon_angstrom(
+                site.element for site in environment_sites
+            )
+        )
+
+    environments: list[RotatableHydrogenEnvironment] = []
+    for residue_index, (
+        residue,
+        template,
+        placement_spec,
+        eligible_donor,
+    ) in enumerate(
+        zip(
+            residues,
+            templates,
+            placement_specs,
+            eligible_donor_by_residue,
+            strict=True,
+        )
+    ):
+        if not eligible_donor:
             environments.append(
                 RotatableHydrogenEnvironment(
-                    residue_number=residue_number,
+                    residue_id=residue.residue_id,
                     atom_x=(),
                     atom_y=(),
                     atom_z=(),
@@ -246,6 +285,8 @@ def build_rotatable_hydrogen_environments(
             )
             continue
 
+        assert placement_spec is not None
+        assert max_hydrogen_site_interaction_horizon_angstrom is not None
         atom_x: list[float] = []
         atom_y: list[float] = []
         atom_z: list[float] = []
@@ -257,7 +298,10 @@ def build_rotatable_hydrogen_environments(
             placement_spec.donor_atom_name
         )
         interaction_radius_sq = _rotatable_hydrogen_environment_radius_sq(
-            placement_spec
+            placement_spec,
+            max_hydrogen_site_interaction_horizon_angstrom=(
+                max_hydrogen_site_interaction_horizon_angstrom
+            ),
         )
 
         for site in environment_sites:
@@ -280,7 +324,7 @@ def build_rotatable_hydrogen_environments(
 
         environments.append(
             RotatableHydrogenEnvironment(
-                residue_number=residue_number,
+                residue_id=residue.residue_id,
                 atom_x=tuple(atom_x),
                 atom_y=tuple(atom_y),
                 atom_z=tuple(atom_z),
@@ -310,11 +354,9 @@ def _rotatable_hydrogen_environment_sites(
         zip(residues, templates, strict=True)
     ):
         residue_geometry = residue.residue_geometry
-        parameters_by_atom = (
-            {} if template is None else template.forcefield_parameters
-        )
+        parameters_by_atom = {} if template is None else template.forcefield_parameters
         for atom_site in residue.atom_sites:
-            if atom_site.element == "H":
+            if atom_site.is_hydrogen():
                 continue
 
             atom_position = residue_geometry.position(atom_site.name)
@@ -343,16 +385,15 @@ def _rotatable_hydrogen_environment_sites(
 
 def _rotatable_hydrogen_environment_radius_sq(
     placement_spec: RotatableHydrogenPlacementSpec,
+    *,
+    max_hydrogen_site_interaction_horizon_angstrom: float,
 ) -> float:
     """Return donor-centered radius squared that safely covers scored candidates."""
 
-    scoring_radius = sqrt(ROTATABLE_HYDROGEN_STERIC_CUTOFF_SQ_ANGSTROM)
-    candidate_radius = max(
-        placement_spec.build_bond_length,
-        placement_spec.reproject_bond_length,
+    environment_radius_angstrom = (
+        max_hydrogen_site_interaction_horizon_angstrom + placement_spec.bond_length
     )
-    environment_radius = scoring_radius + candidate_radius
-    return environment_radius * environment_radius
+    return environment_radius_angstrom * environment_radius_angstrom
 
 
 def _site_within_donor_radius(
@@ -384,7 +425,7 @@ def _rotatable_hydrogen_local_sites(
     residue_geometry = residue.residue_geometry
     local_sites: list[RotatableHydrogenLocalSite] = []
     for atom_site in residue.atom_sites:
-        if atom_site.element == "H":
+        if atom_site.is_hydrogen():
             continue
 
         atom_position = residue_geometry.position(atom_site.name)

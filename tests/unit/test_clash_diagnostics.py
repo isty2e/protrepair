@@ -13,6 +13,7 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
+from protrepair.chemistry import UnknownElementRadiusError
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import (
     ClashPolicy,
@@ -26,6 +27,7 @@ from protrepair.diagnostics import (
     has_clashes_in_context,
     prepare_clash_detection_basis,
     prepare_clash_detection_context,
+    prepare_projected_clash_detection_context,
 )
 from protrepair.diagnostics.clash_pair_generation import (
     ContactDomain,
@@ -146,6 +148,203 @@ def test_clash_pair_generation_has_no_stringly_domain_coercion() -> None:
     assert '== "ligand"' not in source
 
 
+@pytest.mark.parametrize(
+    "invalid_tolerance", (float("nan"), float("inf"), -float("inf"))
+)
+def test_clash_policy_rejects_nonfinite_heavy_overlap_tolerance(
+    invalid_tolerance: float,
+) -> None:
+    """Heavy-atom overlap tolerance must define a finite distance threshold."""
+
+    with pytest.raises(ValueError, match="heavy overlap tolerance must be finite"):
+        ClashPolicy(heavy_overlap_tolerance_angstrom=invalid_tolerance)
+
+
+@pytest.mark.parametrize(
+    "invalid_tolerance", (float("nan"), float("inf"), -float("inf"))
+)
+def test_clash_policy_rejects_nonfinite_hydrogen_overlap_tolerance(
+    invalid_tolerance: float,
+) -> None:
+    """Hydrogen overlap tolerance must define a finite distance threshold."""
+
+    with pytest.raises(ValueError, match="hydrogen overlap tolerance must be finite"):
+        ClashPolicy(hydrogen_overlap_tolerance_angstrom=invalid_tolerance)
+
+
+def test_clash_policy_clamps_nonpositive_pair_distance_threshold() -> None:
+    """An overlap tolerance at least as large as the radius sum admits no pair."""
+
+    policy = ClashPolicy(heavy_overlap_tolerance_angstrom=4.0)
+
+    assert (
+        policy.allowed_distance_angstrom(
+            left_van_der_waals_radius_angstrom=1.7,
+            right_van_der_waals_radius_angstrom=1.7,
+            left_is_hydrogen=False,
+            right_is_hydrogen=False,
+        )
+        == 0.0
+    )
+
+
+@pytest.mark.parametrize(
+    ("left_element", "right_element", "policy"),
+    (
+        ("C", "C", ClashPolicy(heavy_overlap_tolerance_angstrom=10.0)),
+        ("H", "C", ClashPolicy(hydrogen_overlap_tolerance_angstrom=10.0)),
+    ),
+)
+def test_nonpositive_pair_threshold_cannot_create_zero_distance_clash(
+    left_element: str,
+    right_element: str,
+    policy: ClashPolicy,
+) -> None:
+    """Squaring a nonpositive threshold must not revive an impossible clash."""
+
+    structure = build_two_atom_contact_structure(
+        left_element=left_element,
+        right_element=right_element,
+        distance_angstrom=0.0,
+    )
+    context = prepare_clash_detection_context(
+        structure,
+        component_library=build_standard_component_library(),
+        policy=policy,
+    )
+
+    assert (
+        context.allowed_distance_by_element_pair[(left_element, right_element)] == 0.0
+    )
+    assert (
+        context.allowed_distance_by_element_pair[(right_element, left_element)] == 0.0
+    )
+    assert context.candidate_cell_size_angstrom >= 1.0
+    assert context.detect_clashes().is_empty()
+
+
+def test_positive_pair_threshold_still_reports_zero_distance_clash() -> None:
+    """The nonpositive guard must not suppress a genuine zero-distance overlap."""
+
+    report = detect_clashes(
+        build_two_atom_contact_structure(
+            left_element="C",
+            right_element="C",
+            distance_angstrom=0.0,
+        ),
+        component_library=build_standard_component_library(),
+    )
+
+    assert len(report.clashes) == 1
+    assert report.clashes[0].distance_angstrom == 0.0
+    assert report.clashes[0].allowed_distance_angstrom > 0.0
+
+
+def test_pair_distance_threshold_boundary_is_exclusive() -> None:
+    """A pair at the threshold is clear while one just inside still clashes."""
+
+    policy = ClashPolicy(heavy_overlap_tolerance_angstrom=0.0)
+    threshold = policy.allowed_distance_angstrom(
+        left_van_der_waals_radius_angstrom=1.7,
+        right_van_der_waals_radius_angstrom=1.7,
+        left_is_hydrogen=False,
+        right_is_hydrogen=False,
+    )
+    component_library = build_standard_component_library()
+
+    at_threshold = detect_clashes(
+        build_two_atom_contact_structure(
+            left_element="C",
+            right_element="C",
+            distance_angstrom=threshold,
+        ),
+        component_library=component_library,
+        policy=policy,
+    )
+    just_inside = detect_clashes(
+        build_two_atom_contact_structure(
+            left_element="C",
+            right_element="C",
+            distance_angstrom=threshold - 1e-6,
+        ),
+        component_library=component_library,
+        policy=policy,
+    )
+
+    assert at_threshold.is_empty()
+    assert len(just_inside.clashes) == 1
+
+
+def test_very_large_finite_tolerance_produces_inert_threshold() -> None:
+    """A large finite policy value should remain valid without numeric revival."""
+
+    policy = ClashPolicy(heavy_overlap_tolerance_angstrom=1e308)
+
+    assert (
+        policy.allowed_distance_angstrom(
+            left_van_der_waals_radius_angstrom=1.7,
+            right_van_der_waals_radius_angstrom=1.7,
+            left_is_hydrogen=False,
+            right_is_hydrogen=False,
+        )
+        == 0.0
+    )
+
+
+def test_hydrogen_isotope_aliases_share_pair_distance_threshold() -> None:
+    """H, D, and T should select the same hydrogen overlap tolerance."""
+
+    component_library = build_standard_component_library()
+    thresholds = []
+    for hydrogen_element in ("H", "D", "T"):
+        context = prepare_clash_detection_context(
+            build_two_atom_contact_structure(
+                left_element=hydrogen_element,
+                right_element="C",
+                distance_angstrom=2.0,
+            ),
+            component_library=component_library,
+        )
+        thresholds.append(
+            context.allowed_distance_by_element_pair[(hydrogen_element, "C")]
+        )
+
+    assert thresholds == pytest.approx((2.0, 2.0, 2.0))
+
+
+def test_empty_clash_basis_uses_minimum_candidate_cell_size() -> None:
+    """A structure with no eligible atoms should produce an inert clash basis."""
+
+    structure = build_structure(chains=(), source_format=FileFormat.PDB)
+
+    basis = prepare_clash_detection_basis(
+        structure,
+        component_library=build_standard_component_library(),
+    )
+
+    assert basis.atom_site_bases == ()
+    assert basis.candidate_cell_size_angstrom == 1.0
+    assert (
+        bind_clash_detection_context(structure, basis=basis).detect_clashes().is_empty()
+    )
+
+
+def test_empty_projected_clash_context_uses_minimum_candidate_cell_size() -> None:
+    """The projected preparation path should share empty-envelope semantics."""
+
+    structure = build_structure(chains=(), source_format=FileFormat.PDB)
+
+    context = prepare_projected_clash_detection_context(
+        structure,
+        residue_ids=(),
+        component_library=build_standard_component_library(),
+    )
+
+    assert context.atom_sites == ()
+    assert context.candidate_cell_size_angstrom == 1.0
+    assert context.detect_clashes().is_empty()
+
+
 def test_clash_context_uses_explicit_common_metal_vdw_radii() -> None:
     """Common retained metals should not enter clash diagnostics as carbon fallback."""
 
@@ -174,10 +373,100 @@ def test_clash_context_uses_explicit_common_metal_vdw_radii() -> None:
         policy=ClashPolicy(include_ligands=True),
     )
 
-    assert context.van_der_waals_radius("FE") == 2.00
-    assert context.van_der_waals_radius("ZN") == 1.39
-    assert context.van_der_waals_radius("MG") == 1.73
-    assert context.van_der_waals_radius("CA") == 2.31
+    assert context.van_der_waals_radius("FE") == 2.05
+    assert context.van_der_waals_radius("ZN") == 2.10
+    assert context.van_der_waals_radius("MG") == 2.20
+    assert context.van_der_waals_radius("CA") == 2.40
+
+
+def test_clash_detection_cell_size_covers_maximum_radius_pair() -> None:
+    """Spatial hashing should not miss broad-radius pairs in non-adjacent old cells."""
+
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    build_residue(
+                        "CSX",
+                        "A",
+                        1,
+                        (atom("CS1", "CS", Vec3(3.99, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+            chain_payload(
+                "B",
+                (
+                    build_residue(
+                        "CSX",
+                        "B",
+                        1,
+                        (atom("CS1", "CS", Vec3(8.10, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="broad-radius-grid-boundary-clash",
+    )
+    component_library = build_standard_component_library()
+
+    context = prepare_clash_detection_context(
+        structure,
+        component_library=component_library,
+    )
+    report = context.detect_clashes()
+    focused_report = context.detect_clashes(
+        focus_residue_ids=frozenset((ResidueId("A", 1),))
+    )
+    projected_context = prepare_projected_clash_detection_context(
+        structure,
+        residue_ids=(ResidueId("A", 1), ResidueId("B", 1)),
+        component_library=component_library,
+    )
+
+    assert context.candidate_cell_size_angstrom > 4.0
+    assert len(report.clashes) == 1
+    assert focused_report == report
+    assert projected_context.detect_clashes() == report
+    assert report.clashes[0].allowed_distance_angstrom > 4.0
+    assert report.clashes[0].distance_angstrom == pytest.approx(4.11)
+
+
+def test_clash_context_reports_unresolved_element_radii_once() -> None:
+    """Clash preparation should aggregate unknown radii before pair iteration."""
+
+    structure = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("L", 1),
+                atoms=(
+                    atom("XX1", "XX", Vec3(0.0, 0.0, 0.0)),
+                    atom("C1", "C1", Vec3(1.0, 0.0, 0.0)),
+                ),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="unknown-radius-clash-context",
+    )
+
+    with pytest.raises(UnknownElementRadiusError) as error_info:
+        prepare_clash_detection_context(
+            structure,
+            component_library=build_standard_component_library(),
+            policy=ClashPolicy(include_ligands=True),
+        )
+
+    error_message = str(error_info.value)
+    assert "clash detection basis has unresolved van_der_waals radius" in (
+        error_message
+    )
+    assert "C1" in error_message
+    assert "XX" in error_message
 
 
 def test_standard_component_templates_expose_heavy_bond_hops() -> None:
@@ -946,6 +1235,50 @@ def build_hydrogen_bond_candidate_structure(
         ),
         source_format=FileFormat.PDB,
         source_name=source_name,
+    )
+
+
+def build_two_atom_contact_structure(
+    *,
+    left_element: str,
+    right_element: str,
+    distance_angstrom: float,
+) -> ProteinStructure:
+    """Build one cross-chain two-atom contact at a controlled separation."""
+
+    return build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    build_residue(
+                        "UNX",
+                        "A",
+                        1,
+                        (atom("L1", left_element, Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+            chain_payload(
+                "B",
+                (
+                    build_residue(
+                        "UNY",
+                        "B",
+                        1,
+                        (
+                            atom(
+                                "R1",
+                                right_element,
+                                Vec3(distance_angstrom, 0.0, 0.0),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="controlled-two-atom-contact",
     )
 
 

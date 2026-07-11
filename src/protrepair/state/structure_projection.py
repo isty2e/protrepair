@@ -330,7 +330,7 @@ class StructureProjectionStateFacts:
             1
             for residue in (*residues, *ligands)
             for atom_site in residue.atom_sites
-            if atom_site.element == "H"
+            if atom_site.is_hydrogen()
         )
         terminal_observation = terminal_boundary_observation(
             context_structure,

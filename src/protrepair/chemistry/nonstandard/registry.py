@@ -38,6 +38,7 @@ from protrepair.chemistry.restraint.template import (
     PlaneRestraintTarget,
     ResidueRestraintTemplate,
 )
+from protrepair.structure.element import ElementIdentity
 
 IdealPosition = tuple[float, float, float]
 
@@ -85,7 +86,7 @@ class NonstandardComponentAtom:
     def is_hydrogen(self) -> bool:
         """Return whether this atom record represents hydrogen."""
 
-        return self.element == "H"
+        return ElementIdentity(self.element).is_hydrogen()
 
     def to_idealized_atom(self) -> IdealizedComponentAtom:
         """Return the canonical idealized atom projected from this source record."""

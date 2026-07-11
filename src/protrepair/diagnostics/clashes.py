@@ -3,7 +3,7 @@
 from collections import defaultdict
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from math import floor, sqrt
+from math import floor, isfinite, sqrt
 from types import MappingProxyType
 from typing import cast
 
@@ -11,8 +11,9 @@ from typing_extensions import Self
 
 from protrepair.chemistry import (
     ComponentLibrary,
+    RadiusKind,
     ResidueTemplate,
-    van_der_waals_radius_angstrom,
+    prepare_radius_lookup,
 )
 from protrepair.diagnostics import clash_topology_rules
 from protrepair.diagnostics.clash_pair_generation import (
@@ -27,14 +28,17 @@ from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.structure.address_space import StructureAddressSpaceKey
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.disulfide import (
+    disulfide_atom_ref_pairs as topology_disulfide_atom_ref_pairs,
+)
+from protrepair.structure.element import ElementIdentity
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.peptide import are_peptide_adjacent
 from protrepair.structure.slots import ResidueIndex
 
 HYDROGEN_ANCHOR_DISTANCE_CUTOFF_ANGSTROM = 1.45
-DISULFIDE_BOND_DISTANCE_CUTOFF_ANGSTROM = 3.0
-CLASH_GRID_CELL_SIZE_ANGSTROM = 4.0
+MINIMUM_CLASH_GRID_CELL_SIZE_ANGSTROM = 1.0
 HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
 DONOR_ELEMENTS = frozenset({"N", "O", "S"})
@@ -57,9 +61,13 @@ class ClashPolicy:
     ignore_adjacent_polymer_bond_hops: int = 3
 
     def __post_init__(self) -> None:
+        if not isfinite(self.heavy_overlap_tolerance_angstrom):
+            raise ValueError("heavy overlap tolerance must be finite")
         if self.heavy_overlap_tolerance_angstrom < 0:
             raise ValueError("heavy overlap tolerance must be non-negative")
 
+        if not isfinite(self.hydrogen_overlap_tolerance_angstrom):
+            raise ValueError("hydrogen overlap tolerance must be finite")
         if self.hydrogen_overlap_tolerance_angstrom < 0:
             raise ValueError("hydrogen overlap tolerance must be non-negative")
 
@@ -69,13 +77,37 @@ class ClashPolicy:
         if self.ignore_adjacent_polymer_bond_hops < 0:
             raise ValueError("ignore_adjacent_polymer_bond_hops must be non-negative")
 
-    def required_overlap(self, left_element: str, right_element: str) -> float:
-        """Return the minimum overlap required for a pair to count as a clash."""
+    def _required_overlap_for_hydrogen_pair(
+        self,
+        left_is_hydrogen: bool,
+        right_is_hydrogen: bool,
+    ) -> float:
+        """Return the overlap threshold for cached hydrogen classifications."""
 
-        if left_element == "H" or right_element == "H":
+        if left_is_hydrogen or right_is_hydrogen:
             return self.hydrogen_overlap_tolerance_angstrom
 
         return self.heavy_overlap_tolerance_angstrom
+
+    def allowed_distance_angstrom(
+        self,
+        *,
+        left_van_der_waals_radius_angstrom: float,
+        right_van_der_waals_radius_angstrom: float,
+        left_is_hydrogen: bool,
+        right_is_hydrogen: bool,
+    ) -> float:
+        """Return the nonnegative distance below which a pair may clash."""
+
+        return max(
+            0.0,
+            left_van_der_waals_radius_angstrom
+            + right_van_der_waals_radius_angstrom
+            - self._required_overlap_for_hydrogen_pair(
+                left_is_hydrogen,
+                right_is_hydrogen,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +222,7 @@ class AtomSite:
     element: str
     geometry: AtomGeometry
     context: ResidueContext
+    grid_cell_size_angstrom: float
     residue_id: ResidueId = field(init=False, compare=False)
     component_id: str = field(init=False, compare=False)
     domain: ContactDomain = field(init=False, compare=False)
@@ -197,16 +230,35 @@ class AtomSite:
     is_hydrogen_atom: bool = field(init=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self.grid_cell_size_angstrom <= 0.0:
+            raise ValueError("grid_cell_size_angstrom must be positive")
+
         object.__setattr__(self, "residue_id", self.context.residue_id)
         object.__setattr__(self, "component_id", self.context.component_id)
         object.__setattr__(self, "domain", self.context.domain)
-        object.__setattr__(self, "grid_cell", _cell_id_from_geometry(self.geometry))
-        object.__setattr__(self, "is_hydrogen_atom", self.element == "H")
+        object.__setattr__(
+            self,
+            "grid_cell",
+            _cell_id_from_geometry(
+                self.geometry,
+                cell_size_angstrom=self.grid_cell_size_angstrom,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "is_hydrogen_atom",
+            ElementIdentity(self.element).is_hydrogen(),
+        )
 
     def is_hydrogen(self) -> bool:
         """Return whether the atom site is a hydrogen."""
 
         return self.is_hydrogen_atom
+
+    def atom_ref(self) -> AtomRef:
+        """Return the constitution-native identity of this diagnostic atom."""
+
+        return AtomRef(self.residue_id, self.atom_name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,15 +275,19 @@ class ClashDetectionFrame:
 class ClashDetectionContext:
     """Prepared computational context for repeated clash diagnostics.
 
-    This context caches representation and scalar lookup work for one immutable
-    structure view plus one clash policy. It is not a chemistry authority: bonded
-    topology still comes from residue templates and residue-local inferred
-    hydrogen anchors.
+    This context caches representation, scalar lookups, and derived topology
+    projections for one immutable structure view plus one clash policy. It does
+    not construct chemistry truth: canonical inter-residue relationships come
+    from ``StructureTopology``, while residue-local exclusions come from
+    component templates and inferred hydrogen anchors.
     """
 
     atom_sites: tuple[AtomSite, ...]
     policy: ClashPolicy
+    constitution_address_space_key: StructureAddressSpaceKey
     van_der_waals_radius_by_element: Mapping[str, float]
+    candidate_cell_size_angstrom: float
+    disulfide_atom_ref_pairs: frozenset[tuple[AtomRef, AtomRef]]
     allowed_distance_by_element_pair: Mapping[tuple[str, str], float] = field(
         init=False,
         repr=False,
@@ -239,7 +295,21 @@ class ClashDetectionContext:
     )
 
     def __post_init__(self) -> None:
+        if self.candidate_cell_size_angstrom <= 0.0:
+            raise ValueError("candidate_cell_size_angstrom must be positive")
+
         object.__setattr__(self, "atom_sites", tuple(self.atom_sites))
+        object.__setattr__(
+            self,
+            "constitution_address_space_key",
+            tuple(self.constitution_address_space_key),
+        )
+        disulfide_pairs = frozenset(self.disulfide_atom_ref_pairs)
+        if any(left_ref >= right_ref for left_ref, right_ref in disulfide_pairs):
+            raise ValueError(
+                "disulfide atom-ref pairs must be distinct and canonically ordered"
+            )
+        object.__setattr__(self, "disulfide_atom_ref_pairs", disulfide_pairs)
         radius_by_element = dict(self.van_der_waals_radius_by_element)
         object.__setattr__(
             self, "van_der_waals_radius_by_element", MappingProxyType(radius_by_element)
@@ -272,6 +342,20 @@ class ClashDetectionContext:
             focus_residue_ids=focus_residue_ids,
             policy=self.policy,
         )
+
+    def topology_expects_disulfide(
+        self,
+        left_site: AtomSite,
+        right_site: AtomSite,
+    ) -> bool:
+        """Return whether canonical topology bonds this CYS SG atom pair."""
+
+        left_ref = left_site.atom_ref()
+        right_ref = right_site.atom_ref()
+        endpoint_pair = (
+            (right_ref, left_ref) if right_ref < left_ref else (left_ref, right_ref)
+        )
+        return endpoint_pair in self.disulfide_atom_ref_pairs
 
     def detect_clashes(
         self,
@@ -328,8 +412,12 @@ class ClashDetectionBasis:
     policy: ClashPolicy
     constitution_address_space_key: StructureAddressSpaceKey
     van_der_waals_radius_by_element: Mapping[str, float]
+    candidate_cell_size_angstrom: float
 
     def __post_init__(self) -> None:
+        if self.candidate_cell_size_angstrom <= 0.0:
+            raise ValueError("candidate_cell_size_angstrom must be positive")
+
         object.__setattr__(
             self,
             "residue_context_bases",
@@ -378,6 +466,7 @@ class ClashDetectionBasis:
                         ].residue_geometry.atom_geometry(atom_site_basis.atom_name)
                     ),
                     context=residue_contexts[atom_site_basis.residue_context_index],
+                    grid_cell_size_angstrom=self.candidate_cell_size_angstrom,
                 )
                 for atom_site_basis in self.atom_site_bases
             )
@@ -390,7 +479,10 @@ class ClashDetectionBasis:
         return ClashDetectionContext(
             atom_sites=frame.atom_sites,
             policy=self.policy,
+            constitution_address_space_key=self.constitution_address_space_key,
             van_der_waals_radius_by_element=self.van_der_waals_radius_by_element,
+            candidate_cell_size_angstrom=self.candidate_cell_size_angstrom,
+            disulfide_atom_ref_pairs=topology_disulfide_atom_ref_pairs(structure),
         )
 
 
@@ -570,14 +662,21 @@ def prepare_clash_detection_basis(
     elements = frozenset(
         atom_site_basis.element for atom_site_basis in atom_site_bases
     )
+    radius_lookup = prepare_radius_lookup(elements, RadiusKind.VAN_DER_WAALS)
+    radius_lookup.require_complete("clash detection basis")
+    radius_by_element = {
+        element: radius_lookup.radius_angstrom(element) for element in elements
+    }
     return ClashDetectionBasis(
         residue_context_bases=residue_context_bases,
         atom_site_bases=atom_site_bases,
         policy=normalized_policy,
         constitution_address_space_key=structure.constitution.address_space_key,
-        van_der_waals_radius_by_element={
-            element: van_der_waals_radius_angstrom(element) for element in elements
-        },
+        van_der_waals_radius_by_element=radius_by_element,
+        candidate_cell_size_angstrom=_clash_candidate_cell_size_angstrom(
+            radius_by_element,
+            policy=normalized_policy,
+        ),
     )
 
 
@@ -617,10 +716,33 @@ def prepare_projected_clash_detection_context(
         component_library=component_library,
         include_ligands=normalized_policy.include_ligands,
     )
-    atom_sites = tuple(build_atom_sites(residue_contexts, policy=normalized_policy))
+    elements = _atom_site_elements_from_residue_contexts(
+        residue_contexts,
+        policy=normalized_policy,
+    )
+    radius_lookup = prepare_radius_lookup(elements, RadiusKind.VAN_DER_WAALS)
+    radius_lookup.require_complete("clash detection context")
+    radius_by_element = {
+        element: radius_lookup.radius_angstrom(element) for element in elements
+    }
+    candidate_cell_size_angstrom = _clash_candidate_cell_size_angstrom(
+        radius_by_element,
+        policy=normalized_policy,
+    )
+    atom_sites = tuple(
+        build_atom_sites(
+            residue_contexts,
+            policy=normalized_policy,
+            candidate_cell_size_angstrom=candidate_cell_size_angstrom,
+        )
+    )
     return _clash_detection_context_from_atom_sites(
         atom_sites,
         policy=normalized_policy,
+        constitution_address_space_key=structure.constitution.address_space_key,
+        van_der_waals_radius_by_element=radius_by_element,
+        candidate_cell_size_angstrom=candidate_cell_size_angstrom,
+        disulfide_atom_ref_pairs=topology_disulfide_atom_ref_pairs(structure),
     )
 
 
@@ -638,16 +760,20 @@ def _clash_detection_context_from_atom_sites(
     atom_sites: tuple[AtomSite, ...],
     *,
     policy: ClashPolicy,
+    constitution_address_space_key: StructureAddressSpaceKey,
+    van_der_waals_radius_by_element: Mapping[str, float],
+    candidate_cell_size_angstrom: float,
+    disulfide_atom_ref_pairs: frozenset[tuple[AtomRef, AtomRef]],
 ) -> ClashDetectionContext:
     """Build one prepared clash context from precomputed atom sites."""
 
-    elements = frozenset(atom_site.element for atom_site in atom_sites)
     return ClashDetectionContext(
         atom_sites=atom_sites,
         policy=policy,
-        van_der_waals_radius_by_element={
-            element: van_der_waals_radius_angstrom(element) for element in elements
-        },
+        constitution_address_space_key=constitution_address_space_key,
+        van_der_waals_radius_by_element=van_der_waals_radius_by_element,
+        candidate_cell_size_angstrom=candidate_cell_size_angstrom,
+        disulfide_atom_ref_pairs=disulfide_atom_ref_pairs,
     )
 
 
@@ -659,9 +785,15 @@ def _clash_for_atom_site_pair(
 ) -> StericClash | None:
     """Return a steric clash for one pair, if policy and geometry admit it."""
 
+    if context.topology_expects_disulfide(left_site, right_site):
+        return None
+
     allowed_distance = context.allowed_distance_by_element_pair[
         (left_site.element, right_site.element)
     ]
+    if allowed_distance <= 0.0:
+        return None
+
     pair_distance_squared = _atom_site_distance_squared(left_site, right_site)
     if pair_distance_squared >= allowed_distance * allowed_distance:
         return None
@@ -673,9 +805,9 @@ def _clash_for_atom_site_pair(
     if probable_hydrogen_bond(left_site, right_site, pair_distance):
         return None
 
-    required_overlap = context.policy.required_overlap(
-        left_site.element,
-        right_site.element,
+    required_overlap = context.policy._required_overlap_for_hydrogen_pair(
+        left_site.is_hydrogen(),
+        right_site.is_hydrogen(),
     )
     return StericClash(
         left_residue_id=left_site.residue_id,
@@ -699,15 +831,36 @@ def _allowed_distance_by_element_pair(
 ) -> dict[tuple[str, str], float]:
     """Return cached clash distance thresholds by ordered element pair."""
 
+    is_hydrogen_by_element = {
+        element: ElementIdentity(element).is_hydrogen() for element in radius_by_element
+    }
     return {
-        (left_element, right_element): (
-            left_radius
-            + right_radius
-            - policy.required_overlap(left_element, right_element)
+        (left_element, right_element): policy.allowed_distance_angstrom(
+            left_van_der_waals_radius_angstrom=left_radius,
+            right_van_der_waals_radius_angstrom=right_radius,
+            left_is_hydrogen=is_hydrogen_by_element[left_element],
+            right_is_hydrogen=is_hydrogen_by_element[right_element],
         )
         for left_element, left_radius in radius_by_element.items()
         for right_element, right_radius in radius_by_element.items()
     }
+
+
+def _clash_candidate_cell_size_angstrom(
+    radius_by_element: Mapping[str, float],
+    *,
+    policy: ClashPolicy,
+) -> float:
+    """Return a grid cell width that cannot miss any distance-admissible pair."""
+
+    allowed_distances = _allowed_distance_by_element_pair(
+        radius_by_element,
+        policy=policy,
+    ).values()
+    return max(
+        MINIMUM_CLASH_GRID_CELL_SIZE_ANGSTROM,
+        max(allowed_distances, default=0.0),
+    )
 
 
 def _atom_site_distance_squared(left_site: AtomSite, right_site: AtomSite) -> float:
@@ -886,13 +1039,17 @@ def cell_id(atom_site: AtomSite) -> tuple[int, int, int]:
     return atom_site.grid_cell
 
 
-def _cell_id_from_geometry(geometry: AtomGeometry) -> tuple[int, int, int]:
+def _cell_id_from_geometry(
+    geometry: AtomGeometry,
+    *,
+    cell_size_angstrom: float,
+) -> tuple[int, int, int]:
     """Return one geometry site's spatial hash cell identifier."""
 
     return (
-        floor(geometry.position.x / CLASH_GRID_CELL_SIZE_ANGSTROM),
-        floor(geometry.position.y / CLASH_GRID_CELL_SIZE_ANGSTROM),
-        floor(geometry.position.z / CLASH_GRID_CELL_SIZE_ANGSTROM),
+        floor(geometry.position.x / cell_size_angstrom),
+        floor(geometry.position.y / cell_size_angstrom),
+        floor(geometry.position.z / cell_size_angstrom),
     )
 
 
@@ -982,7 +1139,7 @@ def build_atom_site_bases(
         residue_context_bases
     ):
         for atom_site in residue_context_basis.residue_site.atom_sites:
-            if not policy.include_hydrogens and atom_site.element == "H":
+            if not policy.include_hydrogens and atom_site.is_hydrogen():
                 continue
 
             atom_site_bases.append(
@@ -1112,11 +1269,11 @@ def infer_hydrogen_anchors(
             residue_geometry.atom_geometry(atom_site.name),
         )
         for atom_site in residue_site.atom_sites
-        if atom_site.element != "H"
+        if not atom_site.is_hydrogen()
     )
     hydrogen_anchor_by_name: dict[str, str] = {}
     for hydrogen_atom_site in residue_site.atom_sites:
-        if hydrogen_atom_site.element != "H":
+        if not hydrogen_atom_site.is_hydrogen():
             continue
 
         hydrogen_geometry = residue_geometry.atom_geometry(hydrogen_atom_site.name)
@@ -1141,6 +1298,7 @@ def build_atom_sites(
     residue_contexts: tuple[ResidueContext, ...],
     *,
     policy: ClashPolicy,
+    candidate_cell_size_angstrom: float,
 ) -> tuple[AtomSite, ...]:
     """Return atom sites considered by the clash detector."""
 
@@ -1149,7 +1307,7 @@ def build_atom_sites(
         residue_site = context.residue_site
         residue_geometry = context.residue_geometry
         for atom_site in residue_site.atom_sites:
-            if not policy.include_hydrogens and atom_site.element == "H":
+            if not policy.include_hydrogens and atom_site.is_hydrogen():
                 continue
 
             atom_sites.append(
@@ -1158,10 +1316,26 @@ def build_atom_sites(
                     element=atom_site.element,
                     geometry=residue_geometry.atom_geometry(atom_site.name),
                     context=context,
+                    grid_cell_size_angstrom=candidate_cell_size_angstrom,
                 )
             )
 
     return tuple(atom_sites)
+
+
+def _atom_site_elements_from_residue_contexts(
+    residue_contexts: tuple[ResidueContext, ...],
+    *,
+    policy: ClashPolicy,
+) -> frozenset[str]:
+    """Return atom elements considered by the clash detector."""
+
+    return frozenset(
+        atom_site.element
+        for context in residue_contexts
+        for atom_site in context.residue_site.atom_sites
+        if policy.include_hydrogens or not atom_site.is_hydrogen()
+    )
 
 
 def should_consider_pair(
@@ -1259,15 +1433,6 @@ def atom_is_hydrogen(residue_site: ResidueSite, atom_name: str) -> bool:
     """Return whether a named atom within a residue is a hydrogen."""
 
     return clash_topology_rules.atom_is_hydrogen(residue_site, atom_name)
-
-
-def direct_disulfide_bond(left_site: AtomSite, right_site: AtomSite) -> bool:
-    """Return whether one atom pair looks like a bonded disulfide sulfur pair."""
-
-    return clash_topology_rules.direct_disulfide_bond(
-        cast(clash_topology_rules.ClashTopologyAtomSite, left_site),
-        cast(clash_topology_rules.ClashTopologyAtomSite, right_site),
-    )
 
 
 def probable_hydrogen_bond(

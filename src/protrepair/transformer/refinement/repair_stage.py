@@ -462,7 +462,7 @@ def _strict_policy_blocks_retained_non_polymer_hydrogen_prerequisite(
         return False
 
     heavy_atom_count = sum(
-        1 for atom_site in residue_site.atom_sites if atom_site.element != "H"
+        1 for atom_site in residue_site.atom_sites if not atom_site.is_hydrogen()
     )
     return heavy_atom_count > 1
 

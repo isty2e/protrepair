@@ -26,6 +26,12 @@ from protrepair.workflow.planning.default_action_registry.terminal_proposals imp
     terminal_augmentation_is_admissible,
     terminal_augmentation_proposals,
 )
+from protrepair.workflow.planning.default_action_registry.topology_proposals import (
+    disulfide_hydrogen_normalization_is_admissible,
+    disulfide_hydrogen_normalization_proposals,
+    disulfide_topology_resolution_is_admissible,
+    disulfide_topology_resolution_proposals,
+)
 
 from .stereochemistry_proposals import (
     stereochemistry_correction_is_admissible,
@@ -37,6 +43,10 @@ __all__ = [
     "backbone_window_refinement_proposals",
     "committed_packing_is_admissible",
     "committed_packing_proposals",
+    "disulfide_hydrogen_normalization_is_admissible",
+    "disulfide_hydrogen_normalization_proposals",
+    "disulfide_topology_resolution_is_admissible",
+    "disulfide_topology_resolution_proposals",
     "external_span_reconstruction_is_admissible",
     "external_span_reconstruction_proposals",
     "heavy_atom_completion_is_admissible",

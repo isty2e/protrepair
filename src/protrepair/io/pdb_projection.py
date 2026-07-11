@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from protrepair.io.gemmi_writer import (
-    pdb_atom_index_values_in_write_order,
+    atom_index_values_in_coordinate_write_order,
     write_pdb_structure_string_without_conect,
 )
 from protrepair.structure.address_space import StructureAddressSpaceKey
@@ -55,7 +55,7 @@ def prepare_rdkit_no_conect_pdb_block_projector(
 
     pdb_block = pdb_without_conect(structure)
     base_lines = tuple(pdb_block.splitlines())
-    atom_index_values = pdb_atom_index_values_in_write_order(structure)
+    atom_index_values = atom_index_values_in_coordinate_write_order(structure)
     coordinate_line_patches: list[tuple[int, int, str, str]] = []
     atom_index_value_cursor = 0
     for line_index, line in enumerate(base_lines):

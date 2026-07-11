@@ -16,8 +16,7 @@ Current implemented scope:
 - structured Ramachandran and coarse secondary-structure analyses
 - canonical workflow entrypoint via `process_structure()`
 - optional packaged FASPR backend for side-chain packing guidance
-- optional RDKit-backed hydrogenation and local refinement through the
-  `refinement` extra
+- RDKit-backed hydrogenation and local refinement
 
 Topology policy is documented in
 [`docs/topology-bond-policy.md`](docs/topology-bond-policy.md). In short,
@@ -64,12 +63,6 @@ guaranteed to have compiled FASPR assets available; install the package/wheel
 first. For advanced transformer-layer development with a separately built
 FASPR binary, construct the FASPR backend with an explicit FASPR
 `executable_path` whose directory also contains `dun2010bbdep.bin`.
-
-Install optional RDKit-backed refinement support with:
-
-```bash
-pip install ".[refinement]"
-```
 
 ## Usage
 
@@ -141,9 +134,8 @@ hetero multiple-bond or stereochemistry-changing fallback inferences leave the
 retained ligand unchanged with a warning instead of guessing chemistry.
 
 Explicit retained-ligand chemistry overrides are validated at ingress. Invalid
-SMILES/evidence mappings, overrides that do not match the kept heavy-atom set,
-or explicit overrides used without optional RDKit support raise `ValueError`
-before workflow execution rather than falling back silently.
+SMILES/evidence mappings or overrides that do not match the kept heavy-atom set
+raise `ValueError` before workflow execution rather than falling back silently.
 
 ```python
 from protrepair.workflow.contracts import WorkflowTransformRequests
@@ -262,6 +254,13 @@ Third-party provenance is summarized in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOT
 ProtRepair descends from the original
 [PRAS](https://github.com/osita-sunday-nnyigide/Pras_Server) project. The public
 distribution name and import package are now `protrepair`.
+
+Rotatable donor-hydrogen placement uses an axis-specific scientific contract:
+it retains the PRAS AMBER-derived nonbonded model and torsion-search lineage
+while correcting the cumulative scan and unconditional O-H bond-length
+override. Family-specific donor-H bond geometry follows the protein parameters
+in [AMBER ff14SB](https://doi.org/10.1021/acs.jctc.5b00255). RDKit readability
+is an interoperability gate, not the scientific ranking oracle.
 
 ## Changelog
 

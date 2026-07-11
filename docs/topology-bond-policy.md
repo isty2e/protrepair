@@ -16,7 +16,7 @@ readiness, and serialized output must not carry separate chemistry stories.
 `TopologyBond.provenance` records the support mode for the endpoint pair:
 
 - `SOURCE_EXPLICIT`: the source file explicitly reported the bond through PDB
-  `LINK`, PDB `CONECT`, or mmCIF `_struct_conn`.
+  `SSBOND`, PDB `LINK`, PDB `CONECT`, or mmCIF `_struct_conn`.
 - `TEMPLATE_RESOLVED`: a component or residue template resolved the bond.
 - `SEQUENCE_INFERRED`: polymer sequence context resolved the bond.
 - `EVIDENCE_RESOLVED`: external chemistry evidence, such as retained-ligand
@@ -70,6 +70,15 @@ identity includes the source component id and altloc before lowering; a
 canonical atom when the source component variant or altloc did not survive
 normalization.
 
+PDB `SSBOND` is the deliberate exception to altloc-specific endpoint matching.
+The record identifies two cysteine residues but has no alternate-location
+fields; the wwPDB format guide explicitly calls this out as a known ambiguity
+for disordered SG atoms. ProtRepair therefore lowers a source `SSBOND` onto the
+selected canonical SG variants when the residue component identities survive.
+PDB `LINK` and mmCIF `_struct_conn`, which can carry endpoint altloc identity,
+continue to require the declared variants to survive. A duplicate untyped PDB
+`CONECT` pair does not replace the more specific `SSBOND` relationship.
+
 Source bond metadata is canonical metadata, not raw boundary text. Reported
 distances are stored only as finite positive numeric angstrom values; corrupt,
 non-finite, or non-numeric boundary distances are ignored before lowering.
@@ -96,8 +105,65 @@ mode for each generated H anchor:
 Existing source-explicit retained-ligand H bonds remain authoritative when the
 same endpoint pair is regenerated during hydrogen completion.
 
+A canonical `COVALENT` or `DISULFIDE` bond between two CYS `SG` atoms defines
+disulfide chemistry independently of provenance, source record class, distance,
+or polymer/retained placement. Polymer and retained-non-polymer hydrogen
+expectation and completion therefore omit hydrogens anchored to those sulfur
+atoms. Geometry-only SG proximity remains diagnostic evidence and must not
+silently remove thiol hydrogen expectation or materialization.
+
+This follows the chemical distinction between reduced cysteine thiols and the
+oxidized covalent S-S linkage described in the protein-disulfide literature. It
+does not claim that proximity alone establishes oxidation state.
+
+If a canonical disulfide endpoint still contains an H, D, or T atom assigned to
+its thiol site, ProtRepair records a typed chemistry contradiction independently
+of missing-hydrogen coverage. Standard `HG`/`DG`/`TG` names are recognized;
+nonstandard names require an explicit covalent-like SG-H topology bond. The
+planner removes only the contradictory isotope atoms and their incident bonds,
+then re-observes the structure while preserving the S-S relationship, other
+hydrogens, formal charges, and source coordinates. It does not infer a thiolate
+or delete an SG-SG bond from metal coordination, proximity, or charge alone.
+
+The atom-identity rule deliberately covers mixed H/D models. Neutron structures
+can model H and D simultaneously at one exchangeable site and commonly use
+distinct names such as `HG` and `DG`; each explicitly present isotope is part of
+the canonical atom inventory and must be normalized when the same sulfur is in
+a canonical disulfide.
+
+Continuous relaxation likewise projects inter-residue disulfide constraints
+from canonical topology only. A likely geometry candidate must pass through an
+explicit topology-writing transformer before it becomes an execution bond; the
+continuous backend does not maintain a hidden geometry-derived bond graph.
+
+ProtRepair uses an SG-SG distance of at most 2.5 angstrom as candidate evidence,
+not as direct oxidation-state truth. Marino and Gladyshev describe 2.5 angstrom
+as a commonly employed structure-screening cutoff, while broader disulfide
+modeling work also considers bond geometry, torsions, energetics, and steric
+context. A unique candidate may therefore be promoted only by the explicit
+topology-resolution action, after ambiguity and conflicting canonical
+relationships have been excluded. Source-explicit or otherwise conflicting
+topology is preserved and reported rather than overwritten by proximity.
+
 Retained non-polymer readiness uses the same expected H atom naming policy as
 hydrogen coverage. When RDKit fallback infers generated hydrogens for a residue
 that already has complete H names, the generated anchor graph is projected onto
 those preferred names before comparing endpoint pairs against canonical
 topology.
+
+## Scientific and Format References
+
+- wwPDB, [PDB Format v2.3 Connectivity Annotation Section](https://www.wwpdb.org/documentation/file-format-content/format23/sect6.html),
+  including the `SSBOND` altloc limitation and `LINK` endpoint fields.
+- Dombkowski, Sultana, and Craig, "Protein disulfide engineering," *FEBS
+  Letters* 588 (2014), [DOI 10.1016/j.febslet.2013.11.024](https://doi.org/10.1016/j.febslet.2013.11.024).
+- Marino and Gladyshev, "Redox Biology: Computational Approaches to the
+  Investigation of Functional Cysteine Residues," *Antioxidants & Redox
+  Signaling* 15 (2011), [DOI 10.1089/ars.2010.3561](https://doi.org/10.1089/ars.2010.3561).
+- Fass and Thorpe, "Chemistry and Enzymology of Disulfide Cross-Linking in
+  Proteins," *Chemical Reviews* 118 (2018),
+  [DOI 10.1021/acs.chemrev.7b00123](https://doi.org/10.1021/acs.chemrev.7b00123).
+- Liebschner et al., "Evaluation of models determined by neutron diffraction
+  and proposed improvements to their validation and deposition," *Acta
+  Crystallographica D* 74 (2018),
+  [DOI 10.1107/S2059798318004588](https://doi.org/10.1107/S2059798318004588).

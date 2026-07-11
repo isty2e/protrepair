@@ -1,4 +1,6 @@
 """Adversarial edge cases for hydrogen placement."""
+
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -41,10 +43,6 @@ from protrepair.structure.topology import (
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.completion.hydrogen import core as hydrogen_core
 from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
-from protrepair.transformer.completion.hydrogen.rotatable import (
-    RotatableHydrogenEnvironment,
-    RotatableHydrogenSearch,
-)
 from protrepair.transformer.completion.shared import OrderedAtomPatch
 from protrepair.workflow.contracts import (
     LigandPolicy,
@@ -300,18 +298,46 @@ def test_polymer_hydrogen_topology_preserves_existing_source_h_bond() -> None:
 
 
 @pytest.mark.parametrize(
-    ("distance", "expect_hg"),
+    ("distance", "relationship_type", "expect_hg"),
     (
-        pytest.param(3.0, False, id="threshold-bond"),
-        pytest.param(3.01, True, id="outside-threshold"),
+        pytest.param(2.0, None, True, id="close-unbonded"),
+        pytest.param(
+            2.0,
+            BondRelationshipType.UNKNOWN,
+            True,
+            id="close-unknown",
+        ),
+        pytest.param(
+            2.0,
+            BondRelationshipType.METAL_COORDINATION,
+            True,
+            id="close-metal-coordination",
+        ),
+        pytest.param(
+            8.0,
+            BondRelationshipType.COVALENT,
+            False,
+            id="nonideal-covalent-disulfide",
+        ),
+        pytest.param(
+            8.0,
+            BondRelationshipType.DISULFIDE,
+            False,
+            id="nonideal-explicit-disulfide",
+        ),
     ),
 )
-def test_cysteine_hg_depends_on_disulfide_distance_threshold(
-    distance: float, expect_hg: bool
+def test_cysteine_hg_depends_on_topology_disulfide_semantics(
+    distance: float,
+    relationship_type: BondRelationshipType | None,
+    expect_hg: bool,
 ) -> None:
-    """Cysteine HG placement should flip exactly at the disulfide cutoff."""
+    """Cysteine HG placement should follow topology rather than SG distance."""
 
-    structure = disulfide_threshold_structure(distance)
+    structure = cysteine_pair_structure(
+        distance,
+        relationship_type=relationship_type,
+    )
 
     result = add_hydrogens(structure)
     first_residue, second_residue = result.structure.chain_site("A").residues
@@ -323,12 +349,64 @@ def test_cysteine_hg_depends_on_disulfide_distance_threshold(
 def test_disulfide_cysteine_without_hg_counts_as_complete_hydrogen_coverage() -> None:
     """Hydrogen readiness should share disulfide-CYS semantics with hydrogenation."""
 
-    structure = disulfide_threshold_structure(3.0)
+    structure = cysteine_pair_structure(
+        8.0,
+        relationship_type=BondRelationshipType.DISULFIDE,
+    )
 
     result = add_hydrogens(structure)
     observation = ProteinStructureObservation.from_structure(result.structure)
 
     assert observation.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
+
+
+def test_forced_disulfide_hydrogen_normalization_removes_partial_hg() -> None:
+    """Forced completion should remove residual HG while preserving SG topology."""
+
+    first_residue_id = ResidueId("A", 12)
+    second_residue_id = ResidueId("A", 63)
+    structure = cysteine_pair_structure(
+        8.0,
+        relationship_type=BondRelationshipType.DISULFIDE,
+    )
+    structure = _with_residue_hydrogen(
+        structure,
+        first_residue_id,
+        atom_name="HG",
+    )
+
+    first_residue = structure.constitution.residue_or_ligand(first_residue_id)
+    second_residue = structure.constitution.residue_or_ligand(second_residue_id)
+    assert first_residue is not None and first_residue.has_atom_site("HG")
+    assert second_residue is not None and not second_residue.has_atom_site("HG")
+
+    result = materialize_hydrogens_core(structure)
+
+    normalized_first = result.structure.constitution.residue_or_ligand(first_residue_id)
+    normalized_second = result.structure.constitution.residue_or_ligand(
+        second_residue_id
+    )
+    assert normalized_first is not None and not normalized_first.has_atom_site("HG")
+    assert normalized_second is not None and not normalized_second.has_atom_site("HG")
+    disulfide_bond = result.structure.topology.bond_between(
+        result.structure.constitution.atom_index(AtomRef(first_residue_id, "SG")),
+        result.structure.constitution.atom_index(AtomRef(second_residue_id, "SG")),
+    )
+    assert disulfide_bond is not None
+    assert disulfide_bond.relationship_type is BondRelationshipType.DISULFIDE
+
+
+def test_cross_chain_disulfide_completion_omits_both_thiol_hydrogens() -> None:
+    """Chain-local completion must consume structure-global disulfide topology."""
+
+    structure = cross_chain_disulfide_structure()
+
+    result = materialize_hydrogens_core(structure)
+
+    first_residue = result.structure.constitution.residue_or_ligand(ResidueId("A", 12))
+    second_residue = result.structure.constitution.residue_or_ligand(ResidueId("B", 63))
+    assert first_residue is not None and not first_residue.has_atom_site("HG")
+    assert second_residue is not None and not second_residue.has_atom_site("HG")
 
 
 @pytest.mark.parametrize(
@@ -403,67 +481,6 @@ def test_insertion_code_survives_class6_hydrogen_placement() -> None:
 
     assert residue.residue_id.insertion_code == "A"
     assert residue.has_atom_site("HG")
-
-
-def test_rotatable_hydrogen_keeps_candidate_identity_on_legacy_index_overflow(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Duplicate residue-number environments should still select the best candidate."""
-
-    candidate_hydrogens = [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]
-    energy_calls = iter((5.0, 6.0, 1.0, 2.0))
-
-    monkeypatch.setattr(
-        RotatableHydrogenSearch,
-        "candidate_positions",
-        lambda self: tuple(
-            Vec3.from_iterable(candidate) for candidate in candidate_hydrogens
-        ),
-    )
-    monkeypatch.setattr(
-        RotatableHydrogenSearch,
-        "candidate_score",
-        lambda self, hydrogen, environment: next(energy_calls),
-    )
-
-    result = RotatableHydrogenSearch(
-        outer_anchor=[0.0, 0.0, 0.0],
-        inner_anchor=[0.0, 0.0, 0.0],
-        donor=[0.0, 0.0, 0.0],
-        hydrogen=[9.0, 9.0, 9.0],
-        build_bond_length=1.0,
-        reproject_bond_length=1.0,
-        dihedral=0.0,
-        partial_charge=0.0,
-        sigma=0.0,
-        epsilon=0.0,
-    ).optimized_coordinate(
-        residue_number="7",
-        environments=(
-            RotatableHydrogenEnvironment(
-                residue_number="7",
-                atom_x=(1.0,),
-                atom_y=(0.0,),
-                atom_z=(0.0,),
-                elements=("C",),
-                charges=(0.0,),
-                sigmas_nm=(0.0,),
-                epsilons_kj_mol=(0.0,),
-            ),
-            RotatableHydrogenEnvironment(
-                residue_number="7",
-                atom_x=(0.0,),
-                atom_y=(1.0,),
-                atom_z=(0.0,),
-                elements=("C",),
-                charges=(0.0,),
-                sigmas_nm=(0.0,),
-                epsilons_kj_mol=(0.0,),
-            ),
-        ),
-    )
-
-    assert result == Vec3(1.0, 0.0, 0.0)
 
 
 def test_ordered_patch_exposes_backbone_hydrogen_anchor_positions() -> None:
@@ -1317,8 +1334,12 @@ def structure_from_tokens(
     )
 
 
-def disulfide_threshold_structure(distance: float) -> ProteinStructure:
-    """Build a two-cysteine structure with a chosen SG-SG distance."""
+def cysteine_pair_structure(
+    distance: float,
+    *,
+    relationship_type: BondRelationshipType | None = None,
+) -> ProteinStructure:
+    """Build a two-cysteine structure with optional canonical SG topology."""
 
     structure = structure_from_tokens(
         Path("tests/fixtures/pdb/1aho.pdb"),
@@ -1343,10 +1364,55 @@ def disulfide_threshold_structure(distance: float) -> ProteinStructure:
         dy=target_sg.y - second_sg.y,
         dz=target_sg.z - second_sg.z,
     )
-    return rebuild_single_chain_structure(
+    rebuilt = rebuild_single_chain_structure(
         structure,
         chain_id="A",
         residues=(first_payload, shifted_second),
+    )
+    if relationship_type is None:
+        return rebuilt
+
+    return _with_inter_residue_topology_bond(
+        rebuilt,
+        AtomRef(first_residue_id, "SG"),
+        AtomRef(second_residue_id, "SG"),
+        relationship_type=relationship_type,
+    )
+
+
+def cross_chain_disulfide_structure() -> ProteinStructure:
+    """Build one canonical disulfide whose CYS endpoints occupy two chains."""
+
+    source = structure_from_tokens(
+        Path("tests/fixtures/pdb/1aho.pdb"),
+        ("A:12", "A:63"),
+    )
+    first_id = ResidueId("A", 12)
+    second_source_id = ResidueId("A", 63)
+    second_id = ResidueId("B", 63)
+    first_payload = residue_payload_from_structure(source, first_id)
+    second_site, second_geometry, second_charges = residue_payload_from_structure(
+        source,
+        second_source_id,
+    )
+    second_payload: CanonicalResiduePayload = (
+        replace(second_site, residue_id=second_id),
+        second_geometry,
+        second_charges,
+    )
+    structure = build_canonical_structure(
+        chains=(
+            chain_payload("A", (first_payload,)),
+            chain_payload("B", (second_payload,)),
+        ),
+        source_format=source.provenance.ingress.source_format,
+        source_name=source.provenance.ingress.source_name,
+    )
+    return _with_inter_residue_topology_bond(
+        structure,
+        AtomRef(first_id, "SG"),
+        AtomRef(second_id, "SG"),
+        relationship_type=BondRelationshipType.DISULFIDE,
     )
 
 
@@ -1438,6 +1504,72 @@ def _topology_bond_between(
         AtomRef(residue_id, atom_name_2)
     )
     return structure.topology.bond_between(atom_index_1, atom_index_2)
+
+
+def _with_inter_residue_topology_bond(
+    structure: ProteinStructure,
+    atom_ref_1: AtomRef,
+    atom_ref_2: AtomRef,
+    *,
+    relationship_type: BondRelationshipType,
+) -> ProteinStructure:
+    """Return a structure with one canonical inter-residue relationship."""
+
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(
+                *structure.topology.bonds,
+                TopologyBond(
+                    atom_index_1=structure.constitution.atom_index(atom_ref_1),
+                    atom_index_2=structure.constitution.atom_index(atom_ref_2),
+                    relationship_type=relationship_type,
+                    provenance=BondProvenance.SOURCE_EXPLICIT,
+                ),
+            ),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
+
+
+def _with_residue_hydrogen(
+    structure: ProteinStructure,
+    residue_id: ResidueId,
+    *,
+    atom_name: str,
+) -> ProteinStructure:
+    """Return a structure with one test hydrogen appended to a residue."""
+
+    residue_site = structure.constitution.residue_or_ligand(residue_id)
+    assert residue_site is not None
+    residue_geometry = structure.residue_geometry(
+        structure.constitution.residue_index(residue_id)
+    )
+    patch = OrderedAtomPatch.from_residue_payload(
+        residue_site,
+        residue_geometry=residue_geometry,
+    ).append_atoms(
+        (atom_name,),
+        (residue_geometry.position("SG").with_offset(0.0, 0.0, 1.34),),
+    )
+    updated_site, updated_geometry, formal_charges = patch.materialize_on_payload(
+        residue_site,
+        residue_geometry=residue_geometry,
+        formal_charge_by_atom_name=(
+            structure.residue_formal_charge_by_atom_name(
+                structure.constitution.residue_index(residue_id)
+            )
+        ),
+    )
+    return structure.with_updated_residue_facets(
+        updated_site,
+        residue_geometry=updated_geometry,
+        formal_charge_by_atom_name=formal_charges,
+    )
 
 
 def _has_topology_bond(

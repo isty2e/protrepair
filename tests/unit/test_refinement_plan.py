@@ -287,8 +287,8 @@ def test_radius_context_promotes_whole_neighbor_residue() -> None:
     )
 
 
-def test_atomwise_plan_includes_disulfide_partner_at_zero_radius() -> None:
-    """Likely disulfide partners should enter fixed context even at zero radius."""
+def test_atomwise_plan_excludes_geometry_only_disulfide_at_zero_radius() -> None:
+    """Geometry evidence must not become a hidden continuous-execution bond."""
 
     structure = build_disulfide_structure()
     assert not any(
@@ -307,15 +307,37 @@ def test_atomwise_plan_includes_disulfide_partner_at_zero_radius() -> None:
 
     fixed_context_atom_indices = set(plan.region.fixed_context_atom_indices)
     assert (
-        structure.constitution.atom_index(AtomRef(ResidueId("A", 2), "SG"))
-        in fixed_context_atom_indices
+        structure.constitution.atom_index(AtomRef(ResidueId("B", 1), "SG"))
+        not in fixed_context_atom_indices
     )
-    assert any(
+    assert not any(
         {bond.atom_index_1, bond.atom_index_2}
         == {
             structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "SG")),
-            structure.constitution.atom_index(AtomRef(ResidueId("A", 2), "SG")),
+            structure.constitution.atom_index(AtomRef(ResidueId("B", 1), "SG")),
         }
+        for bond in plan.bonds
+    )
+
+
+def test_atomwise_plan_includes_canonical_disulfide_partner_at_zero_radius() -> None:
+    """Canonical disulfides should enter continuous fixed context and bonds."""
+
+    structure = with_disulfide_topology(build_disulfide_structure())
+    plan = build_continuous_relaxation_problem(
+        structure,
+        scope_spec=LocalScopeSpec.from_atoms(
+            (AtomRef(ResidueId(chain_id="A", seq_num=1), "SG"),)
+        ),
+        context_radius_angstrom=0.0,
+        component_library=build_standard_component_library(),
+    )
+
+    left_sg = structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "SG"))
+    right_sg = structure.constitution.atom_index(AtomRef(ResidueId("B", 1), "SG"))
+    assert right_sg in set(plan.region.fixed_context_atom_indices)
+    assert any(
+        {bond.atom_index_1, bond.atom_index_2} == {left_sg, right_sg}
         for bond in plan.bonds
     )
 
@@ -1152,35 +1174,72 @@ def build_multi_atom_context_structure() -> ProteinStructure:
 def build_disulfide_structure() -> ProteinStructure:
     """Return two cysteines arranged as one likely disulfide pair."""
 
-    return build_test_structure(
-        chain_id="A",
-        residues=(
-            build_residue_payload(
-                component_id="CYS",
-                residue_id=ResidueId(chain_id="A", seq_num=1),
-                atoms=(
-                    atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
-                    atom_payload("CA", "C", Vec3(1.45, 0.0, 0.0)),
-                    atom_payload("C", "C", Vec3(2.25, 1.25, 0.0)),
-                    atom_payload("O", "O", Vec3(3.45, 1.25, 0.0)),
-                    atom_payload("CB", "C", Vec3(1.85, -1.25, 0.0)),
-                    atom_payload("SG", "S", Vec3(3.55, -1.45, 0.0)),
+    return build_canonical_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    build_residue_payload(
+                        component_id="CYS",
+                        residue_id=ResidueId(chain_id="A", seq_num=1),
+                        atoms=(
+                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload("CA", "C", Vec3(1.45, 0.0, 0.0)),
+                            atom_payload("C", "C", Vec3(2.25, 1.25, 0.0)),
+                            atom_payload("O", "O", Vec3(3.45, 1.25, 0.0)),
+                            atom_payload("CB", "C", Vec3(1.85, -1.25, 0.0)),
+                            atom_payload("SG", "S", Vec3(3.55, -1.45, 0.0)),
+                        ),
+                    ),
                 ),
             ),
-            build_residue_payload(
-                component_id="CYS",
-                residue_id=ResidueId(chain_id="A", seq_num=2),
-                atoms=(
-                    atom_payload("N", "N", Vec3(2.95, 2.35, 0.0)),
-                    atom_payload("CA", "C", Vec3(3.85, 3.45, 0.0)),
-                    atom_payload("C", "C", Vec3(5.15, 3.00, 0.0)),
-                    atom_payload("O", "O", Vec3(6.15, 3.65, 0.0)),
-                    atom_payload("CB", "C", Vec3(4.05, 4.85, 0.0)),
-                    atom_payload("SG", "S", Vec3(3.75, 0.65, 0.0)),
+            chain_payload(
+                "B",
+                (
+                    build_residue_payload(
+                        component_id="CYS",
+                        residue_id=ResidueId(chain_id="B", seq_num=1),
+                        atoms=(
+                            atom_payload("N", "N", Vec3(2.95, 2.35, 0.0)),
+                            atom_payload("CA", "C", Vec3(3.85, 3.45, 0.0)),
+                            atom_payload("C", "C", Vec3(5.15, 3.00, 0.0)),
+                            atom_payload("O", "O", Vec3(6.15, 3.65, 0.0)),
+                            atom_payload("CB", "C", Vec3(4.05, 4.85, 0.0)),
+                            atom_payload("SG", "S", Vec3(3.75, 0.65, 0.0)),
+                        ),
+                    ),
                 ),
             ),
         ),
         source_format=FileFormat.PDB,
+    )
+
+
+def with_disulfide_topology(structure: ProteinStructure) -> ProteinStructure:
+    """Return a structure with one evidence-resolved canonical disulfide."""
+
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(
+                *structure.topology.bonds,
+                TopologyBond(
+                    atom_index_1=structure.constitution.atom_index(
+                        AtomRef(ResidueId("A", 1), "SG")
+                    ),
+                    atom_index_2=structure.constitution.atom_index(
+                        AtomRef(ResidueId("B", 1), "SG")
+                    ),
+                    relationship_type=BondRelationshipType.DISULFIDE,
+                    provenance=BondProvenance.EVIDENCE_RESOLVED,
+                ),
+            ),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
     )
 
 

@@ -117,8 +117,11 @@ def workflow_planning_phase_hint(
         WorkflowCapabilityDeficitFamily.ATOM_COVERAGE,
     ):
         return WorkflowPlanningPhase.COVERAGE
-    if deficit_family is WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS:
-        return WorkflowPlanningPhase.CHEMISTRY_AUGMENTATION
+    if deficit_family in (
+        WorkflowCapabilityDeficitFamily.CHEMISTRY_CONTRADICTION,
+        WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,
+    ):
+        return WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION
     if deficit_family is WorkflowCapabilityDeficitFamily.BACKBONE_WINDOW_OPERATOR:
         return WorkflowPlanningPhase.INTRINSIC_GEOMETRY_CORRECTION
     if deficit_family is WorkflowCapabilityDeficitFamily.INTRINSIC_GEOMETRY:

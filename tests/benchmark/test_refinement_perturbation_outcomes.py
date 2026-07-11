@@ -21,7 +21,6 @@ RDKIT_AVAILABLE = (
 pytestmark = pytest.mark.benchmark
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 @pytest.mark.parametrize(
     "scenario_id",
     tuple(PERTURBATION_BENCHMARK_SCENARIOS),
@@ -72,7 +71,6 @@ def test_perturbation_benchmark_scenario_recovers_toward_reference(
     assert result.runtime_breakdown.materialization_runtime_median_ms >= 0.0
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_perturbation_benchmark_surfaces_no_op_refinement() -> None:
     """No-op refinement should not be reported as a successful recovery."""
 

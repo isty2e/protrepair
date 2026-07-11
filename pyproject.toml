@@ -12,10 +12,11 @@ dynamic = ["version"]
 description = "Typed Python package for repairing protein structure files."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
-license = { text = "MIT AND CC-BY-4.0" }
+license = { text = "MIT AND BSD-3-Clause AND CC-BY-4.0" }
 license-files = [
   "LICENSE",
   "THIRD_PARTY_NOTICES.md",
+  "vendor/rdkit/LICENSE",
   "vendor/faspr/LICENSE",
   "vendor/faspr/DUNBRACK_ROTAMER_LIBRARY_NOTICE.md",
   "vendor/faspr/PROVENANCE.md",
@@ -34,6 +35,7 @@ classifiers = [
 dependencies = [
   "gemmi>=0.7.5",
   "numpy>=1.26",
+  "rdkit",
   "typing_extensions>=4.12",
 ]
 
@@ -43,9 +45,6 @@ Repository = "https://github.com/isty2e/protrepair"
 Issues = "https://github.com/isty2e/protrepair/issues"
 
 [project.optional-dependencies]
-refinement = [
-  "rdkit",
-]
 dev = [
   "basedpyright>=1.38.2",
   "hypothesis>=6.0",
@@ -100,9 +99,10 @@ only-include = [
   "THIRD_PARTY_NOTICES.md",
   "docs",
   "pyproject.toml",
-  "scripts/run_installed_wheel_smoke.py",
+  "scripts/run_installed_artifact_smoke.py",
   "src/protrepair",
   "vendor/faspr",
+  "vendor/rdkit",
 ]
 exclude = [
   ".gitignore",

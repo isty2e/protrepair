@@ -246,6 +246,10 @@ def score_discrete_correction_candidate(
         clash_context,
         focus_residue_ids=frozenset((residue_id,)),
     ).clashes
+    focus_heavy_clashes = _heavy_heavy_clashes(
+        structure,
+        focus_clashes,
+    )
     geometry_report = detect_heavy_geometry(
         structure,
         component_library=component_library,
@@ -255,10 +259,20 @@ def score_discrete_correction_candidate(
         structure=structure,
         moved_atom_indices=moved_atom_indices,
         score=DiscreteCorrectionScore(
+            focus_heavy_clash_count=len(focus_heavy_clashes),
             focus_clash_count=len(focus_clashes),
             focus_geometry_outlier_count=(
                 len(geometry_report.bond_length_outliers)
                 + len(geometry_report.bond_angle_outliers)
+            ),
+            focus_heavy_fractional_clash_overlap_sum=(
+                focus_fractional_clash_overlap_sum(focus_heavy_clashes)
+            ),
+            focus_fractional_clash_overlap_sum=(
+                focus_fractional_clash_overlap_sum(focus_clashes)
+            ),
+            focus_heavy_clash_overlap_sum_angstrom=(
+                focus_clash_overlap_sum_angstrom(focus_heavy_clashes)
             ),
             focus_clash_overlap_sum_angstrom=focus_clash_overlap_sum_angstrom(
                 focus_clashes
@@ -273,3 +287,52 @@ def focus_clash_overlap_sum_angstrom(
     """Return total focus-clash overlap for one residue-local candidate."""
 
     return sum(clash.overlap_angstrom for clash in clashes)
+
+
+def focus_fractional_clash_overlap_sum(
+    clashes: Iterable[StericClash],
+) -> float:
+    """Return radius-normalized clash severity for residue-local candidate ordering."""
+
+    return sum(
+        clash.overlap_angstrom / (clash.distance_angstrom + clash.overlap_angstrom)
+        for clash in clashes
+    )
+
+
+def _heavy_heavy_clashes(
+    structure: ProteinStructure,
+    clashes: Iterable[StericClash],
+) -> tuple[StericClash, ...]:
+    """Return only heavy-atom clashes for heavy-atom orientation scoring."""
+
+    return tuple(
+        clash
+        for clash in clashes
+        if not _clash_endpoint_is_hydrogen(
+            structure,
+            residue_id=clash.left_residue_id,
+            atom_name=clash.left_atom_name,
+        )
+        and not _clash_endpoint_is_hydrogen(
+            structure,
+            residue_id=clash.right_residue_id,
+            atom_name=clash.right_atom_name,
+        )
+    )
+
+
+def _clash_endpoint_is_hydrogen(
+    structure: ProteinStructure,
+    *,
+    residue_id: ResidueId,
+    atom_name: str,
+) -> bool:
+    """Return whether one clash endpoint has hydrogen chemical behavior."""
+
+    return structure.constitution.atom_site_at(
+        structure.constitution.atom_index_in_residue(
+            structure.constitution.residue_index(residue_id),
+            atom_name,
+        )
+    ).is_hydrogen()

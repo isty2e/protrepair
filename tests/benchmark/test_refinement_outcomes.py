@@ -41,7 +41,6 @@ def test_negative_refinement_benchmark_case_surfaces_error() -> None:
     assert result.expectation_matched is True
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_low_resolution_sidechain_gap_stays_stable_no_op() -> None:
     """Low-resolution sidechain fixtures should expose missing operator support."""
 
@@ -108,7 +107,6 @@ def test_reference_rmsd_is_context_aligned_for_paired_fixture() -> None:
     assert result.metrics_before.reference_aligned_focus_atom_rmsd_angstrom < 5.0
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_positive_refinement_benchmark_case_runs_with_fixed_context_preserved() -> None:
     """One positive benchmark case should run and keep fixed context stationary."""
 
@@ -156,7 +154,6 @@ def test_positive_refinement_benchmark_case_runs_with_fixed_context_preserved() 
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 @pytest.mark.parametrize(
     "case_id",
     (
@@ -191,7 +188,6 @@ def test_hydrogenated_retained_non_polymer_benchmark_cases_run_under_uff(
     assert result.expectation_matched is True
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 @pytest.mark.parametrize("case_id", ("1jd0-gln92", "1ywr-asn155"))
 def test_metric_clean_benchmark_cases_can_expect_no_op(
     case_id: str,
@@ -216,7 +212,6 @@ def test_metric_clean_benchmark_cases_can_expect_no_op(
     assert result.expectation_matched is True
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 @pytest.mark.parametrize("case_id", ("4pep-sep68", "8pyr-tpo170", "4jfx-ptr8"))
 def test_phosphorylated_benchmark_cases_run_under_mmff(
     case_id: str,
@@ -251,7 +246,6 @@ def test_phosphorylated_benchmark_cases_run_under_mmff(
     assert result.fixed_context_max_displacement_angstrom == 0.0
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_asn_benchmark_case_errors_when_clashes_block_residue_local_track() -> None:
     """Hydrogenated 3G8L Asn182 should now run and relieve local clashes."""
 
@@ -276,7 +270,6 @@ def test_asn_benchmark_case_errors_when_clashes_block_residue_local_track() -> N
     assert result.moved_atom_count > 0
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 @pytest.mark.parametrize("case_id", ("1bkr-his42", "1ywr-his148", "1lxa-his125"))
 def test_histidine_benchmark_cases_report_non_regressing_quality_metrics(
     case_id: str,
@@ -308,7 +301,6 @@ def test_histidine_benchmark_cases_report_non_regressing_quality_metrics(
     assert result.fixed_context_max_displacement_angstrom == 0.0
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_glutamine_benchmark_case_reports_non_regressing_quality_metrics() -> None:
     """Hydrogenated 1UAQ Gln55 should expose benchmark quality metrics cleanly."""
 
@@ -337,7 +329,6 @@ def test_glutamine_benchmark_case_reports_non_regressing_quality_metrics() -> No
     assert result.fixed_context_max_displacement_angstrom == 0.0
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 @pytest.mark.parametrize(
     "case_id",
     (
@@ -373,7 +364,6 @@ def test_clashy_hydrogenated_benchmark_cases_error_before_refinement(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_leu_benchmark_case_improves_hydrogenated_residue_local_track() -> None:
     """Hydrogenated Leu253 residue-local track should benefit from rotamer seeding."""
 
@@ -398,7 +388,6 @@ def test_leu_benchmark_case_improves_hydrogenated_residue_local_track() -> None:
     assert result.moved_atom_count > 0
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_positive_refinement_benchmark_case_runs_under_mmff() -> None:
     """One positive benchmark case should also run under MMFF."""
 

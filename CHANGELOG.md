@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- require RDKit at runtime through the `rdkit` package and remove the former
+  `refinement` extra and no-RDKit execution mode
+- replace the partial public Bondi/Cordero radius tables with a bundled RDKit PeriodicTable radius snapshot
+  of `GetRvdw` and `GetRcovalent` values for elements 1-118
+- remove `BONDI_VAN_DER_WAALS_RADII_ANGSTROM`,
+  `CORDERO_COVALENT_RADII_ANGSTROM`, `DEFAULT_COVALENT_RADIUS_ANGSTROM`, and
+  `DEFAULT_VAN_DER_WAALS_RADIUS_ANGSTROM`; radius lookup now raises
+  `UnknownElementRadiusError` instead of silently using a default for unsupported
+  elements
+
+### Changed
+
+- harden ingress normalization by selecting coherent residue-level altloc
+  cohorts by mean occupancy with lexical tie-breaks, validating non-finite atom
+  coordinates/occupancy/B-factors at the boundary, preserving first-model PDB
+  CONECT records safely, and dropping source connectivity that refers to
+  discarded altloc or source component variants
+- tighten source-bond metadata validation so public topology metadata requires
+  finite positive numeric reported distances rather than float-like strings
+- expose unsupported topology as an explicit readiness state for polymer
+  components whose expected topology cannot be resolved from supported chemistry
+  evidence, including separate absent-vs-unsupported workflow deficit fields
+- wrap public structure parsing and unsupported-format failures in project-owned
+  errors so callers can catch `ProtrepairError` subclasses consistently
+- model thiol H/D/T atoms on canonical CYS disulfides as typed chemistry
+  contradictions, remove them through planner-selected topology-preserving
+  normalization, and report chemistry work under the broader
+  `CHEMISTRY_NORMALIZATION` workflow phase
+
 ## 0.1.0
 
 Initial public release candidate of the rewritten `protrepair` package.
@@ -23,15 +56,3 @@ Initial public release candidate of the rewritten `protrepair` package.
 - include representative workflow regressions, fixture-backed refinement
   benchmarks, public API smoke tests, release-facing README examples, typed
   package metadata, and third-party licensing notices
-- harden ingress normalization by selecting coherent residue-level altloc
-  cohorts by mean occupancy with lexical tie-breaks, validating non-finite atom
-  coordinates/occupancy/B-factors at the boundary, preserving first-model PDB
-  CONECT records safely, and dropping source connectivity that refers to
-  discarded altloc or source component variants
-- tighten source-bond metadata validation so public topology metadata requires
-  finite positive numeric reported distances rather than float-like strings
-- expose unsupported topology as an explicit readiness state for polymer
-  components whose expected topology cannot be resolved from supported chemistry
-  evidence, including separate absent-vs-unsupported workflow deficit fields
-- wrap public structure parsing and unsupported-format failures in project-owned
-  errors so callers can catch `ProtrepairError` subclasses consistently

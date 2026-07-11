@@ -5,7 +5,7 @@ import secrets
 from os import PathLike
 from pathlib import Path
 
-from protrepair.errors import UnsupportedFileFormatError
+from protrepair.errors import ModelInvariantError, UnsupportedFileFormatError
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
@@ -127,7 +127,10 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             include_pdb_conect_origin=False,
             include_model_resolved=False,
         )
-        pdb_text = raw_structure.make_pdb_string()
+        pdb_text = _restore_pdb_isotope_element_symbols(
+            raw_structure.make_pdb_string(),
+            structure,
+        )
         return append_pdb_conect_records_from_topology(
             pdb_text,
             structure,
@@ -140,7 +143,9 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             include_pdb_conect_origin=True,
             include_model_resolved=True,
         )
-        return raw_structure.make_mmcif_document().as_string()
+        mmcif_document = raw_structure.make_mmcif_document()
+        _restore_mmcif_isotope_element_symbols(mmcif_document, structure)
+        return mmcif_document.as_string()
 
     raise UnsupportedFileFormatError(f"unsupported file format: {file_format}")
 
@@ -155,7 +160,96 @@ def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> st
         include_pdb_conect_origin=False,
         include_model_resolved=False,
     )
-    return raw_structure.make_pdb_string()
+    return _restore_pdb_isotope_element_symbols(
+        raw_structure.make_pdb_string(),
+        structure,
+    )
+
+
+def _restore_pdb_isotope_element_symbols(
+    pdb_text: str,
+    structure: ProteinStructure,
+) -> str:
+    """Restore isotope aliases that Gemmi cannot represent as elements."""
+
+    if not any(
+        atom_site.element_identity.is_isotope_alias()
+        for atom_site in structure.constitution.atom_slots
+    ):
+        return pdb_text
+
+    lines = pdb_text.splitlines(keepends=True)
+    coordinate_line_indices = tuple(
+        index
+        for index, line in enumerate(lines)
+        if line.startswith(("ATOM  ", "HETATM"))
+    )
+    atom_index_values = atom_index_values_in_coordinate_write_order(structure)
+    if len(coordinate_line_indices) != len(atom_index_values):
+        raise ModelInvariantError(
+            "PDB isotope restoration requires one coordinate line per atom slot"
+        )
+
+    for line_index, atom_index_value in zip(
+        coordinate_line_indices,
+        atom_index_values,
+        strict=True,
+    ):
+        atom_site = structure.constitution.atom_site_at(AtomIndex(atom_index_value))
+        if not atom_site.element_identity.is_isotope_alias():
+            continue
+
+        line = lines[line_index]
+        line_ending = line[len(line.rstrip("\r\n")) :]
+        record = line.removesuffix(line_ending).ljust(78)
+        lines[line_index] = (
+            record[:76]
+            + f"{atom_site.element_identity.source_symbol:>2}"
+            + record[78:]
+            + line_ending
+        )
+
+    return "".join(lines)
+
+
+def _restore_mmcif_isotope_element_symbols(
+    document: gemmi.cif.Document,
+    structure: ProteinStructure,
+) -> None:
+    """Restore source isotope aliases in one generated mmCIF document."""
+
+    if not any(
+        atom_site.element_identity.is_isotope_alias()
+        for atom_site in structure.constitution.atom_slots
+    ):
+        return
+
+    atom_index_values = atom_index_values_in_coordinate_write_order(structure)
+    if not atom_index_values:
+        return
+
+    block = document.sole_block()
+    atom_site_type_symbols = block.find_loop("_atom_site.type_symbol")
+    if len(atom_site_type_symbols) != len(atom_index_values):
+        raise ModelInvariantError(
+            "mmCIF isotope restoration requires one type symbol per atom slot"
+        )
+
+    for row_index, atom_index_value in enumerate(atom_index_values):
+        atom_site = structure.constitution.atom_site_at(AtomIndex(atom_index_value))
+        if atom_site.element_identity.is_isotope_alias():
+            atom_site_type_symbols[row_index] = (
+                atom_site.element_identity.source_symbol
+            )
+
+    atom_type_symbols = block.find_loop("_atom_type.symbol")
+    if not atom_type_symbols:
+        raise ModelInvariantError(
+            "mmCIF isotope restoration requires an atom-type symbol loop"
+        )
+    atom_type_symbols.get_loop().set_all_values(
+        (tuple(dict.fromkeys(atom_site_type_symbols)),)
+    )
 
 
 def build_gemmi_structure(
@@ -484,10 +578,10 @@ def pdb_atom_serial_by_atom_ref(pdb_text: str) -> dict[AtomRef, int]:
     return serial_by_atom_ref
 
 
-def pdb_atom_index_values_in_write_order(
+def atom_index_values_in_coordinate_write_order(
     structure: ProteinStructure,
 ) -> tuple[int, ...]:
-    """Return canonical atom indices in the same order as PDB coordinate lines."""
+    """Return canonical atom indices in coordinate serialization order."""
 
     atom_index_values: list[int] = []
     for _chain_id, residues in residues_by_chain_id(structure):

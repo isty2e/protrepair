@@ -16,9 +16,8 @@ from protrepair.state.retained_non_polymer_chemistry import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ChainSite, ResidueSite
-from protrepair.structure.labels import AtomRef, ResidueId
-
-DISULFIDE_HYDROGEN_SUPPRESSION_DISTANCE_ANGSTROM = 3.0
+from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
+from protrepair.structure.labels import ResidueId
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,9 +56,11 @@ def derive_structure_hydrogen_expectation_model(
 ) -> StructureHydrogenExpectationModel:
     """Derive structure-level hydrogen expectation policy."""
 
+    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(structure)
     expected_hydrogen_atom_names_by_residue = _polymer_expected_hydrogen_atom_names(
         structure,
         component_library=component_library,
+        disulfide_bonded_residue_ids=disulfide_residue_ids,
     )
     evidence_map = evidence_by_residue_id(retained_non_polymer_chemistry_evidence)
     retained_non_polymer_resolution_by_residue_id: dict[
@@ -73,6 +74,7 @@ def derive_structure_hydrogen_expectation_model(
             component_library=component_library,
             evidence=evidence_map.get(ligand.residue_id),
             allow_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            disulfide_residue_ids=disulfide_residue_ids,
         )
         retained_non_polymer_resolution_by_residue_id[ligand.residue_id] = resolution
         if resolution.expected_hydrogen_atom_names:
@@ -94,11 +96,11 @@ def _polymer_expected_hydrogen_atom_names(
     structure: ProteinStructure,
     *,
     component_library: ComponentLibrary,
+    disulfide_bonded_residue_ids: frozenset[ResidueId],
 ) -> dict[ResidueId, tuple[str, ...]]:
     """Return chain-aware expected hydrogens for polymer residues."""
 
     expected_hydrogen_atom_names_by_residue: dict[ResidueId, list[str]] = {}
-    disulfide_bonded_residue_ids = _disulfide_bonded_cysteine_residue_ids(structure)
     for chain in structure.constitution.chains:
         _extend_chain_expected_hydrogens(
             chain,
@@ -205,38 +207,6 @@ def _append_expected_hydrogen_atom_names(
 
         ordered_hydrogen_atom_names.append(hydrogen_atom_name)
         seen_hydrogen_atom_names.add(hydrogen_atom_name)
-
-
-def _disulfide_bonded_cysteine_residue_ids(
-    structure: ProteinStructure,
-) -> frozenset[ResidueId]:
-    """Return cysteine residues whose SG is close enough to suppress HG."""
-
-    cysteine_sg_atom_refs = tuple(
-        AtomRef(residue_site.residue_id, "SG")
-        for chain in structure.constitution.chains
-        for residue_site in chain.residues
-        if residue_site.component_id == "CYS" and residue_site.has_atom_site("SG")
-    )
-    disulfide_bonded_residue_ids: set[ResidueId] = set()
-    for left_index, left_atom_ref in enumerate(cysteine_sg_atom_refs):
-        left_position = structure.geometry.position(
-            structure.constitution.atom_index(left_atom_ref)
-        )
-        for right_atom_ref in cysteine_sg_atom_refs[left_index + 1 :]:
-            right_position = structure.geometry.position(
-                structure.constitution.atom_index(right_atom_ref)
-            )
-            if (
-                left_position.distance_to(right_position)
-                > DISULFIDE_HYDROGEN_SUPPRESSION_DISTANCE_ANGSTROM
-            ):
-                continue
-
-            disulfide_bonded_residue_ids.add(left_atom_ref.residue_id)
-            disulfide_bonded_residue_ids.add(right_atom_ref.residue_id)
-
-    return frozenset(disulfide_bonded_residue_ids)
 
 
 def _supports_peptide_backbone_hydrogens(

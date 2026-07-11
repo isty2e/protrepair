@@ -149,7 +149,7 @@ class TopologyAvailabilityFacts:
             present_heavy_atom_names = {
                 atom_site.name
                 for atom_site in residue.atom_sites
-                if atom_site.element != "H"
+                if not atom_site.is_hydrogen()
             }
             expected_heavy_atom_names = set(template.expected_heavy_atom_names())
             if not expected_heavy_atom_names.issubset(present_heavy_atom_names):
@@ -202,7 +202,7 @@ class TopologyAvailabilityFacts:
             present_hydrogen_atom_names = tuple(
                 atom_site.name
                 for atom_site in residue.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             )
             if not present_hydrogen_atom_names:
                 hydrogen_state = TopologyAvailabilityState.ABSENT
@@ -355,7 +355,7 @@ class HydrogenAttachmentResolutionFacts:
             present_hydrogen_atom_names = tuple(
                 atom_site.name
                 for atom_site in residue.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             )
             if not present_hydrogen_atom_names:
                 residue_facts.append(

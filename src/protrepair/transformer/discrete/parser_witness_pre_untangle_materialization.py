@@ -136,7 +136,7 @@ def sidechain_root_rotating_atom_names(
         atom_name
         for atom_name in reachable_from_cb
         if atom_name not in {"CA", "CB"}
-        and residue_site.atom_site(atom_name).element != "H"
+        and not residue_site.atom_site(atom_name).is_hydrogen()
     }
     if atom_ref.atom_name not in rotating_heavy_atom_names:
         return frozenset()

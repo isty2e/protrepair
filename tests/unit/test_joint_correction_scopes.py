@@ -3,7 +3,6 @@
 from functools import lru_cache
 from pathlib import Path
 
-import pytest
 from tests.support.canonical_builders import (
     atom_payload,
     build_structure,
@@ -13,7 +12,7 @@ from tests.support.canonical_builders import (
 
 import protrepair.transformer.continuous.rdkit as continuous_rdkit
 from protrepair.chemistry import build_default_component_library
-from protrepair.diagnostics import ClashPolicy, detect_clashes_involving_residues
+from protrepair.diagnostics import ClashPolicy
 from protrepair.diagnostics.near_covalent import detect_near_covalent_contacts
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat, read_structure, write_structure_string
@@ -88,7 +87,7 @@ def test_joint_correction_scope_proposals_cluster_representative_contact() -> No
     assert proposals
     assert proposals[0].residue_ids == REPRESENTATIVE_RESIDUE_IDS
     assert proposals[0].contact_pair_count >= 1
-    assert proposals[0].worst_overlap_angstrom >= 1.0
+    assert proposals[0].worst_overlap_angstrom > 0.0
 
 
 def test_joint_correction_scope_keeps_sidechain_only_contacts_sidechain_local() -> None:
@@ -136,7 +135,7 @@ def test_joint_correction_scope_promotes_backbone_contacts_to_residue_atoms() ->
     assert proposals
     assert proposals[0].residue_ids == (ResidueId("A", 1), ResidueId("B", 2))
     assert proposals[0].contact_pair_count >= 1
-    assert proposals[0].worst_overlap_angstrom > 2.0
+    assert proposals[0].worst_overlap_angstrom > 1.0
     assert proposals[0].motion_class is JointCorrectionMotionClass.RESIDUE_ATOMS
     assert (
         proposals[0].as_local_scope_spec().lowering
@@ -179,7 +178,6 @@ def test_backbone_joint_execution_scope_widens_to_peptide_neighbors() -> None:
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_representative_no_conect_failure_is_covered_by_joint_scope_proposal() -> None:
     """The representative no-CONECT sanitize failure should expose a joint scope."""
 
@@ -349,21 +347,67 @@ def test_batch_joint_correction_scope_proposals_filters_below_threshold() -> Non
         (ResidueId("A", 3), ResidueId("A", 4)),
     )
 
+
+def test_joint_scope_batches_genuine_polymer_ligand_contact() -> None:
+    """Unexpected holo contacts should remain representable through batching."""
+
+    polymer_id = ResidueId("A", 1)
+    ligand_id = ResidueId("A", 401)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=polymer_id,
+                        atoms=(atom_payload("CB", "C", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        ligands=(
+            residue_payload(
+                component_id="NAD",
+                residue_id=ligand_id,
+                atoms=(atom_payload("C5N", "C", Vec3(1.5, 0.0, 0.0)),),
+                is_hetero=True,
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    component_library = build_default_component_library()
+    chemistry_readiness_facts = StructureChemistryReadinessFacts.from_structure(
+        structure,
+        component_library=component_library,
+    )
+
+    proposals = propose_joint_correction_scopes(
+        structure,
+        focus_residue_ids=(polymer_id,),
+        component_library=component_library,
+        chemistry_readiness_facts=chemistry_readiness_facts,
+        include_ligands=True,
+    )
+    batched = batch_joint_correction_scope_proposals(
+        structure,
+        proposals=proposals,
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0].residue_ids == (polymer_id, ligand_id)
+    assert batched == proposals
+
 def test_representative_joint_scope_contact_is_detected_as_near_covalent() -> None:
     """Representative sanitize failure should surface as one near-covalent contact."""
 
     component_library = build_default_component_library()
     structure = _hydrogenated_1afc_structure()
-    clash_report = detect_clashes_involving_residues(
-        structure,
-        residue_ids=frozenset((ResidueId("C", 45),)),
-        component_library=component_library,
-        policy=ClashPolicy(include_hydrogens=True),
-    )
-
     near_covalent_contacts = detect_near_covalent_contacts(
         structure,
-        clashes=clash_report.clashes,
+        component_library=component_library,
+        focus_residue_ids=frozenset((ResidueId("C", 45),)),
+        pair_policy=ClashPolicy(include_hydrogens=True),
     )
 
     assert near_covalent_contacts

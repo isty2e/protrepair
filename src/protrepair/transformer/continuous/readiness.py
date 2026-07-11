@@ -340,7 +340,7 @@ def derive_atom_scope_continuous_relaxation_facts(
         for atom_ref in atom_scope.atom_refs
         if (atom_site := snapshot.structure.constitution.resolve_atom_site(atom_ref))
         is not None
-        and atom_site.element == "H"
+        and atom_site.is_hydrogen()
     )
     return AtomScopeStateFacts(
         selected_scope_facts=SelectedAtomScopeFacts(

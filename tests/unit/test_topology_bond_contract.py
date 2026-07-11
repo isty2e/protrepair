@@ -197,6 +197,7 @@ class TestBondRelationshipType:
 
 class TestSourceBondRecordType:
     def test_enum_values(self):
+        assert SourceBondRecordType.PDB_SSBOND == "pdb_ssbond"
         assert SourceBondRecordType.PDB_LINK == "pdb_link"
         assert SourceBondRecordType.PDB_CONECT == "pdb_conect"
         assert SourceBondRecordType.MMCIF_STRUCT_CONN == "mmcif_struct_conn"

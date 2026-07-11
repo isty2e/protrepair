@@ -242,7 +242,7 @@ def _validated_retained_non_polymer_chemistry_evidence(
         present_heavy_atom_names = tuple(
             atom_site.name
             for atom_site in ligand.atom_sites
-            if atom_site.element != "H"
+            if not atom_site.is_hydrogen()
         )
         if set(present_heavy_atom_names) != set(evidence.heavy_atom_names):
             raise ValueError(
@@ -256,9 +256,9 @@ def _validated_retained_non_polymer_chemistry_evidence(
                 retained_non_polymer_evidence_heavy_atom_elements(evidence)
             )
         except RdkitUnavailableError as error:
-            raise ValueError(
+            raise RdkitUnavailableError(
                 "retained non-polymer chemistry override validation requires "
-                "optional RDKit support for "
+                "the required RDKit backend for "
                 f"{override.residue_id.display_token()}"
             ) from error
         except (RuntimeError, ValueError) as error:

@@ -13,7 +13,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     env:
-      PROTREPAIR_RELEASE_STRICT_RDKIT_DIGESTS: "1"
+      PROTREPAIR_RELEASE_STRICT_RDKIT: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -30,8 +30,8 @@ jobs:
       - name: Create virtual environment
         run: python -m venv .venv
 
-      - name: Install package, dev, and refinement dependencies
-        run: .venv/bin/python -m pip install -c constraints/release.txt ".[dev,refinement]"
+      - name: Install package and dev dependencies
+        run: .venv/bin/python -m pip install -c constraints/release.txt ".[dev]"
 
       - name: Ruff
         run: .venv/bin/ruff check src/protrepair tests --extend-select=I,UP
@@ -42,43 +42,8 @@ jobs:
       - name: Unit tests
         run: .venv/bin/pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q
 
-  lean:
-    name: Lean optional dependency boundary (Python 3.12)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Create virtual environment
-        run: python -m venv .venv
-
-      - name: Install package and dev dependencies
-        run: .venv/bin/python -m pip install -c constraints/release.txt ".[dev]"
-
-      - name: Verify RDKit is outside the lean environment
-        run: .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rdkit') is None"
-
-      - name: Lean optional dependency tests
-        run: |
-          rdkit_blocker="$(mktemp -d)"
-          printf 'raise ModuleNotFoundError("No module named rdkit")\n' > "$rdkit_blocker/rdkit.py"
-          PYTHONPATH="$rdkit_blocker:${PYTHONPATH:-}" .venv/bin/pytest \
-            tests/unit/test_release_artifacts.py \
-            tests/unit/test_release_public_api_contract.py \
-            tests/unit/test_readme_usage.py \
-            tests/unit/test_retained_non_polymer_no_rdkit_release.py \
-            tests/unit/test_parser_repair_performance_support.py \
-            tests/workflow/test_process_representatives.py::test_process_structure_preserves_representative_semantics \
-            tests/workflow/test_process_representatives.py::test_process_structure_preserves_rdkit_coordinate_digest \
-            -q
-
-  installed-wheel-smoke:
-    name: Installed wheel FASPR/RDKit smoke (Python 3.12)
+  installed-artifact-smoke:
+    name: Installed wheel and sdist FASPR/RDKit smoke (Python 3.12)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -95,11 +60,14 @@ jobs:
       - name: Install constrained release build tools
         run: .venv/bin/python -m pip install -c constraints/release.txt hatchling hatch-vcs scikit-build-core
 
-      - name: Run installed-wheel FASPR smoke
-        run: .venv/bin/python scripts/run_installed_wheel_smoke.py
+      - name: Build release artifacts
+        run: .venv/bin/python -m hatchling build
 
-      - name: Run installed-wheel RDKit refinement smoke
-        run: .venv/bin/python scripts/run_installed_wheel_smoke.py --with-refinement
+      - name: Smoke-test built wheel
+        run: .venv/bin/python scripts/run_installed_artifact_smoke.py --artifact-path dist/protrepair-*.whl --venv-path .tmp/release-wheel-smoke
+
+      - name: Smoke-test built sdist
+        run: .venv/bin/python scripts/run_installed_artifact_smoke.py --artifact-path dist/protrepair-*.tar.gz --venv-path .tmp/release-sdist-smoke
 
   artifact-content:
     name: Release artifact content (Python 3.12)

@@ -230,11 +230,11 @@ def test_read_structure_accepts_pathlike_input(tmp_path: Path) -> None:
     assert summarize_structure(roundtripped) == summarize_structure(structure)
 
 
-def test_read_structure_normalizes_str_before_raw_file_parser(
+def test_read_structure_normalizes_str_before_text_ingress(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Internal raw parser helpers should receive Path after public coercion."""
+    """Path coercion should happen before the single coordinate text read."""
 
     structure = build_canonical_structure()
     source_path = tmp_path / "fixture.cif"
@@ -242,14 +242,19 @@ def test_read_structure_normalizes_str_before_raw_file_parser(
         write_structure_string(structure, FileFormat.MMCIF),
         encoding="utf-8",
     )
-    original_read_raw_structure = gemmi_ingress.read_raw_structure
+    original_read_text = Path.read_text
     observed_path_inputs: list[Path] = []
 
-    def _spy_read_raw_structure(path: Path, file_format: FileFormat) -> object:
-        observed_path_inputs.append(path)
-        return original_read_raw_structure(path, file_format)
+    def _spy_read_text(
+        self: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> str:
+        if self == source_path:
+            observed_path_inputs.append(self)
+        return original_read_text(self, encoding=encoding, errors=errors)
 
-    monkeypatch.setattr(gemmi_ingress, "read_raw_structure", _spy_read_raw_structure)
+    monkeypatch.setattr(Path, "read_text", _spy_read_text)
 
     roundtripped = read_structure(str(source_path))
 
@@ -2700,6 +2705,37 @@ def test_read_structure_string_link_takes_precedence_over_conect() -> None:
         assert bond.source_metadata.record_type is SourceBondRecordType.PDB_LINK
 
 
+def test_pdb_ssbond_ignores_gemmi_altloc_and_takes_precedence_over_conect() -> None:
+    """PDB SSBOND is residue-level truth even when SG has alternate locations."""
+
+    structure = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
+    disulfide_bonds = tuple(
+        bond
+        for bond in structure.topology.bonds
+        if bond.relationship_type is BondRelationshipType.DISULFIDE
+    )
+
+    assert len(disulfide_bonds) == 4
+    altloc_disulfide = next(
+        bond
+        for bond in disulfide_bonds
+        if {
+            structure.constitution.atom_ref_at(bond.atom_index_1),
+            structure.constitution.atom_ref_at(bond.atom_index_2),
+        }
+        == {
+            AtomRef(ResidueId("A", 12), "SG"),
+            AtomRef(ResidueId("A", 63), "SG"),
+        }
+    )
+    assert altloc_disulfide.source_metadata is not None
+    assert (
+        altloc_disulfide.source_metadata.record_type
+        is SourceBondRecordType.PDB_SSBOND
+    )
+    assert altloc_disulfide.source_metadata.reported_distance_angstrom == 2.01
+
+
 def test_write_pdb_emits_conect_from_source_explicit_topology_bonds() -> None:
     """PDB egress should serialize source-explicit topology bonds as CONECT."""
 
@@ -3468,7 +3504,7 @@ def test_read_structure_pdb_path_matches_string_ingress_with_conect(
     assert from_path.topology.bonds == from_string.topology.bonds
 
 
-def test_read_structure_pdb_path_reads_text_once_and_skips_file_parser(
+def test_read_structure_pdb_path_reads_text_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3504,43 +3540,12 @@ def test_read_structure_pdb_path_reads_text_once_and_skips_file_parser(
 
         return original_read_text(self, encoding=encoding, errors=errors)
 
-    def _fail_file_parser(_path: Path, _file_format: FileFormat) -> object:
-        raise AssertionError("PDB path ingress should not call read_raw_structure")
-
     monkeypatch.setattr(Path, "read_text", _counting_read_text)
-    monkeypatch.setattr(gemmi_ingress, "read_raw_structure", _fail_file_parser)
 
     structure = read_structure(pdb_path)
 
     assert structure.geometry.atom_count() == 1
     assert read_text_calls == [pdb_path]
-
-
-def test_read_structure_mmcif_path_still_uses_file_parser(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """mmCIF path ingress should keep its existing gemmi file-parser path."""
-
-    structure = build_canonical_structure()
-    cif_path = tmp_path / "fixture.cif"
-    cif_path.write_text(
-        write_structure_string(structure, FileFormat.MMCIF),
-        encoding="utf-8",
-    )
-    original_read_raw_structure = gemmi_ingress.read_raw_structure
-    read_raw_calls: list[FileFormat] = []
-
-    def _spy_read_raw_structure(path: Path, file_format: FileFormat) -> object:
-        read_raw_calls.append(file_format)
-        return original_read_raw_structure(path, file_format)
-
-    monkeypatch.setattr(gemmi_ingress, "read_raw_structure", _spy_read_raw_structure)
-
-    roundtripped = read_structure(cif_path)
-
-    assert summarize_structure(roundtripped) == summarize_structure(structure)
-    assert read_raw_calls == [FileFormat.MMCIF]
 
 
 def build_canonical_structure() -> ProteinStructure:

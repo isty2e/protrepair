@@ -70,7 +70,6 @@ RDKIT_AVAILABLE = (
 )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_moves_selected_atom_and_keeps_context_fixed() -> None:
     """RDKit refinement should move selected atoms while keeping context fixed."""
 
@@ -139,7 +138,63 @@ def test_refine_local_region_moves_selected_atom_and_keeps_context_fixed() -> No
     assert refined_observer.position == original_observer.position
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
+def test_rdkit_refinement_preserves_movable_and_fixed_hydrogen_isotopes() -> None:
+    """RDKit should lower D/T as explicit hydrogen isotopes without source loss."""
+
+    structure = build_toy_structure(
+        movable_hydrogen_element="D",
+        context_hydrogen_elements=("T", "H"),
+    )
+    component_library = build_toy_component_library()
+    scope_spec = LocalScopeSpec.from_atoms(
+        (AtomRef(ResidueId(chain_id="A", seq_num=1), "H1"),)
+    )
+    plan = build_continuous_relaxation_problem(
+        structure,
+        scope_spec=scope_spec,
+        context_radius_angstrom=2.5,
+        component_library=component_library,
+    )
+
+    molecule, rdkit_atom_index_by_structure_atom_index = (
+        continuous_rdkit.build_rdkit_molecule(plan)
+    )
+    for atom_ref, source_symbol, isotope_mass_number in (
+        (AtomRef(ResidueId("A", 1), "H1"), "D", 2),
+        (AtomRef(ResidueId("L", 1), "H2"), "T", 3),
+        (AtomRef(ResidueId("L", 1), "H3"), "H", 0),
+    ):
+        atom_index = structure.constitution.atom_index(atom_ref)
+        rdkit_atom = molecule.GetAtomWithIdx(
+            rdkit_atom_index_by_structure_atom_index[atom_index]
+        )
+
+        assert rdkit_atom.GetSymbol() == "H"
+        assert rdkit_atom.GetAtomicNum() == 1
+        assert rdkit_atom.GetIsotope() == isotope_mass_number
+        assert structure.constitution.atom_site_at(atom_index).element == source_symbol
+
+    refined = transform_local_region(
+        structure,
+        DirectRegionTransformationSpec(
+            scope_spec=scope_spec,
+            force_field=ContinuousRelaxationForceField.UFF,
+            config=ContinuousRelaxationConfig(
+                context_radius_angstrom=2.5,
+                max_iterations=50,
+            ),
+        ),
+        component_library=component_library,
+    ).refined_structure
+
+    assert refined.constitution.atom_site_at(
+        refined.constitution.atom_index(AtomRef(ResidueId("A", 1), "H1"))
+    ).element == "D"
+    assert refined.constitution.atom_site_at(
+        refined.constitution.atom_index(AtomRef(ResidueId("L", 1), "H2"))
+    ).element == "T"
+
+
 def test_refine_local_region_supports_mmff_on_benchmark_fixture() -> None:
     """MMFF should run on one chemistry-valid literature-backed benchmark fixture."""
 
@@ -162,7 +217,6 @@ def test_refine_local_region_supports_mmff_on_benchmark_fixture() -> None:
     assert refined.moved_atom_count() > 0
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_moves_ligand_atoms_against_polymer_context() -> None:
     """Ligand atom selections should optimize while nearby polymer atoms stay fixed."""
 
@@ -218,7 +272,6 @@ def test_refine_local_region_moves_ligand_atoms_against_polymer_context() -> Non
     assert refined_anchor.position == original_anchor.position
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_rdkit_backend_discards_catastrophic_bond_distortion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -282,7 +335,6 @@ def test_rdkit_backend_discards_catastrophic_bond_distortion(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_rdkit_backend_discards_chirality_inversion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -341,7 +393,6 @@ def test_rdkit_backend_discards_chirality_inversion(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_rdkit_backend_discards_assigned_chirality_loss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -397,13 +448,13 @@ def test_rdkit_backend_discards_assigned_chirality_loss(
 def test_refine_local_region_raises_rdkit_unavailable_error_when_missing_dependency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The seam should surface one clear error when RDKit is unavailable."""
+    """The seam should surface one clear error when required RDKit cannot import."""
 
     monkeypatch.setattr(continuous_rdkit, "Chem", None)
     monkeypatch.setattr(continuous_rdkit, "rdBase", None)
     monkeypatch.setattr(continuous_rdkit, "rdForceFieldHelpers", None)
 
-    with pytest.raises(RdkitUnavailableError, match="optional rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         transform_local_region(
             build_toy_structure(),
             DirectRegionTransformationSpec(
@@ -426,7 +477,6 @@ def test_rdkit_element_symbol_normalizes_multicharacter_elements() -> None:
     assert continuous_rdkit._rdkit_element_symbol("C") == "C"
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_wraps_rdkit_sanitize_failures() -> None:
     """Invalid local chemistry should surface as one canonical refinement error."""
 
@@ -455,7 +505,6 @@ def test_refine_local_region_wraps_rdkit_sanitize_failures() -> None:
         continuous_rdkit.Chem.SanitizeMol = original_sanitize
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_wraps_natural_uff_parameterization_failures() -> None:
     """Chemically impossible local graphs should still surface one refinement error."""
 
@@ -473,7 +522,6 @@ def test_refine_local_region_wraps_natural_uff_parameterization_failures() -> No
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_wraps_uff_parameterization_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -519,7 +567,6 @@ def test_sidechain_local_selection_drops_position_constraint_cap() -> None:
     assert continuous_rdkit.position_constraint_max_displacement(atom_input) is None
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_raises_when_uff_builder_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -547,7 +594,6 @@ def test_refine_local_region_raises_when_uff_builder_returns_none(
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_rejects_unsupported_planned_bond_orders() -> None:
     """Illegal bond orders should fail before backend execution leaks weird state."""
 
@@ -565,7 +611,6 @@ def test_refine_local_region_rejects_unsupported_planned_bond_orders() -> None:
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_build_rdkit_force_field_adds_position_constraints_for_movable_atoms(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -723,7 +768,6 @@ def test_build_rdkit_force_field_adds_position_constraints_for_movable_atoms(
     ]
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_build_rdkit_force_field_adds_geometry_constraints_for_residuewise_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -900,7 +944,6 @@ def test_build_rdkit_force_field_adds_geometry_constraints_for_residuewise_selec
     assert fake_force_field.fixed_points == []
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_build_rdkit_force_field_uses_mmff_builder_and_constraints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1088,7 +1131,6 @@ def test_build_rdkit_force_field_uses_mmff_builder_and_constraints(
     assert fake_force_field.fixed_points == []
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_preserves_atom_metadata_and_structure_order() -> None:
     """Coordinate updates should preserve metadata and canonical structure order."""
 
@@ -1158,7 +1200,6 @@ def test_refine_local_region_preserves_atom_metadata_and_structure_order() -> No
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_preserves_all_atoms_of_multi_atom_fixed_context() -> None:
     """Whole context residues should remain fixed across promoted context residues."""
 
@@ -1219,7 +1260,6 @@ def test_structure_delta_rejects_unknown_moved_atom_slots() -> None:
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_canonicalizes_moved_atom_order() -> None:
     """Moved atom refs should be reported in canonical structure order."""
 
@@ -1261,7 +1301,6 @@ def test_refine_local_region_canonicalizes_moved_atom_order() -> None:
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_canonicalizes_mixed_domain_moved_atom_order() -> None:
     """Mixed polymer and ligand selections should report canonical move ordering."""
 
@@ -1303,7 +1342,6 @@ def test_refine_local_region_canonicalizes_mixed_domain_moved_atom_order() -> No
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_can_run_with_zero_context_and_same_residue_closure() -> (
     None
 ):
@@ -1498,7 +1536,11 @@ def build_chiral_component_library() -> ComponentLibrary:
     )
 
 
-def build_toy_structure() -> ProteinStructure:
+def build_toy_structure(
+    *,
+    movable_hydrogen_element: str = "H",
+    context_hydrogen_elements: tuple[str, str] = ("H", "H"),
+) -> ProteinStructure:
     """Return one tiny local environment with one hydrogen clash."""
 
     structure = build_canonical_structure(
@@ -1511,7 +1553,11 @@ def build_toy_structure() -> ProteinStructure:
                         residue_id=ResidueId(chain_id="A", seq_num=1),
                         atoms=(
                             atom_payload("C1", "C", Vec3(0.0, 0.0, 0.0)),
-                            atom_payload("H1", "H", Vec3(1.0, 0.0, 0.0)),
+                            atom_payload(
+                                "H1",
+                                movable_hydrogen_element,
+                                Vec3(1.0, 0.0, 0.0),
+                            ),
                         ),
                     ),
                 ),
@@ -1523,8 +1569,16 @@ def build_toy_structure() -> ProteinStructure:
                 residue_id=ResidueId(chain_id="L", seq_num=1),
                 atoms=(
                     atom_payload("O1", "O", Vec3(1.9, 0.0, 0.0)),
-                    atom_payload("H2", "H", Vec3(2.5, 0.75, 0.0)),
-                    atom_payload("H3", "H", Vec3(2.5, -0.75, 0.0)),
+                    atom_payload(
+                        "H2",
+                        context_hydrogen_elements[0],
+                        Vec3(2.5, 0.75, 0.0),
+                    ),
+                    atom_payload(
+                        "H3",
+                        context_hydrogen_elements[1],
+                        Vec3(2.5, -0.75, 0.0),
+                    ),
                 ),
                 is_hetero=True,
             ),

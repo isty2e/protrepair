@@ -1,5 +1,6 @@
 """Acceptance policy helpers for local refinement execution results."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -18,7 +19,10 @@ from protrepair.diagnostics.kinds import (
     IssueSeverity,
     ValidationIssueKind,
 )
-from protrepair.diagnostics.near_covalent import detect_near_covalent_contacts
+from protrepair.diagnostics.near_covalent import (
+    NearCovalentContact,
+    detect_near_covalent_contacts_from_context,
+)
 from protrepair.diagnostics.parser_readability import (
     measure_rdkit_no_conect_sanitize_readability_metrics,
 )
@@ -304,9 +308,10 @@ def measure_refinement_acceptance_metrics(
         restraint_library=restraint_library,
         residue_ids=focus_residue_ids,
     )
-    near_covalent_contacts = detect_near_covalent_contacts(
+    near_covalent_contacts = detect_near_covalent_contacts_from_context(
         structure,
-        clashes=focus_clashes,
+        clash_context,
+        focus_residue_ids=focus_residue_ids,
     )
     stereochemistry_report = detect_sidechain_stereochemistry(
         structure,
@@ -341,10 +346,10 @@ def measure_refinement_acceptance_metrics(
             ),
             near_covalent_contact_count=len(near_covalent_contacts),
             worst_near_covalent_overlap_angstrom=(
-                _worst_clash_overlap_angstrom(near_covalent_contacts)
+                _worst_contact_overlap_angstrom(near_covalent_contacts)
             ),
             total_near_covalent_overlap_angstrom=(
-                _total_clash_overlap_angstrom(near_covalent_contacts)
+                _total_contact_overlap_angstrom(near_covalent_contacts)
             ),
             stereochemistry_violation_count=sum(
                 1
@@ -394,22 +399,26 @@ def count_focus_clash_overlap_sum_angstrom(
     )
 
 
-def _worst_clash_overlap_angstrom(clashes: tuple[StericClash, ...]) -> float:
-    """Return the worst overlap across one clash collection."""
+def _worst_contact_overlap_angstrom(
+    contacts: Sequence[StericClash | NearCovalentContact],
+) -> float:
+    """Return the worst overlap across one contact collection."""
 
     worst_overlap = 0.0
-    for clash in clashes:
-        overlap_angstrom = clash.overlap_angstrom
+    for contact in contacts:
+        overlap_angstrom = contact.overlap_angstrom
         if overlap_angstrom > worst_overlap:
             worst_overlap = overlap_angstrom
 
     return worst_overlap
 
 
-def _total_clash_overlap_angstrom(clashes: tuple[StericClash, ...]) -> float:
-    """Return the total overlap across one clash collection."""
+def _total_contact_overlap_angstrom(
+    contacts: Sequence[StericClash | NearCovalentContact],
+) -> float:
+    """Return the total overlap across one contact collection."""
 
-    return sum(clash.overlap_angstrom for clash in clashes)
+    return sum(contact.overlap_angstrom for contact in contacts)
 
 
 def refinement_metrics_regressed(

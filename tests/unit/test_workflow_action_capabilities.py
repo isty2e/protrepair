@@ -15,6 +15,12 @@ from protrepair.structure.labels import ResidueId
 from protrepair.workflow.actions.backbone_window_refinement import (
     BackboneWindowRefinementTransformer,
 )
+from protrepair.workflow.actions.disulfide_hydrogen import (
+    DisulfideHydrogenNormalizationTransformer,
+)
+from protrepair.workflow.actions.disulfide_topology import (
+    DisulfideTopologyResolutionTransformer,
+)
 from protrepair.workflow.actions.external_span_reconstruction import (
     ExternalSpanReconstructionTransformer,
 )
@@ -58,6 +64,8 @@ def test_request_driven_action_registry_exposes_declared_capabilities() -> None:
 
     assert action_types == (
         HeavyAtomCompletionTransformer,
+        DisulfideTopologyResolutionTransformer,
+        DisulfideHydrogenNormalizationTransformer,
         HydrogenCompletionTransformer,
         RetainedNonPolymerHydrogenCompletionTransformer,
         TerminalAugmentationTransformer,
@@ -222,8 +230,26 @@ def test_explicit_action_registry_entries_expose_capability_metadata() -> None:
 def test_workflow_action_registry_covers_every_bootstrap_family() -> None:
     """Combined bootstrap registry should cover every workflow action family once."""
 
-    assert len(WORKFLOW_ACTION_REGISTRY) == 9
-    assert len({entry.action_type for entry in WORKFLOW_ACTION_REGISTRY}) == 9
+    assert len(WORKFLOW_ACTION_REGISTRY) == 11
+    assert len({entry.action_type for entry in WORKFLOW_ACTION_REGISTRY}) == 11
+    topology_capability = _registry_entry(
+        DisulfideTopologyResolutionTransformer
+    ).capability
+    assert topology_capability.can_reduce_deficit_family(
+        WorkflowCapabilityDeficitFamily.TOPOLOGY_RESOLUTION
+    )
+    assert topology_capability.reads_fact_family(
+        WorkflowCapabilityFactFamily.TOPOLOGY_EVIDENCE
+    )
+    disulfide_hydrogen_capability = _registry_entry(
+        DisulfideHydrogenNormalizationTransformer
+    ).capability
+    assert disulfide_hydrogen_capability.can_reduce_deficit_family(
+        WorkflowCapabilityDeficitFamily.CHEMISTRY_CONTRADICTION
+    )
+    assert disulfide_hydrogen_capability.reads_fact_family(
+        WorkflowCapabilityFactFamily.CHEMISTRY_CONTRADICTION
+    )
     assert _registry_entry(HydrogenCompletionTransformer).supports_goal_value(
         requested_process_goal(
             scope=WholeStructureScope(),

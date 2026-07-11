@@ -1,6 +1,6 @@
 """Canonical raw-structure ingress normalization transformations."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from math import isfinite
 
@@ -92,6 +92,7 @@ class _SourceExplicitInterResidueConnection:
     endpoint_1: SourceAtomIdentity
     endpoint_2: SourceAtomIdentity
     relationship_type: BondRelationshipType
+    record_type: SourceBondRecordType
     source_id: str | None = None
     reported_distance_angstrom: float | None = None
 
@@ -106,6 +107,10 @@ class _SourceExplicitInterResidueConnection:
         if not isinstance(self.relationship_type, BondRelationshipType):
             raise TypeError(
                 "source connection relationship_type must be a BondRelationshipType"
+            )
+        if not isinstance(self.record_type, SourceBondRecordType):
+            raise TypeError(
+                "source connection record_type must be a SourceBondRecordType"
             )
 
         source_id = None if self.source_id is None else self.source_id.strip() or None
@@ -147,6 +152,7 @@ def normalize_raw_structure(
     pdb_conect_atom_identity_pairs: tuple[
         tuple[SourceAtomIdentity, SourceAtomIdentity], ...
     ] = (),
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str] | None = None,
 ) -> ProteinStructure:
     """Normalize the first model from one raw gemmi structure."""
 
@@ -170,14 +176,29 @@ def normalize_raw_structure(
             ),
         )
 
+    normalized_source_elements = (
+        {}
+        if source_element_by_atom_identity is None
+        else source_element_by_atom_identity
+    )
     model = raw_structure[0]
     for raw_chain in model:
         chain_id = normalize_chain_id(raw_chain.name)
         if not policy.selects_chain(chain_id):
             continue
 
-        polymer_residues = _normalize_polymer_residues(raw_chain, chain_id, policy)
-        chain_ligands = _normalize_ligands(raw_chain, chain_id, policy)
+        polymer_residues = _normalize_polymer_residues(
+            raw_chain,
+            chain_id,
+            policy,
+            source_element_by_atom_identity=normalized_source_elements,
+        )
+        chain_ligands = _normalize_ligands(
+            raw_chain,
+            chain_id,
+            policy,
+            source_element_by_atom_identity=normalized_source_elements,
+        )
         if polymer_residues:
             chains.append((chain_id, polymer_residues))
         ligands.extend(chain_ligands)
@@ -208,18 +229,13 @@ def normalize_raw_structure(
     )
     source_connections = _source_inter_residue_connections_from_raw_structure(
         raw_structure,
+        file_format=file_format,
         constitution=constitution,
         geometry=geometry,
-    )
-    connection_record_type = (
-        SourceBondRecordType.PDB_LINK
-        if file_format is FileFormat.PDB
-        else SourceBondRecordType.MMCIF_STRUCT_CONN
     )
     connection_bonds = _topology_bonds_from_source_connections(
         source_connections,
         constitution=constitution,
-        record_type=connection_record_type,
     )
     conect_bonds = _topology_bonds_from_conect_pairs(
         pdb_conect_atom_identity_pairs,
@@ -430,6 +446,7 @@ def apply_structure_normalization_policy(
 def _source_inter_residue_connections_from_raw_structure(
     raw_structure: gemmi.Structure,
     *,
+    file_format: FileFormat,
     constitution: StructureConstitution,
     geometry: StructureGeometry,
 ) -> tuple[_SourceExplicitInterResidueConnection, ...]:
@@ -437,15 +454,29 @@ def _source_inter_residue_connections_from_raw_structure(
 
     connections: list[_SourceExplicitInterResidueConnection] = []
     for connection in raw_structure.connections:
+        relationship_type = _relationship_type_from_connection(connection.type)
+        record_type = _source_connection_record_type(
+            file_format=file_format,
+            relationship_type=relationship_type,
+        )
         endpoint_1 = _source_atom_identity_from_connection_partner(connection.partner1)
         endpoint_2 = _source_atom_identity_from_connection_partner(connection.partner2)
         if endpoint_1 is None or endpoint_2 is None:
             continue
         if endpoint_1.atom_ref.residue_id == endpoint_2.atom_ref.residue_id:
             continue
+        require_altloc_match = record_type is not SourceBondRecordType.PDB_SSBOND
         if not _source_endpoint_survived(
-            endpoint_1, constitution, geometry=geometry
-        ) or not _source_endpoint_survived(endpoint_2, constitution, geometry=geometry):
+            endpoint_1,
+            constitution,
+            geometry=geometry,
+            require_altloc_match=require_altloc_match,
+        ) or not _source_endpoint_survived(
+            endpoint_2,
+            constitution,
+            geometry=geometry,
+            require_altloc_match=require_altloc_match,
+        ):
             continue
 
         reported_distance = _normalize_reported_connection_distance(
@@ -455,13 +486,28 @@ def _source_inter_residue_connections_from_raw_structure(
             _SourceExplicitInterResidueConnection(
                 endpoint_1=endpoint_1,
                 endpoint_2=endpoint_2,
-                relationship_type=_relationship_type_from_connection(connection.type),
+                relationship_type=relationship_type,
+                record_type=record_type,
                 source_id=connection.link_id or connection.name,
                 reported_distance_angstrom=reported_distance,
             )
         )
 
     return tuple(dict.fromkeys(connections))
+
+
+def _source_connection_record_type(
+    *,
+    file_format: FileFormat,
+    relationship_type: BondRelationshipType,
+) -> SourceBondRecordType:
+    """Return the source record contract for one parsed connection."""
+
+    if file_format is FileFormat.MMCIF:
+        return SourceBondRecordType.MMCIF_STRUCT_CONN
+    if relationship_type is BondRelationshipType.DISULFIDE:
+        return SourceBondRecordType.PDB_SSBOND
+    return SourceBondRecordType.PDB_LINK
 
 
 def _source_atom_identity_from_connection_partner(
@@ -549,6 +595,8 @@ def _normalize_polymer_residues(
     raw_chain: gemmi.Chain,
     chain_id: str,
     policy: StructureNormalizationPolicy,
+    *,
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
 ) -> list[_NormalizedResiduePayload]:
     """Normalize polymer residues in one raw chain."""
 
@@ -563,6 +611,7 @@ def _normalize_polymer_residues(
             raw_residue,
             chain_id,
             policy.occupancy_policy,
+            source_element_by_atom_identity=source_element_by_atom_identity,
         )
         residue_id = residue.residue_id
         if residue_id not in grouped_residues:
@@ -581,6 +630,8 @@ def _normalize_ligands(
     raw_chain: gemmi.Chain,
     chain_id: str,
     policy: StructureNormalizationPolicy,
+    *,
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
 ) -> list[_NormalizedResiduePayload]:
     """Normalize ligand residues in one raw chain under one normalization policy."""
 
@@ -604,7 +655,12 @@ def _normalize_ligands(
                 f"{raw_residue.name} at {residue_id.display_token()}"
             )
 
-        ligand = _normalize_residue(raw_residue, chain_id, policy.occupancy_policy)
+        ligand = _normalize_residue(
+            raw_residue,
+            chain_id,
+            policy.occupancy_policy,
+            source_element_by_atom_identity=source_element_by_atom_identity,
+        )
         if residue_id not in grouped_ligands:
             grouped_ligands[residue_id] = []
             ligand_order.append(residue_id)
@@ -735,6 +791,8 @@ def _normalize_residue(
     raw_residue: gemmi.Residue,
     chain_id: str,
     occupancy_policy: OccupancyPolicy,
+    *,
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
 ) -> _NormalizedResiduePayload:
     """Normalize one raw gemmi residue into the canonical residue entity."""
 
@@ -747,6 +805,7 @@ def _normalize_residue(
         raw_residue,
         residue_id=residue_id,
         occupancy_policy=occupancy_policy,
+        source_element_by_atom_identity=source_element_by_atom_identity,
     )
     return _NormalizedResiduePayload(
         constitution=ResidueSite(
@@ -774,11 +833,17 @@ def _select_atom_variants(
     *,
     residue_id: ResidueId,
     occupancy_policy: OccupancyPolicy,
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
 ) -> list[tuple[AtomSite, AtomGeometry, int | None]]:
     """Resolve atom sites by residue altloc cohort, then by atom name."""
 
     raw_atom_payloads = tuple(
-        _atom_payload_from_raw_site(raw_atom, residue_id=residue_id)
+        _atom_payload_from_raw_site(
+            raw_atom,
+            residue_id=residue_id,
+            component_id=raw_residue.name,
+            source_element_by_atom_identity=source_element_by_atom_identity,
+        )
         for raw_atom in raw_residue
     )
     selected_altloc = _select_residue_altloc(raw_atom_payloads, occupancy_policy)
@@ -814,6 +879,8 @@ def _atom_payload_from_raw_site(
     raw_atom: gemmi.Atom,
     *,
     residue_id: ResidueId,
+    component_id: str,
+    source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
 ) -> _RawAtomPayload:
     """Validate and project one raw gemmi atom before variant selection."""
 
@@ -838,10 +905,18 @@ def _atom_payload_from_raw_site(
     )
     occupancy = _validated_raw_atom_occupancy(raw_atom, residue_id)
     b_factor = _validated_raw_atom_b_factor(raw_atom, residue_id)
+    source_identity = SourceAtomIdentity(
+        atom_ref=AtomRef(residue_id=residue_id, atom_name=raw_atom.name),
+        component_id=component_id,
+        altloc=altloc,
+    )
     return _RawAtomPayload(
         AtomSite(
             name=raw_atom.name,
-            element=raw_atom.element.name,
+            element=source_element_by_atom_identity.get(
+                source_identity,
+                raw_atom.element.name,
+            ),
         ),
         AtomGeometry(
             position=Vec3(
@@ -976,7 +1051,6 @@ def _topology_bonds_from_source_connections(
     connections: tuple[_SourceExplicitInterResidueConnection, ...],
     *,
     constitution: StructureConstitution,
-    record_type: SourceBondRecordType,
 ) -> tuple[TopologyBond, ...]:
     """Project source-explicit inter-residue connections into topology bonds."""
 
@@ -990,7 +1064,7 @@ def _topology_bonds_from_source_connections(
                 relationship_type=link.relationship_type,
                 provenance=BondProvenance.SOURCE_EXPLICIT,
                 source_metadata=SourceBondMetadata(
-                    record_type=record_type,
+                    record_type=link.record_type,
                     source_id=link.source_id,
                     reported_distance_angstrom=link.reported_distance_angstrom,
                 ),
@@ -1037,6 +1111,7 @@ def _source_endpoint_survived(
     constitution: StructureConstitution,
     *,
     geometry: StructureGeometry,
+    require_altloc_match: bool = True,
 ) -> bool:
     """Return whether one source endpoint survived canonical normalization."""
 
@@ -1048,7 +1123,10 @@ def _source_endpoint_survived(
     if atom_index is None:
         return False
 
-    return geometry.atom_geometry(atom_index).altloc == endpoint.altloc
+    return bool(
+        not require_altloc_match
+        or geometry.atom_geometry(atom_index).altloc == endpoint.altloc
+    )
 
 
 def _sequence_inferred_topology_bonds(

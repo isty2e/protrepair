@@ -281,7 +281,7 @@ def _heavy_atom_site_signature(
         tuple(
             (atom_site.name, atom_site.element)
             for atom_site in residue_site.atom_sites
-            if atom_site.element != "H"
+            if not atom_site.is_hydrogen()
         ),
     )
 
@@ -298,10 +298,10 @@ def _heavy_atom_coordinates_moved_meaningfully(
     packed_heavy_atom_names = {
         atom_site.name
         for atom_site in packed_residue_site.atom_sites
-        if atom_site.element != "H"
+        if not atom_site.is_hydrogen()
     }
     for atom_site in original_residue_site.atom_sites:
-        if atom_site.element == "H" or atom_site.name not in packed_heavy_atom_names:
+        if atom_site.is_hydrogen() or atom_site.name not in packed_heavy_atom_names:
             continue
 
         distance = original_geometry.atom_geometry(atom_site.name).distance_to(
@@ -323,7 +323,7 @@ def _heavy_atom_formal_charge_by_name(
     heavy_atom_names = {
         atom_site.name
         for atom_site in residue_site.atom_sites
-        if atom_site.element != "H"
+        if not atom_site.is_hydrogen()
     }
     residue_formal_charge_by_atom_name = (
         structure.topology.residue_formal_charge_by_atom_name(

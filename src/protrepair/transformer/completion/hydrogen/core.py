@@ -20,7 +20,8 @@ from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.diagnostics.kinds import RepairEventKind
 from protrepair.geometry import GeometryPlacementError
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ChainSite, StructureConstitution
+from protrepair.structure.constitution import AtomSite, ChainSite, StructureConstitution
+from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import ChainIndex, ResidueIndex
@@ -76,10 +77,61 @@ class _HydrogenChainStageResult:
     issues: tuple[ValidationIssue, ...]
 
 
+def _with_matching_source_isotope_elements(
+    chain_result: _HydrogenChainStageResult,
+    source_structure: ProteinStructure,
+) -> _HydrogenChainStageResult:
+    """Restore source D/T labels when hydrogen atom identity survives rebuilding."""
+
+    restored_residues: list[CompletionResiduePayload] = []
+    for residue in chain_result.residues:
+        source_residue = source_structure.constitution.residue_or_ligand(
+            residue.residue_id
+        )
+        if source_residue is None:
+            restored_residues.append(residue)
+            continue
+
+        restored_residue_site = residue.residue_site
+        for source_atom_site in source_residue.atom_sites:
+            if not source_atom_site.element_identity.is_isotope_alias():
+                continue
+            if not restored_residue_site.has_atom_site(source_atom_site.name):
+                continue
+
+            target_atom_site = restored_residue_site.atom_site(source_atom_site.name)
+            if not target_atom_site.is_hydrogen():
+                continue
+            restored_residue_site = restored_residue_site.with_atom_site(
+                AtomSite(
+                    name=target_atom_site.name,
+                    element=source_atom_site.element,
+                )
+            )
+
+        restored_residues.append(
+            residue
+            if restored_residue_site is residue.residue_site
+            else CompletionResiduePayload(
+                residue_site=restored_residue_site,
+                residue_geometry=residue.residue_geometry,
+                formal_charge_by_atom_name=residue.formal_charge_by_atom_name,
+            )
+        )
+
+    return type(chain_result)(
+        chain_id=chain_result.chain_id,
+        residues=tuple(restored_residues),
+        repairs=chain_result.repairs,
+        issues=chain_result.issues,
+    )
+
+
 def materialize_hydrogens_core(
     structure: ProteinStructure,
     component_library: ComponentLibrary | None = None,
     *,
+    source_isotope_structure: ProteinStructure | None = None,
     target_residue_ids: frozenset[ResidueId] | None = None,
     histidine_protonation: HistidineProtonationRequest = (
         _DISABLED_HISTIDINE_PROTONATION_REQUEST
@@ -105,6 +157,11 @@ def materialize_hydrogens_core(
         component_library=library,
         target_residue_ids=target_residue_ids,
         original_structure=structure,
+        source_isotope_structure=(
+            structure
+            if source_isotope_structure is None
+            else source_isotope_structure
+        ),
     )
 
 
@@ -115,6 +172,7 @@ def _hydrogenate_chain_stage(
     histidine_protonation: HistidineProtonationRequest,
     component_library: ComponentLibrary,
     source_structure: ProteinStructure,
+    disulfide_bonded_residue_ids: frozenset[ResidueId],
     target_residue_ids: frozenset[ResidueId] | None = None,
 ) -> _HydrogenChainStageResult:
     """Hydrogenate one chain and return chain-local repairs and issues."""
@@ -135,6 +193,11 @@ def _hydrogenate_chain_stage(
     environment = HydrogenCompletionEnvironment.from_payloads(
         chain_residues,
         templates=tuple(templates),
+        disulfide_bonded_residue_ids=frozenset(
+            residue.residue_id
+            for residue in chain_residues
+            if residue.residue_id in disulfide_bonded_residue_ids
+        ),
     )
     working_residues = list(chain_residues)
 
@@ -272,6 +335,7 @@ def _execute_hydrogen_placement_stage(
     component_library: ComponentLibrary,
     target_residue_ids: frozenset[ResidueId] | None,
     original_structure: ProteinStructure,
+    source_isotope_structure: ProteinStructure,
 ) -> TransformationResult:
     """Execute the chain-local hydrogen placement stage over one structure."""
 
@@ -281,9 +345,11 @@ def _execute_hydrogen_placement_stage(
             histidine_protonation=histidine_protonation,
             component_library=component_library,
             target_residue_ids=target_residue_ids,
+            source_isotope_structure=source_isotope_structure,
         )
 
     placement_input = prepared_result.structure.without_hydrogens()
+    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(placement_input)
     repaired_chain_results: list[_HydrogenChainStageResult] = []
     repairs = list(prepared_result.repairs)
     issues = list(prepared_result.issues)
@@ -298,7 +364,12 @@ def _execute_hydrogen_placement_stage(
             histidine_protonation=histidine_protonation,
             component_library=component_library,
             source_structure=placement_input,
+            disulfide_bonded_residue_ids=disulfide_residue_ids,
             target_residue_ids=target_residue_ids,
+        )
+        chain_result = _with_matching_source_isotope_elements(
+            chain_result,
+            source_isotope_structure,
         )
         repaired_chain_results.append(chain_result)
         repairs.extend(chain_result.repairs)
@@ -324,10 +395,12 @@ def _execute_targeted_polymer_hydrogen_placement_stage(
     histidine_protonation: HistidineProtonationRequest,
     component_library: ComponentLibrary,
     target_residue_ids: frozenset[ResidueId],
+    source_isotope_structure: ProteinStructure,
 ) -> TransformationResult:
     """Execute hydrogen placement only on polymer chains containing target residues."""
 
     source_structure = prepared_result.structure
+    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(source_structure)
     target_chain_ids = _target_polymer_chain_ids(
         source_structure,
         target_residue_ids=target_residue_ids,
@@ -353,7 +426,12 @@ def _execute_targeted_polymer_hydrogen_placement_stage(
             histidine_protonation=histidine_protonation,
             component_library=component_library,
             source_structure=source_structure,
+            disulfide_bonded_residue_ids=disulfide_residue_ids,
             target_residue_ids=target_residue_ids,
+        )
+        chain_result = _with_matching_source_isotope_elements(
+            chain_result,
+            source_isotope_structure,
         )
         repairs.extend(chain_result.repairs)
         issues.extend(chain_result.issues)
@@ -426,7 +504,7 @@ def _chain_residue_payloads(
             hydrogen_atom_names = {
                 atom_site.name
                 for atom_site in residue_site.atom_sites
-                if atom_site.element == "H"
+                if atom_site.is_hydrogen()
             }
             residue_site = residue_site.without_atom_sites(hydrogen_atom_names)
             residue_geometry = residue_geometry.without_atoms(hydrogen_atom_names)
@@ -704,7 +782,7 @@ def _polymer_context_hydrogen_topology_bonds_for_new_atoms(
         new_hydrogen_atom_names = frozenset(
             atom_site.name
             for atom_site in target_residue_site.atom_sites
-            if atom_site.element == "H" and atom_site.name not in source_atom_names
+            if atom_site.is_hydrogen() and atom_site.name not in source_atom_names
         )
         if not new_hydrogen_atom_names:
             continue

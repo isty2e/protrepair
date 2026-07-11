@@ -123,7 +123,7 @@ from protrepair.workflow.planning.transformation.runtime import (
 
 try:
     from rdkit import Chem
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - required dependency import guard
     Chem = None
 
 RDKIT_AVAILABLE = Chem is not None
@@ -808,7 +808,6 @@ def test_structure_chemistry_readiness_distinguishes_retained_non_polymer_modes(
         assert not retained_facts_by_component["UNK"].is_supported()
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_structure_chemistry_readiness_splits_template_heavy_from_fallback_hydrogen(
 ) -> None:
     """Template heavy topology and fallback hydrogen expectation should split."""
@@ -989,7 +988,6 @@ def test_structure_chemistry_readiness_rejects_override_atoms_without_bonds() ->
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_structure_chemistry_readiness_respects_complete_retained_non_polymer_hydrogens(
 ) -> None:
     """Complete retained non-polymer hydrogens should suppress fallback completion."""
@@ -1036,7 +1034,6 @@ def test_structure_chemistry_readiness_respects_complete_retained_non_polymer_hy
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_structure_chemistry_readiness_accepts_complete_retained_hydrogen_bonds(
 ) -> None:
     """Complete retained H coverage is topology-ready only with H-heavy bonds."""
@@ -2484,7 +2481,6 @@ def test_atom_scope_relaxation_allows_single_center_template_less_metal_context(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_atom_scope_relaxation_keeps_single_center_template_less_context_passive_only(
 ) -> None:
     """Single-heavy fallback context is admissible only when non-movable."""
@@ -2554,7 +2550,6 @@ def test_atom_scope_relaxation_keeps_single_center_template_less_context_passive
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_atom_scope_relaxation_allows_connected_template_less_passive_context(
 ) -> None:
     """Connected retained context may use RDKit fallback topology passively."""
@@ -2629,7 +2624,6 @@ def test_atom_scope_relaxation_allows_connected_template_less_passive_context(
     require_atom_scope_continuous_relaxation_execution(domain_facts)
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_atom_scope_relaxation_blocks_selected_template_less_ligand() -> None:
     """Fallback passive support must not make template-less ligands editable."""
 

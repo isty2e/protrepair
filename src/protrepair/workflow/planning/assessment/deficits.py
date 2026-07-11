@@ -18,6 +18,10 @@ from protrepair.state import (
     StructureParserCompatibilityFacts,
     TopologyAvailabilityState,
 )
+from protrepair.state.structure_topology import (
+    StructureDisulfideHydrogenFacts,
+    StructureDisulfideTopologyFacts,
+)
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.refinement.spec import BackboneWindowRefinementSpec
 from protrepair.workflow.contracts.planning import (
@@ -127,6 +131,43 @@ class StructureChemistryReadinessDeficit:
 
 
 @dataclass(frozen=True, slots=True)
+class StructureTopologyResolutionDeficit:
+    """Canonical topology evidence that still requires explicit resolution."""
+
+    promotable_disulfide_count: int
+    disposition: WorkflowDeficitDisposition
+
+    def __post_init__(self) -> None:
+        if self.promotable_disulfide_count <= 0:
+            raise ValueError(
+                "topology resolution deficits require promotable evidence"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class StructureDisulfideHydrogenDeficit:
+    """Forbidden thiol hydrogens that contradict canonical disulfide topology."""
+
+    forbidden_hydrogen_count: int
+    affected_residue_count: int
+    disposition: WorkflowDeficitDisposition
+
+    def __post_init__(self) -> None:
+        if self.forbidden_hydrogen_count <= 0:
+            raise ValueError(
+                "disulfide hydrogen deficits require forbidden hydrogen atoms"
+            )
+        if self.affected_residue_count <= 0:
+            raise ValueError(
+                "disulfide hydrogen deficits require affected residues"
+            )
+        if self.affected_residue_count > self.forbidden_hydrogen_count:
+            raise ValueError(
+                "affected disulfide residues cannot exceed forbidden atoms"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class StructureIntrinsicGeometryDeficit:
     """Intrinsic geometry burdens that revise present structure geometry."""
 
@@ -226,6 +267,8 @@ class WorkflowStateDeficit:
     """Planner-facing unresolved burden derived from facts, goals, and context."""
 
     coverage: StructureCoverageDeficit
+    topology_resolution: StructureTopologyResolutionDeficit | None
+    disulfide_hydrogen: StructureDisulfideHydrogenDeficit | None
     chemistry_readiness: StructureChemistryReadinessDeficit
     backbone_window_operator: tuple[BackboneWindowOperatorDeficit, ...] = ()
     intrinsic_geometry: StructureIntrinsicGeometryDeficit | None = None
@@ -245,6 +288,8 @@ class WorkflowStateDeficit:
         *,
         coverage_facts: StructureCoverageFacts,
         chemistry_readiness_facts: StructureChemistryReadinessFacts,
+        disulfide_topology_facts: StructureDisulfideTopologyFacts,
+        disulfide_hydrogen_facts: StructureDisulfideHydrogenFacts,
         requested_goals: RequestedGoalSet,
         planning_context: WorkflowPlanningContext,
         intrinsic_geometry_facts: StructureIntrinsicGeometryFacts | None = None,
@@ -260,6 +305,16 @@ class WorkflowStateDeficit:
         if coverage_facts.carrier is not chemistry_readiness_facts.carrier:
             raise ValueError(
                 "workflow deficits require coverage and chemistry facts for the "
+                "same structure"
+            )
+        if disulfide_topology_facts.carrier is not coverage_facts.carrier:
+            raise ValueError(
+                "workflow deficits require disulfide topology facts for the "
+                "same structure"
+            )
+        if disulfide_hydrogen_facts.carrier is not coverage_facts.carrier:
+            raise ValueError(
+                "workflow deficits require disulfide hydrogen facts for the "
                 "same structure"
             )
         if intrinsic_geometry_facts is not None and (
@@ -295,6 +350,12 @@ class WorkflowStateDeficit:
             requested_goals=requested_goals,
             planning_context=planning_context,
         )
+        topology_resolution = _topology_resolution_deficit(
+            disulfide_topology_facts
+        )
+        disulfide_hydrogen = _disulfide_hydrogen_deficit(
+            disulfide_hydrogen_facts
+        )
         intrinsic_geometry = _intrinsic_geometry_deficit(
             intrinsic_geometry_facts=intrinsic_geometry_facts,
             requested_goals=requested_goals,
@@ -315,12 +376,46 @@ class WorkflowStateDeficit:
         )
         return cls(
             coverage=coverage,
+            topology_resolution=topology_resolution,
+            disulfide_hydrogen=disulfide_hydrogen,
             chemistry_readiness=chemistry_readiness,
             backbone_window_operator=backbone_window_operator,
             intrinsic_geometry=intrinsic_geometry,
             parser_compatibility=parser_compatibility,
             interaction=interaction,
         )
+
+
+def _topology_resolution_deficit(
+    facts: StructureDisulfideTopologyFacts,
+) -> StructureTopologyResolutionDeficit | None:
+    """Return a required deficit for promotable disulfide evidence."""
+
+    if not facts.promotable_candidates:
+        return None
+
+    return StructureTopologyResolutionDeficit(
+        promotable_disulfide_count=len(facts.promotable_candidates),
+        disposition=WorkflowDeficitDisposition.REQUIRED,
+    )
+
+
+def _disulfide_hydrogen_deficit(
+    facts: StructureDisulfideHydrogenFacts,
+) -> StructureDisulfideHydrogenDeficit | None:
+    """Return required burden for disulfide-incompatible hydrogens."""
+
+    forbidden_atom_refs = facts.forbidden_hydrogen_atom_refs()
+    if not forbidden_atom_refs:
+        return None
+
+    return StructureDisulfideHydrogenDeficit(
+        forbidden_hydrogen_count=len(forbidden_atom_refs),
+        affected_residue_count=len(
+            {atom_ref.residue_id for atom_ref in forbidden_atom_refs}
+        ),
+        disposition=WorkflowDeficitDisposition.REQUIRED,
+    )
 
 
 def _coverage_deficit(

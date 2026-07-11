@@ -375,7 +375,7 @@ def strip_hydrogens_from_residue_site(residue_site: ResidueSite) -> ResidueSite:
         tuple(
             atom_site.name
             for atom_site in residue_site.atom_sites
-            if atom_site.element == "H"
+            if atom_site.is_hydrogen()
         )
     )
 
@@ -388,7 +388,7 @@ def _hydrogen_atom_refs_for_residue_site(
     return tuple(
         AtomRef(residue_id=residue_site.residue_id, atom_name=atom_site.name)
         for atom_site in residue_site.atom_sites
-        if atom_site.element == "H"
+        if atom_site.is_hydrogen()
     )
 
 
@@ -640,7 +640,7 @@ def _merge_packed_polymer_with_original_ligands(
                 )
                 if (
                     residue_site.residue_id in ligand_residue_id_set
-                    or atom_site.element == "H"
+                    or atom_site.is_hydrogen()
                 )
                 else packed_core.geometry.residue_geometry(
                     constitution=packed_core.constitution,
@@ -715,7 +715,7 @@ def _merged_atom_topologies(
                 original_formal_charge_by_name.get(atom_site.name)
                 if (
                     residue_site.residue_id in ligand_residue_id_set
-                    or atom_site.element == "H"
+                    or atom_site.is_hydrogen()
                 )
                 else packed_formal_charge_by_name.get(atom_site.name)
             )
@@ -814,7 +814,7 @@ def _should_preserve_hydrogens(
         ),
     )
     for atom_site in original_residue_site.atom_sites:
-        if atom_site.element == "H":
+        if atom_site.is_hydrogen():
             continue
 
         distance = original_geometry.atom_geometry(atom_site.name).distance_to(
@@ -842,7 +842,7 @@ def _hydrogen_atom_sites(residue_site: ResidueSite) -> tuple[AtomSite, ...]:
     """Return polymer hydrogen atom sites in residue order."""
 
     return tuple(
-        atom_site for atom_site in residue_site.atom_sites if atom_site.element == "H"
+        atom_site for atom_site in residue_site.atom_sites if atom_site.is_hydrogen()
     )
 
 
@@ -857,7 +857,7 @@ def _heavy_atom_site_signature(
         tuple(
             (atom_site.name, atom_site.element)
             for atom_site in residue_site.atom_sites
-            if atom_site.element != "H"
+            if not atom_site.is_hydrogen()
         ),
     )
 
@@ -873,7 +873,7 @@ def _heavy_atom_formal_charge_by_name(
     heavy_atom_names = {
         atom_site.name
         for atom_site in residue_site.atom_sites
-        if atom_site.element != "H"
+        if not atom_site.is_hydrogen()
     }
     return tuple(
         (atom_name, formal_charge)
@@ -947,5 +947,5 @@ def _missing_original_polymer_hydrogen_names(
     return tuple(
         atom_site.name
         for atom_site in original_residue_site.atom_sites
-        if atom_site.element == "H" and atom_site.name not in packed_atom_names
+        if atom_site.is_hydrogen() and atom_site.name not in packed_atom_names
     )

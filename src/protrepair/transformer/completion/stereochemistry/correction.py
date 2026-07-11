@@ -103,7 +103,7 @@ def _residue_subset_contains_hydrogens(
         residue = structure.constitution.residue_or_ligand(residue_id)
         if residue is None:
             continue
-        if any(atom_site.element == "H" for atom_site in residue.atom_sites):
+        if any(atom_site.is_hydrogen() for atom_site in residue.atom_sites):
             return True
 
     return False

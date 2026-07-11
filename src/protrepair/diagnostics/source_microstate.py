@@ -517,7 +517,7 @@ def _microstate_classification_for_residue(
 def _residue_contains_explicit_hydrogen(residue_site: ResidueSite) -> bool:
     """Return whether one residue already carries explicit hydrogen evidence."""
 
-    return any(atom_site.element == "H" for atom_site in residue_site.atom_sites)
+    return any(atom_site.is_hydrogen() for atom_site in residue_site.atom_sites)
 
 
 def _is_known_single_atom_inorganic_species(residue_site: ResidueSite) -> bool:
@@ -680,6 +680,8 @@ def _geometry_bond_mismatch_descriptors(
             residue_geometry,
             formal_charge_by_atom_name=None,
         )
+    except RdkitUnavailableError:
+        raise
     except Exception:
         return ()
 
@@ -712,7 +714,7 @@ def _unknown_charge_geometry_contradiction_descriptors(
             formal_charge_by_atom_name=None,
         )
     except RdkitUnavailableError:
-        return ()
+        raise
     except Exception:
         return (
             "geometry-backed RDKit inference fails for charged atoms "
@@ -729,7 +731,7 @@ def _unknown_charge_geometry_contradiction_descriptors(
             )
         )
     except RdkitUnavailableError:
-        return ()
+        raise
     except Exception:
         return (
             "source-charge-aware RDKit sanitization fails for charged atoms "

@@ -70,7 +70,7 @@ from protrepair.workflow.contracts.result import ProcessResult
 
 try:
     from rdkit import Chem
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - required dependency import guard
     Chem = None
 
 RDKIT_AVAILABLE = Chem is not None
@@ -109,7 +109,6 @@ def test_repair_heavy_atoms_stages_prerequisites_for_explicit_local_refinement()
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_local_refinement_stage_stages_passive_context_hydrogens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -199,7 +198,6 @@ def test_local_refinement_stage_stages_passive_context_hydrogens(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_local_refinement_stage_respects_strict_passive_context_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -269,7 +267,6 @@ def test_local_refinement_stage_respects_strict_passive_context_policy(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit evidence chemistry")
 def test_local_refinement_stage_threads_retained_ligand_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
