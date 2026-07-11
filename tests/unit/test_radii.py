@@ -30,6 +30,7 @@ from protrepair.chemistry.radii import (
 )
 from protrepair.diagnostics.geometry import expected_bond_length_angstrom
 from protrepair.diagnostics.parser_readability import RDKitProximityBondWitness
+from protrepair.errors import ProtrepairError
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.transformer.completion.hydrogen.geometry import (
     rotatable_hydrogen_vdw_radius_angstrom,
@@ -165,6 +166,13 @@ def test_unsupported_element_radii_resolve_explicitly_unknown() -> None:
         van_der_waals_radius_angstrom("XX")
     with pytest.raises(UnknownElementRadiusError, match="covalent radius"):
         covalent_radius_angstrom("XX")
+
+
+def test_unknown_element_radius_error_uses_project_error_contract() -> None:
+    """Radius failures should remain catchable as project and value errors."""
+
+    assert issubclass(UnknownElementRadiusError, ProtrepairError)
+    assert issubclass(UnknownElementRadiusError, ValueError)
 
 
 def test_invalid_element_radii_resolve_separately_from_unsupported_symbols() -> None:

@@ -41,7 +41,7 @@ def _require_rdkit_parser_backend(context: str) -> None:
 
     if Chem is None or rdBase is None:
         raise RdkitUnavailableError(
-            f"{context} requires the required rdkit dependency"
+            f"{context} requires an operational RDKit installation"
         )
 
 

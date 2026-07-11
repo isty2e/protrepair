@@ -122,7 +122,6 @@ def test_resolve_local_bond_planning_support_strict_allows_single_center_context
     assert resolution.fallback_bond_definitions == ()
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_resolve_local_bond_planning_support_returns_passive_fallback_bonds() -> None:
     """Connected passive retained residues should expose fallback heavy bonds."""
 
@@ -189,7 +188,6 @@ def test_resolve_local_bond_planning_support_strict_policy_blocks_passive_fallba
     assert resolution.fallback_bond_definitions == ()
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit evidence chemistry")
 def test_resolve_local_bond_planning_support_prefers_evidence_over_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -237,7 +235,6 @@ def test_resolve_local_bond_planning_support_prefers_evidence_over_fallback(
     ) == (("C1", "O1"),)
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit evidence chemistry")
 def test_resolve_local_bond_planning_support_bad_evidence_does_not_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -279,7 +276,6 @@ def test_resolve_local_bond_planning_support_bad_evidence_does_not_fallback(
     assert "explicit chemistry evidence" in resolution.blocker_message
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit evidence chemistry")
 def test_resolve_local_bond_planning_support_rejects_disconnected_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -321,7 +317,6 @@ def test_resolve_local_bond_planning_support_rejects_disconnected_evidence(
     assert "explicit chemistry evidence" in resolution.blocker_message
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_resolve_local_bond_planning_support_rejects_ambiguous_fallback() -> None:
     """Passive fallback support should reject chemistry unsafe for hydrogenation."""
 
@@ -345,7 +340,6 @@ def test_resolve_local_bond_planning_support_rejects_ambiguous_fallback() -> Non
     assert resolution.fallback_bond_definitions == ()
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_continuous_readiness_reuses_retained_ligand_resolution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -386,7 +380,6 @@ def test_continuous_readiness_reuses_retained_ligand_resolution(
     assert fallback_call_count == 1
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_plan_continuous_region_bonds_preserves_source_h_anchor() -> None:
     """Template-less passive planning must not infer over source H topology."""
 
@@ -461,7 +454,6 @@ def test_plan_continuous_region_bonds_preserves_source_h_anchor() -> None:
     assert frozenset({"O1", "HSRC"}) not in planned_bond_names
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit evidence chemistry")
 def test_continuous_readiness_requires_retained_ligand_h_topology() -> None:
     """Complete retained-ligand H coordinates do not substitute for H topology."""
 
@@ -501,7 +493,6 @@ def test_continuous_readiness_requires_retained_ligand_h_topology() -> None:
         require_atom_scope_continuous_relaxation_execution(atom_scope_facts)
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit evidence chemistry")
 def test_continuous_readiness_accepts_present_retained_ligand_h_topology() -> None:
     """Retained-ligand H topology blocker should clear when expected bonds exist."""
 
@@ -619,7 +610,7 @@ def test_resolve_local_bond_planning_support_propagates_no_rdkit_capability_erro
     )
     residue_id = ResidueId("L", 1)
 
-    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         support_resolution_for_residue(
             snapshot,
             residue_id=residue_id,
@@ -656,7 +647,6 @@ def test_resolve_local_bond_planning_support_blocks_selected_template_less_ligan
     assert resolution.fallback_bond_definitions == ()
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit evidence chemistry")
 def test_resolve_local_bond_planning_support_evidence_keeps_selected_ligand_blocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

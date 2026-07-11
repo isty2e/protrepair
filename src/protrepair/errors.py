@@ -33,6 +33,10 @@ class UnknownComponentError(ProtrepairError):
     """Raised when a component library cannot resolve a component identifier."""
 
 
+class UnknownElementRadiusError(ProtrepairError, ValueError):
+    """Raised when an element has no radius under the requested radius kind."""
+
+
 class RdkitUnavailableError(ProtrepairError):
     """Raised when a required RDKit backend cannot be imported."""
 

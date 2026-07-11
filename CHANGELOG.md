@@ -1,30 +1,21 @@
 # Changelog
 
-## 0.1.0
+## Unreleased
 
-Initial public release candidate of the rewritten `protrepair` package.
+### Breaking changes
 
-- expose a small release-facing API centered on `process_structure()`,
-  `StructureIngressOptions`, `requested_process_goal()`, and typed workflow
-  result contracts
-- support canonical PDB/mmCIF ingress and egress through `gemmi`, including
-  topology-backed connection emission
-- model structure constitution, geometry, topology, provenance, semantic
-  scopes, and observed state axes as typed canonical domain objects
-- implement workflow planning over explicit heavy-atom completion, hydrogen
-  completion, retained non-polymer hydrogenation, stereochemistry correction,
-  side-chain packing, and local refinement actions
-- support standard residues, bundled polymer-like nonstandard components, and
-  bundled retained non-polymer/cofactor component templates
-- require RDKit at runtime for hydrogenation, retained-ligand chemistry
-  fallback, local refinement, and parser-readability diagnostics
-- use a bundled RDKit PeriodicTable radius snapshot for deterministic vdW and
-  covalent-radius policy with explicit unknown-element handling
-- package the vendored FASPR source and rotamer library for the optional
-  side-chain packing backend
-- include representative workflow regressions, fixture-backed refinement
-  benchmarks, public API smoke tests, release-facing README examples, typed
-  package metadata, and third-party licensing notices
+- require RDKit at runtime through the `rdkit` package and remove the former
+  `refinement` extra and no-RDKit execution mode
+- replace the partial public Bondi/Cordero radius tables with a bundled RDKit PeriodicTable radius snapshot
+  of `GetRvdw` and `GetRcovalent` values for elements 1-118
+- remove `BONDI_VAN_DER_WAALS_RADII_ANGSTROM`,
+  `CORDERO_COVALENT_RADII_ANGSTROM`, `DEFAULT_COVALENT_RADIUS_ANGSTROM`, and
+  `DEFAULT_VAN_DER_WAALS_RADIUS_ANGSTROM`; radius lookup now raises
+  `UnknownElementRadiusError` instead of silently using a default for unsupported
+  elements
+
+### Changed
+
 - harden ingress normalization by selecting coherent residue-level altloc
   cohorts by mean occupancy with lexical tie-breaks, validating non-finite atom
   coordinates/occupancy/B-factors at the boundary, preserving first-model PDB
@@ -41,3 +32,27 @@ Initial public release candidate of the rewritten `protrepair` package.
   contradictions, remove them through planner-selected topology-preserving
   normalization, and report chemistry work under the broader
   `CHEMISTRY_NORMALIZATION` workflow phase
+
+## 0.1.0
+
+Initial public release candidate of the rewritten `protrepair` package.
+
+- expose a small release-facing API centered on `process_structure()`,
+  `StructureIngressOptions`, `requested_process_goal()`, and typed workflow
+  result contracts
+- support canonical PDB/mmCIF ingress and egress through `gemmi`, including
+  topology-backed connection emission
+- model structure constitution, geometry, topology, provenance, semantic
+  scopes, and observed state axes as typed canonical domain objects
+- implement workflow planning over explicit heavy-atom completion, hydrogen
+  completion, retained non-polymer hydrogenation, stereochemistry correction,
+  side-chain packing, and local refinement actions
+- support standard residues, bundled polymer-like nonstandard components, and
+  bundled retained non-polymer/cofactor component templates
+- support RDKit-backed local refinement and parser-readability diagnostics when
+  the optional `refinement` dependency is installed
+- package the vendored FASPR source and rotamer library for the optional
+  side-chain packing backend
+- include representative workflow regressions, fixture-backed refinement
+  benchmarks, public API smoke tests, release-facing README examples, typed
+  package metadata, and third-party licensing notices

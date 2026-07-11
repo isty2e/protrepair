@@ -129,7 +129,6 @@ def test_template_backed_linked_glycan_hydrogenation_skips_absent_anchor_only() 
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="RDKit is required for fallback")
 def test_mixed_glycan_template_and_rdkit_fallback_hydrogenation_resolves_2z62() -> (
     None
 ):
@@ -594,7 +593,6 @@ def test_retained_non_polymer_charge_contradiction_detector_is_quiet_when_charge
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_add_retained_non_polymer_hydrogens_uses_override_for_unsupported_component(
 ) -> None:
     """Unsupported retained non-polymers should hydrogenate from override chemistry."""
@@ -694,7 +692,6 @@ def test_add_retained_non_polymer_hydrogens_uses_override_for_unsupported_compon
     assert not _fallback_used_issues(result.issues)
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_fallback_rejects_unsupported_motif_with_warning() -> (
     None
 ):
@@ -743,7 +740,6 @@ def test_retained_non_polymer_fallback_rejects_unsupported_motif_with_warning() 
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_evidence_allows_fallback_unsupported_motif() -> None:
     """Explicit evidence should remain authoritative for fallback-rejected motifs."""
 
@@ -802,7 +798,6 @@ def test_retained_non_polymer_evidence_allows_fallback_unsupported_motif() -> No
     assert not result.issues
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_evidence_preserves_partial_source_h_names() -> None:
     """Evidence completion should add missing Hs around preserved source Hs."""
 
@@ -860,7 +855,6 @@ def test_retained_non_polymer_evidence_preserves_partial_source_h_names() -> Non
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_evidence_does_not_preserve_overpopulated_source_h(
 ) -> None:
     """Incompatible source H overpopulation should not be preserved."""
@@ -914,7 +908,6 @@ def test_retained_non_polymer_evidence_does_not_preserve_overpopulated_source_h(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_override_detects_swapped_same_element_mapping() -> None:
     """Evidence heavy-name mapping must not trust same-element order alone."""
 
@@ -997,7 +990,6 @@ def test_retained_non_polymer_evidence_geometry_reports_unknown_radii_once(
     assert "C1" in message
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_override_topology_takes_precedence_over_template(
 ) -> None:
     """Explicit evidence should own topology even when a component template exists."""
@@ -1050,7 +1042,6 @@ def test_retained_non_polymer_override_topology_takes_precedence_over_template(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_add_retained_non_polymer_hydrogens_uses_rdkit_fallback_without_support() -> (
     None
 ):
@@ -1150,7 +1141,6 @@ def test_add_retained_non_polymer_hydrogens_uses_rdkit_fallback_without_support(
     assert any(line.startswith("CONECT    1    2") for line in pdb_conect_lines)
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_fallback_preserves_partial_source_h_names() -> None:
     """Fallback completion should add missing Hs around preserved source Hs."""
 
@@ -1201,7 +1191,6 @@ def test_retained_non_polymer_fallback_preserves_partial_source_h_names() -> Non
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_fallback_does_not_preserve_far_source_h() -> None:
     """Stale source H coordinates should not replace generated fallback Hs."""
 
@@ -1241,7 +1230,6 @@ def test_retained_non_polymer_fallback_does_not_preserve_far_source_h() -> None:
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_source_h_reconciliation_is_bounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1282,10 +1270,12 @@ def test_retained_non_polymer_source_h_reconciliation_is_bounded(
 
 
 def test_strict_retained_non_polymer_mode_blocks_rdkit_fallback_and_preserves_source_h(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Strict fallback policy should leave source ligand atoms untouched."""
 
     residue_id = ResidueId("L", 1)
+    monkeypatch.setattr(fallback_inference, "Chem", None)
     structure = build_structure(
         chains=(),
         ligands=(
@@ -1358,7 +1348,7 @@ def test_retained_non_polymer_rdkit_fallback_unavailable_raises_capability_error
         source_name="retained-non-polymer-rdkit-unavailable-fallback",
     )
 
-    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         add_retained_non_polymer_hydrogens(
             structure,
             component_library=build_retained_non_polymer_component_library(),
@@ -1390,7 +1380,7 @@ def test_retained_non_polymer_evidence_rdkit_unavailable_raises_capability_error
         source_name="retained-non-polymer-rdkit-unavailable-evidence",
     )
 
-    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         add_retained_non_polymer_hydrogens(
             structure,
             component_library=build_retained_non_polymer_component_library(),
@@ -1404,7 +1394,6 @@ def test_retained_non_polymer_evidence_rdkit_unavailable_raises_capability_error
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_fallback_failure_stays_unsupported_hydrogenation(
 ) -> None:
     """Failed fallback should not look like successful fallback provenance."""
@@ -1442,7 +1431,6 @@ def test_retained_non_polymer_fallback_failure_stays_unsupported_hydrogenation(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_hydrogen_topology_preserves_source_h_bond() -> None:
     """Regenerated ligand H topology should not overwrite source H bonds."""
 
@@ -1539,7 +1527,6 @@ def test_retained_non_polymer_hydrogen_topology_preserves_source_h_bond() -> Non
     assert fallback_issues[0].residue_id == residue_id
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_topology_conflict_skips_source_h_preservation() -> None:
     """Source H topology and generated H anchor must agree before preservation."""
 
@@ -1605,7 +1592,6 @@ def test_retained_non_polymer_topology_conflict_skips_source_h_preservation() ->
     assert "HSRC" not in write_structure_string(result.structure, FileFormat.PDB)
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_fallback_projects_existing_h_names_by_geometry() -> None:
     """Existing H names should map by coordinates, not source atom order."""
 

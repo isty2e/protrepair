@@ -12,6 +12,8 @@ from enum import Enum
 from math import isfinite
 from types import MappingProxyType
 
+from protrepair.errors import UnknownElementRadiusError
+
 RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION = "2026.03.2"
 RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_SOURCE = (
     "RDKit PeriodicTable GetRvdw/GetRcovalent snapshot generated from "
@@ -325,10 +327,6 @@ class ElementRadiusDataQuality(str, Enum):
 
     SOURCE_REPORTED = "source_reported"
     SOURCE_DEFAULT = "source_default"
-
-
-class UnknownElementRadiusError(ValueError):
-    """Raised when an element has no radius under the requested radius kind."""
 
 
 @dataclass(frozen=True, slots=True)

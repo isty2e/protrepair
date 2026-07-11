@@ -57,9 +57,9 @@ def test_parser_readability_raises_when_required_rdkit_backend_missing(
     monkeypatch.setattr(parser_readability_module, "Chem", None)
     monkeypatch.setattr(parser_readability_module, "rdBase", None)
 
-    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         parser_readability_module.probe_rdkit_no_conect_parser_readability(structure)
-    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         parser_readability_module.measure_rdkit_no_conect_sanitize_readability(
             structure
         )
@@ -67,7 +67,7 @@ def test_parser_readability_raises_when_required_rdkit_backend_missing(
         parser_readability_module
         .measure_rdkit_no_conect_extra_heavy_proximity_bond_count
     )
-    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         extra_heavy_bond_count(structure)
 
 

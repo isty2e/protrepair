@@ -278,6 +278,8 @@ class StructureDisulfideTopologyFacts:
             tuple[ResidueId, ResidueId],
             DisulfideTopologyConflict,
         ] = {}
+        # Raw candidates remain geometry/topology contradiction evidence even
+        # when canonical topology makes them ineligible for promotion.
         candidates_by_pair = {
             candidate.residue_pair(): candidate
             for candidate in (*raw_likely_candidates, *likely_candidates)

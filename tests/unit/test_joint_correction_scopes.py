@@ -3,7 +3,6 @@
 from functools import lru_cache
 from pathlib import Path
 
-import pytest
 from tests.support.canonical_builders import (
     atom_payload,
     build_structure,
@@ -179,7 +178,6 @@ def test_backbone_joint_execution_scope_widens_to_peptide_neighbors() -> None:
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_representative_no_conect_failure_is_covered_by_joint_scope_proposal() -> None:
     """The representative no-CONECT sanitize failure should expose a joint scope."""
 

@@ -296,7 +296,6 @@ def test_process_structure_can_drop_ligands_for_canonical_input() -> None:
     assert result.structure.constitution.ligands == ()
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_retained_non_polymer_hydrogen_transformer_uses_context_override() -> None:
     """Execution context should thread retained non-polymer overrides to repair."""
 
@@ -350,7 +349,6 @@ def test_retained_non_polymer_hydrogen_transformer_uses_context_override() -> No
     assert hydrogen_atom_names == ("H001", "H002", "H003", "H004")
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_process_structure_reports_strict_retained_non_polymer_fallback_blocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -422,7 +420,6 @@ def test_process_structure_reports_strict_retained_non_polymer_fallback_blocked(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit evidence chemistry")
 def test_process_structure_rejects_invalid_retained_non_polymer_override_smiles() -> (
     None
 ):

@@ -486,6 +486,7 @@ def hydrogen_steric_overlap_against_site(
     ):
         return 0.0
 
+    # Preserve the exact-distance boundary after square-root rounding.
     if separation >= allowed_distance:
         return 0.0
 

@@ -70,7 +70,6 @@ RDKIT_AVAILABLE = (
 )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_moves_selected_atom_and_keeps_context_fixed() -> None:
     """RDKit refinement should move selected atoms while keeping context fixed."""
 
@@ -196,7 +195,6 @@ def test_rdkit_refinement_preserves_movable_and_fixed_hydrogen_isotopes() -> Non
     ).element == "T"
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_supports_mmff_on_benchmark_fixture() -> None:
     """MMFF should run on one chemistry-valid literature-backed benchmark fixture."""
 
@@ -219,7 +217,6 @@ def test_refine_local_region_supports_mmff_on_benchmark_fixture() -> None:
     assert refined.moved_atom_count() > 0
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_moves_ligand_atoms_against_polymer_context() -> None:
     """Ligand atom selections should optimize while nearby polymer atoms stay fixed."""
 
@@ -275,7 +272,6 @@ def test_refine_local_region_moves_ligand_atoms_against_polymer_context() -> Non
     assert refined_anchor.position == original_anchor.position
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_rdkit_backend_discards_catastrophic_bond_distortion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -339,7 +335,6 @@ def test_rdkit_backend_discards_catastrophic_bond_distortion(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_rdkit_backend_discards_chirality_inversion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -398,7 +393,6 @@ def test_rdkit_backend_discards_chirality_inversion(
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_rdkit_backend_discards_assigned_chirality_loss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -460,7 +454,7 @@ def test_refine_local_region_raises_rdkit_unavailable_error_when_missing_depende
     monkeypatch.setattr(continuous_rdkit, "rdBase", None)
     monkeypatch.setattr(continuous_rdkit, "rdForceFieldHelpers", None)
 
-    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         transform_local_region(
             build_toy_structure(),
             DirectRegionTransformationSpec(
@@ -483,7 +477,6 @@ def test_rdkit_element_symbol_normalizes_multicharacter_elements() -> None:
     assert continuous_rdkit._rdkit_element_symbol("C") == "C"
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_wraps_rdkit_sanitize_failures() -> None:
     """Invalid local chemistry should surface as one canonical refinement error."""
 
@@ -512,7 +505,6 @@ def test_refine_local_region_wraps_rdkit_sanitize_failures() -> None:
         continuous_rdkit.Chem.SanitizeMol = original_sanitize
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_wraps_natural_uff_parameterization_failures() -> None:
     """Chemically impossible local graphs should still surface one refinement error."""
 
@@ -530,7 +522,6 @@ def test_refine_local_region_wraps_natural_uff_parameterization_failures() -> No
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_wraps_uff_parameterization_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -576,7 +567,6 @@ def test_sidechain_local_selection_drops_position_constraint_cap() -> None:
     assert continuous_rdkit.position_constraint_max_displacement(atom_input) is None
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_raises_when_uff_builder_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -604,7 +594,6 @@ def test_refine_local_region_raises_when_uff_builder_returns_none(
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_rejects_unsupported_planned_bond_orders() -> None:
     """Illegal bond orders should fail before backend execution leaks weird state."""
 
@@ -622,7 +611,6 @@ def test_refine_local_region_rejects_unsupported_planned_bond_orders() -> None:
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_build_rdkit_force_field_adds_position_constraints_for_movable_atoms(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -780,7 +768,6 @@ def test_build_rdkit_force_field_adds_position_constraints_for_movable_atoms(
     ]
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_build_rdkit_force_field_adds_geometry_constraints_for_residuewise_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -957,7 +944,6 @@ def test_build_rdkit_force_field_adds_geometry_constraints_for_residuewise_selec
     assert fake_force_field.fixed_points == []
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_build_rdkit_force_field_uses_mmff_builder_and_constraints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1145,7 +1131,6 @@ def test_build_rdkit_force_field_uses_mmff_builder_and_constraints(
     assert fake_force_field.fixed_points == []
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_preserves_atom_metadata_and_structure_order() -> None:
     """Coordinate updates should preserve metadata and canonical structure order."""
 
@@ -1215,7 +1200,6 @@ def test_refine_local_region_preserves_atom_metadata_and_structure_order() -> No
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_preserves_all_atoms_of_multi_atom_fixed_context() -> None:
     """Whole context residues should remain fixed across promoted context residues."""
 
@@ -1276,7 +1260,6 @@ def test_structure_delta_rejects_unknown_moved_atom_slots() -> None:
         )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_canonicalizes_moved_atom_order() -> None:
     """Moved atom refs should be reported in canonical structure order."""
 
@@ -1318,7 +1301,6 @@ def test_refine_local_region_canonicalizes_moved_atom_order() -> None:
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_canonicalizes_mixed_domain_moved_atom_order() -> None:
     """Mixed polymer and ligand selections should report canonical move ordering."""
 
@@ -1360,7 +1342,6 @@ def test_refine_local_region_canonicalizes_mixed_domain_moved_atom_order() -> No
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_refine_local_region_can_run_with_zero_context_and_same_residue_closure() -> (
     None
 ):

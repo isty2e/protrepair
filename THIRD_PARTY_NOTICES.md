@@ -17,8 +17,8 @@ in git history and the upstream project.
 ## RDKit
 
 - Runtime dependency: `rdkit`
+- PyPI package: `rdkit`
 - Upstream project: `rdkit/rdkit`
-- PyPI wheel project: `kuelumbus/rdkit-pypi`
 - RDKit source license: BSD 3-Clause
 - PyPI package license: BSD 3-Clause
 - Bundled snapshot license text: [vendor/rdkit/LICENSE](vendor/rdkit/LICENSE)

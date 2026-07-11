@@ -102,8 +102,8 @@ class RdkitContinuousRelaxationBackend:
 
         if Chem is None or rdBase is None or rdForceFieldHelpers is None:
             raise RdkitUnavailableError(
-                "RDKit-backed continuous relaxation requires the required "
-                "rdkit dependency"
+                "RDKit-backed continuous relaxation requires an operational "
+                "RDKit installation"
             )
 
         molecule, rdkit_atom_index_by_structure_atom_index = build_rdkit_molecule(

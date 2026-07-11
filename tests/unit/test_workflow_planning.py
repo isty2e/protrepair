@@ -591,7 +591,6 @@ def test_plan_workflow_actions_emits_override_backed_retained_non_polymer_h_comp
     )
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="rdkit is not installed")
 def test_plan_workflow_actions_emits_rdkit_fallback_retained_non_polymer_h_completion(
 ) -> None:
     """Fallback-hydrogenatable retained non-polymers should plan completion."""

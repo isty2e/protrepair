@@ -33,7 +33,6 @@ from protrepair.chemistry.radii import (
     ElementRadiusResolution,
     ElementRadiusResolutionStatus,
     RadiusKind,
-    UnknownElementRadiusError,
     covalent_radius_angstrom,
     element_radius_angstrom,
     normalize_radius_element_symbol,
@@ -53,6 +52,7 @@ from protrepair.chemistry.retained_non_polymer.registry import (
     build_bundled_retained_non_polymer_restraint_library,
     bundled_retained_non_polymer_asset_path,
 )
+from protrepair.errors import UnknownElementRadiusError
 
 __all__ = [
     "BondDefinition",

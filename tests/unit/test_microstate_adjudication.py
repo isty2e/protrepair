@@ -501,7 +501,7 @@ def test_unknown_retained_microstate_propagates_no_rdkit_capability_error(
         source_format=FileFormat.PDB,
     )
 
-    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         collect_microstate_evidence(
             structure.constitution.ligands[0],
             residue_geometry=structure.residue_geometry(ResidueIndex(0)),

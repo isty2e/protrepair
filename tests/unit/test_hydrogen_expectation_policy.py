@@ -245,7 +245,7 @@ def test_hydrogen_expectation_model_propagates_no_rdkit_override(
         source_name="no-rdkit-override-hydrogen-expectation",
     )
 
-    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         derive_structure_hydrogen_expectation_model(
             structure,
             component_library=build_default_component_library(),
@@ -265,7 +265,7 @@ def test_hydrogen_expectation_model_propagates_no_rdkit_fallback(
     """Fallback capability failure should not become unresolved chemistry."""
 
     def fail_infer_fallback(*args, **kwargs):
-        raise RdkitUnavailableError("required rdkit dependency is unavailable")
+        raise RdkitUnavailableError("operational RDKit installation is unavailable")
 
     monkeypatch.setattr(
         retained_non_polymer_chemistry,
@@ -289,7 +289,7 @@ def test_hydrogen_expectation_model_propagates_no_rdkit_fallback(
         source_name="no-rdkit-fallback-hydrogen-expectation",
     )
 
-    with pytest.raises(RdkitUnavailableError, match="required rdkit dependency"):
+    with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         derive_structure_hydrogen_expectation_model(
             structure,
             component_library=build_default_component_library(),
@@ -340,7 +340,6 @@ def test_hydrogen_expectation_model_respects_disabled_rdkit_fallback(
     assert resolution.failure_reason == "RDKit fallback is disabled"
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_hydrogen_expectation_model_marks_metal_context_not_applicable() -> None:
     """Single-center retained metals should resolve as fallback with no Hs."""
 
@@ -373,7 +372,6 @@ def test_hydrogen_expectation_model_marks_metal_context_not_applicable() -> None
     assert resolution.expected_hydrogen_atom_names == ()
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_retained_fallback_resolution_owns_topology_and_projection_facts() -> None:
     """Fallback resolution should own coordinate-free topology facts."""
 
@@ -427,7 +425,6 @@ def test_retained_fallback_resolution_owns_topology_and_projection_facts() -> No
     assert not resolution.failure_reason
 
 
-@pytest.mark.skipif(not RDKIT_AVAILABLE, reason="requires RDKit fallback chemistry")
 def test_retained_readiness_reuses_single_fallback_resolution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
