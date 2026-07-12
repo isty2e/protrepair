@@ -20,6 +20,12 @@ def _vector(x: float, y: float, z: float) -> npt.NDArray[np.float64]:
     return np.asarray((x, y, z), dtype=np.float64)
 
 
+def test_vector_norm_returns_euclidean_length() -> None:
+    """The shared norm primitive should preserve ordinary 3D geometry."""
+
+    assert vector_norm(_vector(3.0, 4.0, 0.0)) == pytest.approx(5.0)
+
+
 def test_normalized_vector_rejects_norm_at_degenerate_threshold() -> None:
     """The shared threshold should be closed on the degenerate side."""
 
@@ -63,6 +69,18 @@ def test_deterministic_orthogonal_vector_rejects_zero_axis() -> None:
     """A zero axis has no canonical orthogonal direction."""
 
     assert deterministic_unit_orthogonal_or_none(_vector(0.0, 0.0, 0.0)) is None
+
+
+@pytest.mark.parametrize("non_finite", (float("nan"), float("inf")))
+def test_deterministic_orthogonal_vector_rejects_non_finite_axis(
+    non_finite: float,
+) -> None:
+    """A non-finite axis must not produce a nominal orthogonal direction."""
+
+    assert (
+        deterministic_unit_orthogonal_or_none(_vector(non_finite, 0.0, 0.0))
+        is None
+    )
 
 
 def test_deterministic_orthogonal_vector_is_unit_and_perpendicular() -> None:
@@ -115,6 +133,20 @@ def test_scaled_point_rejects_norm_overflow() -> None:
             _vector(0.0, 0.0, 0.0),
             _vector(1.0e308, 1.0e308, 0.0),
             1.0,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("non_finite", (float("nan"), float("inf")))
+def test_scaled_point_rejects_non_finite_distance(non_finite: float) -> None:
+    """A non-finite requested distance must not leak into coordinates."""
+
+    assert (
+        scaled_point_from_origin_or_none(
+            _vector(0.0, 0.0, 0.0),
+            _vector(1.0, 0.0, 0.0),
+            non_finite,
         )
         is None
     )

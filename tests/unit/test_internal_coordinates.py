@@ -1,6 +1,6 @@
 """Direct regression tests for internal-coordinate torsion primitives."""
 
-from math import acos, degrees
+from math import acos, degrees, sqrt
 from typing import cast
 
 import numpy as np
@@ -8,6 +8,9 @@ import pytest
 
 from protrepair import ProtrepairError
 from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
+from protrepair.geometry.internal_coordinates import (
+    TORSION_PLANE_NORM_SQUARED_EPSILON,
+)
 from protrepair.geometry.placement_vector import PLACEMENT_VECTOR_NORM_EPSILON
 
 
@@ -48,6 +51,39 @@ def test_torsion_rejects_non_finite_coordinates_without_runtime_warning() -> Non
             Vec3(1.0, 0.0, 0.0),
             Vec3(2.0, 0.0, 0.0),
         )
+
+
+def test_torsion_uses_closed_squared_plane_threshold() -> None:
+    """A plane norm exactly at the squared threshold should use the fallback."""
+
+    plane_offset = sqrt(TORSION_PLANE_NORM_SQUARED_EPSILON)
+
+    torsion = InternalCoordinateFrame.torsion(
+        Vec3(0.0, plane_offset, 0.0),
+        Vec3(0.0, 0.0, 0.0),
+        Vec3(1.0, 0.0, 0.0),
+        Vec3(1.0, 0.0, 1.0),
+    )
+
+    assert torsion == 0.0
+
+
+def test_torsion_accepts_plane_above_squared_threshold() -> None:
+    """The next representable squared plane norm should retain its torsion."""
+
+    plane_norm_squared = float(
+        np.nextafter(TORSION_PLANE_NORM_SQUARED_EPSILON, np.inf)
+    )
+    plane_offset = sqrt(plane_norm_squared)
+
+    torsion = InternalCoordinateFrame.torsion(
+        Vec3(0.0, plane_offset, 0.0),
+        Vec3(0.0, 0.0, 0.0),
+        Vec3(1.0, 0.0, 0.0),
+        Vec3(1.0, 0.0, 1.0),
+    )
+
+    assert torsion == pytest.approx(90.0)
 
 
 def test_place_returns_finite_coordinate_for_collinear_anchors() -> None:
@@ -152,6 +188,22 @@ def test_place_rejects_non_finite_projected_anchor_basis() -> None:
             Vec3(float("inf"), 0.0, 0.0),
             Vec3(1.0, 0.0, 0.0),
             Vec3(2.0, 0.0, 0.0),
+        ).place(
+            bond_length=1.25,
+            bond_angle_degrees=122.5,
+            dihedral_degrees=180.0,
+        )
+
+
+@pytest.mark.filterwarnings("error")
+def test_place_rejects_finite_projection_overflow_without_runtime_warning() -> None:
+    """Finite anchors whose projection overflows should fail cleanly."""
+
+    with pytest.raises(GeometryPlacementError, match="finite anchor basis"):
+        InternalCoordinateFrame(
+            Vec3(1.0e154, 1.0e154, 0.0),
+            Vec3(0.0, 0.0, 0.0),
+            Vec3(9.0e153, 9.0e153, 0.0),
         ).place(
             bond_length=1.25,
             bond_angle_degrees=122.5,

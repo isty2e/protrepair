@@ -69,6 +69,76 @@ def test_tetrahedral_pair_rejects_finite_coordinate_overflow() -> None:
         ).pair()
 
 
+@pytest.mark.filterwarnings("error")
+def test_tetrahedral_pair_avoids_midpoint_overflow_for_large_equal_points() -> None:
+    """Halving each anchor first should preserve a finite coincident midpoint."""
+
+    center = Vec3(1.0e308, 0.0, 0.0)
+    first, second = TetrahedralCenter(
+        anchor_a=center,
+        anchor_b=center,
+        center=center,
+    ).pair(bond_length=1.0)
+
+    assert np.isfinite(first.to_array()).all()
+    assert np.isfinite(second.to_array()).all()
+    assert first == Vec3(1.0e308, 0.0, -1.0)
+    assert second == Vec3(1.0e308, 0.0, 1.0)
+
+
+def test_planar_bisector_returns_requested_distance() -> None:
+    """A defined planar bisector should preserve direction and bond length."""
+
+    center = Vec3(0.0, 0.0, 0.0)
+    placed = PlanarCenter(
+        anchor_a=Vec3(1.0, 0.0, 0.0),
+        center=center,
+        anchor_b=Vec3(0.0, 1.0, 0.0),
+    ).bisector(bond_length=1.5)
+
+    assert placed.to_array() == pytest.approx(
+        np.asarray((1.5 / np.sqrt(5.0), -3.0 / np.sqrt(5.0), 0.0))
+    )
+    assert placed.distance_to(center) == pytest.approx(1.5)
+
+
+@pytest.mark.parametrize("non_finite", (float("nan"), float("inf")))
+@pytest.mark.filterwarnings("error")
+def test_planar_bisector_rejects_non_finite_anchor(non_finite: float) -> None:
+    """Non-finite planar input should fail before bisector arithmetic."""
+
+    with pytest.raises(GeometryPlacementError, match="finite coordinates"):
+        PlanarCenter(
+            anchor_a=Vec3(non_finite, 0.0, 0.0),
+            center=Vec3(0.0, 0.0, 0.0),
+            anchor_b=Vec3(0.0, 1.0, 0.0),
+        ).bisector()
+
+
+def test_planar_bisector_rejects_shared_degenerate_threshold() -> None:
+    """A bisector direction at the shared threshold should be rejected."""
+
+    with pytest.raises(GeometryPlacementError, match="degenerate bond vector"):
+        PlanarCenter(
+            anchor_a=Vec3(PLACEMENT_VECTOR_NORM_EPSILON, 0.0, 0.0),
+            center=Vec3(0.0, 0.0, 0.0),
+            anchor_b=Vec3(0.0, 0.0, 0.0),
+        ).bisector()
+
+
+def test_planar_bisector_accepts_above_shared_degenerate_threshold() -> None:
+    """The next representable bisector direction should remain placeable."""
+
+    separation = float(np.nextafter(PLACEMENT_VECTOR_NORM_EPSILON, np.inf))
+    placed = PlanarCenter(
+        anchor_a=Vec3(separation, 0.0, 0.0),
+        center=Vec3(0.0, 0.0, 0.0),
+        anchor_b=Vec3(0.0, 0.0, 0.0),
+    ).bisector(bond_length=1.01)
+
+    assert placed == pytest.approx(Vec3(1.01, 0.0, 0.0))
+
+
 def test_planar_projected_raises_structured_error_for_coincident_anchor() -> None:
     """Planar projection should reject undefined angles before producing NaNs."""
 

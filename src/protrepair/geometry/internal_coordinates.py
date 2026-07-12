@@ -59,9 +59,10 @@ class InternalCoordinateFrame:
             )
 
         axis_bc_norm = vector_norm(axis_bc)
-        projected = axis_ba - (
-            np.dot(axis_ba, axis_bc) / (axis_bc_norm * axis_bc_norm)
-        ) * axis_bc
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            projected = axis_ba - (
+                np.dot(axis_ba, axis_bc) / (axis_bc_norm * axis_bc_norm)
+            ) * axis_bc
         if not np.isfinite(projected).all():
             raise InternalCoordinatePlacementError(
                 "internal-coordinate placement requires a finite anchor basis"
