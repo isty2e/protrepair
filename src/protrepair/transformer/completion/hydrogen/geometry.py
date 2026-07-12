@@ -3,9 +3,6 @@
 from collections.abc import Mapping
 from math import pi
 
-import numpy as np
-from numpy.typing import NDArray
-
 from protrepair.geometry import (
     AxisRotation,
     GeometryPlacementError,
@@ -13,6 +10,10 @@ from protrepair.geometry import (
     PlanarCenter,
     TetrahedralCenter,
     Vec3,
+)
+from protrepair.geometry.placement_vector import (
+    PlacementVector,
+    scaled_point_from_origin_or_none,
 )
 from protrepair.transformer.completion.hydrogen.scoring import (
     ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS,
@@ -26,8 +27,6 @@ from protrepair.transformer.completion.hydrogen.scoring import (
     rotatable_hydrogen_steric_cutoff_angstrom,
     rotatable_hydrogen_vdw_radius_angstrom,
 )
-
-HYDROGEN_PLACEMENT_DEGENERATE_NORM_EPSILON = 1e-12
 
 
 def backbone_hydrogen(
@@ -158,20 +157,18 @@ def n_terminal_hydrogens(
 
 
 def scale_bond(
-    origin: NDArray[np.float64],
-    candidate: NDArray[np.float64],
+    origin: PlacementVector,
+    candidate: PlacementVector,
     bond_length: float,
 ) -> Vec3:
     """Scale a candidate point to the desired bond length from the origin."""
 
-    direction = candidate - origin
-    direction_norm = float(np.linalg.norm(direction))
-    if direction_norm <= HYDROGEN_PLACEMENT_DEGENERATE_NORM_EPSILON:
+    scaled = scaled_point_from_origin_or_none(origin, candidate, bond_length)
+    if scaled is None:
         raise GeometryPlacementError(
             "hydrogen placement produced a degenerate bond vector"
         )
 
-    scaled = origin + (direction * (bond_length / direction_norm))
     return Vec3.from_iterable(scaled)
 
 

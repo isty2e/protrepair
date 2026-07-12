@@ -16,6 +16,9 @@
 
 ### Changed
 
+- centralize NumPy geometry-placement vector degeneracy rules while preserving
+  domain-specific error and diagnostic semantics, and reject non-finite or
+  overflowing placement frames before they emit invalid coordinates
 - report recoverable heavy-atom, terminal OXT, and polymer-hydrogen geometry
   placement failures as atom-scoped validation issues while preserving any
   successfully placed partial repair

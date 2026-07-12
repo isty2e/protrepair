@@ -14,6 +14,8 @@ HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
 # Baker-Hubbard-style diagnostic cutoff: DOI 10.1016/0079-6107(84)90007-5.
 HYDROGEN_BOND_MIN_DONOR_HYDROGEN_ACCEPTOR_ANGLE_DEGREES = 120.0
+# Clash classification treats undefined tuple-vector angles as non-exempt;
+# it intentionally does not inherit geometry-placement failure semantics.
 HYDROGEN_BOND_DEGENERATE_NORM_EPSILON = 1e-12
 DONOR_ELEMENTS = frozenset({"N", "O", "S"})
 ACCEPTOR_ELEMENTS = frozenset({"N", "O", "S"})

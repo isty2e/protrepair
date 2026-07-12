@@ -5,11 +5,41 @@ from protrepair.chemistry import (
     IdealGeometryHydrogenSemantics,
 )
 from protrepair.chemistry.nonstandard.ingestion import (
+    angle_between,
+    first_non_degenerate_plane_normal,
     ingest_component_library,
     ingest_component_template,
     ingest_restraint_template,
 )
 from protrepair.io.gemmi_normalization import gemmi
+
+
+def test_ingestion_angle_returns_none_for_coincident_tuple_vector() -> None:
+    """Boundary tuple geometry should retain its observation-only None result."""
+
+    assert (
+        angle_between(
+            center_position=(0.0, 0.0, 0.0),
+            first_position=(0.0, 0.0, 0.0),
+            second_position=(1.0, 0.0, 0.0),
+        )
+        is None
+    )
+
+
+def test_ingestion_plane_normal_returns_none_for_collinear_positions() -> None:
+    """CCD tuple geometry should not inherit placement exception semantics."""
+
+    assert (
+        first_non_degenerate_plane_normal(
+            (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (2.0, 0.0, 0.0),
+            )
+        )
+        is None
+    )
 
 
 def test_ingest_component_library_reads_custom_monomer_cif(tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ from protrepair.chemistry import RotatableHydrogenKind, UnknownElementRadiusErro
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import ClashPolicy
 from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
+from protrepair.geometry.placement_vector import PLACEMENT_VECTOR_NORM_EPSILON
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.completion.hydrogen.domain import (
     HydrogenCompletionEnvironment,
@@ -869,6 +870,41 @@ def test_hydrogen_scale_bond_rejects_degenerate_candidate() -> None:
 
     with pytest.raises(GeometryPlacementError, match="degenerate bond vector"):
         scale_bond(origin, origin.copy(), 1.0)
+
+
+def test_hydrogen_scale_bond_rejects_shared_degenerate_threshold() -> None:
+    """Hydrogen scaling should use the closed shared norm threshold."""
+
+    origin = np.zeros(3, dtype=np.float64)
+    candidate = np.array(
+        (PLACEMENT_VECTOR_NORM_EPSILON, 0.0, 0.0), dtype=np.float64
+    )
+
+    with pytest.raises(GeometryPlacementError, match="degenerate bond vector"):
+        scale_bond(origin, candidate, 1.0)
+
+
+def test_hydrogen_scale_bond_accepts_above_shared_degenerate_threshold() -> None:
+    """The next representable displacement should remain scaleable."""
+
+    origin = np.zeros(3, dtype=np.float64)
+    separation = float(np.nextafter(PLACEMENT_VECTOR_NORM_EPSILON, np.inf))
+    candidate = np.array((separation, 0.0, 0.0), dtype=np.float64)
+
+    scaled = scale_bond(origin, candidate, 1.0)
+
+    assert scaled == Vec3(1.0, 0.0, 0.0)
+
+
+@pytest.mark.filterwarnings("error")
+def test_hydrogen_scale_bond_rejects_non_finite_candidate() -> None:
+    """Hydrogen scaling should project non-finite algebra into its domain error."""
+
+    origin = np.array((1.0, 1.0, 1.0), dtype=np.float64)
+    candidate = np.array((float("inf"), 1.0, 1.0), dtype=np.float64)
+
+    with pytest.raises(GeometryPlacementError, match="degenerate bond vector"):
+        scale_bond(origin, candidate, 1.0)
 
 
 def test_build_rotatable_hydrogen_environments_pack_local_steric_sites() -> None:

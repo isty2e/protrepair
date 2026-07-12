@@ -28,6 +28,8 @@ from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import ResidueId
 
+# Observation-only tuple math returns None for undefined angles; it does not
+# share the exception-bearing NumPy placement contract.
 GEOMETRY_DEGENERATE_NORM_EPSILON = 1e-12
 
 
