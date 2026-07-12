@@ -46,6 +46,7 @@ class AxisRotation:
         vector_array = Vec3.coerce(vector).to_array()
         axis_array = self.axis.to_array()
         axis_length = float(np.linalg.norm(axis_array))
+        # A zero rotation axis is identity by contract, not a placement failure.
         if axis_length == 0.0:
             return vector_array
 

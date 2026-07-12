@@ -32,6 +32,8 @@ BOND_ORDER_LABEL_TO_INT: dict[str, int] = {
     "TRIP": 3,
 }
 IDEAL_PLANE_MAX_DEVIATION_ANGSTROM = 0.15
+# This boundary-local tolerance applies to signed volume and plane-normal tuple
+# math, not to the NumPy vector norm used by geometry placement.
 SIGNED_VOLUME_EPSILON = 1.0e-6
 Vector3 = tuple[float, float, float]
 

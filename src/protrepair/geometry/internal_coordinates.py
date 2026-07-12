@@ -4,16 +4,20 @@ from dataclasses import dataclass
 from math import acos, degrees, pi, sqrt
 
 import numpy as np
-import numpy.typing as npt
 
 from protrepair.geometry.exceptions import GeometryPlacementError
+from protrepair.geometry.placement_vector import (
+    PLACEMENT_VECTOR_NORM_EPSILON,
+    PlacementVector,
+    angle_between_vectors_radians_or_none,
+    deterministic_unit_orthogonal_or_none,
+    normalized_vector_or_none,
+    scaled_point_from_origin_or_none,
+    vector_norm,
+)
 from protrepair.geometry.vector import CoordinateLike, Vec3
 
-Vector = npt.NDArray[np.float64]
-TORSION_DEGENERATE_NORM_EPSILON = 1e-12
-UNIT_X_AXIS = np.array((1.0, 0.0, 0.0), dtype=np.float64)
-UNIT_Y_AXIS = np.array((0.0, 1.0, 0.0), dtype=np.float64)
-UNIT_Z_AXIS = np.array((0.0, 0.0, 1.0), dtype=np.float64)
+TORSION_PLANE_NORM_SQUARED_EPSILON = 1e-12
 
 
 class InternalCoordinatePlacementError(GeometryPlacementError):
@@ -44,18 +48,27 @@ class InternalCoordinateFrame:
 
         axis_bc = point_c - point_b
         axis_ba = point_a - point_b
-        axis_bc_norm = _vector_norm(axis_bc)
-        if axis_bc_norm <= TORSION_DEGENERATE_NORM_EPSILON:
+        unit_axis_bc = normalized_vector_or_none(axis_bc)
+        if unit_axis_bc is None:
             raise InternalCoordinatePlacementError(
                 "internal-coordinate placement requires distinct B/C anchors"
             )
+        if not np.isfinite(axis_ba).all():
+            raise InternalCoordinatePlacementError(
+                "internal-coordinate placement requires a finite anchor basis"
+            )
 
-        unit_axis_bc = axis_bc / axis_bc_norm
-        projected = axis_ba - (
-            np.dot(axis_ba, axis_bc) / (axis_bc_norm * axis_bc_norm)
-        ) * axis_bc
-        projected_norm = float(np.linalg.norm(projected))
-        if projected_norm <= TORSION_DEGENERATE_NORM_EPSILON:
+        axis_bc_norm = vector_norm(axis_bc)
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            projected = axis_ba - (
+                np.dot(axis_ba, axis_bc) / (axis_bc_norm * axis_bc_norm)
+            ) * axis_bc
+        if not np.isfinite(projected).all():
+            raise InternalCoordinatePlacementError(
+                "internal-coordinate placement requires a finite anchor basis"
+            )
+        projected_norm = vector_norm(projected)
+        if projected_norm <= PLACEMENT_VECTOR_NORM_EPSILON:
             unit_projected = InternalCoordinateFrame._unit_orthogonal_vector(
                 unit_axis_bc
             )
@@ -107,6 +120,13 @@ class InternalCoordinateFrame:
         point_2 = Vec3.coerce(coord_2).to_array()
         point_3 = Vec3.coerce(coord_3).to_array()
         point_4 = Vec3.coerce(coord_4).to_array()
+        if not all(
+            np.isfinite(point).all()
+            for point in (point_1, point_2, point_3, point_4)
+        ):
+            raise InternalCoordinatePlacementError(
+                "internal-coordinate torsion requires finite coordinates"
+            )
 
         bond_12 = point_1 - point_2
         bond_32 = point_3 - point_2
@@ -118,8 +138,8 @@ class InternalCoordinateFrame:
         plane_24_norm_sq = float(np.dot(plane_24, plane_24))
 
         if (
-            plane_13_norm_sq <= TORSION_DEGENERATE_NORM_EPSILON
-            or plane_24_norm_sq <= TORSION_DEGENERATE_NORM_EPSILON
+            plane_13_norm_sq <= TORSION_PLANE_NORM_SQUARED_EPSILON
+            or plane_24_norm_sq <= TORSION_PLANE_NORM_SQUARED_EPSILON
         ):
             return InternalCoordinateFrame._degenerate_torsion_degrees(
                 bond_12=bond_12,
@@ -138,14 +158,18 @@ class InternalCoordinateFrame:
         return degrees(angle)
 
     @staticmethod
-    def _degenerate_torsion_degrees(*, bond_12: Vector, bond_43: Vector) -> float:
+    def _degenerate_torsion_degrees(
+        *,
+        bond_12: PlacementVector,
+        bond_43: PlacementVector,
+    ) -> float:
         """Return a finite fallback torsion for collinear outer-bond geometry."""
 
-        bond_12_norm = float(np.linalg.norm(bond_12))
-        bond_43_norm = float(np.linalg.norm(bond_43))
+        bond_12_norm = vector_norm(bond_12)
+        bond_43_norm = vector_norm(bond_43)
         if (
-            bond_12_norm <= TORSION_DEGENERATE_NORM_EPSILON
-            or bond_43_norm <= TORSION_DEGENERATE_NORM_EPSILON
+            bond_12_norm <= PLACEMENT_VECTOR_NORM_EPSILON
+            or bond_43_norm <= PLACEMENT_VECTOR_NORM_EPSILON
         ):
             return 0.0
 
@@ -155,18 +179,16 @@ class InternalCoordinateFrame:
         return 180.0 if outer_alignment < 0.0 else 0.0
 
     @staticmethod
-    def _unit_orthogonal_vector(axis: Vector) -> Vector:
+    def _unit_orthogonal_vector(axis: PlacementVector) -> PlacementVector:
         """Return a deterministic unit vector orthogonal to one unit axis."""
 
-        reference_axis = min(
-            (UNIT_X_AXIS, UNIT_Y_AXIS, UNIT_Z_AXIS),
-            key=lambda candidate: abs(float(np.dot(axis, candidate))),
-        )
-        orthogonal = np.asarray(np.cross(axis, reference_axis), dtype=np.float64)
-        return _unit_vector(
-            orthogonal,
-            error_message="internal-coordinate orthogonal basis is undefined",
-        )
+        orthogonal = deterministic_unit_orthogonal_or_none(axis)
+        if orthogonal is None:
+            raise InternalCoordinatePlacementError(
+                "internal-coordinate orthogonal basis is undefined"
+            )
+
+        return orthogonal
 
     @staticmethod
     def distance(coord_1: CoordinateLike, coord_2: CoordinateLike) -> float:
@@ -180,48 +202,49 @@ class InternalCoordinateFrame:
         return sqrt((delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z))
 
 
-def _angle_between_vectors_degrees(left_vector: Vector, right_vector: Vector) -> float:
+def _angle_between_vectors_degrees(
+    left_vector: PlacementVector,
+    right_vector: PlacementVector,
+) -> float:
     """Return the finite angle between two non-zero vectors."""
 
-    left_norm = _vector_norm(left_vector)
-    right_norm = _vector_norm(right_vector)
-    if (
-        left_norm <= TORSION_DEGENERATE_NORM_EPSILON
-        or right_norm <= TORSION_DEGENERATE_NORM_EPSILON
-    ):
+    angle_radians = angle_between_vectors_radians_or_none(
+        left_vector,
+        right_vector,
+    )
+    if angle_radians is None:
         raise InternalCoordinatePlacementError(
             "internal-coordinate angle requires non-zero vectors"
         )
 
-    cosine = float(np.dot(left_vector, right_vector)) / (left_norm * right_norm)
-    clamped = min(1.0, max(-1.0, cosine))
-    return degrees(acos(clamped))
+    return degrees(angle_radians)
 
 
-def _unit_vector(vector: Vector, *, error_message: str) -> Vector:
+def _unit_vector(
+    vector: PlacementVector,
+    *,
+    error_message: str,
+) -> PlacementVector:
     """Return one unit vector or raise when the vector is degenerate."""
 
-    norm = _vector_norm(vector)
-    if norm <= TORSION_DEGENERATE_NORM_EPSILON:
+    normalized = normalized_vector_or_none(vector)
+    if normalized is None:
         raise InternalCoordinatePlacementError(error_message)
 
-    return np.asarray(vector / norm, dtype=np.float64)
+    return normalized
 
 
-def _scale_from_origin(origin: Vector, candidate: Vector, bond_length: float) -> Vector:
+def _scale_from_origin(
+    origin: PlacementVector,
+    candidate: PlacementVector,
+    bond_length: float,
+) -> PlacementVector:
     """Return a candidate scaled to the requested distance from the origin."""
 
-    direction = candidate - origin
-    direction_norm = _vector_norm(direction)
-    if direction_norm <= TORSION_DEGENERATE_NORM_EPSILON:
+    scaled = scaled_point_from_origin_or_none(origin, candidate, bond_length)
+    if scaled is None:
         raise InternalCoordinatePlacementError(
             "internal-coordinate placement produced a degenerate bond vector"
         )
 
-    return origin + (direction * (bond_length / direction_norm))
-
-
-def _vector_norm(vector: Vector) -> float:
-    """Return the Euclidean norm for one vector."""
-
-    return float(np.linalg.norm(vector))
+    return scaled
