@@ -412,6 +412,78 @@ def test_no_conect_pdb_block_projector_avoids_repeated_gemmi_writes(
     assert writer_structure_ids == [id(structure)]
 
 
+def test_no_conect_pdb_block_projector_formats_only_changed_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Coordinate projection should format only atom slots that moved."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload("CA", "C", Vec3(1.0, 0.0, 0.0)),
+                            atom_payload("C", "C", Vec3(2.0, 0.0, 0.0)),
+                            atom_payload("H", "H", Vec3(-1.0, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    projector = prepare_rdkit_no_conect_pdb_block_projector(structure)
+    assert projector is not None
+
+    residue_index = structure.constitution.residue_index(residue_id)
+    residue_geometry = structure.residue_geometry(residue_index)
+    same_coordinate_structure = structure.with_updated_residue_geometries(
+        ((residue_id, residue_geometry),)
+    )
+    updated_structure = structure.with_updated_residue_geometries(
+        (
+            (
+                residue_id,
+                residue_geometry.with_atom_geometry(
+                    "CA",
+                    residue_geometry.atom_geometry("CA").with_position(
+                        Vec3(7.0, 8.0, 9.0)
+                    ),
+                ),
+            ),
+        )
+    )
+    formatted_coordinate_triples: list[tuple[float, float, float]] = []
+    canonical_formatter = pdb_projection_module._format_pdb_coordinates
+
+    def _recording_formatter(x: float, y: float, z: float) -> str:
+        formatted_coordinate_triples.append((x, y, z))
+        return canonical_formatter(x, y, z)
+
+    monkeypatch.setattr(
+        pdb_projection_module,
+        "_format_pdb_coordinates",
+        _recording_formatter,
+    )
+
+    assert projector.render(structure) == pdb_without_conect(structure)
+    assert projector.render(same_coordinate_structure) == pdb_without_conect(
+        same_coordinate_structure
+    )
+    assert formatted_coordinate_triples == []
+
+    assert projector.render(updated_structure) == pdb_without_conect(
+        updated_structure
+    )
+    assert formatted_coordinate_triples == [(7.0, 8.0, 9.0)]
+
+
 def test_no_conect_pdb_block_projector_falls_back_on_address_space_mismatch() -> (
     None
 ):

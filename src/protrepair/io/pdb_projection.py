@@ -8,6 +8,7 @@ from protrepair.io.gemmi_writer import (
 )
 from protrepair.structure.address_space import StructureAddressSpaceKey
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.geometry import StructureGeometry
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +16,8 @@ class RDKitNoConectPDBBlockProjector:
     """Coordinate-only no-CONECT PDB block projection for parser probes."""
 
     address_space_key: StructureAddressSpaceKey
+    base_geometry: StructureGeometry
+    base_pdb_block: str
     base_lines: tuple[str, ...]
     coordinate_line_patches: tuple[tuple[int, int, str, str], ...]
     atom_count: int
@@ -35,17 +38,29 @@ class RDKitNoConectPDBBlockProjector:
                 "PDB block projection requires the original atom address space"
             )
 
-        lines = list(self.base_lines)
+        if structure.geometry is self.base_geometry:
+            return self.base_pdb_block
+
         atom_geometries = structure.geometry.atom_geometries
+        base_atom_geometries = self.base_geometry.atom_geometries
+        lines: list[str] | None = None
         for line_index, atom_index_value, prefix, suffix in (
             self.coordinate_line_patches
         ):
             position = atom_geometries[atom_index_value].position
+            if position == base_atom_geometries[atom_index_value].position:
+                continue
+
+            if lines is None:
+                lines = list(self.base_lines)
             lines[line_index] = (
                 prefix
                 + _format_pdb_coordinates(position.x, position.y, position.z)
                 + suffix
             )
+
+        if lines is None:
+            return self.base_pdb_block
 
         return "\n".join(lines) + "\n"
 
@@ -78,6 +93,8 @@ def prepare_rdkit_no_conect_pdb_block_projector(
 
     return RDKitNoConectPDBBlockProjector(
         address_space_key=structure.constitution.address_space_key,
+        base_geometry=structure.geometry,
+        base_pdb_block=pdb_block,
         base_lines=base_lines,
         coordinate_line_patches=tuple(coordinate_line_patches),
         atom_count=structure.geometry.atom_count(),
