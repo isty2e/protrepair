@@ -1,5 +1,6 @@
 """Pure axis-rotation geometry primitives."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import cos, sin
 
@@ -44,11 +45,46 @@ class AxisRotation:
         """Return one vector rotated around this axis."""
 
         vector_array = Vec3.coerce(vector).to_array()
+        rotation_matrix = self._rotation_matrix(theta_radians)
+        if rotation_matrix is None:
+            return vector_array
+
+        return vector_array @ rotation_matrix
+
+    def rotate_points(
+        self,
+        points: Iterable[CoordinateLike],
+        *,
+        origin: CoordinateLike,
+        theta_radians: float,
+    ) -> tuple[Vec3, ...]:
+        """Rotate points around one origin while reusing matrix construction."""
+
+        point_arrays = tuple(Vec3.coerce(point).to_array() for point in points)
+        if not point_arrays:
+            return ()
+
+        origin_array = Vec3.coerce(origin).to_array()
+        rotation_matrix = self._rotation_matrix(theta_radians)
+        if rotation_matrix is None:
+            return tuple(
+                Vec3.from_iterable((point - origin_array) + origin_array)
+                for point in point_arrays
+            )
+
+        return tuple(
+            Vec3.from_iterable((point - origin_array) @ rotation_matrix + origin_array)
+            for point in point_arrays
+        )
+
+    def _rotation_matrix(self, theta_radians: float) -> FloatArray | None:
+        """Return a Rodrigues row-vector matrix or zero-axis identity sentinel."""
+
         axis_array = self.axis.to_array()
         axis_length = float(np.linalg.norm(axis_array))
         # A zero rotation axis is identity by contract, not a placement failure.
         if axis_length == 0.0:
-            return vector_array
+            return None
 
         unit_axis = axis_array / axis_length
         x_norm = float(unit_axis[0])
@@ -58,7 +94,7 @@ class AxisRotation:
         cos_theta = cos(theta_radians)
         one_minus_cos = 1.0 - cos_theta
 
-        rotation_matrix = np.asarray(
+        return np.asarray(
             (
                 (
                     cos_theta + x_norm * x_norm * one_minus_cos,
@@ -78,7 +114,6 @@ class AxisRotation:
             ),
             dtype=np.float64,
         )
-        return vector_array @ rotation_matrix
 
     def rotate_point(
         self,
