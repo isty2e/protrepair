@@ -65,6 +65,7 @@ from protrepair.transformer.completion.hydrogen.static_patch import (
 )
 from protrepair.transformer.completion.retained_non_polymer_hydrogen import (
     rdkit_evidence,
+    rdkit_patch,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
@@ -628,11 +629,11 @@ def _hydrogenate_retained_non_polymer_payload_with_rdkit_fallback_result(
     )
     return _RdkitFallbackHydrogenationResult(
         payload=payload.apply_patch(
-            _rdkit_hydrogen_append_patch(
+            rdkit_patch.rdkit_hydrogen_append_patch(
                 payload,
                 hydrogenated_molecule=fallback_inference_result.hydrogenated_molecule,
-                hydrogen_name_projection=(
-                    fallback_inference_result.hydrogen_name_projection_map()
+                hydrogen_atom_names=(
+                    fallback_inference_result.projected_hydrogen_atom_names()
                 ),
             )
         ),
@@ -1178,47 +1179,6 @@ def _payload_for_structure(
         formal_charge_by_atom_name=(
             structure.residue_formal_charge_by_atom_name(residue_index)
         ),
-    )
-
-
-def _rdkit_hydrogen_append_patch(
-    payload: CompletionResiduePayload,
-    *,
-    hydrogenated_molecule,
-    hydrogen_name_projection: Mapping[str, str] | None = None,
-) -> OrderedAtomPatch:
-    """Return one patch that appends RDKit-generated hydrogens."""
-
-    conformer = hydrogenated_molecule.GetConformer()
-    hydrogen_positions: list[Vec3] = []
-    hydrogen_atom_names: list[str] = []
-    generated_hydrogen_index = 1
-    for atom in hydrogenated_molecule.GetAtoms():
-        if atom.GetAtomicNum() != 1:
-            continue
-
-        coordinates = conformer.GetAtomPosition(atom.GetIdx())
-        generated_hydrogen_name = f"H{generated_hydrogen_index:03d}"
-        generated_hydrogen_index += 1
-        hydrogen_atom_names.append(
-            generated_hydrogen_name
-            if hydrogen_name_projection is None
-            else hydrogen_name_projection[generated_hydrogen_name]
-        )
-        hydrogen_positions.append(
-            Vec3(
-                float(coordinates.x),
-                float(coordinates.y),
-                float(coordinates.z),
-            )
-        )
-
-    return OrderedAtomPatch.from_residue_payload(
-        payload.residue_site,
-        residue_geometry=payload.residue_geometry,
-    ).append_atoms(
-        tuple(hydrogen_atom_names),
-        hydrogen_positions,
     )
 
 

@@ -10,6 +10,7 @@ from protrepair.chemistry.inference import (
     retained_non_polymer_fallback as fallback_inference,
 )
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
+    RetainedNonPolymerRdkitFallbackInferenceResult,
     infer_retained_non_polymer_rdkit_fallback,
     retained_non_polymer_rdkit_fallback_expected_hydrogen_atom_names,
     retained_non_polymer_rdkit_fallback_heavy_bond_definitions,
@@ -74,6 +75,12 @@ def test_fallback_inference_result_owns_pose_bonds_names_and_bounds() -> None:
 
     assert inference_result.rdkit_backend_version == rdBase.rdkitVersion
     assert inference_result.hydrogen_atom_names == ("H001", "H002", "H003", "H004")
+    assert inference_result.projected_hydrogen_atom_names() == (
+        "H001",
+        "H002",
+        "H003",
+        "H004",
+    )
     assert inference_result.heavy_bond_definitions == (
         BondDefinition("O1", "C1"),
     )
@@ -92,6 +99,47 @@ def test_fallback_inference_result_owns_pose_bonds_names_and_bounds() -> None:
     assert {bond.order for bond in hydrogen_bonds.values()} == {1}
     assert inference_result.hydrogen_name_projection_candidate_count == 4
     assert inference_result.hydrogen_name_projection_candidate_limit >= 4
+
+
+def test_fallback_result_projects_names_in_generated_order() -> None:
+    """Projection tuple insertion order must not change RDKit atom-name order."""
+
+    from rdkit import Chem as RdkitChem
+
+    molecule = RdkitChem.RWMol()
+    molecule.AddAtom(RdkitChem.Atom(1))
+    molecule.AddAtom(RdkitChem.Atom(1))
+    result = RetainedNonPolymerRdkitFallbackInferenceResult(
+        hydrogenated_molecule=molecule.GetMol(),
+        rdkit_backend_version="test",
+        hydrogen_atom_names=("HA", "HB"),
+        hydrogen_name_projection=(("H002", "HB"), ("H001", "HA")),
+        heavy_bond_definitions=(),
+        hydrogen_bond_definitions=(),
+        hydrogen_name_projection_candidate_count=2,
+        hydrogen_name_projection_candidate_limit=2,
+    )
+
+    assert result.projected_hydrogen_atom_names() == ("HA", "HB")
+
+
+def test_fallback_result_projects_empty_hydrogen_names() -> None:
+    """A hydrogen-free fallback molecule should project an empty name tuple."""
+
+    from rdkit import Chem as RdkitChem
+
+    result = RetainedNonPolymerRdkitFallbackInferenceResult(
+        hydrogenated_molecule=RdkitChem.RWMol().GetMol(),
+        rdkit_backend_version="test",
+        hydrogen_atom_names=(),
+        hydrogen_name_projection=(),
+        heavy_bond_definitions=(),
+        hydrogen_bond_definitions=(),
+        hydrogen_name_projection_candidate_count=0,
+        hydrogen_name_projection_candidate_limit=2,
+    )
+
+    assert result.projected_hydrogen_atom_names() == ()
 
 
 def test_fallback_inference_bounds_hydrogen_name_projection_candidates() -> None:
