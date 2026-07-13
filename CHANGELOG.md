@@ -13,10 +13,10 @@
   `DEFAULT_VAN_DER_WAALS_RADIUS_ANGSTROM`; radius lookup now raises
   `UnknownElementRadiusError` instead of silently using a default for unsupported
   elements
-- make low-level clash bases, contexts, and frames factory-only topology-bound
-  artifacts; remove their types, preparation/binding functions, and context
-  query functions from the diagnostics facade; and remove the redundant
-  `constitution_address_space_key` projection
+- make low-level clash bases and contexts factory-only topology-bound artifacts;
+  remove their low-level construction and query functions from the diagnostics
+  facade; remove the responsibility-free intermediate frame type and binding
+  surface; and remove the redundant `constitution_address_space_key` projection
 
 ### Changed
 

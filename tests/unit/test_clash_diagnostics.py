@@ -30,7 +30,6 @@ from protrepair.diagnostics.clash_pair_generation import (
 )
 from protrepair.diagnostics.clashes import (
     bind_clash_detection_context,
-    bind_clash_detection_frame,
     detect_clashes_from_context,
     has_clashes_in_context,
     prepare_clash_detection_basis,
@@ -417,8 +416,11 @@ def test_clash_basis_rejects_unsafe_cell_size_override(cell_size: float) -> None
         component_library=build_standard_component_library(),
     )
 
-    with pytest.raises(ValueError, match="finite candidate cell size"):
-        bind_clash_detection_frame(
+    with pytest.raises(
+        ValueError,
+        match="bound clash contexts require a finite candidate cell size",
+    ):
+        bind_clash_detection_context(
             structure,
             basis=basis,
             candidate_cell_size_angstrom=cell_size,
@@ -786,34 +788,35 @@ def test_clash_detection_basis_rebinds_coordinate_only_structures() -> None:
         ((residue_id, moved_residue_geometry),)
     )
 
-    assert detect_clashes_from_context(
-        bind_clash_detection_context(structure, basis=basis)
-    ) == detect_clashes(structure, component_library=component_library)
+    original_context = bind_clash_detection_context(structure, basis=basis)
+    moved_context = bind_clash_detection_context(moved_structure, basis=basis)
+
+    assert detect_clashes_from_context(original_context) == detect_clashes(
+        structure,
+        component_library=component_library,
+    )
     assert basis.bind_context(structure).detect_clashes() == detect_clashes(
         structure,
         component_library=component_library,
     )
-    assert detect_clashes_from_context(
-        bind_clash_detection_context(moved_structure, basis=basis)
-    ) == detect_clashes(moved_structure, component_library=component_library)
+    assert detect_clashes_from_context(moved_context) == detect_clashes(
+        moved_structure,
+        component_library=component_library,
+    )
     assert basis.bind_context(moved_structure).detect_clashes() == detect_clashes(
         moved_structure,
         component_library=component_library,
     )
 
-    original_frame = bind_clash_detection_frame(structure, basis=basis)
-    moved_frame = bind_clash_detection_frame(moved_structure, basis=basis)
-    assert original_frame == basis.bind_frame(structure)
-    assert moved_frame == basis.bind_frame(moved_structure)
-    assert len(original_frame.atom_sites) == len(moved_frame.atom_sites)
+    assert len(original_context.atom_sites) == len(moved_context.atom_sites)
     original_hg_site = next(
         atom_site
-        for atom_site in original_frame.atom_sites
+        for atom_site in original_context.atom_sites
         if atom_site.atom_name == "HG"
     )
     moved_hg_site = next(
         atom_site
-        for atom_site in moved_frame.atom_sites
+        for atom_site in moved_context.atom_sites
         if atom_site.atom_name == "HG"
     )
     assert original_hg_site.context.template is moved_hg_site.context.template

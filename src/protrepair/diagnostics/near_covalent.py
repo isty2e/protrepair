@@ -279,7 +279,7 @@ class NearCovalentContactBasis:
         self,
         context: ClashDetectionContext,
     ) -> _NearCovalentCandidateContext:
-        """Project one compatible clash frame into near-covalent semantics."""
+        """Project one compatible clash context into near-covalent semantics."""
 
         if (
             context.constitution is not self.constitution

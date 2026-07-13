@@ -227,7 +227,7 @@ class ResidueContext:
 
 @dataclass(frozen=True, slots=True)
 class _ResidueContextBasis:
-    """Coordinate-independent residue context used to bind clash frames."""
+    """Coordinate-independent residue facts used to bind clash contexts."""
 
     residue_site: ResidueSite
     template: ResidueTemplate | None
@@ -254,7 +254,7 @@ class _ResidueContextBasis:
 
 @dataclass(frozen=True, slots=True)
 class _AtomSiteBasis:
-    """Coordinate-independent atom-site metadata used to bind clash frames."""
+    """Coordinate-independent atom-site facts used to bind clash contexts."""
 
     residue_context_index: int
     atom_name: str
@@ -306,16 +306,6 @@ class AtomSite:
         """Return the constitution-native identity of this diagnostic atom."""
 
         return AtomRef(self.residue_id, self.atom_name)
-
-
-@dataclass(frozen=True, slots=True)
-class ClashDetectionFrame:
-    """Coordinate-bound clash detection frame for one compatible geometry."""
-
-    atom_sites: tuple[AtomSite, ...]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "atom_sites", tuple(self.atom_sites))
 
 
 @dataclass(frozen=True, slots=True)
@@ -632,12 +622,12 @@ class ClashDetectionBasis:
 
         return self._topology_facts.is_compatible_with(structure)
 
-    def bind_frame(
+    def _bind_atom_sites(
         self,
         structure: ProteinStructure,
         *,
-        candidate_cell_size_angstrom: float | None = None,
-    ) -> ClashDetectionFrame:
+        candidate_cell_size_angstrom: float,
+    ) -> tuple[AtomSite, ...]:
         """Bind this reusable basis to coordinate-derived atom sites."""
 
         if not self.is_compatible_with(structure):
@@ -646,17 +636,12 @@ class ClashDetectionBasis:
                 "and topology"
             )
 
-        active_candidate_cell_size_angstrom = (
-            self.candidate_cell_size_angstrom
-            if candidate_cell_size_angstrom is None
-            else candidate_cell_size_angstrom
-        )
         if (
-            not isfinite(active_candidate_cell_size_angstrom)
-            or active_candidate_cell_size_angstrom < self.candidate_cell_size_angstrom
+            not isfinite(candidate_cell_size_angstrom)
+            or candidate_cell_size_angstrom < self.candidate_cell_size_angstrom
         ):
             raise ValueError(
-                "bound clash frames require a finite candidate cell size at least "
+                "bound clash contexts require a finite candidate cell size at least "
                 "as large as the clash basis requirement"
             )
 
@@ -664,21 +649,19 @@ class ClashDetectionBasis:
             structure,
             self.residue_context_bases,
         )
-        return ClashDetectionFrame(
-            atom_sites=tuple(
-                AtomSite(
-                    atom_name=atom_site_basis.atom_name,
-                    element=atom_site_basis.element,
-                    geometry=(
-                        residue_contexts[
-                            atom_site_basis.residue_context_index
-                        ].residue_geometry.atom_geometry(atom_site_basis.atom_name)
-                    ),
-                    context=residue_contexts[atom_site_basis.residue_context_index],
-                    grid_cell_size_angstrom=active_candidate_cell_size_angstrom,
-                )
-                for atom_site_basis in self.atom_site_bases
+        return tuple(
+            AtomSite(
+                atom_name=atom_site_basis.atom_name,
+                element=atom_site_basis.element,
+                geometry=(
+                    residue_contexts[
+                        atom_site_basis.residue_context_index
+                    ].residue_geometry.atom_geometry(atom_site_basis.atom_name)
+                ),
+                context=residue_contexts[atom_site_basis.residue_context_index],
+                grid_cell_size_angstrom=candidate_cell_size_angstrom,
             )
+            for atom_site_basis in self.atom_site_bases
         )
 
     def bind_context(
@@ -694,12 +677,11 @@ class ClashDetectionBasis:
             if candidate_cell_size_angstrom is None
             else candidate_cell_size_angstrom
         )
-        frame = self.bind_frame(
-            structure,
-            candidate_cell_size_angstrom=active_candidate_cell_size_angstrom,
-        )
         return ClashDetectionContext(
-            atom_sites=frame.atom_sites,
+            atom_sites=self._bind_atom_sites(
+                structure,
+                candidate_cell_size_angstrom=active_candidate_cell_size_angstrom,
+            ),
             policy=self.policy,
             geometry=structure.geometry,
             _topology_facts=self._topology_facts,
@@ -914,20 +896,6 @@ def bind_clash_detection_context(
     """Bind one reusable clash basis to the current coordinate frame."""
 
     return basis.bind_context(
-        structure,
-        candidate_cell_size_angstrom=candidate_cell_size_angstrom,
-    )
-
-
-def bind_clash_detection_frame(
-    structure: ProteinStructure,
-    *,
-    basis: ClashDetectionBasis,
-    candidate_cell_size_angstrom: float | None = None,
-) -> ClashDetectionFrame:
-    """Bind one reusable clash basis to coordinate-derived atom sites."""
-
-    return basis.bind_frame(
         structure,
         candidate_cell_size_angstrom=candidate_cell_size_angstrom,
     )
