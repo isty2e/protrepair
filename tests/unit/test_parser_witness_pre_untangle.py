@@ -12,6 +12,14 @@ from protrepair.chemistry import (
     UnknownElementRadiusError,
     build_default_component_library,
 )
+from protrepair.diagnostics.clashes import (
+    detect_clashes_from_context,
+    prepare_clash_detection_basis,
+    prepare_clash_detection_context,
+)
+from protrepair.diagnostics.near_covalent import (
+    detect_near_covalent_contacts_from_context,
+)
 from protrepair.diagnostics.parser_readability import (
     RDKitProximityBondCluster,
     RDKitProximityBondWitness,
@@ -438,6 +446,12 @@ def test_transform_reuses_accepted_candidate_parser_burden_count(
         parser_module._ParserWitnessPreUntangleCandidateRank | None
     ] = []
     observed_pdb_block_projectors: list[object | None] = []
+    observed_contact_basis_caches: list[
+        parser_module._ParserWitnessContactBasisCache
+    ] = []
+    observed_contact_assessment_bases: list[
+        parser_scoring_module.ParserWitnessContactAssessmentBasis
+    ] = []
     sentinel_pdb_block_projector = object()
     accepted_score = parser_module.ParserWitnessPreUntangleScore(
         unresolved_contact_count=0,
@@ -460,6 +474,11 @@ def test_transform_reuses_accepted_candidate_parser_burden_count(
         )
         observed_baseline_ranks.append(kwargs["baseline_rank"])
         observed_pdb_block_projectors.append(kwargs["pdb_block_projector"])
+        contact_basis_cache = kwargs["contact_basis_cache"]
+        observed_contact_basis_caches.append(contact_basis_cache)
+        observed_contact_assessment_bases.append(
+            contact_basis_cache.basis_for(structure, cluster)
+        )
         if len(observed_baseline_counts) > 1:
             return None
 
@@ -481,7 +500,7 @@ def test_transform_reuses_accepted_candidate_parser_burden_count(
     monkeypatch.setattr(
         parser_module,
         "rdkit_no_conect_extra_proximity_bond_clusters",
-        lambda *_args, **_kwargs: (cluster,),
+        lambda *_args, **_kwargs: (cluster, cluster),
     )
     monkeypatch.setattr(
         parser_module,
@@ -509,12 +528,24 @@ def test_transform_reuses_accepted_candidate_parser_burden_count(
         )
     )
 
-    assert observed_baseline_counts == [1, 3]
+    assert observed_baseline_counts == [2, 3, 3]
     assert observed_baseline_ranks[0] is None
     assert observed_pdb_block_projectors == [
         sentinel_pdb_block_projector,
         sentinel_pdb_block_projector,
+        sentinel_pdb_block_projector,
     ]
+    assert observed_contact_basis_caches[0] is observed_contact_basis_caches[1]
+    assert observed_contact_basis_caches[0] is observed_contact_basis_caches[2]
+    assert observed_contact_assessment_bases[0] == observed_contact_assessment_bases[1]
+    assert (
+        observed_contact_assessment_bases[0].near_covalent_basis
+        is observed_contact_assessment_bases[2].near_covalent_basis
+    )
+    assert (
+        observed_contact_assessment_bases[0].clash_basis
+        is observed_contact_assessment_bases[2].clash_basis
+    )
     expected_baseline_rank = parser_module._ParserWitnessPreUntangleCandidateRank(
         parser_extra_heavy_proximity_bond_count=3,
         focus_near_covalent_contact_count=0,
@@ -525,6 +556,7 @@ def test_transform_reuses_accepted_candidate_parser_burden_count(
         angle_degrees=0,
     )
     assert observed_baseline_ranks[1] == expected_baseline_rank
+    assert observed_baseline_ranks[2] is None
 
 
 def test_exhaustive_pre_untangle_defers_full_rank_to_minimum_parser_burden(
@@ -772,6 +804,240 @@ def test_parser_extra_heavy_proximity_bond_count_accepts_pdb_projector(
         == 9
     )
     assert observed_pdb_block_projectors == [pdb_block_projector]
+
+
+@pytest.mark.parametrize("angle_degrees", (-30, 0, 30))
+def test_parser_witness_contact_basis_preserves_candidate_rank(
+    angle_degrees: int,
+) -> None:
+    """Prepared contact facts must preserve the exact candidate rank tuple."""
+
+    structure, cluster = _parser_witness_contact_fixture()
+    component_library = build_default_component_library()
+    target_score = parser_witness_pre_untangle_score(structure, cluster)
+    focus_residue_ids = frozenset(cluster.residue_ids)
+    clash_context = prepare_clash_detection_context(
+        structure,
+        component_library=component_library,
+    )
+    focus_clashes = detect_clashes_from_context(
+        clash_context,
+        focus_residue_ids=focus_residue_ids,
+    ).clashes
+    near_covalent_contacts = detect_near_covalent_contacts_from_context(
+        structure,
+        clash_context,
+        focus_residue_ids=focus_residue_ids,
+    )
+    expected_rank = parser_module._ParserWitnessPreUntangleCandidateRank(
+        parser_extra_heavy_proximity_bond_count=1,
+        focus_near_covalent_contact_count=len(near_covalent_contacts),
+        focus_total_near_covalent_overlap_angstrom=sum(
+            contact.overlap_angstrom for contact in near_covalent_contacts
+        ),
+        focus_clash_count=len(focus_clashes),
+        target_score=target_score,
+        absolute_angle_degrees=abs(angle_degrees),
+        angle_degrees=angle_degrees,
+    )
+    contact_assessment_basis = (
+        parser_scoring_module.ParserWitnessContactAssessmentBasis.prepare(
+            structure,
+            cluster,
+            component_library=component_library,
+        )
+    )
+
+    actual_rank = parser_scoring_module.parser_witness_pre_untangle_candidate_rank(
+        structure,
+        cluster,
+        target_score=target_score,
+        angle_degrees=angle_degrees,
+        component_library=component_library,
+        contact_assessment_basis=contact_assessment_basis,
+        parser_extra_heavy_proximity_bond_count=1,
+    )
+
+    assert actual_rank == expected_rank
+
+
+def test_parser_witness_contact_basis_rejects_mismatched_cluster_and_basis() -> None:
+    """Prepared rank facts must remain bound to one focus and clash basis."""
+
+    structure, cluster = _parser_witness_contact_fixture()
+    component_library = build_default_component_library()
+    clash_basis = prepare_clash_detection_basis(
+        structure,
+        component_library=component_library,
+    )
+    contact_assessment_basis = (
+        parser_scoring_module.ParserWitnessContactAssessmentBasis.prepare(
+            structure,
+            cluster,
+            component_library=component_library,
+            clash_basis=clash_basis,
+        )
+    )
+    target_score = parser_witness_pre_untangle_score(structure, cluster)
+    mismatched_cluster = RDKitProximityBondCluster(
+        residue_ids=(cluster.residue_ids[0],),
+        bonds=cluster.bonds,
+    )
+
+    with pytest.raises(ValueError, match="matching cluster"):
+        parser_scoring_module.parser_witness_pre_untangle_candidate_rank(
+            structure,
+            mismatched_cluster,
+            target_score=target_score,
+            angle_degrees=30,
+            component_library=component_library,
+            contact_assessment_basis=contact_assessment_basis,
+            parser_extra_heavy_proximity_bond_count=1,
+        )
+
+    independent_clash_basis = prepare_clash_detection_basis(
+        structure,
+        component_library=component_library,
+    )
+    with pytest.raises(ValueError, match="conflicts with clash basis"):
+        parser_scoring_module.parser_witness_pre_untangle_candidate_rank(
+            structure,
+            cluster,
+            target_score=target_score,
+            angle_degrees=30,
+            component_library=component_library,
+            clash_basis=independent_clash_basis,
+            contact_assessment_basis=contact_assessment_basis,
+            parser_extra_heavy_proximity_bond_count=1,
+        )
+
+
+def test_parser_witness_search_session_prepares_contact_basis_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One cluster search should reuse coordinate-independent contact facts."""
+
+    structure, cluster = _parser_witness_contact_fixture()
+    component_library = build_default_component_library()
+    preparation_count = 0
+    original_prepare = parser_scoring_module.prepare_near_covalent_contact_basis
+
+    def counted_prepare(*args, **kwargs):
+        nonlocal preparation_count
+        preparation_count += 1
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(
+        parser_scoring_module,
+        "prepare_near_covalent_contact_basis",
+        counted_prepare,
+    )
+    session = parser_module._ParserWitnessPreUntangleSearchSession(
+        snapshot=ProteinStructureSnapshot.from_structure(structure),
+        atom_input=None,
+        cluster=cluster,
+        component_library=component_library,
+    )
+
+    first_basis = session.resolved_contact_assessment_basis()
+    second_basis = session.resolved_contact_assessment_basis()
+
+    assert second_basis is first_basis
+    assert preparation_count == 1
+
+
+def test_transform_does_not_prepare_contact_basis_without_rotation_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-rotatable witness cluster remains a no-op before radius preparation."""
+
+    structure, cluster = _parser_witness_contact_fixture()
+    component_library = build_default_component_library()
+    snapshot = ProteinStructureSnapshot.from_structure(structure)
+    atom_input = atom_input_from_local_scope_spec(
+        snapshot,
+        LocalScopeSpec.from_residues(cluster.residue_ids),
+        component_library=component_library,
+    )
+    monkeypatch.setattr(
+        parser_module,
+        "rdkit_no_conect_extra_proximity_bond_clusters",
+        lambda *_args, **_kwargs: (cluster,),
+    )
+    monkeypatch.setattr(
+        parser_module,
+        "prepare_rdkit_no_conect_known_bond_lookup",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        parser_module,
+        "prepare_rdkit_no_conect_pdb_block_projector",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        parser_module,
+        "prepare_clash_detection_basis",
+        lambda *_args, **_kwargs: pytest.fail(
+            "contact facts must stay lazy until a rotation plan exists"
+        ),
+    )
+
+    result = parser_module.ParserWitnessPreUntangleTransformer(
+        component_library
+    ).transform(
+        ProteinTransformationContext(
+            source_snapshot=snapshot,
+            atom_input=atom_input,
+            supporting_structures=(),
+        )
+    )
+
+    assert result is snapshot
+
+
+def _parser_witness_contact_fixture(
+) -> tuple[ProteinStructure, RDKitProximityBondCluster]:
+    """Return a compact two-residue parser-witness contact fixture."""
+
+    left_id = ResidueId("A", 1)
+    right_id = ResidueId("B", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=left_id,
+                        atoms=(atom_payload("CB", "C", Vec3(0.0, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+            chain_payload(
+                "B",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=right_id,
+                        atoms=(atom_payload("CB", "C", Vec3(1.5, 0.0, 0.0)),),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    return structure, RDKitProximityBondCluster(
+        residue_ids=(left_id, right_id),
+        bonds=(
+            RDKitProximityBondWitness(
+                atom_ref_1=AtomRef(left_id, "CB"),
+                atom_ref_2=AtomRef(right_id, "CB"),
+                element_1="C",
+                element_2="C",
+                is_known_component_bond=False,
+            ),
+        ),
+    )
 
 
 def _placeholder_rotated_payload(

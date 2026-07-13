@@ -1,7 +1,7 @@
 """Derived diagnostics for severe nonbonded contacts that look near-covalent."""
 
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import InitVar, dataclass, field
 from math import isfinite
 from types import MappingProxyType
 from typing import cast
@@ -13,13 +13,16 @@ from protrepair.chemistry import (
     prepare_radius_lookup,
 )
 from protrepair.diagnostics.clash_pair_generation import (
+    ClashPairAtomSite,
     ContactDomain,
+    ContactPairPolicy,
+    PreparedAtomSitePairIndex,
+    SpatialPairPolicy,
     iter_candidate_atom_site_pairs,
 )
 from protrepair.diagnostics.clashes import (
     AtomSite,
     ClashDetectionContext,
-    ClashPolicy,
     build_atom_sites,
     build_residue_contexts,
     probable_hydrogen_bond,
@@ -28,8 +31,9 @@ from protrepair.diagnostics.clashes import (
     should_ignore_pair,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.constitution import StructureConstitution
 from protrepair.structure.labels import AtomRef, ResidueId
-from protrepair.structure.topology import BondRelationshipType
+from protrepair.structure.topology import BondRelationshipType, StructureTopology
 
 MINIMUM_NEAR_COVALENT_GRID_CELL_SIZE_ANGSTROM = 1.0
 _EXPECTED_CLOSE_CONTACT_RELATIONSHIP_TYPES = frozenset(
@@ -39,6 +43,15 @@ _EXPECTED_CLOSE_CONTACT_RELATIONSHIP_TYPES = frozenset(
         BondRelationshipType.METAL_COORDINATION,
     }
 )
+
+
+class _PreparedNearCovalentBasisToken:
+    """Authorize construction of an internally consistent contact basis."""
+
+    __slots__ = ()
+
+
+_PREPARED_NEAR_COVALENT_BASIS_TOKEN = _PreparedNearCovalentBasisToken()
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +112,7 @@ class _NearCovalentCandidateContext:
     """Prepared candidate context for covalent-radius proximity diagnostics."""
 
     atom_sites: tuple[AtomSite, ...]
-    pair_policy: ClashPolicy
+    pair_policy: ContactPairPolicy
     covalent_radius_by_element: Mapping[str, float]
     expected_topology_endpoint_pairs: frozenset[tuple[AtomRef, AtomRef]]
 
@@ -141,8 +154,21 @@ class _NearCovalentCandidateContext:
         *,
         focus_residue_ids: frozenset[ResidueId] | None = None,
         include_same_residue_heavy_pairs: bool = False,
+        prepared_pair_index: PreparedAtomSitePairIndex | None = None,
     ) -> Iterator[tuple[AtomSite, AtomSite]]:
         """Yield spatially pruned atom pairs before covalent distance checks."""
+
+        if prepared_pair_index is not None:
+            prepared_pair_index.require_compatible(
+                cast(tuple[ClashPairAtomSite, ...], self.atom_sites),
+                focus_residue_ids=focus_residue_ids,
+            )
+            for left_site, right_site in prepared_pair_index.candidate_pairs(
+                policy=cast(SpatialPairPolicy, self.pair_policy),
+                include_same_residue_heavy_pairs=include_same_residue_heavy_pairs,
+            ):
+                yield cast(AtomSite, left_site), cast(AtomSite, right_site)
+            return
 
         for left_site, right_site in iter_candidate_atom_site_pairs(
             self.atom_sites,
@@ -166,12 +192,186 @@ class _NearCovalentCandidateContext:
         return endpoint_pair in self.expected_topology_endpoint_pairs
 
 
+@dataclass(frozen=True, slots=True)
+class NearCovalentContactBasis:
+    """Coordinate-independent near-covalent facts for one topology snapshot."""
+
+    pair_policy: ContactPairPolicy
+    contact_policy: NearCovalentContactPolicy
+    constitution: StructureConstitution = field(repr=False, compare=False)
+    topology: StructureTopology = field(repr=False, compare=False)
+    covalent_radius_by_element: Mapping[str, float]
+    candidate_cell_size_angstrom: float
+    _construction_token: InitVar[_PreparedNearCovalentBasisToken | None] = None
+    expected_topology_endpoint_pairs: frozenset[tuple[AtomRef, AtomRef]] = field(
+        init=False,
+    )
+
+    def __post_init__(
+        self,
+        _construction_token: _PreparedNearCovalentBasisToken | None,
+    ) -> None:
+        if _construction_token is not _PREPARED_NEAR_COVALENT_BASIS_TOKEN:
+            raise ValueError(
+                "near-covalent bases must be created by a preparation factory"
+            )
+
+        if not self.topology.is_aligned_to(self.constitution):
+            raise ValueError(
+                "near-covalent basis topology must align with its constitution"
+            )
+        if (
+            not isfinite(self.candidate_cell_size_angstrom)
+            or self.candidate_cell_size_angstrom <= 0.0
+        ):
+            raise ValueError(
+                "near-covalent basis candidate cell size must be finite and positive"
+            )
+        radius_by_element = dict(self.covalent_radius_by_element)
+        if any(
+            not isfinite(radius) or radius <= 0.0
+            for radius in radius_by_element.values()
+        ):
+            raise ValueError("near-covalent basis radii must be finite and positive")
+        required_cell_size_angstrom = _near_covalent_candidate_cell_size_from_radii(
+            radius_by_element.values(),
+            policy=self.contact_policy,
+        )
+        if self.candidate_cell_size_angstrom < required_cell_size_angstrom:
+            raise ValueError(
+                "near-covalent basis candidate cell size must cover the contact cutoff"
+            )
+        expected_endpoint_pairs = _expected_topology_endpoint_pairs(
+            constitution=self.constitution,
+            topology=self.topology,
+        )
+
+        object.__setattr__(
+            self,
+            "covalent_radius_by_element",
+            MappingProxyType(radius_by_element),
+        )
+        object.__setattr__(
+            self,
+            "expected_topology_endpoint_pairs",
+            expected_endpoint_pairs,
+        )
+
+    def require_compatible_structure(self, structure: ProteinStructure) -> None:
+        """Reject reuse after constitution or topology replacement."""
+
+        if (
+            structure.constitution is not self.constitution
+            and structure.constitution != self.constitution
+        ):
+            raise ValueError(
+                "near-covalent basis requires its original immutable constitution"
+            )
+        if (
+            structure.topology is not self.topology
+            and structure.topology != self.topology
+        ):
+            raise ValueError(
+                "near-covalent basis requires its original immutable topology"
+            )
+
+    def bind_context(
+        self,
+        context: ClashDetectionContext,
+    ) -> _NearCovalentCandidateContext:
+        """Project one compatible clash frame into near-covalent semantics."""
+
+        if (
+            context.constitution is not self.constitution
+            and context.constitution != self.constitution
+        ):
+            raise ValueError(
+                "near-covalent basis requires a clash context for its original "
+                "immutable constitution"
+            )
+        if context.topology is not self.topology and context.topology != self.topology:
+            raise ValueError(
+                "near-covalent basis requires a clash context for its original "
+                "immutable topology"
+            )
+        if context.policy.as_contact_pair_policy() != self.pair_policy:
+            raise ValueError("near-covalent basis requires a matching pair policy")
+        if context.candidate_cell_size_angstrom < self.candidate_cell_size_angstrom:
+            raise ValueError(
+                "near-covalent basis requires a sufficiently large spatial cell"
+            )
+
+        return _NearCovalentCandidateContext(
+            atom_sites=context.atom_sites,
+            pair_policy=self.pair_policy,
+            covalent_radius_by_element=self.covalent_radius_by_element,
+            expected_topology_endpoint_pairs=self.expected_topology_endpoint_pairs,
+        )
+
+
+def _candidate_elements(
+    constitution: StructureConstitution,
+    *,
+    pair_policy: ContactPairPolicy,
+) -> tuple[str, ...]:
+    """Return deterministic element coverage for one contact-pair scope."""
+
+    return tuple(
+        dict.fromkeys(
+            atom_site.element
+            for residue_site in constitution.iter_residues(
+                include_ligands=pair_policy.include_ligands
+            )
+            for atom_site in residue_site.atom_sites
+            if pair_policy.include_hydrogens or not atom_site.is_hydrogen()
+        )
+    )
+
+
+def prepare_near_covalent_contact_basis(
+    structure: ProteinStructure,
+    *,
+    pair_policy: ContactPairPolicy | None = None,
+    policy: NearCovalentContactPolicy | None = None,
+) -> NearCovalentContactBasis:
+    """Prepare reusable near-covalent facts for one topology snapshot."""
+
+    active_pair_policy = (
+        ContactPairPolicy()
+        if pair_policy is None
+        else pair_policy.as_contact_pair_policy()
+    )
+    active_policy = NearCovalentContactPolicy() if policy is None else policy
+    elements = _candidate_elements(
+        structure.constitution,
+        pair_policy=active_pair_policy,
+    )
+    covalent_radius_lookup = prepare_radius_lookup(elements, RadiusKind.COVALENT)
+    covalent_radius_lookup.require_complete("near-covalent contact basis")
+    return NearCovalentContactBasis(
+        pair_policy=active_pair_policy,
+        contact_policy=active_policy,
+        constitution=structure.constitution,
+        topology=structure.topology,
+        covalent_radius_by_element={
+            element: covalent_radius_lookup.radius_angstrom(element)
+            for element in elements
+        },
+        candidate_cell_size_angstrom=_near_covalent_candidate_cell_size_angstrom(
+            elements,
+            covalent_radius_lookup=covalent_radius_lookup,
+            policy=active_policy,
+        ),
+        _construction_token=_PREPARED_NEAR_COVALENT_BASIS_TOKEN,
+    )
+
+
 def detect_near_covalent_contacts(
     structure: ProteinStructure,
     *,
     component_library: ComponentLibrary | None = None,
     focus_residue_ids: frozenset[ResidueId] | None = None,
-    pair_policy: ClashPolicy | None = None,
+    pair_policy: ContactPairPolicy | None = None,
     policy: NearCovalentContactPolicy | None = None,
 ) -> tuple[NearCovalentContact, ...]:
     """Return severe nonbonded contacts short enough to look near-covalent."""
@@ -198,18 +398,41 @@ def detect_near_covalent_contacts_from_context(
     *,
     focus_residue_ids: frozenset[ResidueId] | None = None,
     policy: NearCovalentContactPolicy | None = None,
+    basis: NearCovalentContactBasis | None = None,
+    prepared_pair_index: PreparedAtomSitePairIndex | None = None,
 ) -> tuple[NearCovalentContact, ...]:
     """Return near-covalent contacts from one prepared clash context."""
 
-    active_policy = NearCovalentContactPolicy() if policy is None else policy
+    context.require_compatible_structure(structure)
+    if policy is None:
+        active_policy = (
+            NearCovalentContactPolicy()
+            if basis is None
+            else basis.contact_policy
+        )
+    else:
+        active_policy = policy
+    if basis is None:
+        if prepared_pair_index is not None:
+            raise ValueError(
+                "prepared near-covalent pair indexes require a near-covalent basis"
+            )
+        candidate_context = _candidate_context_from_clash_context(
+            structure, context, policy=active_policy
+        )
+    else:
+        if active_policy != basis.contact_policy:
+            raise ValueError(
+                "near-covalent basis requires a matching contact policy"
+            )
+        basis.require_compatible_structure(structure)
+        candidate_context = basis.bind_context(context)
+
     return _detect_near_covalent_contacts_from_candidate_context(
-        _candidate_context_from_clash_context(
-            structure,
-            context,
-            policy=active_policy,
-        ),
+        candidate_context,
         focus_residue_ids=focus_residue_ids,
         policy=active_policy,
+        prepared_pair_index=prepared_pair_index,
     )
 
 
@@ -218,6 +441,7 @@ def _detect_near_covalent_contacts_from_candidate_context(
     *,
     focus_residue_ids: frozenset[ResidueId] | None,
     policy: NearCovalentContactPolicy,
+    prepared_pair_index: PreparedAtomSitePairIndex | None = None,
 ) -> tuple[NearCovalentContact, ...]:
     """Return near-covalent contacts from a covalent-radius candidate context."""
 
@@ -225,6 +449,7 @@ def _detect_near_covalent_contacts_from_candidate_context(
     for left_site, right_site in context.candidate_atom_site_pairs(
         focus_residue_ids=focus_residue_ids,
         include_same_residue_heavy_pairs=not policy.ignore_same_residue,
+        prepared_pair_index=prepared_pair_index,
     ):
         contact = _near_covalent_contact_for_atom_site_pair(
             left_site,
@@ -250,12 +475,16 @@ def _prepare_near_covalent_candidate_context(
     structure: ProteinStructure,
     *,
     component_library: ComponentLibrary,
-    pair_policy: ClashPolicy | None,
+    pair_policy: ContactPairPolicy | None,
     policy: NearCovalentContactPolicy,
 ) -> _NearCovalentCandidateContext:
     """Prepare covalent-radius atom-pair candidates without vdW lookup."""
 
-    active_pair_policy = ClashPolicy() if pair_policy is None else pair_policy
+    active_pair_policy = (
+        ContactPairPolicy()
+        if pair_policy is None
+        else pair_policy.as_contact_pair_policy()
+    )
     residue_contexts = build_residue_contexts(
         structure,
         component_library=component_library,
@@ -287,7 +516,10 @@ def _prepare_near_covalent_candidate_context(
             element: covalent_radius_lookup.radius_angstrom(element)
             for element in elements
         },
-        expected_topology_endpoint_pairs=_expected_topology_endpoint_pairs(structure),
+        expected_topology_endpoint_pairs=_expected_topology_endpoint_pairs(
+            constitution=structure.constitution,
+            topology=structure.topology,
+        ),
     )
 
 
@@ -298,14 +530,6 @@ def _candidate_context_from_clash_context(
     policy: NearCovalentContactPolicy,
 ) -> _NearCovalentCandidateContext:
     """Project a clash context into a covalent-radius candidate context."""
-
-    if (
-        context.constitution_address_space_key
-        != structure.constitution.address_space_key
-    ):
-        raise ValueError(
-            "near-covalent contact context requires a matching structure address space"
-        )
 
     elements = tuple(dict.fromkeys(site.element for site in context.atom_sites))
     covalent_radius_lookup = prepare_radius_lookup(elements, RadiusKind.COVALENT)
@@ -324,12 +548,15 @@ def _candidate_context_from_clash_context(
             context,
             cell_size_angstrom=actual_cell_size_angstrom,
         ),
-        pair_policy=context.policy,
+        pair_policy=context.policy.as_contact_pair_policy(),
         covalent_radius_by_element={
             element: covalent_radius_lookup.radius_angstrom(element)
             for element in elements
         },
-        expected_topology_endpoint_pairs=_expected_topology_endpoint_pairs(structure),
+        expected_topology_endpoint_pairs=_expected_topology_endpoint_pairs(
+            constitution=structure.constitution,
+            topology=structure.topology,
+        ),
     )
 
 
@@ -414,16 +641,18 @@ def _near_covalent_contact_for_atom_site_pair(
 
 
 def _expected_topology_endpoint_pairs(
-    structure: ProteinStructure,
+    *,
+    constitution: StructureConstitution,
+    topology: StructureTopology,
 ) -> frozenset[tuple[AtomRef, AtomRef]]:
     """Project topology relationships that explain legitimate close contacts."""
 
     return frozenset(
         _canonical_atom_ref_pair(
-            structure.constitution.atom_ref_at(bond.atom_index_1),
-            structure.constitution.atom_ref_at(bond.atom_index_2),
+            constitution.atom_ref_at(bond.atom_index_1),
+            constitution.atom_ref_at(bond.atom_index_2),
         )
-        for bond in structure.topology.bonds
+        for bond in topology.bonds
         if bond.relationship_type in _EXPECTED_CLOSE_CONTACT_RELATIONSHIP_TYPES
     )
 
@@ -449,18 +678,27 @@ def _near_covalent_candidate_cell_size_angstrom(
 ) -> float:
     """Return a grid cell width that cannot miss near-covalent candidates."""
 
-    if not elements:
-        return MINIMUM_NEAR_COVALENT_GRID_CELL_SIZE_ANGSTROM
+    return _near_covalent_candidate_cell_size_from_radii(
+        (
+            covalent_radius_lookup.radius_angstrom(element)
+            for element in elements
+        ),
+        policy=policy,
+    )
 
+
+def _near_covalent_candidate_cell_size_from_radii(
+    radii_angstrom: Iterable[float],
+    *,
+    policy: NearCovalentContactPolicy,
+) -> float:
+    """Return the complete near-covalent search width for known radii."""
+
+    maximum_radius_angstrom = max(radii_angstrom, default=0.0)
     return max(
         MINIMUM_NEAR_COVALENT_GRID_CELL_SIZE_ANGSTROM,
-        *(
-            covalent_radius_lookup.radius_angstrom(left_element)
-            + covalent_radius_lookup.radius_angstrom(right_element)
-            + policy.covalent_distance_margin_angstrom
-            for left_element in elements
-            for right_element in elements
-        ),
+        (2.0 * maximum_radius_angstrom)
+        + policy.covalent_distance_margin_angstrom,
     )
 
 

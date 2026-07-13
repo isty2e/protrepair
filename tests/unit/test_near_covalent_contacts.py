@@ -16,10 +16,15 @@ from protrepair.chemistry import (
     build_default_component_library,
 )
 from protrepair.chemistry.standard.components import build_standard_component_library
-from protrepair.diagnostics.clash_pair_generation import ContactDomain
+from protrepair.diagnostics.clash_pair_generation import (
+    ContactDomain,
+    PreparedAtomSitePairIndex,
+)
 from protrepair.diagnostics.clashes import (
     ClashPolicy,
     detect_clashes,
+    detect_clashes_from_context,
+    prepare_clash_detection_basis,
     prepare_clash_detection_context,
 )
 from protrepair.diagnostics.near_covalent import (
@@ -27,10 +32,12 @@ from protrepair.diagnostics.near_covalent import (
     NearCovalentContactPolicy,
     detect_near_covalent_contacts,
     detect_near_covalent_contacts_from_context,
+    prepare_near_covalent_contact_basis,
 )
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat, read_structure
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import (
     BondRelationshipType,
@@ -380,8 +387,8 @@ def test_6nbb_zinc_coordination_is_not_near_covalent_pathology() -> None:
     )
 
 
-def test_context_projection_rejects_mismatched_structure_address_space() -> None:
-    """Prepared geometry and canonical topology must share one address space."""
+def test_context_projection_rejects_mismatched_structure_constitution() -> None:
+    """Prepared geometry and canonical topology must share one constitution."""
 
     source_structure = _polymer_ligand_contact_structure()
     mismatched_structure = build_structure(
@@ -406,14 +413,338 @@ def test_context_projection_rejects_mismatched_structure_address_space() -> None
         policy=ClashPolicy(include_ligands=True),
     )
 
-    with pytest.raises(ValueError, match="matching structure address space"):
+    with pytest.raises(ValueError, match="immutable constitution"):
         detect_near_covalent_contacts_from_context(
             mismatched_structure,
             context,
         )
 
 
-def _polymer_ligand_contact_structure() -> ProteinStructure:
+def test_context_projection_rejects_same_address_replacement_constitution() -> None:
+    """Address equality must not admit chemistry facts from another snapshot."""
+
+    source_structure = _polymer_ligand_contact_structure()
+    replacement_structure = _polymer_ligand_contact_structure(ligand_element="N")
+    assert source_structure.constitution is not replacement_structure.constitution
+    assert (
+        source_structure.constitution.address_space_key
+        == replacement_structure.constitution.address_space_key
+    )
+    context = prepare_clash_detection_context(
+        source_structure,
+        component_library=build_default_component_library(),
+        policy=ClashPolicy(include_ligands=True),
+    )
+
+    with pytest.raises(ValueError, match="immutable constitution"):
+        detect_near_covalent_contacts_from_context(
+            replacement_structure,
+            context,
+        )
+
+
+def test_context_projection_rejects_replaced_geometry() -> None:
+    """Coordinate-bound contexts must not be paired with a newer geometry."""
+
+    source_structure = _polymer_ligand_contact_structure()
+    ligand_id = ResidueId("A", 401)
+    moved_ligand_geometry = source_structure.residue_geometry(
+        source_structure.constitution.residue_index(ligand_id)
+    ).with_atom_geometry(
+        "C5N",
+        AtomGeometry(position=Vec3(10.0, 0.0, 0.0)),
+    )
+    moved_structure = source_structure.with_updated_residue_geometries(
+        ((ligand_id, moved_ligand_geometry),)
+    )
+    context = prepare_clash_detection_context(
+        source_structure,
+        component_library=build_default_component_library(),
+        policy=ClashPolicy(include_ligands=True),
+    )
+
+    with pytest.raises(ValueError, match="created by a preparation factory"):
+        replace(context, geometry=moved_structure.geometry)
+    with pytest.raises(ValueError, match="original immutable geometry"):
+        detect_near_covalent_contacts_from_context(
+            moved_structure,
+            context,
+        )
+
+
+def test_prepared_pair_index_requires_near_covalent_basis() -> None:
+    """Shared spatial frames require the basis that owns their cell contract."""
+
+    structure = _polymer_ligand_contact_structure()
+    context = prepare_clash_detection_context(
+        structure,
+        component_library=build_default_component_library(),
+        policy=ClashPolicy(include_ligands=True),
+    )
+    prepared_pair_index = PreparedAtomSitePairIndex(
+        atom_sites=context.atom_sites,
+        focus_residue_ids=None,
+    )
+
+    with pytest.raises(ValueError, match="require a near-covalent basis"):
+        detect_near_covalent_contacts_from_context(
+            structure,
+            context,
+            prepared_pair_index=prepared_pair_index,
+        )
+
+
+def test_prepared_near_covalent_basis_cannot_be_reassembled_with_replace() -> None:
+    """Cached contact facets must only be assembled by their preparation factory."""
+
+    structure = _polymer_ligand_contact_structure()
+    clash_basis = prepare_clash_detection_basis(
+        structure,
+        component_library=build_default_component_library(),
+        policy=ClashPolicy(include_ligands=True),
+    )
+    near_covalent_basis = prepare_near_covalent_contact_basis(
+        structure,
+        pair_policy=clash_basis.policy,
+    )
+
+    with pytest.raises(ValueError, match="created by a preparation factory"):
+        replace(near_covalent_basis, candidate_cell_size_angstrom=0.5)
+
+
+def test_prepared_pair_index_preserves_independent_contact_metrics() -> None:
+    """Shared spatial preparation must not merge metric-specific semantics."""
+
+    structure = _polymer_ligand_contact_structure()
+    component_library = build_default_component_library()
+    clash_basis = prepare_clash_detection_basis(
+        structure,
+        component_library=component_library,
+        policy=ClashPolicy(include_ligands=True),
+    )
+    near_covalent_basis = prepare_near_covalent_contact_basis(
+        structure,
+        pair_policy=clash_basis.policy,
+    )
+    shared_cell_size_angstrom = max(
+        clash_basis.candidate_cell_size_angstrom,
+        near_covalent_basis.candidate_cell_size_angstrom,
+    )
+    context = clash_basis.bind_context(
+        structure,
+        candidate_cell_size_angstrom=shared_cell_size_angstrom,
+    )
+    focus_residue_ids = frozenset({ResidueId("A", 1)})
+    prepared_pair_index = PreparedAtomSitePairIndex(
+        atom_sites=context.atom_sites,
+        focus_residue_ids=focus_residue_ids,
+    )
+
+    expected_clashes = detect_clashes_from_context(
+        context,
+        focus_residue_ids=focus_residue_ids,
+    )
+    expected_near_covalent_contacts = detect_near_covalent_contacts_from_context(
+        structure,
+        context,
+        focus_residue_ids=focus_residue_ids,
+        basis=near_covalent_basis,
+    )
+
+    assert (
+        detect_clashes_from_context(
+            context,
+            focus_residue_ids=focus_residue_ids,
+            prepared_pair_index=prepared_pair_index,
+        )
+        == expected_clashes
+    )
+    assert (
+        detect_near_covalent_contacts_from_context(
+            structure,
+            context,
+            focus_residue_ids=focus_residue_ids,
+            basis=near_covalent_basis,
+            prepared_pair_index=prepared_pair_index,
+        )
+        == expected_near_covalent_contacts
+    )
+
+
+def test_near_covalent_basis_ignores_clash_metric_thresholds() -> None:
+    """Shared pair scope must not couple near-covalent facts to clash cutoffs."""
+
+    structure = _polymer_ligand_contact_structure()
+    component_library = build_default_component_library()
+    source_clash_basis = prepare_clash_detection_basis(
+        structure,
+        component_library=component_library,
+        policy=ClashPolicy(
+            include_ligands=True,
+            heavy_overlap_tolerance_angstrom=10.0,
+        ),
+    )
+    near_covalent_basis = prepare_near_covalent_contact_basis(
+        structure,
+        pair_policy=source_clash_basis.policy,
+    )
+    independent_clash_basis = prepare_clash_detection_basis(
+        structure,
+        component_library=component_library,
+        policy=ClashPolicy(
+            include_ligands=True,
+            heavy_overlap_tolerance_angstrom=0.0,
+        ),
+    )
+    context = independent_clash_basis.bind_context(
+        structure,
+        candidate_cell_size_angstrom=max(
+            independent_clash_basis.candidate_cell_size_angstrom,
+            near_covalent_basis.candidate_cell_size_angstrom,
+        ),
+    )
+
+    assert near_covalent_basis.bind_context(context).pair_policy == (
+        independent_clash_basis.policy.as_contact_pair_policy()
+    )
+
+
+def test_prepared_pair_index_rejects_another_focus_or_coordinate_frame() -> None:
+    """Spatial indexes must remain bound to one atom-site frame and focus."""
+
+    structure = _polymer_ligand_contact_structure()
+    component_library = build_default_component_library()
+    clash_basis = prepare_clash_detection_basis(
+        structure,
+        component_library=component_library,
+        policy=ClashPolicy(include_ligands=True),
+    )
+    first_context = clash_basis.bind_context(structure)
+    second_context = clash_basis.bind_context(structure)
+    focus_residue_ids = frozenset({ResidueId("A", 1)})
+    prepared_pair_index = PreparedAtomSitePairIndex(
+        atom_sites=first_context.atom_sites,
+        focus_residue_ids=focus_residue_ids,
+    )
+
+    with pytest.raises(ValueError, match="matching focus"):
+        detect_clashes_from_context(
+            first_context,
+            focus_residue_ids=frozenset({ResidueId("A", 401)}),
+            prepared_pair_index=prepared_pair_index,
+        )
+    with pytest.raises(ValueError, match="original atom-site frame"):
+        detect_clashes_from_context(
+            second_context,
+            focus_residue_ids=focus_residue_ids,
+            prepared_pair_index=prepared_pair_index,
+        )
+
+
+def test_near_covalent_basis_rejects_replaced_topology() -> None:
+    """Cached topology exclusions must not cross a topology replacement."""
+
+    structure = _polymer_ligand_contact_structure()
+    component_library = build_default_component_library()
+    clash_basis = prepare_clash_detection_basis(
+        structure,
+        component_library=component_library,
+        policy=ClashPolicy(include_ligands=True),
+    )
+    near_covalent_basis = prepare_near_covalent_contact_basis(
+        structure,
+        pair_policy=clash_basis.policy,
+    )
+    topology_updated_structure = _with_topology_relationship(
+        structure,
+        BondRelationshipType.COVALENT,
+    )
+    replacement_clash_basis = prepare_clash_detection_basis(
+        topology_updated_structure,
+        component_library=component_library,
+        policy=ClashPolicy(include_ligands=True),
+    )
+    context = replacement_clash_basis.bind_context(
+        topology_updated_structure,
+        candidate_cell_size_angstrom=max(
+            replacement_clash_basis.candidate_cell_size_angstrom,
+            near_covalent_basis.candidate_cell_size_angstrom,
+        ),
+    )
+
+    assert not clash_basis.is_compatible_with(topology_updated_structure)
+    with pytest.raises(ValueError, match="immutable constitution and topology"):
+        clash_basis.bind_context(topology_updated_structure)
+    with pytest.raises(ValueError, match="original immutable topology"):
+        detect_near_covalent_contacts_from_context(
+            topology_updated_structure,
+            context,
+            basis=near_covalent_basis,
+        )
+    with pytest.raises(ValueError, match="clash context.*immutable topology"):
+        near_covalent_basis.bind_context(context)
+
+    updated_near_covalent_basis = prepare_near_covalent_contact_basis(
+        topology_updated_structure,
+        pair_policy=replacement_clash_basis.policy,
+    )
+    assert (
+        detect_near_covalent_contacts_from_context(
+            topology_updated_structure,
+            context,
+            basis=updated_near_covalent_basis,
+        )
+        == ()
+    )
+
+
+def test_near_covalent_basis_rejects_context_from_replaced_constitution() -> None:
+    """Cached chemistry facts must not mix with a same-address context."""
+
+    source_structure = _polymer_ligand_contact_structure()
+    replacement_structure = _polymer_ligand_contact_structure(ligand_element="N")
+    assert source_structure.constitution is not replacement_structure.constitution
+    assert (
+        source_structure.constitution.address_space_key
+        == replacement_structure.constitution.address_space_key
+    )
+    component_library = build_default_component_library()
+    source_clash_basis = prepare_clash_detection_basis(
+        source_structure,
+        component_library=component_library,
+        policy=ClashPolicy(include_ligands=True),
+    )
+    near_covalent_basis = prepare_near_covalent_contact_basis(
+        source_structure,
+        pair_policy=source_clash_basis.policy,
+    )
+    replacement_clash_basis = prepare_clash_detection_basis(
+        replacement_structure,
+        component_library=component_library,
+        policy=ClashPolicy(include_ligands=True),
+    )
+    replacement_context = replacement_clash_basis.bind_context(
+        replacement_structure,
+        candidate_cell_size_angstrom=max(
+            replacement_clash_basis.candidate_cell_size_angstrom,
+            near_covalent_basis.candidate_cell_size_angstrom,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="original immutable constitution"):
+        near_covalent_basis.bind_context(replacement_context)
+    with pytest.raises(ValueError, match="created by a preparation factory"):
+        replace(
+            near_covalent_basis,
+            constitution=replacement_structure.constitution,
+            topology=replacement_structure.topology,
+        )
+
+
+def _polymer_ligand_contact_structure(
+    *,
+    ligand_element: str = "C",
+) -> ProteinStructure:
     """Return one unexplained polymer-ligand near-covalent contact."""
 
     return build_structure(
@@ -433,7 +764,9 @@ def _polymer_ligand_contact_structure() -> ProteinStructure:
             residue_payload(
                 component_id="NAD",
                 residue_id=ResidueId("A", 401),
-                atoms=(atom_payload("C5N", "C", Vec3(1.5, 0.0, 0.0)),),
+                atoms=(
+                    atom_payload("C5N", ligand_element, Vec3(1.5, 0.0, 0.0)),
+                ),
                 is_hetero=True,
             ),
         ),

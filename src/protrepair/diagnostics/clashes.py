@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from math import floor, isfinite, sqrt
 from types import MappingProxyType
 from typing import cast
@@ -18,24 +18,30 @@ from protrepair.chemistry import (
 from protrepair.diagnostics import clash_topology_rules
 from protrepair.diagnostics.clash_pair_generation import (
     ClashPairAtomSite,
-    ClashPairPolicy,
     ContactDomain,
+    ContactPairPolicy,
+    PreparedAtomSitePairIndex,
+    SpatialPairPolicy,
     iter_candidate_atom_site_pairs,
     pair_can_be_rejected_before_distance,
 )
 from protrepair.diagnostics.events import EventScope, ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
-from protrepair.structure.address_space import StructureAddressSpaceKey
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.constitution import ResidueSite, StructureConstitution
 from protrepair.structure.disulfide import (
-    disulfide_atom_ref_pairs as topology_disulfide_atom_ref_pairs,
+    disulfide_atom_ref_pairs_from_topology,
 )
 from protrepair.structure.element import ElementIdentity
-from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
+from protrepair.structure.geometry import (
+    AtomGeometry,
+    ResidueGeometry,
+    StructureGeometry,
+)
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.peptide import are_peptide_adjacent
 from protrepair.structure.slots import ResidueIndex
+from protrepair.structure.topology import StructureTopology
 
 HYDROGEN_ANCHOR_DISTANCE_CUTOFF_ANGSTROM = 1.45
 MINIMUM_CLASH_GRID_CELL_SIZE_ANGSTROM = 1.0
@@ -48,19 +54,66 @@ NEIGHBOR_CELL_OFFSETS: tuple[tuple[int, int, int], ...] = tuple(
 )
 
 
-@dataclass(frozen=True, slots=True)
-class ClashPolicy:
+class _PreparedClashArtifactToken:
+    """Authorize construction of internally consistent prepared clash artifacts."""
+
+    __slots__ = ()
+
+
+_PREPARED_CLASH_ARTIFACT_TOKEN = _PreparedClashArtifactToken()
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ClashPolicy(ContactPairPolicy):
     """Policy controlling steric clash detection sensitivity and scope."""
 
     heavy_overlap_tolerance_angstrom: float = 0.60
     hydrogen_overlap_tolerance_angstrom: float = 0.90
-    include_hydrogens: bool = True
-    include_hydrogen_hydrogen: bool = False
-    include_ligands: bool = False
-    ignore_same_residue_bond_hops: int = 2
-    ignore_adjacent_polymer_bond_hops: int = 3
+
+    def __init__(
+        self,
+        heavy_overlap_tolerance_angstrom: float = 0.60,
+        hydrogen_overlap_tolerance_angstrom: float = 0.90,
+        include_hydrogens: bool = True,
+        include_hydrogen_hydrogen: bool = False,
+        include_ligands: bool = False,
+        ignore_same_residue_bond_hops: int = 2,
+        ignore_adjacent_polymer_bond_hops: int = 3,
+    ) -> None:
+        """Initialize clash thresholds followed by the historical pair scope."""
+
+        object.__setattr__(
+            self,
+            "heavy_overlap_tolerance_angstrom",
+            heavy_overlap_tolerance_angstrom,
+        )
+        object.__setattr__(
+            self,
+            "hydrogen_overlap_tolerance_angstrom",
+            hydrogen_overlap_tolerance_angstrom,
+        )
+        object.__setattr__(self, "include_hydrogens", include_hydrogens)
+        object.__setattr__(
+            self,
+            "include_hydrogen_hydrogen",
+            include_hydrogen_hydrogen,
+        )
+        object.__setattr__(self, "include_ligands", include_ligands)
+        object.__setattr__(
+            self,
+            "ignore_same_residue_bond_hops",
+            ignore_same_residue_bond_hops,
+        )
+        object.__setattr__(
+            self,
+            "ignore_adjacent_polymer_bond_hops",
+            ignore_adjacent_polymer_bond_hops,
+        )
+        self.__post_init__()
 
     def __post_init__(self) -> None:
+        ContactPairPolicy.__post_init__(self)
+
         if not isfinite(self.heavy_overlap_tolerance_angstrom):
             raise ValueError("heavy overlap tolerance must be finite")
         if self.heavy_overlap_tolerance_angstrom < 0:
@@ -70,12 +123,6 @@ class ClashPolicy:
             raise ValueError("hydrogen overlap tolerance must be finite")
         if self.hydrogen_overlap_tolerance_angstrom < 0:
             raise ValueError("hydrogen overlap tolerance must be non-negative")
-
-        if self.ignore_same_residue_bond_hops < 0:
-            raise ValueError("ignore_same_residue_bond_hops must be non-negative")
-
-        if self.ignore_adjacent_polymer_bond_hops < 0:
-            raise ValueError("ignore_adjacent_polymer_bond_hops must be non-negative")
 
     def _required_overlap_for_hydrogen_pair(
         self,
@@ -272,6 +319,41 @@ class ClashDetectionFrame:
 
 
 @dataclass(frozen=True, slots=True)
+class _ClashTopologyFacts:
+    """Immutable topology identity and its derived clash exclusions."""
+
+    constitution: StructureConstitution = field(repr=False, compare=False)
+    topology: StructureTopology = field(repr=False, compare=False)
+    disulfide_atom_ref_pairs: frozenset[tuple[AtomRef, AtomRef]] = field(
+        init=False,
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "disulfide_atom_ref_pairs",
+            disulfide_atom_ref_pairs_from_topology(
+                constitution=self.constitution,
+                topology=self.topology,
+            ),
+        )
+
+    def is_compatible_with(self, structure: ProteinStructure) -> bool:
+        """Return whether a structure carries semantically equal topology facts."""
+
+        return (
+            (
+                structure.constitution is self.constitution
+                or structure.constitution == self.constitution
+            )
+            and (
+                structure.topology is self.topology
+                or structure.topology == self.topology
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ClashDetectionContext:
     """Prepared computational context for repeated clash diagnostics.
 
@@ -284,46 +366,99 @@ class ClashDetectionContext:
 
     atom_sites: tuple[AtomSite, ...]
     policy: ClashPolicy
-    constitution_address_space_key: StructureAddressSpaceKey
+    geometry: StructureGeometry = field(repr=False, compare=False)
+    _topology_facts: _ClashTopologyFacts = field(repr=False, compare=False)
     van_der_waals_radius_by_element: Mapping[str, float]
     candidate_cell_size_angstrom: float
-    disulfide_atom_ref_pairs: frozenset[tuple[AtomRef, AtomRef]]
+    _construction_token: InitVar[_PreparedClashArtifactToken | None] = None
     allowed_distance_by_element_pair: Mapping[tuple[str, str], float] = field(
         init=False,
         repr=False,
         compare=False,
     )
 
-    def __post_init__(self) -> None:
-        if self.candidate_cell_size_angstrom <= 0.0:
-            raise ValueError("candidate_cell_size_angstrom must be positive")
-
-        object.__setattr__(self, "atom_sites", tuple(self.atom_sites))
-        object.__setattr__(
-            self,
-            "constitution_address_space_key",
-            tuple(self.constitution_address_space_key),
-        )
-        disulfide_pairs = frozenset(self.disulfide_atom_ref_pairs)
-        if any(left_ref >= right_ref for left_ref, right_ref in disulfide_pairs):
+    def __post_init__(
+        self,
+        _construction_token: _PreparedClashArtifactToken | None,
+    ) -> None:
+        if _construction_token is not _PREPARED_CLASH_ARTIFACT_TOKEN:
             raise ValueError(
-                "disulfide atom-ref pairs must be distinct and canonically ordered"
+                "clash detection contexts must be created by a preparation factory"
             )
-        object.__setattr__(self, "disulfide_atom_ref_pairs", disulfide_pairs)
+
         radius_by_element = dict(self.van_der_waals_radius_by_element)
+        if any(
+            not isfinite(radius) or radius <= 0.0
+            for radius in radius_by_element.values()
+        ):
+            raise ValueError("van der Waals radii must be finite and positive")
+        if (
+            not isfinite(self.candidate_cell_size_angstrom)
+            or self.candidate_cell_size_angstrom <= 0.0
+        ):
+            raise ValueError(
+                "candidate_cell_size_angstrom must be finite and positive"
+            )
+        allowed_distance_by_element_pair = _allowed_distance_by_element_pair(
+            radius_by_element,
+            policy=self.policy,
+        )
+        required_cell_size_angstrom = max(
+            MINIMUM_CLASH_GRID_CELL_SIZE_ANGSTROM,
+            max(allowed_distance_by_element_pair.values(), default=0.0),
+        )
+        if self.candidate_cell_size_angstrom < required_cell_size_angstrom:
+            raise ValueError(
+                "candidate_cell_size_angstrom must cover the clash cutoff"
+            )
+
+        if not self.geometry.is_aligned_to(self.constitution):
+            raise ValueError(
+                "clash detection context geometry must align with its constitution"
+            )
+        object.__setattr__(self, "atom_sites", tuple(self.atom_sites))
         object.__setattr__(
             self, "van_der_waals_radius_by_element", MappingProxyType(radius_by_element)
         )
         object.__setattr__(
             self,
             "allowed_distance_by_element_pair",
-            MappingProxyType(
-                _allowed_distance_by_element_pair(
-                    radius_by_element,
-                    policy=self.policy,
-                )
-            ),
+            MappingProxyType(allowed_distance_by_element_pair),
         )
+
+    @property
+    def constitution(self) -> StructureConstitution:
+        """Return the immutable constitution owned by this context."""
+
+        return self._topology_facts.constitution
+
+    @property
+    def topology(self) -> StructureTopology:
+        """Return the immutable topology owned by this context."""
+
+        return self._topology_facts.topology
+
+    @property
+    def disulfide_atom_ref_pairs(self) -> frozenset[tuple[AtomRef, AtomRef]]:
+        """Return topology-derived disulfide clash exclusions."""
+
+        return self._topology_facts.disulfide_atom_ref_pairs
+
+    def require_compatible_structure(self, structure: ProteinStructure) -> None:
+        """Reject structures with incompatible immutable or geometry facts."""
+
+        if not self._topology_facts.is_compatible_with(structure):
+            raise ValueError(
+                "clash detection context requires compatible immutable constitution "
+                "and topology"
+            )
+        if (
+            structure.geometry is not self.geometry
+            and structure.geometry != self.geometry
+        ):
+            raise ValueError(
+                "clash detection context requires its original immutable geometry"
+            )
 
     def van_der_waals_radius(self, element: str) -> float:
         """Return the cached van der Waals radius for one atom element."""
@@ -334,8 +469,20 @@ class ClashDetectionContext:
         self,
         *,
         focus_residue_ids: frozenset[ResidueId] | None = None,
+        prepared_pair_index: PreparedAtomSitePairIndex | None = None,
     ) -> Iterator[tuple[AtomSite, AtomSite]]:
         """Yield policy-filtered candidate atom pairs before distance checks."""
+
+        if prepared_pair_index is not None:
+            prepared_pair_index.require_compatible(
+                cast(tuple[ClashPairAtomSite, ...], self.atom_sites),
+                focus_residue_ids=focus_residue_ids,
+            )
+            for left_site, right_site in prepared_pair_index.candidate_pairs(
+                policy=cast(SpatialPairPolicy, self.policy),
+            ):
+                yield cast(AtomSite, left_site), cast(AtomSite, right_site)
+            return
 
         yield from _iter_candidate_atom_site_pairs(
             self.atom_sites,
@@ -361,12 +508,14 @@ class ClashDetectionContext:
         self,
         *,
         focus_residue_ids: frozenset[ResidueId] | None = None,
+        prepared_pair_index: PreparedAtomSitePairIndex | None = None,
     ) -> "ClashReport":
         """Return clashes from this prepared context."""
 
         clashes: list[StericClash] = []
         for left_site, right_site in self.candidate_atom_site_pairs(
             focus_residue_ids=focus_residue_ids,
+            prepared_pair_index=prepared_pair_index,
         ):
             clash = _clash_for_atom_site_pair(left_site, right_site, context=self)
             if clash is not None:
@@ -400,23 +549,57 @@ class ClashDetectionContext:
 
 @dataclass(frozen=True, slots=True)
 class ClashDetectionBasis:
-    """Coordinate-independent clash detection basis for one address space.
+    """Coordinate-independent clash facts for one constitution and topology.
 
-    The basis owns constitution/component/policy facts only. Coordinate-derived
-    facts, including inferred hydrogen anchors, are bound later for each
-    candidate geometry to preserve the existing clash semantics.
+    The basis owns constitution, topology exclusions, component, and policy
+    facts. Coordinate-derived facts, including inferred hydrogen anchors, are
+    bound later for each candidate geometry.
     """
 
     residue_context_bases: tuple[_ResidueContextBasis, ...]
     atom_site_bases: tuple[_AtomSiteBasis, ...]
     policy: ClashPolicy
-    constitution_address_space_key: StructureAddressSpaceKey
+    constitution: StructureConstitution = field(repr=False, compare=False)
+    topology: StructureTopology = field(repr=False, compare=False)
     van_der_waals_radius_by_element: Mapping[str, float]
     candidate_cell_size_angstrom: float
+    _construction_token: InitVar[_PreparedClashArtifactToken | None] = None
+    _topology_facts: _ClashTopologyFacts = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
-    def __post_init__(self) -> None:
-        if self.candidate_cell_size_angstrom <= 0.0:
-            raise ValueError("candidate_cell_size_angstrom must be positive")
+    def __post_init__(
+        self,
+        _construction_token: _PreparedClashArtifactToken | None,
+    ) -> None:
+        if _construction_token is not _PREPARED_CLASH_ARTIFACT_TOKEN:
+            raise ValueError(
+                "clash detection bases must be created by a preparation factory"
+            )
+
+        radius_by_element = dict(self.van_der_waals_radius_by_element)
+        if any(
+            not isfinite(radius) or radius <= 0.0
+            for radius in radius_by_element.values()
+        ):
+            raise ValueError("van der Waals radii must be finite and positive")
+        if (
+            not isfinite(self.candidate_cell_size_angstrom)
+            or self.candidate_cell_size_angstrom <= 0.0
+        ):
+            raise ValueError(
+                "candidate_cell_size_angstrom must be finite and positive"
+            )
+        required_cell_size_angstrom = _clash_candidate_cell_size_angstrom(
+            radius_by_element,
+            policy=self.policy,
+        )
+        if self.candidate_cell_size_angstrom < required_cell_size_angstrom:
+            raise ValueError(
+                "candidate_cell_size_angstrom must cover the clash cutoff"
+            )
 
         object.__setattr__(
             self,
@@ -426,29 +609,55 @@ class ClashDetectionBasis:
         object.__setattr__(self, "atom_site_bases", tuple(self.atom_site_bases))
         object.__setattr__(
             self,
-            "constitution_address_space_key",
-            tuple(self.constitution_address_space_key),
+            "_topology_facts",
+            _ClashTopologyFacts(
+                constitution=self.constitution,
+                topology=self.topology,
+            ),
         )
         object.__setattr__(
             self,
             "van_der_waals_radius_by_element",
-            MappingProxyType(dict(self.van_der_waals_radius_by_element)),
+            MappingProxyType(radius_by_element),
         )
+
+    @property
+    def disulfide_atom_ref_pairs(self) -> frozenset[tuple[AtomRef, AtomRef]]:
+        """Return topology-derived disulfide clash exclusions."""
+
+        return self._topology_facts.disulfide_atom_ref_pairs
 
     def is_compatible_with(self, structure: ProteinStructure) -> bool:
-        """Return whether this basis can be bound to the structure geometry."""
+        """Return whether this basis owns the structure's immutable facts."""
 
-        return (
-            structure.constitution.address_space_key
-            == self.constitution_address_space_key
-        )
+        return self._topology_facts.is_compatible_with(structure)
 
-    def bind_frame(self, structure: ProteinStructure) -> ClashDetectionFrame:
+    def bind_frame(
+        self,
+        structure: ProteinStructure,
+        *,
+        candidate_cell_size_angstrom: float | None = None,
+    ) -> ClashDetectionFrame:
         """Bind this reusable basis to coordinate-derived atom sites."""
 
         if not self.is_compatible_with(structure):
             raise ValueError(
-                "clash detection basis requires a matching structure address space"
+                "clash detection basis requires its compatible immutable constitution "
+                "and topology"
+            )
+
+        active_candidate_cell_size_angstrom = (
+            self.candidate_cell_size_angstrom
+            if candidate_cell_size_angstrom is None
+            else candidate_cell_size_angstrom
+        )
+        if (
+            not isfinite(active_candidate_cell_size_angstrom)
+            or active_candidate_cell_size_angstrom < self.candidate_cell_size_angstrom
+        ):
+            raise ValueError(
+                "bound clash frames require a finite candidate cell size at least "
+                "as large as the clash basis requirement"
             )
 
         residue_contexts = bind_residue_contexts(
@@ -466,23 +675,37 @@ class ClashDetectionBasis:
                         ].residue_geometry.atom_geometry(atom_site_basis.atom_name)
                     ),
                     context=residue_contexts[atom_site_basis.residue_context_index],
-                    grid_cell_size_angstrom=self.candidate_cell_size_angstrom,
+                    grid_cell_size_angstrom=active_candidate_cell_size_angstrom,
                 )
                 for atom_site_basis in self.atom_site_bases
             )
         )
 
-    def bind_context(self, structure: ProteinStructure) -> ClashDetectionContext:
+    def bind_context(
+        self,
+        structure: ProteinStructure,
+        *,
+        candidate_cell_size_angstrom: float | None = None,
+    ) -> ClashDetectionContext:
         """Bind this reusable basis to one coordinate-bound detection context."""
 
-        frame = self.bind_frame(structure)
+        active_candidate_cell_size_angstrom = (
+            self.candidate_cell_size_angstrom
+            if candidate_cell_size_angstrom is None
+            else candidate_cell_size_angstrom
+        )
+        frame = self.bind_frame(
+            structure,
+            candidate_cell_size_angstrom=active_candidate_cell_size_angstrom,
+        )
         return ClashDetectionContext(
             atom_sites=frame.atom_sites,
             policy=self.policy,
-            constitution_address_space_key=self.constitution_address_space_key,
+            geometry=structure.geometry,
+            _topology_facts=self._topology_facts,
             van_der_waals_radius_by_element=self.van_der_waals_radius_by_element,
-            candidate_cell_size_angstrom=self.candidate_cell_size_angstrom,
-            disulfide_atom_ref_pairs=topology_disulfide_atom_ref_pairs(structure),
+            candidate_cell_size_angstrom=active_candidate_cell_size_angstrom,
+            _construction_token=_PREPARED_CLASH_ARTIFACT_TOKEN,
         )
 
 
@@ -647,7 +870,7 @@ def prepare_clash_detection_basis(
     component_library: ComponentLibrary,
     policy: ClashPolicy | None = None,
 ) -> ClashDetectionBasis:
-    """Prepare coordinate-independent clash facts for one structure address space."""
+    """Prepare coordinate-independent clash facts for one topology snapshot."""
 
     normalized_policy = ClashPolicy() if policy is None else policy
     residue_context_bases = build_residue_context_bases(
@@ -671,12 +894,14 @@ def prepare_clash_detection_basis(
         residue_context_bases=residue_context_bases,
         atom_site_bases=atom_site_bases,
         policy=normalized_policy,
-        constitution_address_space_key=structure.constitution.address_space_key,
+        constitution=structure.constitution,
+        topology=structure.topology,
         van_der_waals_radius_by_element=radius_by_element,
         candidate_cell_size_angstrom=_clash_candidate_cell_size_angstrom(
             radius_by_element,
             policy=normalized_policy,
         ),
+        _construction_token=_PREPARED_CLASH_ARTIFACT_TOKEN,
     )
 
 
@@ -684,20 +909,28 @@ def bind_clash_detection_context(
     structure: ProteinStructure,
     *,
     basis: ClashDetectionBasis,
+    candidate_cell_size_angstrom: float | None = None,
 ) -> ClashDetectionContext:
     """Bind one reusable clash basis to the current coordinate frame."""
 
-    return basis.bind_context(structure)
+    return basis.bind_context(
+        structure,
+        candidate_cell_size_angstrom=candidate_cell_size_angstrom,
+    )
 
 
 def bind_clash_detection_frame(
     structure: ProteinStructure,
     *,
     basis: ClashDetectionBasis,
+    candidate_cell_size_angstrom: float | None = None,
 ) -> ClashDetectionFrame:
     """Bind one reusable clash basis to coordinate-derived atom sites."""
 
-    return basis.bind_frame(structure)
+    return basis.bind_frame(
+        structure,
+        candidate_cell_size_angstrom=candidate_cell_size_angstrom,
+    )
 
 
 def prepare_projected_clash_detection_context(
@@ -739,10 +972,11 @@ def prepare_projected_clash_detection_context(
     return _clash_detection_context_from_atom_sites(
         atom_sites,
         policy=normalized_policy,
-        constitution_address_space_key=structure.constitution.address_space_key,
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=structure.topology,
         van_der_waals_radius_by_element=radius_by_element,
         candidate_cell_size_angstrom=candidate_cell_size_angstrom,
-        disulfide_atom_ref_pairs=topology_disulfide_atom_ref_pairs(structure),
     )
 
 
@@ -750,30 +984,39 @@ def detect_clashes_from_context(
     context: ClashDetectionContext,
     *,
     focus_residue_ids: frozenset[ResidueId] | None = None,
+    prepared_pair_index: PreparedAtomSitePairIndex | None = None,
 ) -> ClashReport:
     """Return clashes from one prepared context."""
 
-    return context.detect_clashes(focus_residue_ids=focus_residue_ids)
+    return context.detect_clashes(
+        focus_residue_ids=focus_residue_ids,
+        prepared_pair_index=prepared_pair_index,
+    )
 
 
 def _clash_detection_context_from_atom_sites(
     atom_sites: tuple[AtomSite, ...],
     *,
     policy: ClashPolicy,
-    constitution_address_space_key: StructureAddressSpaceKey,
+    constitution: StructureConstitution,
+    geometry: StructureGeometry,
+    topology: StructureTopology,
     van_der_waals_radius_by_element: Mapping[str, float],
     candidate_cell_size_angstrom: float,
-    disulfide_atom_ref_pairs: frozenset[tuple[AtomRef, AtomRef]],
 ) -> ClashDetectionContext:
     """Build one prepared clash context from precomputed atom sites."""
 
     return ClashDetectionContext(
         atom_sites=atom_sites,
         policy=policy,
-        constitution_address_space_key=constitution_address_space_key,
+        geometry=geometry,
+        _topology_facts=_ClashTopologyFacts(
+            constitution=constitution,
+            topology=topology,
+        ),
         van_der_waals_radius_by_element=van_der_waals_radius_by_element,
         candidate_cell_size_angstrom=candidate_cell_size_angstrom,
-        disulfide_atom_ref_pairs=disulfide_atom_ref_pairs,
+        _construction_token=_PREPARED_CLASH_ARTIFACT_TOKEN,
     )
 
 
@@ -948,14 +1191,14 @@ def _iter_candidate_atom_site_pairs(
     atom_sites: tuple[AtomSite, ...],
     *,
     focus_residue_ids: frozenset[ResidueId] | None,
-    policy: ClashPolicy | None,
+    policy: ContactPairPolicy | None,
 ) -> Iterator[tuple[AtomSite, AtomSite]]:
     """Yield locality-pruned candidate pairs, optionally restricted to one focus."""
 
     for left_site, right_site in iter_candidate_atom_site_pairs(
         cast(tuple[ClashPairAtomSite, ...], atom_sites),
         focus_residue_ids=focus_residue_ids,
-        policy=cast(ClashPairPolicy | None, policy),
+        policy=cast(SpatialPairPolicy | None, policy),
     ):
         yield cast(AtomSite, left_site), cast(AtomSite, right_site)
 
@@ -964,7 +1207,7 @@ def _iter_focused_candidate_atom_site_pairs(
     atom_sites: tuple[AtomSite, ...],
     *,
     focus_residue_ids: frozenset[ResidueId],
-    policy: ClashPolicy | None,
+    policy: ContactPairPolicy | None,
 ) -> Iterator[tuple[AtomSite, AtomSite]]:
     """Yield candidate pairs touching focus atoms without streaming all pairs."""
 
@@ -1022,14 +1265,14 @@ def _pair_can_be_rejected_before_distance(
     left_site: AtomSite,
     right_site: AtomSite,
     *,
-    policy: ClashPolicy | None,
+    policy: ContactPairPolicy | None,
 ) -> bool:
     """Return whether one pair can be rejected without distance/topology work."""
 
     return pair_can_be_rejected_before_distance(
         cast(ClashPairAtomSite, left_site),
         cast(ClashPairAtomSite, right_site),
-        policy=cast(ClashPairPolicy | None, policy),
+        policy=cast(SpatialPairPolicy | None, policy),
     )
 
 
@@ -1297,7 +1540,7 @@ def infer_hydrogen_anchors(
 def build_atom_sites(
     residue_contexts: tuple[ResidueContext, ...],
     *,
-    policy: ClashPolicy,
+    policy: ContactPairPolicy,
     candidate_cell_size_angstrom: float,
 ) -> tuple[AtomSite, ...]:
     """Return atom sites considered by the clash detector."""
@@ -1326,7 +1569,7 @@ def build_atom_sites(
 def _atom_site_elements_from_residue_contexts(
     residue_contexts: tuple[ResidueContext, ...],
     *,
-    policy: ClashPolicy,
+    policy: ContactPairPolicy,
 ) -> frozenset[str]:
     """Return atom elements considered by the clash detector."""
 
@@ -1342,7 +1585,7 @@ def should_consider_pair(
     left_site: AtomSite,
     right_site: AtomSite,
     *,
-    policy: ClashPolicy,
+    policy: ContactPairPolicy,
 ) -> bool:
     """Return whether one atom pair should enter clash evaluation."""
 
@@ -1364,7 +1607,7 @@ def should_ignore_pair(
     left_site: AtomSite,
     right_site: AtomSite,
     *,
-    policy: ClashPolicy,
+    policy: ContactPairPolicy,
 ) -> bool:
     """Return whether one atom pair should be ignored as bonded or near-bonded."""
 

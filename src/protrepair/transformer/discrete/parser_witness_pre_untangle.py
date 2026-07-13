@@ -1,11 +1,16 @@
 """Topology-preserving pre-untangle for parser-witness local refinement."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.diagnostics.clashes import (
     ClashDetectionBasis,
+    prepare_clash_detection_basis,
+)
+from protrepair.diagnostics.near_covalent import (
+    NearCovalentContactBasis,
+    prepare_near_covalent_contact_basis,
 )
 from protrepair.diagnostics.parser_readability import (
     RDKitKnownBondLookup,
@@ -32,6 +37,7 @@ from protrepair.transformer.discrete import (
     parser_witness_pre_untangle_materialization as parser_materialization,
 )
 from protrepair.transformer.discrete.parser_witness_pre_untangle_scoring import (
+    ParserWitnessContactAssessmentBasis,
     atom_ref_position_from_scoring_context,
     materialized_atom_ref_position,
     parser_extra_heavy_proximity_bond_count_for_structure,
@@ -80,6 +86,55 @@ _RotatedSidechainPayload = RotatedSidechainPayload
 _SidechainRootRotationPlan = SidechainRootRotationPlan
 
 
+@dataclass(slots=True)
+class _ParserWitnessContactBasisCache:
+    """Lazily share structure-wide contact facts across cluster searches."""
+
+    component_library: ComponentLibrary
+    initial_clash_basis: ClashDetectionBasis | None = None
+    _prepared_bases: tuple[ClashDetectionBasis, NearCovalentContactBasis] | None = (
+        field(default=None, init=False, repr=False)
+    )
+
+    def basis_for(
+        self,
+        structure: ProteinStructure,
+        cluster: RDKitProximityBondCluster,
+    ) -> ParserWitnessContactAssessmentBasis:
+        """Return one cluster view, preparing shared facts on first demand."""
+
+        prepared_bases = self._prepared_bases
+        if prepared_bases is None:
+            clash_basis = self.initial_clash_basis
+            clash_basis = (
+                prepare_clash_detection_basis(
+                    structure,
+                    component_library=self.component_library,
+                )
+                if clash_basis is None
+                else clash_basis
+            )
+            if not clash_basis.is_compatible_with(structure):
+                raise ValueError(
+                    "parser-witness contact cache requires a matching clash basis"
+                )
+            near_covalent_basis = prepare_near_covalent_contact_basis(
+                structure,
+                pair_policy=clash_basis.policy,
+            )
+            prepared_bases = (clash_basis, near_covalent_basis)
+            self._prepared_bases = prepared_bases
+        else:
+            clash_basis, near_covalent_basis = prepared_bases
+            near_covalent_basis.require_compatible_structure(structure)
+
+        return ParserWitnessContactAssessmentBasis.from_bases(
+            cluster,
+            clash_basis=clash_basis,
+            near_covalent_basis=near_covalent_basis,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class _ParserWitnessPreUntangleSearchSession:
     """Private search session for one parser-witness cluster and baseline."""
@@ -93,6 +148,44 @@ class _ParserWitnessPreUntangleSearchSession:
     baseline_rank: _ParserWitnessPreUntangleCandidateRank | None = None
     known_bond_lookup: RDKitKnownBondLookup | None = None
     pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None
+    contact_basis_cache: _ParserWitnessContactBasisCache | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    contact_assessment_basis: ParserWitnessContactAssessmentBasis | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
+    def resolved_contact_assessment_basis(
+        self,
+    ) -> ParserWitnessContactAssessmentBasis:
+        """Return contact facts cached for this cluster search session."""
+
+        contact_assessment_basis = self.contact_assessment_basis
+        if contact_assessment_basis is None:
+            contact_assessment_basis = (
+                ParserWitnessContactAssessmentBasis.prepare(
+                    self.snapshot.structure,
+                    self.cluster,
+                    component_library=self.component_library,
+                    clash_basis=self.clash_basis,
+                )
+                if self.contact_basis_cache is None
+                else self.contact_basis_cache.basis_for(
+                    self.snapshot.structure,
+                    self.cluster,
+                )
+            )
+            object.__setattr__(
+                self,
+                "contact_assessment_basis",
+                contact_assessment_basis,
+            )
+
+        return contact_assessment_basis
 
     def build_ranked_candidate(self) -> _RankedRotatedSidechainCandidate | None:
         """Return the best ranked torsion move for this search session."""
@@ -364,6 +457,7 @@ class _ParserWitnessPreUntangleSearchSession:
             angle_degrees=angle_degrees,
             component_library=self.component_library,
             clash_basis=self.clash_basis,
+            contact_assessment_basis=self.resolved_contact_assessment_basis(),
             parser_extra_heavy_proximity_bond_count=(
                 parser_extra_heavy_proximity_bond_count
             ),
@@ -443,6 +537,10 @@ class ParserWitnessPreUntangleTransformer(
         pdb_block_projector = prepare_rdkit_no_conect_pdb_block_projector(
             context.source_snapshot.structure,
         )
+        contact_basis_cache = _ParserWitnessContactBasisCache(
+            component_library=self._component_library,
+            initial_clash_basis=self._clash_basis,
+        )
         working_snapshot = context.source_snapshot
         for cluster in clusters:
             baseline_rank: _ParserWitnessPreUntangleCandidateRank | None = None
@@ -453,6 +551,7 @@ class ParserWitnessPreUntangleTransformer(
                     cluster,
                     component_library=self._component_library,
                     clash_basis=self._clash_basis,
+                    contact_basis_cache=contact_basis_cache,
                     baseline_extra_heavy_proximity_bond_count=(
                         baseline_extra_heavy_proximity_bond_count
                     ),
@@ -522,6 +621,8 @@ def _build_ranked_parser_witness_pre_untangle_candidate(
     *,
     component_library: ComponentLibrary,
     clash_basis: ClashDetectionBasis | None = None,
+    contact_basis_cache: _ParserWitnessContactBasisCache | None = None,
+    contact_assessment_basis: ParserWitnessContactAssessmentBasis | None = None,
     baseline_extra_heavy_proximity_bond_count: int | None = None,
     baseline_rank: _ParserWitnessPreUntangleCandidateRank | None = None,
     known_bond_lookup: RDKitKnownBondLookup | None = None,
@@ -535,6 +636,8 @@ def _build_ranked_parser_witness_pre_untangle_candidate(
         cluster=cluster,
         component_library=component_library,
         clash_basis=clash_basis,
+        contact_basis_cache=contact_basis_cache,
+        contact_assessment_basis=contact_assessment_basis,
         baseline_extra_heavy_proximity_bond_count=(
             baseline_extra_heavy_proximity_bond_count
         ),
@@ -780,6 +883,7 @@ def _parser_witness_pre_untangle_candidate_rank(
     angle_degrees: int,
     component_library: ComponentLibrary,
     clash_basis: ClashDetectionBasis | None = None,
+    contact_assessment_basis: ParserWitnessContactAssessmentBasis | None = None,
     parser_extra_heavy_proximity_bond_count: int | None = None,
     known_bond_lookup: RDKitKnownBondLookup | None = None,
     pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
@@ -793,6 +897,7 @@ def _parser_witness_pre_untangle_candidate_rank(
         angle_degrees=angle_degrees,
         component_library=component_library,
         clash_basis=clash_basis,
+        contact_assessment_basis=contact_assessment_basis,
         parser_extra_heavy_proximity_bond_count=(
             parser_extra_heavy_proximity_bond_count
         ),

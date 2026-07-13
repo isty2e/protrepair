@@ -13,12 +13,19 @@
   `DEFAULT_VAN_DER_WAALS_RADIUS_ANGSTROM`; radius lookup now raises
   `UnknownElementRadiusError` instead of silently using a default for unsupported
   elements
+- make low-level clash bases, contexts, and frames factory-only topology-bound
+  artifacts; remove their types, preparation/binding functions, and context
+  query functions from the diagnostics facade; and remove the redundant
+  `constitution_address_space_key` projection
 
 ### Changed
 
 - reuse workflow branch evaluations across sibling selection, regression
   retention, budget pruning, and terminal reporting while evicting discarded
   branch results from the runtime cache
+- reuse topology/radius preparation and one focus-aware spatial index across
+  parser-witness clash and near-covalent candidate assessments while keeping
+  their metric policies and radius systems independent
 - consolidate retained-ligand RDKit hydrogen patch projection while rejecting
   invalid generated names and non-finite coordinates before materialization
 - centralize NumPy geometry-placement vector degeneracy rules while preserving

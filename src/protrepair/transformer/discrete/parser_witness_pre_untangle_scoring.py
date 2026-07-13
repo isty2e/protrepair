@@ -1,14 +1,19 @@
 """Scoring context and ranking for parser-witness pre-untangle search."""
 
+from dataclasses import dataclass
+
 from protrepair.chemistry import ElementRadiusLookup, RadiusKind, prepare_radius_lookup
 from protrepair.chemistry.component.library import ComponentLibrary
+from protrepair.diagnostics.clash_pair_generation import PreparedAtomSitePairIndex
 from protrepair.diagnostics.clashes import (
     ClashDetectionBasis,
     detect_clashes_from_context,
-    prepare_clash_detection_context,
+    prepare_clash_detection_basis,
 )
 from protrepair.diagnostics.near_covalent import (
+    NearCovalentContactBasis,
     detect_near_covalent_contacts_from_context,
+    prepare_near_covalent_contact_basis,
 )
 from protrepair.diagnostics.parser_readability import (
     RDKitKnownBondLookup,
@@ -28,6 +33,144 @@ from protrepair.transformer.discrete.parser_witness_pre_untangle_types import (
 )
 
 PARSER_WITNESS_PRE_UNTANGLE_COVALENT_MARGIN_ANGSTROM = 0.45
+
+
+@dataclass(frozen=True, slots=True)
+class ParserWitnessContactAssessment:
+    """Contact-derived rank components for one parser-witness candidate."""
+
+    focus_near_covalent_contact_count: int
+    focus_total_near_covalent_overlap_angstrom: float
+    focus_clash_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ParserWitnessContactAssessmentBasis:
+    """Reusable facts for independent clash and near-covalent candidate scoring."""
+
+    clash_basis: ClashDetectionBasis
+    near_covalent_basis: NearCovalentContactBasis
+    focus_residue_ids: frozenset[ResidueId]
+
+    def __post_init__(self) -> None:
+        if (
+            self.near_covalent_basis.constitution is not self.clash_basis.constitution
+            and self.near_covalent_basis.constitution
+            != self.clash_basis.constitution
+        ):
+            raise ValueError(
+                "parser-witness contact bases require one immutable constitution"
+            )
+        if (
+            self.near_covalent_basis.topology is not self.clash_basis.topology
+            and self.near_covalent_basis.topology != self.clash_basis.topology
+        ):
+            raise ValueError(
+                "parser-witness contact bases require one immutable topology"
+            )
+        if (
+            self.near_covalent_basis.pair_policy
+            != self.clash_basis.policy.as_contact_pair_policy()
+        ):
+            raise ValueError("parser-witness contact bases require one pair policy")
+
+        object.__setattr__(
+            self,
+            "focus_residue_ids",
+            frozenset(self.focus_residue_ids),
+        )
+
+    @property
+    def shared_candidate_cell_size_angstrom(self) -> float:
+        """Return the cell size required by both independent metrics."""
+
+        return max(
+            self.clash_basis.candidate_cell_size_angstrom,
+            self.near_covalent_basis.candidate_cell_size_angstrom,
+        )
+
+    @classmethod
+    def from_bases(
+        cls,
+        cluster: RDKitProximityBondCluster,
+        *,
+        clash_basis: ClashDetectionBasis,
+        near_covalent_basis: NearCovalentContactBasis,
+    ) -> "ParserWitnessContactAssessmentBasis":
+        """Bind one cluster focus to reusable structure-wide contact facts."""
+
+        return cls(
+            clash_basis=clash_basis,
+            near_covalent_basis=near_covalent_basis,
+            focus_residue_ids=frozenset(cluster.residue_ids),
+        )
+
+    @classmethod
+    def prepare(
+        cls,
+        structure: ProteinStructure,
+        cluster: RDKitProximityBondCluster,
+        *,
+        component_library: ComponentLibrary,
+        clash_basis: ClashDetectionBasis | None = None,
+    ) -> "ParserWitnessContactAssessmentBasis":
+        """Prepare coordinate-independent contact facts for one witness cluster."""
+
+        active_clash_basis = (
+            prepare_clash_detection_basis(
+                structure,
+                component_library=component_library,
+            )
+            if clash_basis is None
+            else clash_basis
+        )
+        if not active_clash_basis.is_compatible_with(structure):
+            raise ValueError(
+                "parser-witness contact assessment requires a matching clash basis"
+            )
+        near_covalent_basis = prepare_near_covalent_contact_basis(
+            structure,
+            pair_policy=active_clash_basis.policy,
+        )
+        return cls.from_bases(
+            cluster,
+            clash_basis=active_clash_basis,
+            near_covalent_basis=near_covalent_basis,
+        )
+
+    def assess(self, structure: ProteinStructure) -> ParserWitnessContactAssessment:
+        """Assess both contact metrics over one shared coordinate-bound index."""
+
+        self.near_covalent_basis.require_compatible_structure(structure)
+        clash_context = self.clash_basis.bind_context(
+            structure,
+            candidate_cell_size_angstrom=(
+                self.shared_candidate_cell_size_angstrom
+            ),
+        )
+        prepared_pair_index = PreparedAtomSitePairIndex(
+            atom_sites=clash_context.atom_sites,
+            focus_residue_ids=self.focus_residue_ids,
+        )
+        focus_clashes = detect_clashes_from_context(
+            clash_context,
+            focus_residue_ids=self.focus_residue_ids,
+            prepared_pair_index=prepared_pair_index,
+        ).clashes
+        near_covalent_contacts = detect_near_covalent_contacts_from_context(
+            structure,
+            clash_context,
+            focus_residue_ids=self.focus_residue_ids,
+            basis=self.near_covalent_basis,
+            prepared_pair_index=prepared_pair_index,
+        )
+        return ParserWitnessContactAssessment(
+            focus_near_covalent_contact_count=len(near_covalent_contacts),
+            focus_total_near_covalent_overlap_angstrom=sum(
+                contact.overlap_angstrom for contact in near_covalent_contacts
+            ),
+            focus_clash_count=len(focus_clashes),
+        )
 
 
 def parser_witness_pre_untangle_score(
@@ -96,6 +239,7 @@ def parser_witness_pre_untangle_candidate_rank(
     angle_degrees: int,
     component_library: ComponentLibrary,
     clash_basis: ClashDetectionBasis | None = None,
+    contact_assessment_basis: ParserWitnessContactAssessmentBasis | None = None,
     parser_extra_heavy_proximity_bond_count: int | None = None,
     known_bond_lookup: RDKitKnownBondLookup | None = None,
     pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
@@ -111,29 +255,41 @@ def parser_witness_pre_untangle_candidate_rank(
                 pdb_block_projector=pdb_block_projector,
             )
         )
-    clash_context = prepare_clash_detection_context(
-        structure,
-        component_library=component_library,
-        basis=clash_basis,
+    active_contact_assessment_basis = (
+        ParserWitnessContactAssessmentBasis.prepare(
+            structure,
+            cluster,
+            component_library=component_library,
+            clash_basis=clash_basis,
+        )
+        if contact_assessment_basis is None
+        else contact_assessment_basis
     )
-    focus_clashes = detect_clashes_from_context(
-        clash_context,
-        focus_residue_ids=frozenset(cluster.residue_ids),
-    ).clashes
-    near_covalent_contacts = detect_near_covalent_contacts_from_context(
-        structure,
-        clash_context,
-        focus_residue_ids=frozenset(cluster.residue_ids),
-    )
+    if active_contact_assessment_basis.focus_residue_ids != frozenset(
+        cluster.residue_ids
+    ):
+        raise ValueError(
+            "parser-witness contact assessment basis requires a matching cluster"
+        )
+    if (
+        clash_basis is not None
+        and clash_basis is not active_contact_assessment_basis.clash_basis
+    ):
+        raise ValueError(
+            "parser-witness contact assessment basis conflicts with clash basis"
+        )
+    contact_assessment = active_contact_assessment_basis.assess(structure)
     return ParserWitnessPreUntangleCandidateRank(
         parser_extra_heavy_proximity_bond_count=(
             parser_extra_heavy_proximity_bond_count
         ),
-        focus_near_covalent_contact_count=len(near_covalent_contacts),
-        focus_total_near_covalent_overlap_angstrom=sum(
-            contact.overlap_angstrom for contact in near_covalent_contacts
+        focus_near_covalent_contact_count=(
+            contact_assessment.focus_near_covalent_contact_count
         ),
-        focus_clash_count=len(focus_clashes),
+        focus_total_near_covalent_overlap_angstrom=(
+            contact_assessment.focus_total_near_covalent_overlap_angstrom
+        ),
+        focus_clash_count=contact_assessment.focus_clash_count,
         target_score=target_score,
         absolute_angle_degrees=abs(angle_degrees),
         angle_degrees=angle_degrees,

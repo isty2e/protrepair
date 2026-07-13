@@ -11,12 +11,12 @@ from tests.support.canonical_builders import (
 
 from protrepair.api import process_structure
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
-from protrepair.diagnostics import (
-    ClashPolicy,
+from protrepair.diagnostics import ClashPolicy
+from protrepair.diagnostics.clashes import (
+    StericClash,
     bind_clash_detection_context,
     prepare_clash_detection_basis,
 )
-from protrepair.diagnostics.clashes import StericClash
 from protrepair.diagnostics.kinds import (
     IssueSeverity,
     RepairEventKind,
@@ -162,8 +162,8 @@ def test_atom_name_alone_does_not_make_non_cysteine_sg_a_disulfide() -> None:
     assert disulfide_bonded_cysteine_residue_ids(structure) == frozenset()
 
 
-def test_clash_basis_rebinds_disulfide_truth_from_current_topology() -> None:
-    """Reusable clash bases must not cache topology from their source structure."""
+def test_clash_basis_rejects_replaced_disulfide_topology() -> None:
+    """Topology-bound clash facts must be rebuilt after topology replacement."""
 
     unbonded = sg_pair_structure(distance_angstrom=2.0)
     bonded = with_sg_relationship(unbonded, BondRelationshipType.DISULFIDE)
@@ -173,13 +173,23 @@ def test_clash_basis_rebinds_disulfide_truth_from_current_topology() -> None:
         component_library=component_library,
     )
 
-    unbonded_report = bind_clash_detection_context(
+    unbonded_context = bind_clash_detection_context(
         unbonded,
         basis=basis,
-    ).detect_clashes()
+    )
+    unbonded_report = unbonded_context.detect_clashes()
+    bonded_basis = prepare_clash_detection_basis(
+        bonded,
+        component_library=component_library,
+    )
+    with pytest.raises(ValueError, match="immutable constitution and topology"):
+        bind_clash_detection_context(
+            bonded,
+            basis=basis,
+        )
     bonded_report = bind_clash_detection_context(
         bonded,
-        basis=basis,
+        basis=bonded_basis,
     ).detect_clashes()
 
     assert has_sg_sg_clash(unbonded_report.clashes)

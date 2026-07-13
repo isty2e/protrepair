@@ -25,11 +25,11 @@ from protrepair.chemistry import (
 from protrepair.chemistry.internal_coordinates import InternalCoordinateProgram
 from protrepair.chemistry.restraint.library import RestraintLibrary
 from protrepair.diagnostics import (
-    ClashDetectionBasis,
     IssueSeverity,
     ValidationIssue,
     ValidationIssueKind,
 )
+from protrepair.diagnostics.clashes import ClashDetectionBasis
 from protrepair.diagnostics.parser_readability import (
     RDKitNoConectSanitizeReadabilityMetrics,
 )
