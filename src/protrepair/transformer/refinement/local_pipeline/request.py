@@ -16,6 +16,10 @@ from protrepair.diagnostics.clashes import (
     ClashDetectionBasis,
     prepare_clash_detection_basis,
 )
+from protrepair.io.pdb_projection import (
+    RDKitNoConectPDBBlockProjector,
+    prepare_rdkit_no_conect_pdb_block_projector,
+)
 from protrepair.state.hydrogen_expectation import (
     StructureHydrogenExpectationModel,
     derive_structure_hydrogen_expectation_model,
@@ -45,6 +49,7 @@ class LocalRefinementRequest:
         ...,
     ] = ()
     hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None
+    pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None
 
     @classmethod
     def from_context(
@@ -110,6 +115,9 @@ class LocalRefinementRequest:
             clash_basis=prepare_clash_detection_basis(
                 context.source_snapshot.structure,
                 component_library=active_component_library,
+            ),
+            pdb_block_projector=prepare_rdkit_no_conect_pdb_block_projector(
+                context.source_snapshot.structure
             ),
             allow_retained_non_polymer_rdkit_fallback=(
                 allow_retained_non_polymer_rdkit_fallback

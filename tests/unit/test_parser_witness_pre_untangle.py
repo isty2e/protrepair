@@ -26,6 +26,9 @@ from protrepair.diagnostics.parser_readability import (
 )
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
+from protrepair.io.pdb_projection import (
+    prepare_rdkit_no_conect_pdb_block_projector,
+)
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
@@ -452,7 +455,10 @@ def test_transform_reuses_accepted_candidate_parser_burden_count(
     observed_contact_assessment_bases: list[
         parser_scoring_module.ParserWitnessContactAssessmentBasis
     ] = []
-    sentinel_pdb_block_projector = object()
+    sentinel_pdb_block_projector = prepare_rdkit_no_conect_pdb_block_projector(
+        structure
+    )
+    assert sentinel_pdb_block_projector is not None
     accepted_score = parser_module.ParserWitnessPreUntangleScore(
         unresolved_contact_count=0,
         total_overlap_angstrom=0.0,
@@ -510,7 +516,9 @@ def test_transform_reuses_accepted_candidate_parser_burden_count(
     monkeypatch.setattr(
         parser_module,
         "prepare_rdkit_no_conect_pdb_block_projector",
-        lambda *_args, **_kwargs: sentinel_pdb_block_projector,
+        lambda *_args, **_kwargs: pytest.fail(
+            "the injected projector should be reused"
+        ),
     )
     monkeypatch.setattr(
         parser_module,
@@ -520,7 +528,10 @@ def test_transform_reuses_accepted_candidate_parser_burden_count(
         ),
     )
 
-    parser_module.ParserWitnessPreUntangleTransformer(component_library).transform(
+    parser_module.ParserWitnessPreUntangleTransformer(
+        component_library,
+        pdb_block_projector=sentinel_pdb_block_projector,
+    ).transform(
         ProteinTransformationContext(
             source_snapshot=snapshot,
             atom_input=atom_input,

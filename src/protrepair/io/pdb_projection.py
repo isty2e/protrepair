@@ -42,7 +42,9 @@ class RDKitNoConectPDBBlockProjector:
         ):
             position = atom_geometries[atom_index_value].position
             lines[line_index] = (
-                prefix + f"{position.x:8.3f}{position.y:8.3f}{position.z:8.3f}" + suffix
+                prefix
+                + _format_pdb_coordinates(position.x, position.y, position.z)
+                + suffix
             )
 
         return "\n".join(lines) + "\n"
@@ -110,3 +112,26 @@ def _is_pdb_atom_line(line: str) -> bool:
     """Return whether a PDB line carries atom coordinates."""
 
     return line.startswith(("ATOM  ", "HETATM"))
+
+
+def _format_pdb_coordinates(x: float, y: float, z: float) -> str:
+    """Format one coordinate triple with Gemmi's PDB normalization."""
+
+    normalized_x = 0.0 if -5e-4 < x < 0.0 else x + 1e-10
+    normalized_y = 0.0 if -5e-4 < y < 0.0 else y + 1e-10
+    normalized_z = 0.0 if -5e-4 < z < 0.0 else z + 1e-10
+    normalized_fields = (
+        f"{normalized_x:8.3f}"
+        f"{normalized_y:8.3f}"
+        f"{normalized_z:8.3f}"
+    )
+    if len(normalized_fields) == 24:
+        return normalized_fields
+
+    # Gemmi fixes overflowed records in-place: x keeps its normalized field,
+    # while y and z are rewritten from the original values at fixed columns.
+    return (
+        normalized_fields[:8]
+        + f"{y:8.3f}"[:8]
+        + f"{z:8.3f}"[:8]
+    )

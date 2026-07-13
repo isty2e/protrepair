@@ -6,6 +6,7 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
+import protrepair.io.pdb_projection as pdb_projection_module
 from protrepair.chemistry import build_default_component_library
 from protrepair.diagnostics import parser_readability as parser_readability_module
 from protrepair.diagnostics.parser_readability import (
@@ -17,9 +18,10 @@ from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
 from protrepair.io.pdb_projection import (
     pdb_without_conect,
+    pdb_without_conect_for_parser_probe,
     prepare_rdkit_no_conect_pdb_block_projector,
 )
-from protrepair.structure import StructureTopology
+from protrepair.structure import ProteinStructure, StructureTopology
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
@@ -312,3 +314,151 @@ def test_no_conect_pdb_block_projector_patches_coordinate_only_updates() -> None
 
     assert projector.render(structure) == pdb_without_conect(structure)
     assert projector.render(updated_structure) == pdb_without_conect(updated_structure)
+
+
+def test_no_conect_pdb_block_projector_matches_gemmi_coordinate_formatting() -> (
+    None
+):
+    """Projection should preserve Gemmi's half ties and field truncation."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload("CA", "C", Vec3(0.0, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    residue_geometry = structure.residue_geometry(
+        structure.constitution.residue_index(residue_id)
+    )
+    projector = prepare_rdkit_no_conect_pdb_block_projector(structure)
+    assert projector is not None
+
+    for position in (
+        Vec3(7.6255, -1.2355, -0.0005),
+        Vec3(-999.9995, 9999.9995, -99.9995),
+    ):
+        updated_structure = structure.with_updated_residue_geometries(
+            (
+                (
+                    residue_id,
+                    residue_geometry.with_atom_geometry(
+                        "CA",
+                        residue_geometry.atom_geometry("CA").with_position(position),
+                    ),
+                ),
+            )
+        )
+
+        assert projector.render(updated_structure) == pdb_without_conect(
+            updated_structure
+        )
+
+
+def test_no_conect_pdb_block_projector_avoids_repeated_gemmi_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated coordinate projections should reuse one canonical base write."""
+
+    residue_id = ResidueId("A", 1)
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload("CA", "C", Vec3(0.0, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    writer_structure_ids: list[int] = []
+    canonical_writer = (
+        pdb_projection_module.write_pdb_structure_string_without_conect
+    )
+
+    def _recording_writer(candidate_structure: ProteinStructure) -> str:
+        writer_structure_ids.append(id(candidate_structure))
+        return canonical_writer(candidate_structure)
+
+    monkeypatch.setattr(
+        pdb_projection_module,
+        "write_pdb_structure_string_without_conect",
+        _recording_writer,
+    )
+    projector = prepare_rdkit_no_conect_pdb_block_projector(structure)
+    assert projector is not None
+
+    projector.render(structure)
+    projector.render(structure)
+
+    assert writer_structure_ids == [id(structure)]
+
+
+def test_no_conect_pdb_block_projector_falls_back_on_address_space_mismatch() -> (
+    None
+):
+    """Equal atom counts must not permit projection across atom identities."""
+
+    residue_id = ResidueId("A", 1)
+    source_structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload("CA", "C", Vec3(1.0, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    same_size_different_address_space = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=residue_id,
+                        atoms=(
+                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload("CB", "C", Vec3(7.0, 8.0, 9.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    projector = prepare_rdkit_no_conect_pdb_block_projector(source_structure)
+    assert projector is not None
+    assert not projector.can_render(same_size_different_address_space)
+
+    assert pdb_without_conect_for_parser_probe(
+        same_size_different_address_space,
+        projector,
+    ) == pdb_without_conect(same_size_different_address_space)

@@ -159,6 +159,7 @@ def assess_refinement_candidate(
             candidate.outcome,
             before_metrics=before_metrics,
             clash_basis=request.clash_basis,
+            pdb_block_projector=request.pdb_block_projector,
         ),
     )
 
@@ -212,6 +213,7 @@ def cached_before_acceptance_metrics(
         component_library=request.component_library,
         restraint_library=request.restraint_library,
         clash_basis=request.clash_basis,
+        pdb_block_projector=request.pdb_block_projector,
     )
     cache[cache_key] = measured_metrics
     return measured_metrics
@@ -264,4 +266,5 @@ def materialize_selected_refinement_candidate(
         restraint_library=request.restraint_library,
         current_metrics=candidate.evaluation.after_metrics,
         clash_basis=request.clash_basis,
+        pdb_block_projector=request.pdb_block_projector,
     )

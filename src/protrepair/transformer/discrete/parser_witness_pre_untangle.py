@@ -486,9 +486,11 @@ class ParserWitnessPreUntangleTransformer(
         component_library: ComponentLibrary,
         *,
         clash_basis: ClashDetectionBasis | None = None,
+        pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
     ) -> None:
         self._component_library = component_library
         self._clash_basis = clash_basis
+        self._pdb_block_projector = pdb_block_projector
 
     def is_applicable(
         self,
@@ -516,9 +518,17 @@ class ParserWitnessPreUntangleTransformer(
         if not _context_can_pre_untangle_parser_witness(context.atom_input):
             return context.source_snapshot
 
+        pdb_block_projector = self._pdb_block_projector
+        if pdb_block_projector is None or not pdb_block_projector.can_render(
+            context.source_snapshot.structure
+        ):
+            pdb_block_projector = prepare_rdkit_no_conect_pdb_block_projector(
+                context.source_snapshot.structure,
+            )
         parser_witness_clusters = rdkit_no_conect_extra_proximity_bond_clusters(
             context.source_snapshot.structure,
             component_library=self._component_library,
+            pdb_block_projector=pdb_block_projector,
         )
         clusters = _eligible_parser_witness_clusters_from_candidates(
             parser_witness_clusters,
@@ -533,9 +543,6 @@ class ParserWitnessPreUntangleTransformer(
         known_bond_lookup = prepare_rdkit_no_conect_known_bond_lookup(
             context.source_snapshot.structure,
             component_library=self._component_library,
-        )
-        pdb_block_projector = prepare_rdkit_no_conect_pdb_block_projector(
-            context.source_snapshot.structure,
         )
         contact_basis_cache = _ParserWitnessContactBasisCache(
             component_library=self._component_library,

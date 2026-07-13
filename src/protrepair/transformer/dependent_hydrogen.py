@@ -7,6 +7,7 @@ from protrepair.diagnostics.kinds import IssueSeverity
 from protrepair.diagnostics.parser_readability import (
     rdkit_no_conect_parser_failing_residue_ids,
 )
+from protrepair.io.pdb_projection import RDKitNoConectPDBBlockProjector
 from protrepair.scope import Scope
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
@@ -31,6 +32,7 @@ def revalidate_dependent_hydrogens_after_refinement(
     restraint_library: RestraintLibrary,
     current_metrics: RefinementAcceptanceMetrics | None = None,
     clash_basis: ClashDetectionBasis | None = None,
+    pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
 ) -> RegionTransformationResult:
     """Re-materialize stale dependent hydrogens only behind validation gates."""
 
@@ -42,6 +44,7 @@ def revalidate_dependent_hydrogens_after_refinement(
             component_library=component_library,
             restraint_library=restraint_library,
             clash_basis=clash_basis,
+            pdb_block_projector=pdb_block_projector,
         )
     if active_current_metrics.parser_compatibility.rdkit_sanitize_readable is not False:
         return result
@@ -55,6 +58,7 @@ def revalidate_dependent_hydrogens_after_refinement(
     target_residue_ids = _dependent_hydrogen_revalidation_residue_ids(
         result,
         component_library=component_library,
+        pdb_block_projector=pdb_block_projector,
     )
     if not target_residue_ids:
         return result
@@ -120,6 +124,7 @@ def _dependent_hydrogen_revalidation_residue_ids(
     result: RegionTransformationResult,
     *,
     component_library: ComponentLibrary,
+    pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
 ) -> tuple[ResidueId, ...]:
     """Return residue ids eligible for dependent-hydrogen re-materialization."""
 
@@ -128,6 +133,7 @@ def _dependent_hydrogen_revalidation_residue_ids(
         *rdkit_no_conect_parser_failing_residue_ids(
             result.refined_structure,
             component_library=component_library,
+            pdb_block_projector=pdb_block_projector,
         ),
     )
     residue_ids: list[ResidueId] = []
