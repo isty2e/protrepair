@@ -1,6 +1,6 @@
 """Steric-clash diagnostics over canonical repaired structures."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -19,19 +19,22 @@ from protrepair.diagnostics import (
     ClashPolicy,
     EventScopeKind,
     ValidationIssueKind,
-    bind_clash_detection_context,
-    bind_clash_detection_frame,
     detect_clashes,
-    detect_clashes_from_context,
     detect_clashes_involving_residues,
+)
+from protrepair.diagnostics.clash_pair_generation import (
+    ContactDomain,
+    PreparedAtomSitePairIndex,
+    iter_candidate_atom_site_pairs,
+    pair_can_be_rejected_before_distance,
+)
+from protrepair.diagnostics.clashes import (
+    bind_clash_detection_context,
+    detect_clashes_from_context,
     has_clashes_in_context,
     prepare_clash_detection_basis,
     prepare_clash_detection_context,
     prepare_projected_clash_detection_context,
-)
-from protrepair.diagnostics.clash_pair_generation import (
-    ContactDomain,
-    pair_can_be_rejected_before_distance,
 )
 from protrepair.geometry import Vec3
 from protrepair.structure.aggregate import ProteinStructure
@@ -138,6 +141,67 @@ def test_clash_pair_generation_still_applies_non_domain_fast_rejections() -> Non
     )
 
 
+@pytest.mark.parametrize(
+    ("focus_residue_ids", "policy"),
+    (
+        (None, _PairPolicy()),
+        (frozenset({ResidueId("A", 1)}), _PairPolicy()),
+        (
+            frozenset({ResidueId("A", 2), ResidueId("L", 1)}),
+            _PairPolicy(include_ligands=True),
+        ),
+        (frozenset(), _PairPolicy(include_ligands=True)),
+        (None, _PairPolicy(include_hydrogen_hydrogen=True)),
+        (
+            frozenset({ResidueId("H", 1), ResidueId("H", 2)}),
+            _PairPolicy(include_hydrogen_hydrogen=True),
+        ),
+    ),
+)
+def test_prepared_pair_index_preserves_streaming_pair_order(
+    focus_residue_ids: frozenset[ResidueId] | None,
+    policy: _PairPolicy,
+) -> None:
+    """Prepared spatial reuse must preserve exact streaming pair order."""
+
+    atom_sites = (
+        _PairSite(ResidueId("A", 1), ContactDomain.POLYMER, grid_cell=(0, 0, 0)),
+        _PairSite(ResidueId("A", 2), ContactDomain.POLYMER, grid_cell=(0, 0, 0)),
+        _PairSite(
+            ResidueId("L", 1),
+            ContactDomain.RETAINED_NON_POLYMER,
+            grid_cell=(1, 0, 0),
+        ),
+        _PairSite(
+            ResidueId("H", 1),
+            ContactDomain.POLYMER,
+            is_hydrogen_atom=True,
+            grid_cell=(1, 0, 0),
+        ),
+        _PairSite(
+            ResidueId("H", 2),
+            ContactDomain.POLYMER,
+            is_hydrogen_atom=True,
+            grid_cell=(1, 1, 0),
+        ),
+    )
+    prepared_pair_index = PreparedAtomSitePairIndex(
+        atom_sites=atom_sites,
+        focus_residue_ids=focus_residue_ids,
+    )
+
+    expected_pairs = tuple(
+        iter_candidate_atom_site_pairs(
+            atom_sites,
+            focus_residue_ids=focus_residue_ids,
+            policy=policy,
+        )
+    )
+    actual_pairs = tuple(prepared_pair_index.candidate_pairs(policy=policy))
+
+    assert actual_pairs == expected_pairs
+
+
 def test_clash_pair_generation_has_no_stringly_domain_coercion() -> None:
     """Hot pair filtering should not use getattr/string fallback domain coercion."""
 
@@ -186,6 +250,15 @@ def test_clash_policy_clamps_nonpositive_pair_distance_threshold() -> None:
         )
         == 0.0
     )
+
+
+def test_clash_policy_preserves_positional_threshold_contract() -> None:
+    """The first positional value remains the heavy-overlap threshold."""
+
+    policy = ClashPolicy(0.5)
+
+    assert policy.heavy_overlap_tolerance_angstrom == 0.5
+    assert policy.include_hydrogens is True
 
 
 @pytest.mark.parametrize(
@@ -327,6 +400,82 @@ def test_empty_clash_basis_uses_minimum_candidate_cell_size() -> None:
     assert (
         bind_clash_detection_context(structure, basis=basis).detect_clashes().is_empty()
     )
+
+
+@pytest.mark.parametrize("cell_size", (float("nan"), float("inf"), 0.5))
+def test_clash_basis_rejects_unsafe_cell_size_override(cell_size: float) -> None:
+    """A shared grid must never undercut the clash basis search radius."""
+
+    structure = build_two_atom_contact_structure(
+        left_element="C",
+        right_element="C",
+        distance_angstrom=1.0,
+    )
+    basis = prepare_clash_detection_basis(
+        structure,
+        component_library=build_standard_component_library(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="bound clash contexts require a finite candidate cell size",
+    ):
+        bind_clash_detection_context(
+            structure,
+            basis=basis,
+            candidate_cell_size_angstrom=cell_size,
+        )
+
+
+def test_prepared_clash_artifacts_cannot_be_reassembled_with_replace() -> None:
+    """Cached facets must only be assembled by their preparation factories."""
+
+    structure = build_two_atom_contact_structure(
+        left_element="C",
+        right_element="C",
+        distance_angstrom=1.0,
+    )
+    basis = prepare_clash_detection_basis(
+        structure,
+        component_library=build_standard_component_library(),
+    )
+    context = basis.bind_context(structure)
+
+    with pytest.raises(ValueError, match="created by a preparation factory"):
+        replace(basis, candidate_cell_size_angstrom=0.5)
+    with pytest.raises(ValueError, match="created by a preparation factory"):
+        replace(
+            context,
+            candidate_cell_size_angstrom=0.5,
+        )
+
+
+def test_clash_basis_accepts_larger_shared_cell_size() -> None:
+    """A broader shared grid should preserve exact clash results."""
+
+    structure = build_two_atom_contact_structure(
+        left_element="C",
+        right_element="C",
+        distance_angstrom=1.0,
+    )
+    basis = prepare_clash_detection_basis(
+        structure,
+        component_library=build_standard_component_library(),
+    )
+    shared_cell_size_angstrom = basis.candidate_cell_size_angstrom + 1.0
+
+    context = bind_clash_detection_context(
+        structure,
+        basis=basis,
+        candidate_cell_size_angstrom=shared_cell_size_angstrom,
+    )
+
+    assert context.candidate_cell_size_angstrom == shared_cell_size_angstrom
+    assert all(
+        atom_site.grid_cell_size_angstrom == shared_cell_size_angstrom
+        for atom_site in context.atom_sites
+    )
+    assert context.detect_clashes() == basis.bind_context(structure).detect_clashes()
 
 
 def test_empty_projected_clash_context_uses_minimum_candidate_cell_size() -> None:
@@ -567,6 +716,17 @@ def test_prepared_clash_context_matches_public_clash_detection() -> None:
         structure,
         component_library=component_library,
     )
+    prepared_pair_index = PreparedAtomSitePairIndex(
+        atom_sites=context.atom_sites,
+        focus_residue_ids=None,
+    )
+    assert detect_clashes_from_context(
+        context,
+        prepared_pair_index=prepared_pair_index,
+    ) == detect_clashes(
+        structure,
+        component_library=component_library,
+    )
     assert context.detect_clashes(focus_residue_ids=residue_ids) == (
         detect_clashes_involving_residues(
             structure,
@@ -628,38 +788,66 @@ def test_clash_detection_basis_rebinds_coordinate_only_structures() -> None:
         ((residue_id, moved_residue_geometry),)
     )
 
-    assert detect_clashes_from_context(
-        bind_clash_detection_context(structure, basis=basis)
-    ) == detect_clashes(structure, component_library=component_library)
+    original_context = bind_clash_detection_context(structure, basis=basis)
+    moved_context = bind_clash_detection_context(moved_structure, basis=basis)
+
+    assert detect_clashes_from_context(original_context) == detect_clashes(
+        structure,
+        component_library=component_library,
+    )
     assert basis.bind_context(structure).detect_clashes() == detect_clashes(
         structure,
         component_library=component_library,
     )
-    assert detect_clashes_from_context(
-        bind_clash_detection_context(moved_structure, basis=basis)
-    ) == detect_clashes(moved_structure, component_library=component_library)
+    assert detect_clashes_from_context(moved_context) == detect_clashes(
+        moved_structure,
+        component_library=component_library,
+    )
     assert basis.bind_context(moved_structure).detect_clashes() == detect_clashes(
         moved_structure,
         component_library=component_library,
     )
 
-    original_frame = bind_clash_detection_frame(structure, basis=basis)
-    moved_frame = bind_clash_detection_frame(moved_structure, basis=basis)
-    assert original_frame == basis.bind_frame(structure)
-    assert moved_frame == basis.bind_frame(moved_structure)
-    assert len(original_frame.atom_sites) == len(moved_frame.atom_sites)
+    assert len(original_context.atom_sites) == len(moved_context.atom_sites)
     original_hg_site = next(
         atom_site
-        for atom_site in original_frame.atom_sites
+        for atom_site in original_context.atom_sites
         if atom_site.atom_name == "HG"
     )
     moved_hg_site = next(
         atom_site
-        for atom_site in moved_frame.atom_sites
+        for atom_site in moved_context.atom_sites
         if atom_site.atom_name == "HG"
     )
     assert original_hg_site.context.template is moved_hg_site.context.template
     assert original_hg_site.geometry != moved_hg_site.geometry
+
+
+def test_clash_detection_basis_rejects_same_address_replacement_constitution() -> None:
+    """Cached chemistry facts must remain tied to the exact constitution."""
+
+    source_structure = build_two_atom_contact_structure(
+        left_element="C",
+        right_element="C",
+        distance_angstrom=1.0,
+    )
+    replacement_structure = build_two_atom_contact_structure(
+        left_element="N",
+        right_element="O",
+        distance_angstrom=1.0,
+    )
+    assert (
+        source_structure.constitution.address_space_key
+        == replacement_structure.constitution.address_space_key
+    )
+    basis = prepare_clash_detection_basis(
+        source_structure,
+        component_library=build_standard_component_library(),
+    )
+
+    assert not basis.is_compatible_with(replacement_structure)
+    with pytest.raises(ValueError, match="immutable constitution"):
+        basis.bind_context(replacement_structure)
 
 
 def test_detect_clashes_ignores_same_residue_two_hop_hydrogen_contacts() -> None:

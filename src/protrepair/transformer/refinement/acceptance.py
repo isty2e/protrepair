@@ -27,6 +27,7 @@ from protrepair.diagnostics.parser_readability import (
     measure_rdkit_no_conect_sanitize_readability_metrics,
 )
 from protrepair.diagnostics.stereochemistry import detect_sidechain_stereochemistry
+from protrepair.io.pdb_projection import RDKitNoConectPDBBlockProjector
 from protrepair.scope import (
     AtomSetScope,
     ResidueSetScope,
@@ -251,6 +252,7 @@ def assess_refinement_result_with_before_metrics(
     *,
     before_metrics: RefinementAcceptanceMetrics,
     clash_basis: ClashDetectionBasis | None = None,
+    pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
 ) -> AssessedRefinementResult:
     """Return assessed execution output using precomputed fallback metrics."""
 
@@ -261,6 +263,7 @@ def assess_refinement_result_with_before_metrics(
         component_library=component_library,
         restraint_library=restraint_library,
         clash_basis=clash_basis,
+        pdb_block_projector=pdb_block_projector,
     )
     if not refinement_metrics_rejected(before_metrics, after_metrics):
         return AssessedRefinementResult(
@@ -290,6 +293,7 @@ def measure_refinement_acceptance_metrics(
     component_library: ComponentLibrary,
     restraint_library: RestraintLibrary,
     clash_basis: ClashDetectionBasis | None = None,
+    pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
 ) -> RefinementAcceptanceMetrics:
     """Return clash and geometry metrics over one selected residue region."""
 
@@ -316,11 +320,13 @@ def measure_refinement_acceptance_metrics(
     stereochemistry_report = detect_sidechain_stereochemistry(
         structure,
         component_library=component_library,
+        residue_ids=focus_residue_ids,
     )
     rdkit_readability_metrics = (
         measure_rdkit_no_conect_sanitize_readability_metrics(
             structure,
             component_library=component_library,
+            pdb_block_projector=pdb_block_projector,
         )
     )
     return RefinementAcceptanceMetrics(
@@ -351,10 +357,8 @@ def measure_refinement_acceptance_metrics(
             total_near_covalent_overlap_angstrom=(
                 _total_contact_overlap_angstrom(near_covalent_contacts)
             ),
-            stereochemistry_violation_count=sum(
-                1
-                for violation in stereochemistry_report.violations
-                if violation.residue_id in focus_residue_ids
+            stereochemistry_violation_count=len(
+                stereochemistry_report.violations
             ),
         ),
         parser_compatibility=WholeStructureParserCompatibilityMetrics(
@@ -683,6 +687,7 @@ def measure_refinement_acceptance_metrics_for_scope(
     component_library: ComponentLibrary,
     restraint_library: RestraintLibrary,
     clash_basis: ClashDetectionBasis | None = None,
+    pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
 ) -> RefinementAcceptanceMetrics:
     """Return acceptance metrics over one semantic refinement scope."""
 
@@ -692,6 +697,7 @@ def measure_refinement_acceptance_metrics_for_scope(
         component_library=component_library,
         restraint_library=restraint_library,
         clash_basis=clash_basis,
+        pdb_block_projector=pdb_block_projector,
     )
 
 

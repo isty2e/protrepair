@@ -1,8 +1,13 @@
 """Disulfide semantics projected from canonical structure topology."""
 
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.constitution import StructureConstitution
 from protrepair.structure.labels import AtomRef, ResidueId
-from protrepair.structure.topology import TopologyBond, is_covalent_like_relationship
+from protrepair.structure.topology import (
+    StructureTopology,
+    TopologyBond,
+    is_covalent_like_relationship,
+)
 
 
 def disulfide_atom_ref_pairs(
@@ -10,9 +15,25 @@ def disulfide_atom_ref_pairs(
 ) -> frozenset[tuple[AtomRef, AtomRef]]:
     """Return canonical CYS SG-SG pairs supported by covalent-like topology."""
 
+    return disulfide_atom_ref_pairs_from_topology(
+        constitution=structure.constitution,
+        topology=structure.topology,
+    )
+
+
+def disulfide_atom_ref_pairs_from_topology(
+    *,
+    constitution: StructureConstitution,
+    topology: StructureTopology,
+) -> frozenset[tuple[AtomRef, AtomRef]]:
+    """Project canonical CYS SG-SG pairs from aligned topology facets."""
+
+    if not topology.is_aligned_to(constitution):
+        raise ValueError("disulfide projection requires aligned topology facets")
+
     pairs: set[tuple[AtomRef, AtomRef]] = set()
-    for bond in structure.topology.bonds:
-        pair = _disulfide_atom_ref_pair(structure, bond)
+    for bond in topology.bonds:
+        pair = _disulfide_atom_ref_pair(constitution, bond)
         if pair is not None:
             pairs.add(pair)
 
@@ -32,7 +53,7 @@ def disulfide_bonded_cysteine_residue_ids(
 
 
 def _disulfide_atom_ref_pair(
-    structure: ProteinStructure,
+    constitution: StructureConstitution,
     bond: TopologyBond,
 ) -> tuple[AtomRef, AtomRef] | None:
     """Project one covalent-like topology bond when both endpoints are CYS SG."""
@@ -40,16 +61,16 @@ def _disulfide_atom_ref_pair(
     if not is_covalent_like_relationship(bond):
         return None
 
-    atom_ref_1 = structure.constitution.atom_ref_at(bond.atom_index_1)
-    atom_ref_2 = structure.constitution.atom_ref_at(bond.atom_index_2)
+    atom_ref_1 = constitution.atom_ref_at(bond.atom_index_1)
+    atom_ref_2 = constitution.atom_ref_at(bond.atom_index_2)
     if atom_ref_1.atom_name != "SG" or atom_ref_2.atom_name != "SG":
         return None
 
-    residue_1 = structure.constitution.residue_site_at(
-        structure.constitution.residue_index_for_atom_index(bond.atom_index_1)
+    residue_1 = constitution.residue_site_at(
+        constitution.residue_index_for_atom_index(bond.atom_index_1)
     )
-    residue_2 = structure.constitution.residue_site_at(
-        structure.constitution.residue_index_for_atom_index(bond.atom_index_2)
+    residue_2 = constitution.residue_site_at(
+        constitution.residue_index_for_atom_index(bond.atom_index_2)
     )
     if residue_1.component_id != "CYS" or residue_2.component_id != "CYS":
         return None

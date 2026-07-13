@@ -17,6 +17,7 @@ from protrepair.chemistry import build_default_component_library
 from protrepair.diagnostics.clashes import ClashDetectionBasis
 from protrepair.errors import RefinementError
 from protrepair.geometry import Vec3
+from protrepair.io.pdb_projection import RDKitNoConectPDBBlockProjector
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
     AtomRef,
@@ -643,6 +644,7 @@ def test_refine_local_region_keeps_seed_candidates_when_baseline_candidate_fails
         *,
         before_metrics: RefinementAcceptanceMetrics,
         clash_basis: ClashDetectionBasis | None = None,
+        pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
     ) -> AssessedRefinementResult:
         del (
             selected_scope,
@@ -650,6 +652,7 @@ def test_refine_local_region_keeps_seed_candidates_when_baseline_candidate_fails
             restraint_library,
             before_metrics,
             clash_basis,
+            pdb_block_projector,
         )
         zero_metrics = RefinementAcceptanceMetrics(
             focus_quality=FocusRefinementQualityMetrics(

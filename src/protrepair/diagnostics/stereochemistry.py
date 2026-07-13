@@ -1,5 +1,6 @@
 """Side-chain stereochemistry diagnostics over canonical structures."""
 
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 
 from protrepair.chemistry import (
@@ -13,6 +14,7 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import ResidueId
+from protrepair.structure.slots import ResidueIndex
 
 STEREOCHEMISTRY_DEGENERACY_EPSILON = 1.0e-6
 
@@ -77,18 +79,41 @@ def detect_sidechain_stereochemistry(
     structure: ProteinStructure,
     *,
     component_library: ComponentLibrary,
+    residue_ids: Collection[ResidueId] | None = None,
 ) -> StereochemistryReport:
-    """Return side-chain stereochemistry violations for supported residues."""
+    """Return violations for all or selected canonical polymer residues.
+
+    Selected residue identifiers are deduplicated and evaluated in canonical
+    structure order. Missing identifiers and retained non-polymer slots are
+    ignored, matching a filtered whole-structure report.
+    """
 
     violations: list[SidechainStereochemistryViolation] = []
-    for residue in structure.constitution.iter_residues():
+    if residue_ids is None:
+        residues: Iterable[ResidueSite] = structure.constitution.iter_residues()
+        focused_residue_index_by_id: dict[ResidueId, ResidueIndex] | None = None
+    else:
+        focused_residue_entries = _focused_polymer_residue_entries(
+            structure,
+            residue_ids,
+        )
+        residues = (residue for _, residue in focused_residue_entries)
+        focused_residue_index_by_id = {
+            residue.residue_id: residue_index
+            for residue_index, residue in focused_residue_entries
+        }
+
+    for residue in residues:
         template = component_library.get(residue.component_id)
         if template is None or not template.has_tetrahedral_stereochemistry():
             continue
 
-        residue_geometry = structure.residue_geometry(
+        residue_index = (
             structure.constitution.residue_index(residue.residue_id)
+            if focused_residue_index_by_id is None
+            else focused_residue_index_by_id[residue.residue_id]
         )
+        residue_geometry = structure.residue_geometry(residue_index)
         violations.extend(
             detect_residue_stereochemistry_violations(
                 residue,
@@ -98,6 +123,32 @@ def detect_sidechain_stereochemistry(
         )
 
     return StereochemistryReport(violations=tuple(violations))
+
+
+def _focused_polymer_residue_entries(
+    structure: ProteinStructure,
+    residue_ids: Collection[ResidueId],
+) -> tuple[tuple[ResidueIndex, ResidueSite], ...]:
+    """Return selected polymer residues in canonical structure order."""
+
+    constitution = structure.constitution
+    polymer_residue_count = len(constitution.residue_slots) - len(
+        constitution.ligands
+    )
+    indexed_residues = []
+    for residue_id in frozenset(residue_ids):
+        residue = constitution.residue_or_ligand(residue_id)
+        if residue is None:
+            continue
+
+        residue_index = constitution.residue_index(residue_id)
+        if residue_index.value >= polymer_residue_count:
+            continue
+
+        indexed_residues.append((residue_index, residue))
+
+    indexed_residues.sort(key=lambda indexed_residue: indexed_residue[0])
+    return tuple(indexed_residues)
 
 
 def detect_residue_stereochemistry_violations(

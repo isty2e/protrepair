@@ -89,6 +89,7 @@ from protrepair.transformer.refinement.spec import RepairRefinementSpec
 from protrepair.transformer.refinement.speculative_planning import (
     SpeculativeAdoptedChild,
     SpeculativeAdoptionDecision,
+    SpeculativePlanningNodeId,
 )
 from protrepair.workflow.actions.context import TransformerExecutionContext
 from protrepair.workflow.actions.heavy_completion import (
@@ -135,8 +136,10 @@ from protrepair.workflow.engine.packing import (
 from protrepair.workflow.engine.reporting import evaluate_requested_goal_report
 from protrepair.workflow.engine.runtime import (
     WorkflowRuntimeState,
+    _adopted_workflow_children,
     _workflow_children_with_regression_retention,
     _workflow_children_within_node_budget,
+    _WorkflowBranchEvaluator,
     execute_iterative_workflow,
 )
 from protrepair.workflow.planning.action.registry import WorkflowStateAction
@@ -1754,6 +1757,23 @@ def test_process_structure_expands_multi_node_workflow_frontier_fifo(
     )
     planner_calls: list[tuple[str, tuple[type[WorkflowStateAction], ...]]] = []
     execution_calls: list[type[WorkflowStateAction]] = []
+    retained_frontiers: list[tuple[tuple[str, ...], int]] = []
+    original_retain_states = _WorkflowBranchEvaluator.retain_states
+
+    def track_retain_states(
+        evaluator: _WorkflowBranchEvaluator,
+        states: tuple[WorkflowRuntimeState, ...],
+    ) -> None:
+        original_retain_states(evaluator, states)
+        retained_frontiers.append(
+            (
+                tuple(
+                    state.result.structure.provenance.ingress.source_name or ""
+                    for state in states
+                ),
+                len(evaluator._evaluations_by_result_depth),
+            )
+        )
 
     def fake_plan_workflow_actions(
         current_structure: ProteinStructure,
@@ -1835,6 +1855,11 @@ def test_process_structure_expands_multi_node_workflow_frontier_fifo(
         "protrepair.workflow.engine.runtime.execute_workflow_transformer",
         fake_execute_workflow_transformer,
     )
+    monkeypatch.setattr(
+        _WorkflowBranchEvaluator,
+        "retain_states",
+        track_retain_states,
+    )
 
     result = process_structure(structure)
 
@@ -1856,6 +1881,11 @@ def test_process_structure_expands_multi_node_workflow_frontier_fifo(
     assert (
         result.structure.provenance.ingress.source_name == "workflow-frontier-branch-a"
     )
+    assert retained_frontiers == [
+        (("workflow-frontier-branch-a", "workflow-frontier-branch-b"), 2),
+        (("workflow-frontier-branch-b",), 1),
+        ((), 0),
+    ]
 
 
 def test_workflow_children_retain_current_branch_when_child_regresses(
@@ -1904,6 +1934,22 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
         ),
         adopted_decision=SpeculativeAdoptionDecision.reject(reason="fixture"),
     )
+    peer_structure = structure.with_provenance(
+        StructureProvenance(
+            ingress=StructureIngress(
+                source_format=FileFormat.PDB,
+                source_name="workflow-child-peer",
+            ),
+            lineage=structure.provenance.lineage,
+        )
+    )
+    peer = SpeculativeAdoptedChild(
+        state=WorkflowRuntimeState(
+            result=ProcessResult(structure=peer_structure, repairs=(), issues=()),
+            planner_memory=child_memory,
+        ),
+        adopted_decision=SpeculativeAdoptionDecision.reject(reason="fixture"),
+    )
 
     def fake_evaluate_requested_goal_report(
         *args,
@@ -1916,14 +1962,17 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
         result: ProcessResult,
         **kwargs,
     ) -> WorkflowBranchQualityScore:
-        del kwargs
+        source_name = result.structure.provenance.ingress.source_name
+        assert source_name is not None
+        quality_score_sources.append(source_name)
         return WorkflowBranchQualityScore(
             parser_incompatible=int(
-                result.structure.provenance.ingress.source_name
-                == "workflow-child-regressed"
-            )
+                source_name in {"workflow-child-regressed", "workflow-child-peer"}
+            ),
+            search_depth=kwargs["search_depth"],
         )
 
+    quality_score_sources: list[str] = []
     monkeypatch.setattr(
         "protrepair.workflow.engine.runtime.evaluate_requested_goal_report",
         fake_evaluate_requested_goal_report,
@@ -1932,16 +1981,25 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
         "protrepair.workflow.engine.runtime.evaluate_workflow_branch_quality_score",
         fake_evaluate_workflow_branch_quality_score,
     )
+    component_library = build_default_component_library()
+    planning_context = WorkflowPlanningContext()
+    branch_evaluator = _WorkflowBranchEvaluator(
+        requested_goals=RequestedGoalSet(),
+        component_library=component_library,
+        planning_context=planning_context,
+        already_satisfied_requested_goals=(),
+    )
+    assert _adopted_workflow_children(
+        adopted_children=(child, peer),
+        branch_evaluator=branch_evaluator,
+    ) == (child, peer)
 
     retained_children = _workflow_children_with_regression_retention(
         current_branch_state=current_branch_state,
         attempted_transformers=(transformer,),
         transform_requests=WorkflowTransformRequests(),
         retained_children=(child,),
-        requested_goals=RequestedGoalSet(),
-        component_library=build_default_component_library(),
-        planning_context=WorkflowPlanningContext(),
-        already_satisfied_requested_goals=(),
+        branch_evaluator=branch_evaluator,
     )
 
     assert len(retained_children) == 2
@@ -1955,11 +2013,61 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
     assert _workflow_children_within_node_budget(
         children=retained_children,
         child_budget=1,
-        requested_goals=RequestedGoalSet(),
-        component_library=build_default_component_library(),
-        planning_context=WorkflowPlanningContext(),
-        already_satisfied_requested_goals=(),
+        branch_evaluator=branch_evaluator,
     ) == (retained_current_branch,)
+    terminal_outcome = branch_evaluator.terminal_outcome(
+        node_id=SpeculativePlanningNodeId(7),
+        state=child.state,
+        result=child.state.result,
+        planning_outcome=WorkflowPlanningOutcome(
+            structure_planning_signature=StructurePlanningSignature.from_facts(
+                StructureProjectionStateFacts.from_structure(child_structure)
+            ),
+            transformers=(),
+        ),
+    )
+
+    assert terminal_outcome.branch_quality_score.search_depth == 7
+    deeper_state = WorkflowRuntimeState(
+        result=child.state.result,
+        planner_memory=child_memory.with_adopted_transformer(
+            TerminalAugmentationTransformer(scope=residue_scope)
+        ),
+    )
+    assert branch_evaluator.evaluation(deeper_state).quality_score.search_depth == 2
+    changed_result = child.state.result.with_appended_issues(
+        (
+            ValidationIssue(
+                kind=ValidationIssueKind.PARSER_READABILITY,
+                severity=IssueSeverity.WARNING,
+                message="terminal context changed",
+            ),
+        )
+    )
+    changed_terminal_outcome = branch_evaluator.terminal_outcome(
+        node_id=SpeculativePlanningNodeId(8),
+        state=child.state,
+        result=changed_result,
+        planning_outcome=WorkflowPlanningOutcome(
+            structure_planning_signature=StructurePlanningSignature.from_facts(
+                StructureProjectionStateFacts.from_structure(child_structure)
+            ),
+            transformers=(),
+        ),
+    )
+
+    assert changed_terminal_outcome.warning_count == 1
+    assert changed_terminal_outcome.branch_quality_score.search_depth == 8
+    branch_evaluator.retain_states((child.state,))
+    branch_evaluator.evaluation(peer.state)
+    assert quality_score_sources == [
+        "workflow-child-regressed",
+        "workflow-child-peer",
+        "workflow-parent",
+        "workflow-child-regressed",
+        "workflow-child-regressed",
+        "workflow-child-peer",
+    ]
 
 
 def test_process_structure_executes_parser_witness_repair_inside_workflow_pass(

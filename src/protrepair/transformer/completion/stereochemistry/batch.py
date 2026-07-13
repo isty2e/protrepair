@@ -63,23 +63,27 @@ class StereochemistryCorrectionBatch:
         *,
         component_library: ComponentLibrary,
     ) -> ProteinStructure:
-        """Drop correction subtrees so heavy-atom completion can rebuild them."""
+        """Drop correction subtrees so heavy-atom completion can rebuild them.
 
-        prepared_structure = structure
+        Each payload is derived from the unchanged input because selected
+        correction subtrees are residue-local and independent within a batch.
+        """
+
+        prepared_residue_facets = []
         for residue_id in self.corrected_residue_ids():
             prepared_residue = self.prepared_payload(
-                _completion_payload_for_structure(prepared_structure, residue_id),
+                _completion_payload_for_structure(structure, residue_id),
                 component_library=component_library,
             )
-            prepared_structure = prepared_structure.with_updated_residue_facets(
-                prepared_residue.residue_site,
-                residue_geometry=prepared_residue.residue_geometry,
-                formal_charge_by_atom_name=(
-                    prepared_residue.formal_charge_by_atom_name
-                ),
+            prepared_residue_facets.append(
+                (
+                    prepared_residue.residue_site,
+                    prepared_residue.residue_geometry,
+                    prepared_residue.formal_charge_by_atom_name,
+                )
             )
 
-        return prepared_structure
+        return structure.with_updated_residue_facets_batch(prepared_residue_facets)
 
     def prepared_payload(
         self,
@@ -115,21 +119,23 @@ class StereochemistryCorrectionBatch:
         if not corrected_residue_ids:
             return original_structure
 
-        merged_structure = original_structure
+        corrected_residue_facets = []
         for residue_id in corrected_residue_ids:
             corrected_residue = _completion_payload_for_structure(
                 corrected_heavy_structure,
                 residue_id,
             )
-            merged_structure = merged_structure.with_updated_residue_facets(
-                corrected_residue.residue_site,
-                residue_geometry=corrected_residue.residue_geometry,
-                formal_charge_by_atom_name=(
-                    corrected_residue.formal_charge_by_atom_name
-                ),
+            corrected_residue_facets.append(
+                (
+                    corrected_residue.residue_site,
+                    corrected_residue.residue_geometry,
+                    corrected_residue.formal_charge_by_atom_name,
+                )
             )
 
-        return merged_structure
+        return original_structure.with_updated_residue_facets_batch(
+            corrected_residue_facets
+        )
 
     def completed_result(
         self,
@@ -147,6 +153,7 @@ class StereochemistryCorrectionBatch:
         remaining_report = detect_sidechain_stereochemistry(
             merged_structure,
             component_library=component_library,
+            residue_ids=self.corrected_residue_ids(),
         )
         remaining_issues = self.remaining_issues(remaining_report)
         correction_repairs = self.correction_repairs(

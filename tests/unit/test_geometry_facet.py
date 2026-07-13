@@ -86,6 +86,41 @@ def test_residue_geometry_keys_payload_by_atom_name() -> None:
     )
 
 
+def test_residue_geometry_batches_normalized_atom_updates() -> None:
+    """Batch updates should preserve order and use the last normalized name."""
+
+    original_ca = AtomGeometry(position=Vec3(1.0, 0.0, 0.0))
+    geometry = ResidueGeometry(
+        atoms_by_name={
+            "N": AtomGeometry(position=Vec3(0.0, 0.0, 0.0)),
+            "CA": original_ca,
+        }
+    )
+    updated_ca = AtomGeometry(position=Vec3(2.0, 0.0, 0.0))
+    first_cb = AtomGeometry(position=Vec3(3.0, 0.0, 0.0))
+    final_cb = AtomGeometry(position=Vec3(4.0, 0.0, 0.0))
+
+    updated = geometry.with_atom_geometries(
+        ((" ca ", updated_ca), ("cb", first_cb), ("CB", final_cb))
+    )
+
+    assert updated.atom_names() == ("N", "CA", "CB")
+    assert updated.atom_geometry("CA") is updated_ca
+    assert updated.atom_geometry("CB") is final_cb
+    assert geometry.atom_geometry("CA") is original_ca
+    assert not geometry.has_atom("CB")
+
+
+def test_residue_geometry_empty_batch_preserves_identity() -> None:
+    """An empty batch should retain the existing immutable geometry value."""
+
+    geometry = ResidueGeometry(
+        atoms_by_name={"N": AtomGeometry(position=Vec3(0.0, 0.0, 0.0))}
+    )
+
+    assert geometry.with_atom_geometries(()) is geometry
+
+
 def test_structure_resolves_atom_geometry_from_geometry_payload() -> None:
     residue = residue_payload(
         component_id="SER",

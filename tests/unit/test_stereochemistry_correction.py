@@ -1,8 +1,9 @@
 """Unit tests for localized side-chain stereochemistry correction."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Iterable
 from pathlib import Path
 
+import pytest
 from tests.support.canonical_builders import (
     CanonicalResiduePayload,
     chain_payload,
@@ -11,6 +12,9 @@ from tests.support.canonical_builders import (
     build_structure as build_canonical_structure,
 )
 
+import protrepair.transformer.completion.stereochemistry.batch as batch_module
+import protrepair.transformer.completion.stereochemistry.correction as correction_module
+from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import (
     RepairEventKind,
@@ -80,6 +84,150 @@ def test_correct_sidechain_stereochemistry_repairs_inverted_isoleucine() -> None
     )
 
 
+def test_correct_sidechain_stereochemistry_repairs_multiple_residues() -> None:
+    """One correction batch should rebuild each selected residue independently."""
+
+    structure = focused_structure_for_residues(
+        (
+            (25, invert_isoleucine_residue),
+            (30, invert_threonine_residue),
+        )
+    )
+
+    result = correct_sidechain_stereochemistry(structure)
+
+    assert result.issue_count() == 0
+    assert stereochemistry_report(result).is_empty()
+    assert {
+        repair.residue_id
+        for repair in result.repairs
+        if repair.kind is RepairEventKind.STEREOCHEMISTRY_CORRECTED
+    } == {ResidueId("A", 25), ResidueId("A", 30)}
+    assert set(
+        result.structure.constitution.residue_site_at(
+            result.structure.constitution.residue_index(ResidueId("A", 25))
+        ).atom_site_names()
+    ) >= {"CG1", "CG2", "CD1"}
+    assert set(
+        result.structure.constitution.residue_site_at(
+            result.structure.constitution.residue_index(ResidueId("A", 30))
+        ).atom_site_names()
+    ) >= {"OG1", "CG2"}
+
+
+def test_stereochemistry_batch_updates_multiple_residue_facets_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preparation and merge should each perform one structure batch update."""
+
+    structure = focused_structure_for_residues(
+        (
+            (25, invert_isoleucine_residue),
+            (30, invert_threonine_residue),
+        )
+    )
+    component_library = build_standard_component_library()
+    batch = StereochemistryCorrectionBatch.from_violations(
+        detect_sidechain_stereochemistry(
+            structure,
+            component_library=component_library,
+        ).violations
+    )
+    original_batch_update = ProteinStructure.with_updated_residue_facets_batch
+    observed_batch_sizes: list[int] = []
+
+    def recording_batch_update(
+        candidate_structure: ProteinStructure,
+        residue_facets: Iterable[CanonicalResiduePayload],
+    ) -> ProteinStructure:
+        materialized_facets = tuple(residue_facets)
+        observed_batch_sizes.append(len(materialized_facets))
+        return original_batch_update(candidate_structure, materialized_facets)
+
+    monkeypatch.setattr(
+        ProteinStructure,
+        "with_updated_residue_facets_batch",
+        recording_batch_update,
+    )
+
+    batch.prepared_structure(structure, component_library=component_library)
+    batch.merged_structure(
+        original_structure=structure,
+        corrected_heavy_structure=structure,
+    )
+
+    assert observed_batch_sizes == [2, 2]
+
+
+def test_stereochemistry_batch_matches_sequential_topology_remapping() -> None:
+    """Batch preparation and merge should match sequential facet replacement."""
+
+    structure = read_structure(
+        Path("tests/fixtures/corpus/pdb1afc.ent"),
+        policy=StructureIngressOptions().structure_normalization_policy(),
+    )
+    component_library = build_standard_component_library()
+    residue_ids = (ResidueId("A", 30), ResidueId("B", 30))
+    batch = StereochemistryCorrectionBatch(
+        violations_by_residue={
+            residue_id: (_stereochemistry_violation(residue_id),)
+            for residue_id in residue_ids
+        }
+    )
+
+    sequentially_prepared = structure
+    for residue_id in batch.corrected_residue_ids():
+        prepared_residue = batch.prepared_payload(
+            batch_module._completion_payload_for_structure(
+                sequentially_prepared,
+                residue_id,
+            ),
+            component_library=component_library,
+        )
+        sequentially_prepared = sequentially_prepared.with_updated_residue_facets(
+            prepared_residue.residue_site,
+            residue_geometry=prepared_residue.residue_geometry,
+            formal_charge_by_atom_name=(
+                prepared_residue.formal_charge_by_atom_name
+            ),
+        )
+
+    batch_prepared = batch.prepared_structure(
+        structure,
+        component_library=component_library,
+    )
+    assert structure.topology.bonds
+    assert batch_prepared == sequentially_prepared
+    assert batch_prepared.topology.bonds == sequentially_prepared.topology.bonds
+
+    sequentially_merged = structure
+    for residue_id in batch.corrected_residue_ids():
+        corrected_residue = batch_module._completion_payload_for_structure(
+            batch_prepared,
+            residue_id,
+        )
+        sequentially_merged = sequentially_merged.with_updated_residue_facets(
+            corrected_residue.residue_site,
+            residue_geometry=corrected_residue.residue_geometry,
+            formal_charge_by_atom_name=(
+                corrected_residue.formal_charge_by_atom_name
+            ),
+        )
+
+    batch_merged = batch.merged_structure(
+        original_structure=structure,
+        corrected_heavy_structure=batch_prepared,
+    )
+    assert batch_merged == sequentially_merged
+    assert batch_merged.topology.bonds == sequentially_merged.topology.bonds
+    assert tuple(
+        residue_site.residue_id for residue_site in batch_merged.iter_residue_sites()
+    ) == tuple(
+        residue_site.residue_id
+        for residue_site in sequentially_merged.iter_residue_sites()
+    )
+
+
 def test_correct_sidechain_stereochemistry_is_noop_for_native_residues() -> None:
     """Native supported residues should pass through without corrections."""
 
@@ -92,6 +240,52 @@ def test_correct_sidechain_stereochemistry_is_noop_for_native_residues() -> None
         repairs=(),
         issues=(),
     )
+
+
+def test_targeted_stereochemistry_correction_keeps_diagnostics_focused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Initial and residual diagnostics should retain the requested scope."""
+
+    residue_id = ResidueId("A", 30)
+    target_residue_ids = frozenset({residue_id})
+    structure = focused_structure_for_residue(
+        seq_num=residue_id.seq_num,
+        mutate_residue=invert_threonine_residue,
+    )
+    observed_focuses: list[Collection[ResidueId] | None] = []
+
+    def focused_detector(
+        candidate_structure: ProteinStructure,
+        *,
+        component_library: ComponentLibrary,
+        residue_ids: Collection[ResidueId] | None = None,
+    ) -> StereochemistryReport:
+        observed_focuses.append(residue_ids)
+        return detect_sidechain_stereochemistry(
+            candidate_structure,
+            component_library=component_library,
+            residue_ids=residue_ids,
+        )
+
+    monkeypatch.setattr(
+        correction_module,
+        "detect_sidechain_stereochemistry",
+        focused_detector,
+    )
+    monkeypatch.setattr(
+        batch_module,
+        "detect_sidechain_stereochemistry",
+        focused_detector,
+    )
+
+    result = correct_sidechain_stereochemistry(
+        structure,
+        target_residue_ids=target_residue_ids,
+    )
+
+    assert result.issue_count() == 0
+    assert observed_focuses == [target_residue_ids, target_residue_ids]
 
 
 def test_stereochemistry_batch_remaining_issues_filters_to_corrected_residues() -> None:
@@ -163,35 +357,52 @@ def focused_structure_for_residue(
 ) -> ProteinStructure:
     """Return a one-residue canonical structure from the representative fixture."""
 
+    return focused_structure_for_residues(((seq_num, mutate_residue),))
+
+
+def focused_structure_for_residues(
+    residue_specs: tuple[
+        tuple[
+            int,
+            Callable[[CanonicalResiduePayload], CanonicalResiduePayload] | None,
+        ],
+        ...,
+    ],
+) -> ProteinStructure:
+    """Return selected canonical residues from the representative fixture."""
+
     structure = read_structure(
         Path("tests/fixtures/corpus/pdb1afc.ent"),
         policy=StructureIngressOptions().structure_normalization_policy(),
     )
-    residue_site = next(
-        residue_site
-        for residue_site in structure.chain_site("A").residues
-        if residue_site.residue_id.seq_num == seq_num
-    )
-    residue_id = residue_site.residue_id
-    residue_geometry = structure.geometry.residue_geometry(
-        constitution=structure.constitution,
-        residue_index=structure.constitution.residue_index(residue_id),
-    )
-    residue = (
-        residue_site,
-        residue_geometry,
-        structure.topology.residue_formal_charge_by_atom_name(
+    residues: list[CanonicalResiduePayload] = []
+    for seq_num, mutate_residue in residue_specs:
+        residue_site = next(
+            residue_site
+            for residue_site in structure.chain_site("A").residues
+            if residue_site.residue_id.seq_num == seq_num
+        )
+        residue_id = residue_site.residue_id
+        residue_geometry = structure.geometry.residue_geometry(
             constitution=structure.constitution,
             residue_index=structure.constitution.residue_index(residue_id),
-        ),
-    )
-    if mutate_residue is not None:
-        residue = mutate_residue(residue)
+        )
+        residue: CanonicalResiduePayload = (
+            residue_site,
+            residue_geometry,
+            structure.topology.residue_formal_charge_by_atom_name(
+                constitution=structure.constitution,
+                residue_index=structure.constitution.residue_index(residue_id),
+            ),
+        )
+        residues.append(
+            mutate_residue(residue) if mutate_residue is not None else residue
+        )
 
     return build_canonical_structure(
-        chains=(chain_payload("A", (residue,)),),
+        chains=(chain_payload("A", tuple(residues)),),
         source_format=FileFormat.PDB,
-        source_name=f"stereochemistry-{seq_num}",
+        source_name="stereochemistry-focused",
     )
 
 

@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 from protrepair.geometry import AxisRotation
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
-from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
+from protrepair.structure.geometry import ResidueGeometry
 
 FloatArray = NDArray[np.float64]
 ATTACHED_HYDROGEN_DISTANCE_MAX_ANGSTROM = 1.35
@@ -33,31 +33,41 @@ def rotate_residue_atoms_about_axis(
         axis_start,
         residue_geometry.position(axis_atom_names[1]),
     )
-    updated_atom_geometries: list[tuple[str, AtomGeometry]] = []
-    moved_atom_names: list[str] = []
-    for atom_site in residue_site.atom_sites:
-        if atom_site.name not in rotated_atom_names:
-            continue
-
-        updated_atom_geometries.append(
-            (
-                atom_site.name,
-                residue_geometry.atom_geometry(atom_site.name).with_position(
-                    axis_rotation.rotate_point(
-                        residue_geometry.position(atom_site.name),
-                        origin=axis_start,
-                        theta_radians=theta_radians,
-                    )
-                ),
-            )
+    rotated_atom_sites = tuple(
+        atom_site
+        for atom_site in residue_site.atom_sites
+        if atom_site.name in rotated_atom_names
+    )
+    rotated_positions = axis_rotation.rotate_points(
+        (
+            residue_geometry.position(atom_site.name)
+            for atom_site in rotated_atom_sites
+        ),
+        origin=axis_start,
+        theta_radians=theta_radians,
+    )
+    updated_atom_geometries = tuple(
+        (
+            atom_site.name,
+            residue_geometry.atom_geometry(atom_site.name).with_position(
+                rotated_position
+            ),
         )
-        moved_atom_names.append(atom_site.name)
+        for atom_site, rotated_position in zip(
+            rotated_atom_sites,
+            rotated_positions,
+            strict=True,
+        )
+    )
+    moved_atom_names = tuple(
+        dict.fromkeys(atom_site.name for atom_site in rotated_atom_sites)
+    )
 
     return (
         residue_site,
         residue_geometry.with_atom_geometries(updated_atom_geometries),
         formal_charge_by_atom_name,
-        tuple(dict.fromkeys(moved_atom_names)),
+        moved_atom_names,
     )
 
 

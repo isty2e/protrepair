@@ -25,16 +25,20 @@ from protrepair.chemistry import (
 from protrepair.chemistry.internal_coordinates import InternalCoordinateProgram
 from protrepair.chemistry.restraint.library import RestraintLibrary
 from protrepair.diagnostics import (
-    ClashDetectionBasis,
     IssueSeverity,
     ValidationIssue,
     ValidationIssueKind,
 )
+from protrepair.diagnostics.clashes import ClashDetectionBasis
 from protrepair.diagnostics.parser_readability import (
     RDKitNoConectSanitizeReadabilityMetrics,
 )
 from protrepair.errors import RefinementError
 from protrepair.geometry import Vec3
+from protrepair.io.pdb_projection import (
+    RDKitNoConectPDBBlockProjector,
+    prepare_rdkit_no_conect_pdb_block_projector,
+)
 from protrepair.relation import (
     DensityEvidence,
     StructureEndpoint,
@@ -446,19 +450,36 @@ def test_refine_local_region_rejects_unresolved_full_structure_sanitize_failure(
                 backend_name="fake",
             )
 
+    prepared_projectors: list[RDKitNoConectPDBBlockProjector] = []
+
+    def _prepare_projector(
+        candidate_structure: ProteinStructure,
+    ) -> RDKitNoConectPDBBlockProjector | None:
+        projector = prepare_rdkit_no_conect_pdb_block_projector(candidate_structure)
+        assert projector is not None
+        prepared_projectors.append(projector)
+        return projector
+
     monkeypatch.setattr(
         "protrepair.transformer.refinement.local_pipeline.backend.resolve_continuous_relaxation_backend",
         lambda backend_name: FakeBackend(),
     )
+    monkeypatch.setattr(
+        "protrepair.transformer.refinement.local_pipeline.request.prepare_rdkit_no_conect_pdb_block_projector",
+        _prepare_projector,
+    )
 
     sanitize_readability_by_structure = {id(structure): True}
+    observed_projectors: list[RDKitNoConectPDBBlockProjector | None] = []
 
     def _measure_sanitize_readability_metrics(
         candidate_structure: ProteinStructure,
         *,
         component_library: ComponentLibrary | None = None,
+        pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
     ) -> RDKitNoConectSanitizeReadabilityMetrics:
         del component_library
+        observed_projectors.append(pdb_block_projector)
         sanitize_readable = sanitize_readability_by_structure.get(
             id(candidate_structure),
             False,
@@ -482,6 +503,11 @@ def test_refine_local_region_rejects_unresolved_full_structure_sanitize_failure(
 
     assert result.refined_structure == structure
     assert result.delta.moved_atoms == ()
+    assert len(prepared_projectors) == 1
+    assert len(observed_projectors) >= 2
+    assert all(
+        projector is prepared_projectors[0] for projector in observed_projectors
+    )
     assert any(
         issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
     )
@@ -509,8 +535,9 @@ def test_refine_local_region_can_adopt_discrete_preconditioning_candidate(
         *,
         component_library: ComponentLibrary,
         clash_basis: ClashDetectionBasis,
+        pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
     ) -> PreparedRefinementCandidateBase:
-        del component_library, clash_basis
+        del component_library, clash_basis, pdb_block_projector
         discrete_structure = _structure_with_updated_atom_positions(
             context.source_snapshot.structure,
             residue_id,
@@ -571,8 +598,15 @@ def test_refine_local_region_can_adopt_discrete_preconditioning_candidate(
         *,
         before_metrics: RefinementAcceptanceMetrics,
         clash_basis: ClashDetectionBasis | None = None,
+        pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
     ) -> AssessedRefinementResult:
-        del selected_scope, component_library, restraint_library, clash_basis
+        del (
+            selected_scope,
+            component_library,
+            restraint_library,
+            clash_basis,
+            pdb_block_projector,
+        )
         assessed_backend_names.append(result.backend_name)
         if result.backend_name == "discrete_preconditioning":
             return AssessedRefinementResult(
@@ -706,13 +740,44 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
         "protrepair.transformer.refinement.local_pipeline.assessment.assess_refinement_result_with_before_metrics",
         _accepted_h_only_parser_failure,
     )
+    revalidation_projectors: list[RDKitNoConectPDBBlockProjector | None] = []
+
+    def _measure_revalidated_metrics(
+        structure: ProteinStructure,
+        *,
+        selected_scope: Scope,
+        component_library: ComponentLibrary,
+        restraint_library: RestraintLibrary,
+        clash_basis: ClashDetectionBasis | None = None,
+        pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
+    ) -> RefinementAcceptanceMetrics:
+        del (
+            structure,
+            selected_scope,
+            component_library,
+            restraint_library,
+            clash_basis,
+        )
+        revalidation_projectors.append(pdb_block_projector)
+        return _refinement_metrics(rdkit_readable=True)
+
+    def _failing_revalidation_residue_ids(
+        structure: ProteinStructure,
+        *,
+        component_library: ComponentLibrary | None = None,
+        pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
+    ) -> tuple[ResidueId, ...]:
+        del structure, component_library
+        revalidation_projectors.append(pdb_block_projector)
+        return (residue_id,)
+
     monkeypatch.setattr(
         "protrepair.transformer.dependent_hydrogen.measure_refinement_acceptance_metrics_for_scope",
-        lambda structure, **kwargs: _refinement_metrics(rdkit_readable=True),
+        _measure_revalidated_metrics,
     )
     monkeypatch.setattr(
         "protrepair.transformer.dependent_hydrogen.rdkit_no_conect_parser_failing_residue_ids",
-        lambda structure, **kwargs: (residue_id,),
+        _failing_revalidation_residue_ids,
     )
 
     hydrogenation_calls: list[frozenset[ResidueId] | None] = []
@@ -749,6 +814,9 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
     )
 
     assert hydrogenation_calls == [frozenset((residue_id,))]
+    assert len(revalidation_projectors) == 2
+    assert revalidation_projectors[0] is not None
+    assert revalidation_projectors[1] is revalidation_projectors[0]
     assert _atom_position(result.refined_structure, residue_id, "A3") == (
         refined_heavy_position
     )
@@ -1429,10 +1497,17 @@ def _accepted_h_only_parser_failure(
     *,
     before_metrics: RefinementAcceptanceMetrics,
     clash_basis: ClashDetectionBasis | None = None,
+    pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
 ) -> AssessedRefinementResult:
     """Return an accepted assessment carrying an H-only parser failure."""
 
-    del selected_scope, component_library, restraint_library, clash_basis
+    del (
+        selected_scope,
+        component_library,
+        restraint_library,
+        clash_basis,
+        pdb_block_projector,
+    )
     return AssessedRefinementResult(
         executed_result=result,
         before_metrics=before_metrics,
@@ -1452,10 +1527,17 @@ def _accepted_mixed_parser_failure(
     *,
     before_metrics: RefinementAcceptanceMetrics,
     clash_basis: ClashDetectionBasis | None = None,
+    pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
 ) -> AssessedRefinementResult:
     """Return an accepted assessment carrying mixed heavy and H parser failures."""
 
-    del selected_scope, component_library, restraint_library, clash_basis
+    del (
+        selected_scope,
+        component_library,
+        restraint_library,
+        clash_basis,
+        pdb_block_projector,
+    )
     return AssessedRefinementResult(
         executed_result=result,
         before_metrics=before_metrics,

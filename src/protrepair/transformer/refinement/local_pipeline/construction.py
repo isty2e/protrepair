@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.diagnostics.clashes import ClashDetectionBasis
+from protrepair.io.pdb_projection import RDKitNoConectPDBBlockProjector
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.discrete import (
@@ -79,6 +80,7 @@ def build_refinement_execution_batch(
         request.context,
         component_library=request.component_library,
         clash_basis=request.clash_basis,
+        pdb_block_projector=request.pdb_block_projector,
     )
     candidates: list[RefinementExecutionCandidate] = []
     if prepared_base.lineage.moved_atom_indices():
@@ -111,6 +113,7 @@ def prepare_refinement_candidate_base(
     *,
     component_library: ComponentLibrary,
     clash_basis: ClashDetectionBasis,
+    pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
 ) -> PreparedRefinementCandidateBase:
     """Return one prepared baseline before optional seed candidate expansion."""
 
@@ -141,6 +144,7 @@ def prepare_refinement_candidate_base(
     pre_untangle_transformer = ParserWitnessPreUntangleTransformer(
         component_library,
         clash_basis=clash_basis,
+        pdb_block_projector=pdb_block_projector,
     )
     pre_untangled_snapshot = pre_untangle_transformer.transform(active_context)
     pre_untangled_moved_atom_indices = (
