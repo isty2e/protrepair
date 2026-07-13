@@ -26,6 +26,9 @@
 - reuse topology/radius preparation and one focus-aware spatial index across
   parser-witness clash and near-covalent candidate assessments while keeping
   their metric policies and radius systems independent
+- restrict local-refinement and targeted-correction stereochemistry diagnostics
+  to directly selected residue slots instead of scanning the whole polymer
+  structure
 - consolidate retained-ligand RDKit hydrogen patch projection while rejecting
   invalid generated names and non-finite coordinates before materialization
 - centralize NumPy geometry-placement vector degeneracy rules while preserving

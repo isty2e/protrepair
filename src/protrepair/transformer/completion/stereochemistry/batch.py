@@ -147,6 +147,7 @@ class StereochemistryCorrectionBatch:
         remaining_report = detect_sidechain_stereochemistry(
             merged_structure,
             component_library=component_library,
+            residue_ids=self.corrected_residue_ids(),
         )
         remaining_issues = self.remaining_issues(remaining_report)
         correction_repairs = self.correction_repairs(

@@ -316,6 +316,7 @@ def measure_refinement_acceptance_metrics(
     stereochemistry_report = detect_sidechain_stereochemistry(
         structure,
         component_library=component_library,
+        residue_ids=focus_residue_ids,
     )
     rdkit_readability_metrics = (
         measure_rdkit_no_conect_sanitize_readability_metrics(
@@ -351,10 +352,8 @@ def measure_refinement_acceptance_metrics(
             total_near_covalent_overlap_angstrom=(
                 _total_contact_overlap_angstrom(near_covalent_contacts)
             ),
-            stereochemistry_violation_count=sum(
-                1
-                for violation in stereochemistry_report.violations
-                if violation.residue_id in focus_residue_ids
+            stereochemistry_violation_count=len(
+                stereochemistry_report.violations
             ),
         ),
         parser_compatibility=WholeStructureParserCompatibilityMetrics(

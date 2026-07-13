@@ -5,7 +5,6 @@ from protrepair.chemistry import (
     build_default_component_library,
 )
 from protrepair.diagnostics import (
-    StereochemistryReport,
     detect_sidechain_stereochemistry,
 )
 from protrepair.structure.aggregate import ProteinStructure
@@ -35,15 +34,8 @@ def correct_sidechain_stereochemistry(
     initial_report = detect_sidechain_stereochemistry(
         heavy_structure,
         component_library=library,
+        residue_ids=target_residue_ids,
     )
-    if target_residue_ids is not None:
-        initial_report = StereochemistryReport(
-            violations=tuple(
-                violation
-                for violation in initial_report.violations
-                if violation.residue_id in target_residue_ids
-            )
-        )
     if initial_report.is_empty():
         return TransformationResult(
             structure=structure,

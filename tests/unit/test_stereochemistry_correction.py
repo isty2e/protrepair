@@ -1,8 +1,9 @@
 """Unit tests for localized side-chain stereochemistry correction."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 
+import pytest
 from tests.support.canonical_builders import (
     CanonicalResiduePayload,
     chain_payload,
@@ -11,6 +12,9 @@ from tests.support.canonical_builders import (
     build_structure as build_canonical_structure,
 )
 
+import protrepair.transformer.completion.stereochemistry.batch as batch_module
+import protrepair.transformer.completion.stereochemistry.correction as correction_module
+from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import (
     RepairEventKind,
@@ -92,6 +96,52 @@ def test_correct_sidechain_stereochemistry_is_noop_for_native_residues() -> None
         repairs=(),
         issues=(),
     )
+
+
+def test_targeted_stereochemistry_correction_keeps_diagnostics_focused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Initial and residual diagnostics should retain the requested scope."""
+
+    residue_id = ResidueId("A", 30)
+    target_residue_ids = frozenset({residue_id})
+    structure = focused_structure_for_residue(
+        seq_num=residue_id.seq_num,
+        mutate_residue=invert_threonine_residue,
+    )
+    observed_focuses: list[Collection[ResidueId] | None] = []
+
+    def focused_detector(
+        candidate_structure: ProteinStructure,
+        *,
+        component_library: ComponentLibrary,
+        residue_ids: Collection[ResidueId] | None = None,
+    ) -> StereochemistryReport:
+        observed_focuses.append(residue_ids)
+        return detect_sidechain_stereochemistry(
+            candidate_structure,
+            component_library=component_library,
+            residue_ids=residue_ids,
+        )
+
+    monkeypatch.setattr(
+        correction_module,
+        "detect_sidechain_stereochemistry",
+        focused_detector,
+    )
+    monkeypatch.setattr(
+        batch_module,
+        "detect_sidechain_stereochemistry",
+        focused_detector,
+    )
+
+    result = correct_sidechain_stereochemistry(
+        structure,
+        target_residue_ids=target_residue_ids,
+    )
+
+    assert result.issue_count() == 0
+    assert observed_focuses == [target_residue_ids, target_residue_ids]
 
 
 def test_stereochemistry_batch_remaining_issues_filters_to_corrected_residues() -> None:
