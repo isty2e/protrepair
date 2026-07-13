@@ -63,7 +63,11 @@ class StereochemistryCorrectionBatch:
         *,
         component_library: ComponentLibrary,
     ) -> ProteinStructure:
-        """Drop correction subtrees so heavy-atom completion can rebuild them."""
+        """Drop correction subtrees so heavy-atom completion can rebuild them.
+
+        Each payload is derived from the unchanged input because selected
+        correction subtrees are residue-local and independent within a batch.
+        """
 
         prepared_residue_facets = []
         for residue_id in self.corrected_residue_ids():

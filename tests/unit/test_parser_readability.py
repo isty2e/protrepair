@@ -1,4 +1,5 @@
 from pathlib import Path
+from random import Random
 
 import pytest
 from tests.support.canonical_builders import (
@@ -322,7 +323,7 @@ def test_no_conect_pdb_block_projector_patches_coordinate_only_updates() -> None
 def test_no_conect_pdb_block_projector_matches_gemmi_coordinate_formatting() -> (
     None
 ):
-    """Projection should preserve Gemmi's half ties and field truncation."""
+    """Projection should match Gemmi across rounding and field-width regimes."""
 
     residue_id = ResidueId("A", 1)
     structure = build_structure(
@@ -348,10 +349,31 @@ def test_no_conect_pdb_block_projector_matches_gemmi_coordinate_formatting() -> 
     projector = prepare_rdkit_no_conect_pdb_block_projector(structure)
     assert projector is not None
 
-    for position in (
+    random = Random(20260714)
+    positions = (
+        Vec3(-0.0004, -0.0005, 0.0005),
         Vec3(7.6255, -1.2355, -0.0005),
         Vec3(-999.9995, 9999.9995, -99.9995),
-    ):
+        Vec3(9999.9996, -999.9996, 10000.0),
+        *(
+            Vec3(
+                random.uniform(-999.999, 9999.999),
+                random.uniform(-999.999, 9999.999),
+                random.uniform(-999.999, 9999.999),
+            )
+            for _ in range(96)
+        ),
+        *(
+            Vec3(
+                random.uniform(-1.0e8, 1.0e8),
+                random.uniform(-1.0e8, 1.0e8),
+                random.uniform(-1.0e8, 1.0e8),
+            )
+            for _ in range(32)
+        ),
+    )
+
+    for position in positions:
         updated_structure = structure.with_updated_residue_geometries(
             (
                 (
