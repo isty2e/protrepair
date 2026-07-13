@@ -103,14 +103,17 @@ class ResidueGeometry:
     ) -> "ResidueGeometry":
         """Return a copy with multiple atom geometries added or replaced by name."""
 
-        residue_geometry = self
+        updated_atoms_by_name: dict[str, AtomGeometry] | None = None
         for atom_name, atom_geometry in atom_geometries:
-            residue_geometry = residue_geometry.with_atom_geometry(
-                atom_name,
-                atom_geometry,
-            )
+            if updated_atoms_by_name is None:
+                updated_atoms_by_name = dict(self.atoms_by_name)
 
-        return residue_geometry
+            updated_atoms_by_name[atom_name.strip().upper()] = atom_geometry
+
+        if updated_atoms_by_name is None:
+            return self
+
+        return type(self)(atoms_by_name=updated_atoms_by_name)
 
     def without_atoms(self, atom_names: Collection[str]) -> "ResidueGeometry":
         """Return a copy without the requested residue-local atom names."""
