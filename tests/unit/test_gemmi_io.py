@@ -47,6 +47,7 @@ from protrepair.structure.labels import (
     ResidueId,
 )
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
     BondProvenance,
     BondRelationshipType,
@@ -2984,6 +2985,113 @@ def test_write_mmcif_recomputes_hydrogen_connection_distance() -> None:
     )
 
     assert roundtripped_bond.relationship_type is BondRelationshipType.HYDROGEN_BOND
+    assert roundtripped_bond.source_metadata is not None
+    reported_distance = (
+        roundtripped_bond.source_metadata.reported_distance_angstrom
+    )
+    assert reported_distance == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize(
+    (
+        "component_id",
+        "atom_name",
+        "element",
+        "relationship_type",
+        "record_type",
+        "record_prefix",
+    ),
+    (
+        (
+            "ALA",
+            "CB",
+            "C",
+            BondRelationshipType.COVALENT,
+            SourceBondRecordType.PDB_LINK,
+            "LINK",
+        ),
+        (
+            "CYS",
+            "SG",
+            "S",
+            BondRelationshipType.DISULFIDE,
+            SourceBondRecordType.PDB_SSBOND,
+            "SSBOND",
+        ),
+    ),
+)
+def test_write_pdb_recomputes_typed_connection_distance(
+    component_id: str,
+    atom_name: str,
+    element: str,
+    relationship_type: BondRelationshipType,
+    record_type: SourceBondRecordType,
+    record_prefix: str,
+) -> None:
+    """PDB typed connection distances must follow current coordinates."""
+
+    base_structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id=component_id,
+                        residue_id=ResidueId("A", 1),
+                        atoms=(
+                            atom_payload(atom_name, element, Vec3(0.0, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+            chain_payload(
+                "B",
+                (
+                    residue_payload(
+                        component_id=component_id,
+                        residue_id=ResidueId("B", 1),
+                        atoms=(
+                            atom_payload(atom_name, element, Vec3(2.0, 0.0, 0.0)),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+    )
+    structure = ProteinStructure.from_payload(
+        constitution=base_structure.constitution,
+        geometry=base_structure.geometry,
+        topology=StructureTopology(
+            constitution=base_structure.constitution,
+            atom_topologies=base_structure.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    atom_index_1=AtomIndex(0),
+                    atom_index_2=AtomIndex(1),
+                    relationship_type=relationship_type,
+                    provenance=BondProvenance.SOURCE_EXPLICIT,
+                    source_metadata=SourceBondMetadata(
+                        record_type=record_type,
+                        source_id="source1",
+                        reported_distance_angstrom=9.0,
+                    ),
+                ),
+            ),
+        ),
+        provenance=base_structure.provenance,
+    )
+
+    pdb_text = write_structure_string(structure, FileFormat.PDB)
+    roundtripped = read_structure_string(pdb_text, FileFormat.PDB)
+    roundtripped_bond = next(
+        bond
+        for bond in roundtripped.topology.bonds
+        if bond.source_metadata is not None
+        and bond.source_metadata.record_type is record_type
+    )
+
+    assert any(line.startswith(record_prefix) for line in pdb_text.splitlines())
     assert roundtripped_bond.source_metadata is not None
     reported_distance = (
         roundtripped_bond.source_metadata.reported_distance_angstrom
