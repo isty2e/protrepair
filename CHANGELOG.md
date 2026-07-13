@@ -29,8 +29,12 @@
 - restrict local-refinement and targeted-correction stereochemistry diagnostics
   to directly selected residue slots instead of scanning the whole polymer
   structure
-- reuse one address-space-checked no-CONECT PDB projector across local-refinement
-  candidate parser assessments
+- reuse one serialization-compatible no-CONECT PDB projector across
+  local-refinement and dependent-hydrogen parser assessments, patching only
+  changed coordinates while falling back on any unpatched fact drift
+- batch residue geometry and stereochemistry facet updates and reuse one
+  rotation matrix per residue-local transform instead of rebuilding immutable
+  structures or matrices for each atom
 - consolidate retained-ligand RDKit hydrogen patch projection while rejecting
   invalid generated names and non-finite coordinates before materialization
 - centralize NumPy geometry-placement vector degeneracy rules while preserving
