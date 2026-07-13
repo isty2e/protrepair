@@ -95,6 +95,7 @@ def revalidate_dependent_hydrogens_after_refinement(
         component_library=component_library,
         restraint_library=restraint_library,
         clash_basis=clash_basis,
+        pdb_block_projector=pdb_block_projector,
     )
     if refinement_metrics_rejected(active_current_metrics, candidate_metrics):
         return result

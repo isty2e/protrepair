@@ -2934,6 +2934,63 @@ def test_write_mmcif_emits_struct_conn_from_source_explicit_topology_bonds() -> 
         )
 
 
+def test_write_mmcif_recomputes_hydrogen_connection_distance() -> None:
+    """mmCIF keeps the type but reports distance from current coordinates."""
+
+    base_structure = read_structure_string(
+        build_source_connection_text(FileFormat.PDB),
+        FileFormat.PDB,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+    source_bond = next(
+        bond
+        for bond in base_structure.topology.bonds
+        if bond.provenance is BondProvenance.SOURCE_EXPLICIT
+    )
+    structure = ProteinStructure.from_payload(
+        constitution=base_structure.constitution,
+        geometry=base_structure.geometry,
+        topology=StructureTopology(
+            constitution=base_structure.constitution,
+            atom_topologies=base_structure.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    atom_index_1=source_bond.atom_index_1,
+                    atom_index_2=source_bond.atom_index_2,
+                    relationship_type=BondRelationshipType.HYDROGEN_BOND,
+                    provenance=BondProvenance.SOURCE_EXPLICIT,
+                    source_metadata=SourceBondMetadata(
+                        record_type=SourceBondRecordType.MMCIF_STRUCT_CONN,
+                        source_id="hydrog1",
+                        reported_distance_angstrom=2.75,
+                    ),
+                ),
+            ),
+        ),
+        polymer_blueprint=base_structure.polymer_blueprint,
+        provenance=base_structure.provenance,
+    )
+
+    mmcif_text = write_structure_string(structure, FileFormat.MMCIF)
+    roundtripped = read_structure_string(
+        mmcif_text,
+        FileFormat.MMCIF,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+    roundtripped_bond = next(
+        bond
+        for bond in roundtripped.topology.bonds
+        if bond.provenance is BondProvenance.SOURCE_EXPLICIT
+    )
+
+    assert roundtripped_bond.relationship_type is BondRelationshipType.HYDROGEN_BOND
+    assert roundtripped_bond.source_metadata is not None
+    reported_distance = (
+        roundtripped_bond.source_metadata.reported_distance_angstrom
+    )
+    assert reported_distance == pytest.approx(2.0)
+
+
 def test_write_mmcif_emits_struct_conn_from_pdb_conect_topology_bonds() -> None:
     """PDB CONECT-origin topology should remain source-explicit in mmCIF."""
 

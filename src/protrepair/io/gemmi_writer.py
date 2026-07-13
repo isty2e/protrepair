@@ -124,8 +124,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         add_topology_connections_to_gemmi_structure(
             raw_structure,
             structure,
-            include_pdb_conect_origin=False,
-            include_model_resolved=False,
+            bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
         )
         pdb_text = _restore_pdb_isotope_element_symbols(
             raw_structure.make_pdb_string(),
@@ -140,8 +139,10 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         add_topology_connections_to_gemmi_structure(
             raw_structure,
             structure,
-            include_pdb_conect_origin=True,
-            include_model_resolved=True,
+            bonds=gemmi_connection_topology_bonds_for_egress(
+                structure,
+                include_model_resolved=True,
+            ),
         )
         mmcif_document = raw_structure.make_mmcif_document()
         _restore_mmcif_isotope_element_symbols(mmcif_document, structure)
@@ -157,8 +158,7 @@ def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> st
     add_topology_connections_to_gemmi_structure(
         raw_structure,
         structure,
-        include_pdb_conect_origin=False,
-        include_model_resolved=False,
+        bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
     )
     return _restore_pdb_isotope_element_symbols(
         raw_structure.make_pdb_string(),
@@ -291,22 +291,11 @@ def add_topology_connections_to_gemmi_structure(
     raw_structure: gemmi.Structure,
     structure: ProteinStructure,
     *,
-    include_pdb_conect_origin: bool,
-    include_model_resolved: bool = False,
+    bonds: tuple[TopologyBond, ...],
 ) -> None:
     """Add topology bonds as gemmi connection records."""
 
-    for bond in gemmi_connection_topology_bonds_for_egress(
-        structure,
-        include_model_resolved=include_model_resolved,
-    ):
-        if (
-            not include_pdb_conect_origin
-            and bond.source_metadata is not None
-            and bond.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
-        ):
-            continue
-
+    for bond in bonds:
         raw_connection = gemmi.Connection()
         raw_connection.name = source_connection_name(bond)
         raw_connection.link_id = source_connection_link_id(bond)
@@ -354,12 +343,14 @@ def gemmi_connection_topology_bonds_for_egress(
     structure: ProteinStructure,
     *,
     include_model_resolved: bool,
+    include_pdb_conect_origin: bool = True,
 ) -> tuple[TopologyBond, ...]:
     """Return topology bonds emitted through gemmi connection records.
 
     Gemmi connection records preserve typed relationships such as LINK,
-    struct_conn, disulfide, hydrogen, and metal coordination. PDB CONECT records
-    are appended separately because they are an untyped connectivity table.
+    struct_conn, disulfide, hydrogen, and metal coordination. Callers that
+    append PDB CONECT separately exclude bonds originating from that untyped
+    connectivity table.
     """
 
     return tuple(
@@ -369,6 +360,27 @@ def gemmi_connection_topology_bonds_for_egress(
             bond,
             include_model_resolved=include_model_resolved,
         )
+        and (
+            include_pdb_conect_origin
+            or bond.source_metadata is None
+            or bond.source_metadata.record_type is not SourceBondRecordType.PDB_CONECT
+        )
+    )
+
+
+def pdb_typed_connection_topology_bonds_for_egress(
+    structure: ProteinStructure,
+) -> tuple[TopologyBond, ...]:
+    """Return source bonds represented by typed PDB connection records."""
+
+    return tuple(
+        bond
+        for bond in gemmi_connection_topology_bonds_for_egress(
+            structure,
+            include_model_resolved=False,
+            include_pdb_conect_origin=False,
+        )
+        if bond.relationship_type is not BondRelationshipType.HYDROGEN_BOND
     )
 
 

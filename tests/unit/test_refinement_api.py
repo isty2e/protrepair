@@ -816,7 +816,7 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
     assert hydrogenation_calls == [frozenset((residue_id,))]
     assert len(revalidation_projectors) == 2
     assert revalidation_projectors[0] is not None
-    assert revalidation_projectors[1] is None
+    assert revalidation_projectors[1] is revalidation_projectors[0]
     assert _atom_position(result.refined_structure, residue_id, "A3") == (
         refined_heavy_position
     )
