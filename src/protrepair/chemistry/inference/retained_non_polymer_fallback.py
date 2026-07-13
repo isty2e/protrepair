@@ -50,10 +50,16 @@ class RetainedNonPolymerRdkitFallbackInferenceResult:
     hydrogen_name_projection_candidate_count: int
     hydrogen_name_projection_candidate_limit: int
 
-    def hydrogen_name_projection_map(self) -> Mapping[str, str]:
-        """Return generated-to-final hydrogen names as a read-only mapping."""
+    def projected_hydrogen_atom_names(self) -> tuple[str, ...]:
+        """Return final H names in RDKit-generated hydrogen atom order."""
 
-        return MappingProxyType(dict(self.hydrogen_name_projection))
+        final_name_by_generated_name = dict(self.hydrogen_name_projection)
+        return tuple(
+            final_name_by_generated_name[generated_name]
+            for generated_name in _generated_hydrogen_atom_names(
+                self.hydrogenated_molecule
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)

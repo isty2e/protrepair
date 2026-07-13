@@ -24,9 +24,10 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
 from protrepair.errors import RdkitUnavailableError
-from protrepair.geometry import Vec3
+from protrepair.transformer.completion.retained_non_polymer_hydrogen import (
+    rdkit_patch,
+)
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
-from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 
 if TYPE_CHECKING:
     from rdkit.Chem.rdchem import Mol
@@ -82,9 +83,12 @@ def hydrogenate_retained_non_polymer_payload_with_evidence_result(
     )
     return EvidenceHydrogenationResult(
         payload=payload.apply_patch(
-            _hydrogen_append_patch(
+            rdkit_patch.rdkit_hydrogen_append_patch(
                 payload,
                 hydrogenated_molecule=hydrogenated_molecule,
+                hydrogen_atom_names=_evidence_hydrogen_atom_names(
+                    hydrogenated_molecule,
+                ),
             )
         ),
         heavy_bond_definitions=retained_non_polymer_evidence_heavy_bond_definitions(
@@ -214,35 +218,12 @@ def _rdkit_pose_molecule(
     return pose_molecule
 
 
-def _hydrogen_append_patch(
-    payload: CompletionResiduePayload,
-    *,
+def _evidence_hydrogen_atom_names(
     hydrogenated_molecule: "Mol",
-) -> OrderedAtomPatch:
-    """Return one patch that appends generated evidence hydrogens."""
+) -> tuple[str, ...]:
+    """Return generated evidence H names in RDKit atom order."""
 
-    conformer = hydrogenated_molecule.GetConformer()
-    hydrogen_positions: list[Vec3] = []
-    for atom in hydrogenated_molecule.GetAtoms():
-        if atom.GetAtomicNum() != 1:
-            continue
-
-        coordinates = conformer.GetAtomPosition(atom.GetIdx())
-        hydrogen_positions.append(
-            Vec3(
-                float(coordinates.x),
-                float(coordinates.y),
-                float(coordinates.z),
-            )
-        )
-
-    hydrogen_atom_names = tuple(
-        f"H{index:03d}" for index in range(1, len(hydrogen_positions) + 1)
+    hydrogen_count = sum(
+        atom.GetAtomicNum() == 1 for atom in hydrogenated_molecule.GetAtoms()
     )
-    return OrderedAtomPatch.from_residue_payload(
-        payload.residue_site,
-        residue_geometry=payload.residue_geometry,
-    ).append_atoms(
-        hydrogen_atom_names,
-        hydrogen_positions,
-    )
+    return tuple(f"H{index:03d}" for index in range(1, hydrogen_count + 1))

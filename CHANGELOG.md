@@ -16,6 +16,8 @@
 
 ### Changed
 
+- consolidate retained-ligand RDKit hydrogen patch projection while rejecting
+  invalid generated names and non-finite coordinates before materialization
 - centralize NumPy geometry-placement vector degeneracy rules while preserving
   domain-specific error and diagnostic semantics, and reject non-finite or
   overflowing placement frames before they emit invalid coordinates
