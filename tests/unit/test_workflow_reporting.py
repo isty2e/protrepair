@@ -295,7 +295,7 @@ def test_process_structure_defers_intrinsic_phase_report_for_hydrogen_complete_r
         lambda *_args, **_kwargs: (),
     )
     monkeypatch.setattr(
-        "protrepair.workflow.engine.reporting.evaluate_workflow_branch_quality_score",
+        "protrepair.workflow.engine.runtime.evaluate_workflow_branch_quality_score",
         lambda *_args, **_kwargs: WorkflowBranchQualityScore(),
     )
     _patch_workflow_planning_parser_compatibility_facts(

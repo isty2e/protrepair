@@ -302,29 +302,14 @@ def evaluate_terminal_branch_outcome(
     *,
     node_id: SpeculativePlanningNodeId,
     result: TransformationResult,
-    requested_goals: tuple[WorkflowGoal, ...],
+    requested_goal_report: RequestedGoalReport,
+    branch_quality_score: WorkflowBranchQualityScore,
     planning_context: WorkflowPlanningContext,
     component_library: ComponentLibrary,
-    unsupported_requested_goals: tuple[WorkflowGoal, ...] = (),
-    blocked_requested_goal_blockers: tuple[
-        tuple[
-            WorkflowGoal,
-            tuple[WorkflowBlocker, ...],
-        ],
-        ...,
-    ] = (),
-    already_satisfied_requested_goals: tuple[WorkflowGoal, ...] = (),
+    blockers: tuple[WorkflowBlocker, ...] = (),
 ) -> WorkflowTerminalBranchOutcome:
-    """Evaluate one terminal branch outcome against requested goals."""
+    """Build one terminal outcome from its already-evaluated branch facts."""
 
-    requested_goal_report = evaluate_requested_goal_report(
-        result.structure,
-        requested_goals=requested_goals,
-        component_library=component_library,
-        unsupported_requested_goals=unsupported_requested_goals,
-        blocked_requested_goal_blockers=blocked_requested_goal_blockers,
-        already_satisfied_requested_goals=already_satisfied_requested_goals,
-    )
     return WorkflowTerminalBranchOutcome(
         node_id=node_id,
         requested_goal_report=requested_goal_report,
@@ -332,19 +317,9 @@ def evaluate_terminal_branch_outcome(
             result.structure,
             planning_context=planning_context,
             component_library=component_library,
-            blockers=tuple(
-                blocker
-                for _, blockers in blocked_requested_goal_blockers
-                for blocker in blockers
-            ),
+            blockers=blockers,
         ),
-        branch_quality_score=evaluate_workflow_branch_quality_score(
-            result,
-            requested_goal_report=requested_goal_report,
-            planning_context=planning_context,
-            component_library=component_library,
-            search_depth=node_id.value,
-        ),
+        branch_quality_score=branch_quality_score,
         error_count=result.error_count(),
         warning_count=result.warning_count(),
         issue_count=result.issue_count(),

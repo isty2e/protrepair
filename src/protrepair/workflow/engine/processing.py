@@ -117,12 +117,8 @@ def process_canonical_structure(
     )
     return finalize_workflow_result(
         terminal_branches=runtime_result.terminal_branches,
-        requested_goals=requested_goal_set,
         planning_context=active_planning_context,
         component_library=component_library,
-        initially_satisfied_requested_goals=(
-            runtime_result.initially_satisfied_requested_goals
-        ),
         requested_analyses=normalized_analyses,
         preliminary_issues=packing_reference_issues,
     )

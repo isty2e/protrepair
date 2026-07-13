@@ -22,22 +22,18 @@ from protrepair.state.structure_topology import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.workflow.contracts.planning import WorkflowPlanningContext
-from protrepair.workflow.contracts.request import RequestedGoalSet, WorkflowGoal
 from protrepair.workflow.contracts.result import (
     ProcessResult,
     WorkflowTerminalBranchReport,
 )
-from protrepair.workflow.engine.reporting import evaluate_terminal_branch_outcome
 from protrepair.workflow.engine.runtime import WorkflowTerminalBranch
 
 
 def finalize_workflow_result(
     *,
     terminal_branches: tuple[WorkflowTerminalBranch, ...],
-    requested_goals: RequestedGoalSet,
     planning_context: WorkflowPlanningContext,
     component_library: ComponentLibrary,
-    initially_satisfied_requested_goals: tuple[WorkflowGoal, ...],
     requested_analyses: frozenset[AnalysisKind],
     preliminary_issues: tuple[ValidationIssue, ...] = (),
 ) -> ProcessResult:
@@ -45,10 +41,7 @@ def finalize_workflow_result(
 
     terminal_branch_report = _terminal_branch_report(
         terminal_branches=terminal_branches,
-        requested_goals=requested_goals,
         planning_context=planning_context,
-        component_library=component_library,
-        initially_satisfied_requested_goals=initially_satisfied_requested_goals,
     )
     preferred_terminal_branch = terminal_branch_report.require_preferred_value(
         {branch.node_id: branch for branch in terminal_branches}
@@ -153,33 +146,12 @@ def _disulfide_topology_conflict_issue(
 def _terminal_branch_report(
     *,
     terminal_branches: tuple[WorkflowTerminalBranch, ...],
-    requested_goals: RequestedGoalSet,
     planning_context: WorkflowPlanningContext,
-    component_library: ComponentLibrary,
-    initially_satisfied_requested_goals: tuple[WorkflowGoal, ...],
 ) -> WorkflowTerminalBranchReport:
     """Build the terminal branch preference report for runtime branches."""
 
     return WorkflowTerminalBranchReport.from_outcomes(
-        tuple(
-            evaluate_terminal_branch_outcome(
-                node_id=branch.node_id,
-                result=branch.result,
-                requested_goals=requested_goals.goals,
-                planning_context=planning_context,
-                component_library=component_library,
-                unsupported_requested_goals=(
-                    branch.planning_outcome.unsupported_requested_goals
-                ),
-                blocked_requested_goal_blockers=(
-                    branch.planning_outcome.blocked_requested_goal_blockers()
-                ),
-                already_satisfied_requested_goals=(
-                    initially_satisfied_requested_goals
-                ),
-            )
-            for branch in terminal_branches
-        ),
+        tuple(branch.outcome for branch in terminal_branches),
         branch_preference_policy=planning_context.branch_preference_policy,
     )
 

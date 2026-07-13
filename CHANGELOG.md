@@ -16,6 +16,9 @@
 
 ### Changed
 
+- reuse workflow branch evaluations across sibling selection, regression
+  retention, budget pruning, and terminal reporting while evicting discarded
+  branch results from the runtime cache
 - consolidate retained-ligand RDKit hydrogen patch projection while rejecting
   invalid generated names and non-finite coordinates before materialization
 - centralize NumPy geometry-placement vector degeneracy rules while preserving

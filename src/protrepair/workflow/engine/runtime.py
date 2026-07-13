@@ -1,6 +1,6 @@
 """Frontier runtime for workflow planning execution."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
@@ -35,11 +35,17 @@ from protrepair.workflow.contracts.request import (
     WorkflowGoal,
     WorkflowTransformRequests,
 )
+from protrepair.workflow.contracts.result import (
+    RequestedGoalReport,
+    WorkflowBranchQualityScore,
+    WorkflowTerminalBranchOutcome,
+)
 from protrepair.workflow.engine.parser_witness_repair import (
     execute_bounded_parser_witness_repair_loop,
 )
 from protrepair.workflow.engine.reporting import (
     evaluate_requested_goal_report,
+    evaluate_terminal_branch_outcome,
     evaluate_workflow_branch_quality_score,
 )
 from protrepair.workflow.planning.action.registry import WorkflowStateAction
@@ -59,20 +65,175 @@ class WorkflowRuntimeState:
 
 
 @dataclass(frozen=True, slots=True)
+class _WorkflowBranchEvaluation:
+    """One runtime branch's goal report and policy-independent quality score."""
+
+    requested_goal_report: RequestedGoalReport
+    quality_score: WorkflowBranchQualityScore
+
+
+@dataclass(slots=True)
+class _WorkflowBranchEvaluator:
+    """Memoize branch evaluations for one immutable workflow runtime."""
+
+    requested_goals: RequestedGoalSet
+    component_library: ComponentLibrary
+    planning_context: WorkflowPlanningContext
+    already_satisfied_requested_goals: tuple[WorkflowGoal, ...]
+    _evaluations_by_result_depth: dict[
+        tuple[int, int],
+        tuple[TransformationResult, _WorkflowBranchEvaluation],
+    ] = field(default_factory=dict, init=False, repr=False)
+
+    def evaluation(self, state: WorkflowRuntimeState) -> _WorkflowBranchEvaluation:
+        """Return the cached evaluation for one exact result and search depth."""
+
+        search_depth = len(state.planner_memory.adopted_transformers)
+        cache_key = (id(state.result), search_depth)
+        cached_entry = self._evaluations_by_result_depth.get(cache_key)
+        if cached_entry is not None and cached_entry[0] is state.result:
+            return cached_entry[1]
+
+        requested_goal_report = evaluate_requested_goal_report(
+            state.result.structure,
+            requested_goals=self.requested_goals.goals,
+            component_library=self.component_library,
+            already_satisfied_requested_goals=(
+                self.already_satisfied_requested_goals
+            ),
+        )
+        evaluation = self._evaluation_for_report(
+            state.result,
+            requested_goal_report=requested_goal_report,
+            search_depth=search_depth,
+        )
+        self._evaluations_by_result_depth[cache_key] = (state.result, evaluation)
+        return evaluation
+
+    def quality_key(
+        self,
+        state: WorkflowRuntimeState,
+        *,
+        policy: WorkflowBranchPreferencePolicy,
+    ) -> tuple[int | float, ...]:
+        """Return one cached branch evaluation under the selected axis order."""
+
+        return self.evaluation(state).quality_score.order_key(policy)
+
+    def retain_states(self, states: tuple[WorkflowRuntimeState, ...]) -> None:
+        """Discard evaluations that no longer belong to the live frontier."""
+
+        retained_keys = {
+            (
+                id(state.result),
+                len(state.planner_memory.adopted_transformers),
+            )
+            for state in states
+        }
+        self._evaluations_by_result_depth = {
+            cache_key: entry
+            for cache_key, entry in self._evaluations_by_result_depth.items()
+            if cache_key in retained_keys
+        }
+
+    def _evaluation_for_report(
+        self,
+        result: TransformationResult,
+        *,
+        requested_goal_report: RequestedGoalReport,
+        search_depth: int,
+    ) -> _WorkflowBranchEvaluation:
+        """Pair one goal report with its policy-independent structure score."""
+
+        return _WorkflowBranchEvaluation(
+            requested_goal_report=requested_goal_report,
+            quality_score=evaluate_workflow_branch_quality_score(
+                result,
+                requested_goal_report=requested_goal_report,
+                planning_context=self.planning_context,
+                component_library=self.component_library,
+                search_depth=search_depth,
+            ),
+        )
+
+    def terminal_outcome(
+        self,
+        *,
+        node_id: SpeculativePlanningNodeId,
+        state: WorkflowRuntimeState,
+        result: TransformationResult,
+        planning_outcome: WorkflowPlanningOutcome,
+    ) -> WorkflowTerminalBranchOutcome:
+        """Return terminal reporting facts, reusing selection facts when exact."""
+
+        blocked_requested_goal_blockers = (
+            planning_outcome.blocked_requested_goal_blockers()
+        )
+        unsupported_requested_goals = planning_outcome.unsupported_requested_goals
+        if (
+            result is state.result
+            and not unsupported_requested_goals
+            and not blocked_requested_goal_blockers
+        ):
+            selection_evaluation = self.evaluation(state)
+            evaluation = _WorkflowBranchEvaluation(
+                requested_goal_report=selection_evaluation.requested_goal_report,
+                quality_score=replace(
+                    selection_evaluation.quality_score,
+                    search_depth=node_id.value,
+                ),
+            )
+        else:
+            requested_goal_report = evaluate_requested_goal_report(
+                result.structure,
+                requested_goals=self.requested_goals.goals,
+                component_library=self.component_library,
+                unsupported_requested_goals=unsupported_requested_goals,
+                blocked_requested_goal_blockers=blocked_requested_goal_blockers,
+                already_satisfied_requested_goals=(
+                    self.already_satisfied_requested_goals
+                ),
+            )
+            evaluation = self._evaluation_for_report(
+                result,
+                requested_goal_report=requested_goal_report,
+                search_depth=node_id.value,
+            )
+
+        return evaluate_terminal_branch_outcome(
+            node_id=node_id,
+            result=result,
+            requested_goal_report=evaluation.requested_goal_report,
+            branch_quality_score=evaluation.quality_score,
+            planning_context=self.planning_context,
+            component_library=self.component_library,
+            blockers=tuple(
+                blocker
+                for _, blockers in blocked_requested_goal_blockers
+                for blocker in blockers
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class WorkflowTerminalBranch:
     """One terminal workflow branch captured before final branch selection."""
 
-    node_id: SpeculativePlanningNodeId
     result: TransformationResult
-    planning_outcome: WorkflowPlanningOutcome
+    outcome: WorkflowTerminalBranchOutcome
+
+    @property
+    def node_id(self) -> SpeculativePlanningNodeId:
+        """Return the identity owned by this branch's terminal outcome."""
+
+        return self.outcome.node_id
 
 
 @dataclass(frozen=True, slots=True)
 class WorkflowRuntimeResult:
-    """Terminal branches plus root-requested-goal facts from one runtime run."""
+    """Evaluated terminal branches from one workflow runtime run."""
 
     terminal_branches: tuple[WorkflowTerminalBranch, ...]
-    initially_satisfied_requested_goals: tuple[WorkflowGoal, ...]
 
 
 def execute_iterative_workflow(
@@ -103,7 +264,7 @@ def execute_iterative_workflow(
         )
     )
     terminal_branches: list[WorkflowTerminalBranch] = []
-    initial_already_satisfied_requested_goals: tuple[WorkflowGoal, ...] = ()
+    branch_evaluator: _WorkflowBranchEvaluator | None = None
     while True:
         if not trace.frontier.active_nodes:
             trace = trace.stop(reason=SpeculativeStopReason.NO_PROPOSALS_AVAILABLE)
@@ -122,26 +283,39 @@ def execute_iterative_workflow(
                 retained_non_polymer_chemistry_evidence
             ),
         )
-        if not runtime_state.planner_memory.adopted_transformers:
-            initial_already_satisfied_requested_goals = (
-                planning_outcome.already_satisfied_requested_goals
+        if branch_evaluator is None:
+            branch_evaluator = _WorkflowBranchEvaluator(
+                requested_goals=requested_goals,
+                component_library=component_library,
+                planning_context=planning_context,
+                already_satisfied_requested_goals=(
+                    planning_outcome.already_satisfied_requested_goals
+                ),
             )
         if planning_outcome.is_terminal():
+            terminal_result = runtime_state.result.with_appended_issues(
+                planning_outcome.blocker_issues(
+                    runtime_state.result.structure,
+                    component_library=component_library,
+                )
+            )
             terminal_branches.append(
                 WorkflowTerminalBranch(
-                    node_id=active_node.node_id,
-                    result=runtime_state.result.with_appended_issues(
-                        planning_outcome.blocker_issues(
-                            runtime_state.result.structure,
-                            component_library=component_library,
-                        )
+                    result=terminal_result,
+                    outcome=branch_evaluator.terminal_outcome(
+                        node_id=active_node.node_id,
+                        state=runtime_state,
+                        result=terminal_result,
+                        planning_outcome=planning_outcome,
                     ),
-                    planning_outcome=planning_outcome,
                 )
             )
             trace = trace.expand_active_node(
                 parent_node=active_node,
                 adopted_children=(),
+            )
+            branch_evaluator.retain_states(
+                tuple(node.state for node in trace.frontier.active_nodes)
             )
             continue
         remaining_child_budget = planning_context.max_speculative_nodes - len(
@@ -221,12 +395,7 @@ def execute_iterative_workflow(
         adopted_children = list(
             _adopted_workflow_children(
                 adopted_children=tuple(adopted_children),
-                requested_goals=requested_goals,
-                component_library=component_library,
-                planning_context=planning_context,
-                already_satisfied_requested_goals=(
-                    initial_already_satisfied_requested_goals
-                ),
+                branch_evaluator=branch_evaluator,
             )
         )
         adopted_children = list(
@@ -235,29 +404,22 @@ def execute_iterative_workflow(
                 attempted_transformers=proposal_batch,
                 transform_requests=transform_requests,
                 retained_children=tuple(adopted_children),
-                requested_goals=requested_goals,
-                component_library=component_library,
-                planning_context=planning_context,
-                already_satisfied_requested_goals=(
-                    initial_already_satisfied_requested_goals
-                ),
+                branch_evaluator=branch_evaluator,
             )
         )
         adopted_children = list(
             _workflow_children_within_node_budget(
                 children=tuple(adopted_children),
                 child_budget=remaining_child_budget,
-                requested_goals=requested_goals,
-                component_library=component_library,
-                planning_context=planning_context,
-                already_satisfied_requested_goals=(
-                    initial_already_satisfied_requested_goals
-                ),
+                branch_evaluator=branch_evaluator,
             )
         )
         trace = trace.expand_active_node(
             parent_node=active_node,
             adopted_children=tuple(adopted_children),
+        )
+        branch_evaluator.retain_states(
+            tuple(node.state for node in trace.frontier.active_nodes)
         )
 
     if not terminal_branches:
@@ -273,7 +435,6 @@ def execute_iterative_workflow(
 
     return WorkflowRuntimeResult(
         terminal_branches=tuple(terminal_branches),
-        initially_satisfied_requested_goals=initial_already_satisfied_requested_goals,
     )
 
 
@@ -302,10 +463,7 @@ def _adopted_workflow_children(
         ],
         ...,
     ],
-    requested_goals: RequestedGoalSet,
-    component_library: ComponentLibrary,
-    planning_context: WorkflowPlanningContext,
-    already_satisfied_requested_goals: tuple[WorkflowGoal, ...],
+    branch_evaluator: _WorkflowBranchEvaluator,
 ) -> tuple[
     SpeculativeAdoptedChild[
         WorkflowRuntimeState,
@@ -326,10 +484,7 @@ def _adopted_workflow_children(
     child_keys = tuple(
         _workflow_child_quality_key(
             child,
-            requested_goals=requested_goals,
-            component_library=component_library,
-            planning_context=planning_context,
-            already_satisfied_requested_goals=already_satisfied_requested_goals,
+            branch_evaluator=branch_evaluator,
         )
         for child in adopted_children
     )
@@ -355,10 +510,7 @@ def _workflow_children_with_regression_retention(
         ],
         ...,
     ],
-    requested_goals: RequestedGoalSet,
-    component_library: ComponentLibrary,
-    planning_context: WorkflowPlanningContext,
-    already_satisfied_requested_goals: tuple[WorkflowGoal, ...],
+    branch_evaluator: _WorkflowBranchEvaluator,
 ) -> tuple[
     SpeculativeAdoptedChild[
         WorkflowRuntimeState,
@@ -379,28 +531,20 @@ def _workflow_children_with_regression_retention(
     ):
         return retained_children
 
-    regression_policy = _branch_regression_preference_policy(planning_context)
+    regression_policy = _branch_regression_preference_policy(
+        branch_evaluator.planning_context
+    )
     if regression_policy is None:
         return retained_children
 
-    current_branch_quality_key = _workflow_result_quality_key(
-        current_branch_state.result,
-        planner_memory=current_branch_state.planner_memory,
-        requested_goals=requested_goals,
-        component_library=component_library,
-        planning_context=planning_context,
-        branch_preference_policy=regression_policy,
-        already_satisfied_requested_goals=already_satisfied_requested_goals,
+    current_branch_quality_key = branch_evaluator.quality_key(
+        current_branch_state,
+        policy=regression_policy,
     )
     child_quality_keys = tuple(
-        _workflow_result_quality_key(
-            child.state.result,
-            planner_memory=child.state.planner_memory,
-            requested_goals=requested_goals,
-            component_library=component_library,
-            planning_context=planning_context,
-            branch_preference_policy=regression_policy,
-            already_satisfied_requested_goals=already_satisfied_requested_goals,
+        branch_evaluator.quality_key(
+            child.state,
+            policy=regression_policy,
         )
         for child in retained_children
     )
@@ -442,10 +586,7 @@ def _workflow_children_within_node_budget(
         ...,
     ],
     child_budget: int,
-    requested_goals: RequestedGoalSet,
-    component_library: ComponentLibrary,
-    planning_context: WorkflowPlanningContext,
-    already_satisfied_requested_goals: tuple[WorkflowGoal, ...],
+    branch_evaluator: _WorkflowBranchEvaluator,
 ) -> tuple[
     SpeculativeAdoptedChild[
         WorkflowRuntimeState,
@@ -466,10 +607,7 @@ def _workflow_children_within_node_budget(
     child_keys = tuple(
         _workflow_child_quality_key(
             child,
-            requested_goals=requested_goals,
-            component_library=component_library,
-            planning_context=planning_context,
-            already_satisfied_requested_goals=already_satisfied_requested_goals,
+            branch_evaluator=branch_evaluator,
         )
         for child in children
     )
@@ -527,10 +665,7 @@ def _workflow_child_quality_key(
         TransformationResult,
     ],
     *,
-    requested_goals: RequestedGoalSet,
-    component_library: ComponentLibrary,
-    planning_context: WorkflowPlanningContext,
-    already_satisfied_requested_goals: tuple[WorkflowGoal, ...],
+    branch_evaluator: _WorkflowBranchEvaluator,
 ) -> tuple[
     SpeculativeAdoptedChild[
         WorkflowRuntimeState,
@@ -544,41 +679,8 @@ def _workflow_child_quality_key(
 
     return (
         child,
-        _workflow_result_quality_key(
-            child.state.result,
-            planner_memory=child.state.planner_memory,
-            requested_goals=requested_goals,
-            component_library=component_library,
-            planning_context=planning_context,
-            branch_preference_policy=planning_context.branch_preference_policy,
-            already_satisfied_requested_goals=already_satisfied_requested_goals,
+        branch_evaluator.quality_key(
+            child.state,
+            policy=branch_evaluator.planning_context.branch_preference_policy,
         ),
     )
-
-
-def _workflow_result_quality_key(
-    result: TransformationResult,
-    *,
-    planner_memory: WorkflowPlannerMemory,
-    requested_goals: RequestedGoalSet,
-    component_library: ComponentLibrary,
-    planning_context: WorkflowPlanningContext,
-    branch_preference_policy: WorkflowBranchPreferencePolicy,
-    already_satisfied_requested_goals: tuple[WorkflowGoal, ...],
-) -> tuple[int | float, ...]:
-    """Return one result's configured branch score key."""
-
-    requested_goal_report = evaluate_requested_goal_report(
-        result.structure,
-        requested_goals=requested_goals.goals,
-        component_library=component_library,
-        already_satisfied_requested_goals=already_satisfied_requested_goals,
-    )
-    score = evaluate_workflow_branch_quality_score(
-        result,
-        requested_goal_report=requested_goal_report,
-        planning_context=planning_context,
-        component_library=component_library,
-        search_depth=len(planner_memory.adopted_transformers),
-    )
-    return score.order_key(branch_preference_policy)
