@@ -1578,6 +1578,454 @@ def test_read_structure_string_selects_duplicate_ligand_residue_variant() -> Non
     assert ligand_geometry.atom_geometry("N1").position.x == 4.0
 
 
+def test_read_pdb_promotes_het_encoded_sep_into_canonical_polymer_chain() -> None:
+    """Supported HET-encoded SEP should occupy its peptide-linked chain slot."""
+
+    structure = read_structure(
+        Path("tests/fixtures/pdb/refinement/8pyr_sep164_local.pdb")
+    )
+    chain = structure.constitution.chain("A")
+    sep = chain.residue(ResidueId("A", 164))
+    sequence_bond_tokens = {
+        frozenset(
+            (
+                structure.constitution.atom_ref_at(bond.atom_index_1).display_token(),
+                structure.constitution.atom_ref_at(bond.atom_index_2).display_token(),
+            )
+        )
+        for bond in structure.topology.bonds
+        if bond.provenance is BondProvenance.SEQUENCE_INFERRED
+    }
+
+    assert tuple(
+        residue_id.seq_num
+        for residue_id in chain.residue_ids()
+        if 161 <= residue_id.seq_num <= 166
+    ) == (161, 162, 163, 164, 165, 166)
+    assert sep.component_id == "SEP"
+    assert not sep.is_hetero
+    assert sep not in structure.constitution.ligands
+    assert {
+        frozenset(("A:163.C", "A:164.N")),
+        frozenset(("A:164.C", "A:165.N")),
+    } <= sequence_bond_tokens
+
+
+def test_ligand_policy_uses_normalized_role_for_het_encoded_polymer() -> None:
+    """Ligand handling should keep promoted SEP while applying only to FAD."""
+
+    source_text = build_het_encoded_modified_polymer_pdb_text(
+        include_retained_ligand=True
+    )
+    structure = read_structure_string(
+        source_text,
+        FileFormat.PDB,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.DROP),
+    )
+    polymer_only = read_structure_string(
+        build_het_encoded_modified_polymer_pdb_text(include_retained_ligand=False),
+        FileFormat.PDB,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.REJECT),
+    )
+
+    assert structure.constitution.chain("A").residue_ids() == (
+        ResidueId("A", 1),
+        ResidueId("A", 2),
+        ResidueId("A", 3),
+    )
+    assert structure.constitution.ligands == ()
+    assert polymer_only.constitution.chain("A").has_residue(ResidueId("A", 2))
+
+
+def test_mmcif_entity_role_overrides_het_spelling_and_component_chemistry() -> None:
+    """Explicit mmCIF entities should distinguish polymer SEP from retained MSE."""
+
+    structure = read_structure_string(
+        build_mmcif_explicit_residue_roles_text(),
+        FileFormat.MMCIF,
+    )
+    sep = structure.constitution.chain("A").residue(ResidueId("A", 2))
+    mse = structure.constitution.ligands[0]
+    pdb_text = write_structure_string(structure, FileFormat.PDB)
+    pdb_record_by_component = {
+        line[17:20].strip(): line[:6].strip()
+        for line in pdb_text.splitlines()
+        if line.startswith(("ATOM  ", "HETATM"))
+    }
+    roundtripped = read_structure_string(
+        write_structure_string(structure, FileFormat.MMCIF),
+        FileFormat.MMCIF,
+    )
+
+    assert sep.component_id == "SEP"
+    assert not sep.is_hetero
+    assert mse.component_id == "MSE"
+    assert mse.is_hetero
+    assert pdb_record_by_component == {"SEP": "HETATM", "MSE": "HETATM"}
+    assert roundtripped.constitution.chain("A").has_residue(ResidueId("A", 2))
+    assert roundtripped.constitution.ligands[0].component_id == "MSE"
+
+
+def test_pdb_egress_keeps_unknown_polymer_component_as_atom_record() -> None:
+    """Role correction should not broaden HET spelling to unknown polymers."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C1 ",
+                    residue_name="MOV",
+                    chain_id="A",
+                    residue_seq=1,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+    atom_records = tuple(
+        line
+        for line in write_structure_string(structure, FileFormat.PDB).splitlines()
+        if line.startswith(("ATOM  ", "HETATM"))
+    )
+
+    assert len(atom_records) == 1
+    assert atom_records[0].startswith("ATOM  ")
+
+
+def test_pdb_does_not_promote_supported_het_component_without_polymer_context() -> None:
+    """Peptide-compatible chemistry alone should not turn free MSE into polymer."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                "LINK         C   MSE L   1                 N   MSE L   1     "
+                "1555   1555  1.35  ",
+                build_pdb_atom_line(
+                    serial=1,
+                    record_name="HETATM",
+                    atom_name=" C  ",
+                    residue_name="MSE",
+                    chain_id="L",
+                    residue_seq=1,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" N  ",
+                    residue_name="MSE",
+                    chain_id="L",
+                    residue_seq=1,
+                    x=2.0,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert structure.constitution.chains == ()
+    assert structure.constitution.ligands[0].component_id == "MSE"
+
+
+def test_pdb_does_not_promote_distant_insertion_code_candidate() -> None:
+    """Distant insertion codes should not imply peptide adjacency."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C  ",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=100,
+                    insertion_code="A",
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" N  ",
+                    residue_name="SEP",
+                    chain_id="A",
+                    residue_seq=100,
+                    insertion_code="Z",
+                    x=2.0,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert structure.constitution.chain("A").residue_ids() == (
+        ResidueId("A", 100, "A"),
+    )
+    assert structure.constitution.ligands[0].residue_id == ResidueId("A", 100, "Z")
+
+
+def test_pdb_promotes_consecutive_het_polymer_candidates_transitively() -> None:
+    """Polymer context should propagate across consecutive supported HET slots."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" N  ",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=4,
+                    x=4.0,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" C  ",
+                    residue_name="SEP",
+                    chain_id="A",
+                    residue_seq=2,
+                    x=1.0,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=3,
+                    record_name="HETATM",
+                    atom_name=" N  ",
+                    residue_name="TPO",
+                    chain_id="A",
+                    residue_seq=3,
+                    x=2.0,
+                    element="N",
+                ),
+                build_pdb_atom_line(
+                    serial=4,
+                    record_name="HETATM",
+                    atom_name=" C  ",
+                    residue_name="TPO",
+                    chain_id="A",
+                    residue_seq=3,
+                    x=3.0,
+                    element="C",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert structure.constitution.chain("A").residue_ids() == (
+        ResidueId("A", 2),
+        ResidueId("A", 3),
+        ResidueId("A", 4),
+    )
+    assert structure.constitution.ligands == ()
+
+
+def test_pdb_source_peptide_link_can_seed_het_only_polymer_context() -> None:
+    """An explicit C-N link should establish two supported HET polymer slots."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                "LINK         C   SEP A  10                 N   TPO A  20     "
+                "1555   1555  1.35  ",
+                build_pdb_atom_line(
+                    serial=1,
+                    record_name="HETATM",
+                    atom_name=" C  ",
+                    residue_name="SEP",
+                    chain_id="A",
+                    residue_seq=10,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" N  ",
+                    residue_name="TPO",
+                    chain_id="A",
+                    residue_seq=20,
+                    x=2.0,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert tuple(
+        residue.component_id for residue in structure.constitution.chain("A").residues
+    ) == ("SEP", "TPO")
+    assert structure.constitution.ligands == ()
+    assert any(
+        bond.provenance is BondProvenance.SOURCE_EXPLICIT
+        and bond.relationship_type is BondRelationshipType.COVALENT
+        for bond in structure.topology.bonds
+    )
+
+
+def test_pdb_source_peptide_link_promotes_candidate_from_polymer_anchor() -> None:
+    """A source C-N link should promote a nonconsecutive candidate from an anchor."""
+
+    structure = read_structure_string(
+        build_pdb_text(
+            [
+                "LINK         C   ALA A   1                 N   SEP A  10     "
+                "1555   1555  1.35  ",
+                build_pdb_atom_line(
+                    serial=1,
+                    atom_name=" C  ",
+                    residue_name="ALA",
+                    chain_id="A",
+                    residue_seq=1,
+                    element="C",
+                ),
+                build_pdb_atom_line(
+                    serial=2,
+                    record_name="HETATM",
+                    atom_name=" N  ",
+                    residue_name="SEP",
+                    chain_id="A",
+                    residue_seq=10,
+                    x=2.0,
+                    element="N",
+                ),
+                "END",
+            ]
+        ),
+        FileFormat.PDB,
+    )
+
+    assert structure.constitution.chain("A").residue_ids() == (
+        ResidueId("A", 1),
+        ResidueId("A", 10),
+    )
+    assert structure.constitution.ligands == ()
+
+
+@pytest.mark.parametrize(
+    ("variants", "expected_message"),
+    [
+        pytest.param(
+            (
+                ("HETATM", "HOH", " O  ", "O"),
+                ("HETATM", "FAD", " C1 ", "C"),
+            ),
+            "mixed water and non-water variants",
+            id="water-and-non-water",
+        ),
+        pytest.param(
+            (
+                ("ATOM", "ALA", " N  ", "N"),
+                ("HETATM", "FAD", " C1 ", "C"),
+            ),
+            "polymer/non-polymer variant ambiguity",
+            id="polymer-and-non-polymer",
+        ),
+        pytest.param(
+            (
+                ("HETATM", "SEP", " N  ", "N"),
+                ("HETATM", "FAD", " C1 ", "C"),
+            ),
+            "peptide/non-polymer variant ambiguity",
+            id="peptide-and-non-polymer",
+        ),
+    ],
+)
+def test_pdb_rejects_ambiguous_residue_role_variants(
+    variants: tuple[tuple[str, str, str, str], tuple[str, str, str, str]],
+    expected_message: str,
+) -> None:
+    """One source residue slot cannot normalize to contradictory canonical roles."""
+
+    with pytest.raises(StructureNormalizationError, match=expected_message):
+        read_structure_string(
+            build_pdb_text(
+                [
+                    *(
+                        build_pdb_atom_line(
+                            serial=serial,
+                            record_name=record_name,
+                            atom_name=atom_name,
+                            residue_name=residue_name,
+                            chain_id="A",
+                            residue_seq=1,
+                            x=float(serial),
+                            element=element,
+                        )
+                        for serial, (
+                            record_name,
+                            residue_name,
+                            atom_name,
+                            element,
+                        ) in enumerate(variants, start=1)
+                    ),
+                    "END",
+                ]
+            ),
+            FileFormat.PDB,
+        )
+
+
+def test_mmcif_rejects_conflicting_explicit_roles_for_one_residue_id() -> None:
+    """One canonical residue slot cannot belong to two declared entity roles."""
+
+    with pytest.raises(
+        StructureNormalizationError,
+        match="contradictory entity roles at A:2",
+    ):
+        read_structure_string(
+            build_mmcif_explicit_residue_roles_text(retained_residue_seq=2),
+            FileFormat.MMCIF,
+        )
+
+
+def test_normalize_raw_structure_rejects_conflicting_entity_types() -> None:
+    """One declared entity id cannot denote two source entity types."""
+
+    raw_structure = build_raw_source_connection_structure()
+    for entity_type in (
+        gemmi.EntityType.Polymer,
+        gemmi.EntityType.NonPolymer,
+    ):
+        entity = gemmi.Entity("1")
+        entity.entity_type = entity_type
+        raw_structure.entities.append(entity)
+
+    with pytest.raises(
+        StructureNormalizationError,
+        match="contradictory entity types for entity '1'",
+    ):
+        normalize_raw_structure(
+            raw_structure,
+            file_format=FileFormat.PDB,
+            policy=StructureNormalizationPolicy(),
+        )
+
+
+def test_mmcif_branched_entity_remains_retained_non_polymer() -> None:
+    """Branched source entities should not enter the polymer chain ontology."""
+
+    structure = read_structure_string(
+        build_mmcif_branched_entity_text(),
+        FileFormat.MMCIF,
+    )
+
+    assert structure.constitution.chains == ()
+    assert tuple(
+        ligand.component_id for ligand in structure.constitution.ligands
+    ) == ("NAG",)
+
+
 def test_read_structure_string_rejects_ligands_via_public_ligand_policy() -> None:
     """Public ligand rejection should reach raw ingress normalization."""
 
@@ -3945,6 +4393,157 @@ ATOM 1 N N . GLY A 1 1 ? 1.000 2.000 3.000 {occupancy:.7f} {b_factor:.7f} 1 A 1
 """
 
 
+def build_het_encoded_modified_polymer_pdb_text(
+    *,
+    include_retained_ligand: bool,
+) -> str:
+    """Build a PDB with one HET-encoded SEP inserted between polymer anchors."""
+
+    lines = [
+        build_pdb_atom_line(
+            serial=1,
+            atom_name=" C  ",
+            residue_name="ALA",
+            chain_id="A",
+            residue_seq=1,
+            element="C",
+        ),
+        build_pdb_atom_line(
+            serial=2,
+            atom_name=" N  ",
+            residue_name="GLY",
+            chain_id="A",
+            residue_seq=3,
+            x=4.0,
+            element="N",
+        ),
+    ]
+    if include_retained_ligand:
+        lines.append(
+            build_pdb_atom_line(
+                serial=3,
+                record_name="HETATM",
+                atom_name=" C1 ",
+                residue_name="FAD",
+                chain_id="A",
+                residue_seq=100,
+                x=8.0,
+                element="C",
+            )
+        )
+    lines.extend(
+        (
+            build_pdb_atom_line(
+                serial=4,
+                record_name="HETATM",
+                atom_name=" N  ",
+                residue_name="SEP",
+                chain_id="A",
+                residue_seq=2,
+                x=2.0,
+                element="N",
+            ),
+            build_pdb_atom_line(
+                serial=5,
+                record_name="HETATM",
+                atom_name=" C  ",
+                residue_name="SEP",
+                chain_id="A",
+                residue_seq=2,
+                x=3.0,
+                element="C",
+            ),
+            "END",
+        )
+    )
+    return build_pdb_text(lines)
+
+
+def build_mmcif_explicit_residue_roles_text(
+    *,
+    retained_residue_seq: int = 100,
+) -> str:
+    """Build mmCIF HET records with distinct explicit entity roles."""
+
+    return f"""data_residue_roles
+#
+loop_
+_entity.id
+_entity.type
+1 polymer
+2 non-polymer
+#
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+B 2
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id
+_atom_site.pdbx_PDB_model_num
+HETATM 1 N N . SEP A 1 2 ? 0 0 0 1 20 2 A 1
+HETATM 2 C C . SEP A 1 2 ? 1 0 0 1 20 2 A 1
+HETATM 3 SE SE . MSE B 2 . ? 5 0 0 1 20 {retained_residue_seq} A 1
+#
+"""
+
+
+def build_mmcif_branched_entity_text() -> str:
+    """Build one retained glycan residue with an explicit branched entity."""
+
+    return """data_branched_entity
+#
+loop_
+_entity.id
+_entity.type
+1 branched
+#
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id
+_atom_site.pdbx_PDB_model_num
+HETATM 1 C C1 . NAG A 1 . ? 0 0 0 1 20 1 A 1
+#
+"""
+
+
 def build_2q6f_linked_pdb_text() -> str:
     """Return the 2Q6F local fixture with source-explicit annotated links."""
 
@@ -3970,6 +4569,7 @@ def build_pdb_atom_line(
     residue_seq: int,
     record_name: str = "ATOM",
     altloc: str = " ",
+    insertion_code: str = " ",
     x: float = 1.0,
     y: float = 2.0,
     z: float = 3.0,
@@ -3981,7 +4581,7 @@ def build_pdb_atom_line(
 
     return (
         f"{record_name:<6}{serial:>5} {atom_name}{altloc}{residue_name:>3} "
-        f"{chain_id}{residue_seq:>4}    "
+        f"{chain_id}{residue_seq:>4}{insertion_code}   "
         f"{x:>8.3f}{y:>8.3f}{z:>8.3f}{occupancy:>6.2f}{b_factor:>6.2f}"
         f"          {element:>2}  "
     )

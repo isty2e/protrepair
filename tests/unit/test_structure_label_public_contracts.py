@@ -47,6 +47,27 @@ def test_residue_id_ordering_handles_blank_and_letter_insertion_codes() -> None:
 
 
 @pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        pytest.param(ResidueId("A", 100), ResidueId("A", 100, "A"), True),
+        pytest.param(ResidueId("A", 100, "A"), ResidueId("A", 100, "B"), True),
+        pytest.param(ResidueId("A", 100, "A"), ResidueId("A", 100, "Z"), False),
+        pytest.param(ResidueId("A", 100, "A"), ResidueId("A", 101), True),
+        pytest.param(ResidueId("A", 100), ResidueId("A", 101, "A"), False),
+        pytest.param(ResidueId("A", 100), ResidueId("B", 101), False),
+    ],
+)
+def test_residue_id_immediate_precedence_contract(
+    left: ResidueId,
+    right: ResidueId,
+    expected: bool,
+) -> None:
+    """Residue numbering adjacency should be explicit and insertion-code aware."""
+
+    assert left.immediately_precedes(right) is expected
+
+
+@pytest.mark.parametrize(
     "chain_id",
     [
         cast(str, 1),

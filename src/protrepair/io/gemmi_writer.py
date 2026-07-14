@@ -5,6 +5,12 @@ import secrets
 from os import PathLike
 from pathlib import Path
 
+from protrepair.chemistry.nonstandard.registry import (
+    build_bundled_nonstandard_registry,
+)
+from protrepair.chemistry.standard.components import (
+    build_standard_component_library,
+)
 from protrepair.errors import ModelInvariantError, UnsupportedFileFormatError
 from protrepair.io.gemmi_normalization import (
     gemmi,
@@ -645,7 +651,7 @@ def build_gemmi_residue(
         residue_site.residue_id.seq_num,
         residue_site.residue_id.insertion_code or " ",
     )
-    raw_residue.het_flag = "H" if residue_site.is_hetero else "A"
+    raw_residue.het_flag = _gemmi_het_flag_for_residue(residue_site)
     raw_residue.entity_type = (
         gemmi.EntityType.NonPolymer
         if residue_site.is_hetero
@@ -663,6 +669,18 @@ def build_gemmi_residue(
         )
 
     return raw_residue
+
+
+def _gemmi_het_flag_for_residue(residue_site: ResidueSite) -> str:
+    """Return canonical PDB/mmCIF record spelling independently of entity role."""
+
+    if residue_site.is_hetero:
+        return "H"
+    if build_standard_component_library().has(residue_site.component_id):
+        return "A"
+    if build_bundled_nonstandard_registry().get(residue_site.component_id) is not None:
+        return "H"
+    return "A"
 
 
 def build_gemmi_atom(

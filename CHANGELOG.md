@@ -20,6 +20,9 @@
 
 ### Changed
 
+- classify HET-encoded peptide-linking modifications by declared entity,
+  supported polymer chemistry, and chain/linkage context at ingress so canonical
+  polymer diagnostics and topology include them without absorbing free ligands
 - reuse workflow branch evaluations across sibling selection, regression
   retention, budget pruning, and terminal reporting while evicting discarded
   branch results from the runtime cache
