@@ -45,18 +45,7 @@ def residue_ids_are_sequential_peptide_neighbors(
 ) -> bool:
     """Return whether adjacent residue slots are plausibly sequence-adjacent."""
 
-    if left_residue_id.chain_id != right_residue_id.chain_id:
-        return False
-    if (
-        left_residue_id.insertion_code is not None
-        or right_residue_id.insertion_code is not None
-    ):
-        return right_residue_id.seq_num in {
-            left_residue_id.seq_num,
-            left_residue_id.seq_num + 1,
-        }
-
-    return right_residue_id.seq_num == left_residue_id.seq_num + 1
+    return left_residue_id.immediately_precedes(right_residue_id)
 
 
 @dataclass(frozen=True, order=True, slots=True)

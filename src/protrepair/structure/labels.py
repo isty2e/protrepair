@@ -61,6 +61,25 @@ class ResidueId:
             insertion_code=self.insertion_code,
         )
 
+    def immediately_precedes(self, other: "ResidueId") -> bool:
+        """Return whether another id immediately follows in residue numbering."""
+
+        if self.chain_id != other.chain_id:
+            return False
+        if other.seq_num == self.seq_num:
+            if other.insertion_code is None:
+                return False
+            if self.insertion_code is None:
+                return other.insertion_code == "A"
+
+            return (
+                len(self.insertion_code) == 1
+                and len(other.insertion_code) == 1
+                and ord(other.insertion_code) == ord(self.insertion_code) + 1
+            )
+
+        return other.seq_num == self.seq_num + 1 and other.insertion_code is None
+
     def _ordering_key(self) -> tuple[str, int, str]:
         """Return the canonical sort key for residue identity."""
 
