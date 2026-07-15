@@ -1,6 +1,7 @@
 """gemmi-backed canonical structure ingress for coordinate formats."""
 
 from collections.abc import Iterator
+from math import isfinite
 from os import PathLike
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from protrepair.io.gemmi_normalization import (
     to_gemmi_coor_format,
 )
 from protrepair.io.ingress_policy import StructureNormalizationPolicy
+from protrepair.io.source_connection import SourceConnection
 from protrepair.io.source_identity import (
     SourceAtomIdentity,
     normalize_altloc,
@@ -25,6 +27,11 @@ from protrepair.io.structure_ingress import normalize_raw_structure
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.topology import (
+    BondRelationshipType,
+    SourceBondMetadata,
+    SourceBondRecordType,
+)
 
 MAX_STRUCTURE_INPUT_BYTES = 256 * 1024 * 1024
 
@@ -123,7 +130,7 @@ def _normalize_structure_text(
     _assert_structure_text_size(contents, source_name=source_name)
     if file_format is FileFormat.PDB:
         raw_structure = gemmi.read_pdb_string(contents)
-        pdb_conect_atom_identity_pairs = _pdb_conect_atom_identity_pairs(contents)
+        pdb_conect_source_connections = _pdb_conect_source_connections(contents)
         source_element_by_atom_identity = (
             _pdb_source_isotope_element_by_atom_identity(contents)
         )
@@ -135,17 +142,26 @@ def _normalize_structure_text(
             to_gemmi_coor_format(file_format),
             source_document,
         )
-        pdb_conect_atom_identity_pairs = ()
+        pdb_conect_source_connections = ()
         source_element_by_atom_identity = (
             _mmcif_source_isotope_element_by_atom_identity(source_document)
         )
 
+    # Typed Gemmi declarations precede untyped PDB CONECT fallback so the
+    # canonical endpoint keeps the strongest surviving source fact.
+    source_connections = (
+        *_source_connections_from_raw_structure(
+            raw_structure,
+            file_format=file_format,
+        ),
+        *pdb_conect_source_connections,
+    )
     return normalize_raw_structure(
         raw_structure,
         file_format=file_format,
         policy=policy,
         source_name=source_name,
-        pdb_conect_atom_identity_pairs=pdb_conect_atom_identity_pairs,
+        source_connections=source_connections,
         source_element_by_atom_identity=source_element_by_atom_identity,
     )
 
@@ -176,15 +192,121 @@ def _assert_structure_text_size(
         )
 
 
-def _pdb_conect_atom_identity_pairs(
+def _source_connections_from_raw_structure(
+    raw_structure: gemmi.Structure,
+    *,
+    file_format: FileFormat,
+) -> tuple[SourceConnection, ...]:
+    """Project Gemmi connection records into boundary-normalized facts."""
+
+    source_connections: list[SourceConnection] = []
+    for connection in raw_structure.connections:
+        endpoint_1 = _source_atom_identity_from_connection_partner(connection.partner1)
+        endpoint_2 = _source_atom_identity_from_connection_partner(connection.partner2)
+        if endpoint_1 is None or endpoint_2 is None:
+            continue
+        if endpoint_1.atom_ref.residue_id == endpoint_2.atom_ref.residue_id:
+            continue
+
+        relationship_type = _relationship_type_from_connection(connection.type)
+        source_connections.append(
+            SourceConnection(
+                endpoint_1=endpoint_1,
+                endpoint_2=endpoint_2,
+                relationship_type=relationship_type,
+                source_metadata=SourceBondMetadata(
+                    record_type=_source_connection_record_type(
+                        file_format=file_format,
+                        relationship_type=relationship_type,
+                    ),
+                    source_id=connection.link_id or connection.name,
+                    reported_distance_angstrom=_normalize_reported_connection_distance(
+                        connection.reported_distance
+                    ),
+                ),
+            )
+        )
+
+    return tuple(dict.fromkeys(source_connections))
+
+
+def _source_connection_record_type(
+    *,
+    file_format: FileFormat,
+    relationship_type: BondRelationshipType,
+) -> SourceBondRecordType:
+    """Return the source record contract for one Gemmi connection."""
+
+    if file_format is FileFormat.MMCIF:
+        return SourceBondRecordType.MMCIF_STRUCT_CONN
+    if relationship_type is BondRelationshipType.DISULFIDE:
+        return SourceBondRecordType.PDB_SSBOND
+    return SourceBondRecordType.PDB_LINK
+
+
+def _source_atom_identity_from_connection_partner(
+    partner: gemmi.AtomAddress,
+) -> SourceAtomIdentity | None:
+    """Return a normalized endpoint for one Gemmi connection partner."""
+
+    atom_name = partner.atom_name.strip()
+    component_id = partner.res_id.name.strip()
+    seq_num = partner.res_id.seqid.num
+    if not atom_name or not component_id or seq_num is None:
+        return None
+
+    return SourceAtomIdentity(
+        atom_ref=AtomRef(
+            residue_id=ResidueId(
+                chain_id=normalize_chain_id(partner.chain_name),
+                seq_num=int(seq_num),
+                insertion_code=normalize_insertion_code(partner.res_id.seqid.icode),
+            ),
+            atom_name=atom_name,
+        ),
+        component_id=component_id,
+        altloc=normalize_altloc(partner.altloc),
+    )
+
+
+def _relationship_type_from_connection(
+    connection_type: gemmi.ConnectionType,
+) -> BondRelationshipType:
+    """Map one Gemmi connection type into canonical relationship semantics."""
+
+    if connection_type is gemmi.ConnectionType.Covale:
+        return BondRelationshipType.COVALENT
+    if connection_type is gemmi.ConnectionType.Disulf:
+        return BondRelationshipType.DISULFIDE
+    if connection_type is gemmi.ConnectionType.Hydrog:
+        return BondRelationshipType.HYDROGEN_BOND
+    if connection_type is gemmi.ConnectionType.MetalC:
+        return BondRelationshipType.METAL_COORDINATION
+    return BondRelationshipType.UNKNOWN
+
+
+def _normalize_reported_connection_distance(
+    reported_distance: float,
+) -> float | None:
+    """Return a positive finite source distance when one was reported."""
+
+    try:
+        normalized_distance = float(reported_distance)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(normalized_distance) or normalized_distance <= 0.0:
+        return None
+    return normalized_distance
+
+
+def _pdb_conect_source_connections(
     contents: str,
-) -> tuple[tuple[SourceAtomIdentity, SourceAtomIdentity], ...]:
-    """Return all selected source-identity pairs declared by PDB CONECT."""
+) -> tuple[SourceConnection, ...]:
+    """Return boundary-normalized connections declared by PDB CONECT."""
 
     atom_identity_by_serial = _first_model_unambiguous_pdb_atom_identities(contents)
 
-    pairs: list[tuple[SourceAtomIdentity, SourceAtomIdentity]] = []
-    seen: set[tuple[SourceAtomIdentity, SourceAtomIdentity]] = set()
+    source_connections: list[SourceConnection] = []
     for line in contents.splitlines():
         if not line.startswith("CONECT"):
             continue
@@ -205,17 +327,19 @@ def _pdb_conect_atom_identity_pairs(
             ):
                 continue
 
-            canonical = _canonical_pdb_conect_identity_pair(
-                source_identity,
-                target_identity,
+            source_connections.append(
+                SourceConnection(
+                    endpoint_1=source_identity,
+                    endpoint_2=target_identity,
+                    relationship_type=BondRelationshipType.UNKNOWN,
+                    source_metadata=SourceBondMetadata(
+                        record_type=SourceBondRecordType.PDB_CONECT,
+                        source_id="CONECT",
+                    ),
+                )
             )
-            if canonical in seen:
-                continue
 
-            pairs.append(canonical)
-            seen.add(canonical)
-
-    return tuple(pairs)
+    return tuple(dict.fromkeys(source_connections))
 
 
 def _first_model_unambiguous_pdb_atom_identities(
@@ -460,19 +584,6 @@ def _first_model_pdb_atom_lines(contents: str) -> Iterator[str]:
             continue
         if line.startswith(("ATOM  ", "HETATM")):
             yield line
-
-
-def _canonical_pdb_conect_identity_pair(
-    identity_1: SourceAtomIdentity,
-    identity_2: SourceAtomIdentity,
-) -> tuple[SourceAtomIdentity, SourceAtomIdentity]:
-    """Return a deterministic order for one PDB CONECT identity pair."""
-
-    return (
-        (identity_1, identity_2)
-        if identity_1.sort_key() <= identity_2.sort_key()
-        else (identity_2, identity_1)
-    )
 
 
 def _pdb_atom_serial_and_identity(
