@@ -81,7 +81,9 @@ for disordered SG atoms. ProtRepair therefore lowers a source `SSBOND` onto the
 selected canonical SG variants when the residue component identities survive.
 PDB `LINK` and mmCIF `_struct_conn`, which can carry endpoint altloc identity,
 continue to require the declared variants to survive. A duplicate untyped PDB
-`CONECT` pair does not replace the more specific `SSBOND` relationship.
+`CONECT` pair is ordered after typed source records and fills only an endpoint
+pair that no surviving typed record claimed. Conflicting typed declarations
+remain invalid canonical topology rather than silently becoming first-wins.
 
 Source bond metadata is canonical metadata, not raw boundary text. Reported
 distances are stored only as finite positive numeric angstrom values; corrupt,

@@ -1,6 +1,7 @@
 """Focused tests for the gemmi-backed I/O boundary."""
 
 import stat
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -21,6 +22,7 @@ import protrepair.io.gemmi_ingress as gemmi_ingress
 import protrepair.io.gemmi_writer as gemmi_writer
 from protrepair.diagnostics.topology import detect_disulfide_topology
 from protrepair.errors import (
+    ModelInvariantError,
     ProtrepairError,
     StructureInputTooLargeError,
     StructureNormalizationError,
@@ -371,6 +373,8 @@ ATOM 1 N N . GLY A 1 1 ? nan 2.000 3.000 1.00 20.00 1 A 1
         )
 
 
+# These tests isolate format-agnostic lowering from adapter assembly. Public
+# read_structure_string tests cover mixed Gemmi and PDB CONECT precedence.
 @pytest.mark.parametrize(
     "occupancy",
     [
@@ -2009,6 +2013,7 @@ def test_normalize_raw_structure_rejects_conflicting_entity_types() -> None:
             raw_structure,
             file_format=FileFormat.PDB,
             policy=StructureNormalizationPolicy(),
+            source_connections=(),
         )
 
 
@@ -2313,10 +2318,15 @@ def test_normalize_raw_structure_keeps_source_connection_for_selected_altloc_ato
 ) -> None:
     """LINK/struct_conn endpoints should survive only when their altloc survived."""
 
+    raw_structure = build_raw_source_connection_structure(linked_altloc="A")
     structure = normalize_raw_structure(
-        build_raw_source_connection_structure(linked_altloc="A"),
+        raw_structure,
         file_format=file_format,
         policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+        source_connections=gemmi_ingress._source_connections_from_raw_structure(
+            raw_structure,
+            file_format=file_format,
+        ),
     )
 
     source_bonds = tuple(
@@ -2343,10 +2353,15 @@ def test_normalize_raw_structure_drops_source_connection_from_discarded_altloc_a
 ) -> None:
     """LINK/struct_conn from a discarded altloc must not bind to selected AtomRef."""
 
+    raw_structure = build_raw_source_connection_structure(linked_altloc="B")
     structure = normalize_raw_structure(
-        build_raw_source_connection_structure(linked_altloc="B"),
+        raw_structure,
         file_format=file_format,
         policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+        source_connections=gemmi_ingress._source_connections_from_raw_structure(
+            raw_structure,
+            file_format=file_format,
+        ),
     )
 
     assert not any(
@@ -2369,14 +2384,19 @@ def test_normalize_raw_structure_drops_source_connection_from_discarded_componen
 ) -> None:
     """LINK/struct_conn from discarded microheterogeneity must not survive."""
 
+    raw_structure = build_raw_source_connection_structure(
+        selected_component_id="NAD",
+        source_component_id="FAD",
+        linked_altloc="A",
+    )
     structure = normalize_raw_structure(
-        build_raw_source_connection_structure(
-            selected_component_id="NAD",
-            source_component_id="FAD",
-            linked_altloc="A",
-        ),
+        raw_structure,
         file_format=file_format,
         policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+        source_connections=gemmi_ingress._source_connections_from_raw_structure(
+            raw_structure,
+            file_format=file_format,
+        ),
     )
 
     selected_residue = structure.constitution.residue_or_ligand(ResidueId("A", 1))
@@ -2386,6 +2406,51 @@ def test_normalize_raw_structure_drops_source_connection_from_discarded_componen
         bond.source_metadata is not None
         and bond.source_metadata.record_type is record_type
         for bond in structure.topology.bonds
+    )
+
+
+def test_normalize_raw_structure_rejects_conflicting_typed_source_connections(
+) -> None:
+    """Distinct typed declarations cannot silently claim one canonical edge."""
+
+    raw_structure = build_raw_source_connection_structure()
+    source_connection = gemmi_ingress._source_connections_from_raw_structure(
+        raw_structure,
+        file_format=FileFormat.PDB,
+    )[0]
+    conflicting_connection = replace(
+        source_connection,
+        source_metadata=replace(
+            source_connection.source_metadata,
+            source_id="conflicting-source-conn",
+        ),
+    )
+
+    with pytest.raises(ModelInvariantError, match="conflicting bonds"):
+        normalize_raw_structure(
+            raw_structure,
+            file_format=FileFormat.PDB,
+            policy=StructureNormalizationPolicy(
+                ligand_handling=LigandHandling.KEEP
+            ),
+            source_connections=(source_connection, conflicting_connection),
+        )
+
+
+def test_gemmi_connection_projection_drops_same_residue_records() -> None:
+    """Gemmi connection records cannot promote an intra-residue source edge."""
+
+    raw_structure = build_raw_source_connection_structure()
+    connection = raw_structure.connections[0]
+    connection.partner2.chain_name = connection.partner1.chain_name
+    connection.partner2.res_id = connection.partner1.res_id
+
+    assert (
+        gemmi_ingress._source_connections_from_raw_structure(
+            raw_structure,
+            file_format=FileFormat.PDB,
+        )
+        == ()
     )
 
 

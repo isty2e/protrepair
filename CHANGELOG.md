@@ -20,6 +20,9 @@
 
 ### Changed
 
+- separate source-format connection parsing from canonical structure
+  normalization through one internal source-connection contract, while
+  preserving LINK/struct_conn precedence over fallback PDB CONECT records
 - classify HET-encoded peptide-linking modifications by declared entity,
   supported polymer chemistry, and chain/linkage context at ingress so canonical
   polymer diagnostics and topology include them without absorbing free ligands
