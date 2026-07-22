@@ -1,4 +1,4 @@
-"""External nonstandard component ingestion from CCD or monomer-CIF assets."""
+"""Gemmi boundary for external CCD or monomer-CIF component assets."""
 
 from collections import defaultdict, deque
 from collections.abc import Mapping
@@ -9,19 +9,16 @@ from pathlib import Path
 from typing import cast
 
 from protrepair.chemistry.component.graph import BondDefinition
-from protrepair.chemistry.component.library import ComponentLibrary
-from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.nonstandard.registry import (
     NonstandardComponentAtom,
     NonstandardComponentRecord,
+    NonstandardComponentRegistry,
 )
-from protrepair.chemistry.restraint.library import RestraintLibrary
 from protrepair.chemistry.restraint.template import (
     AngleRestraintTarget,
     BondRestraintTarget,
     ChiralityRestraintTarget,
     PlaneRestraintTarget,
-    ResidueRestraintTemplate,
 )
 from protrepair.io.gemmi_normalization import gemmi
 
@@ -67,50 +64,14 @@ def _build_component_atom_record(
     )
 
 
-def ingest_component_library(path: Path) -> ComponentLibrary:
-    """Ingest one CCD or monomer-CIF asset into a canonical component library."""
-
-    component_library, _ = _ingest_external_assets(path)
-    return component_library
-
-
-def ingest_restraint_library(path: Path) -> RestraintLibrary:
-    """Ingest one CCD or monomer-CIF asset into a canonical restraint library."""
-
-    _, restraint_library = _ingest_external_assets(path)
-    return restraint_library
-
-
-def ingest_component_template(block) -> ResidueTemplate | None:
-    """Ingest one CIF block into a canonical residue template."""
-
-    parsed_record = _parse_component_record(block)
-    if parsed_record is None:
-        return None
-
-    return parsed_record.to_template()
-
-
-def ingest_restraint_template(block) -> ResidueRestraintTemplate | None:
-    """Ingest one CIF block into a canonical restraint template."""
-
-    parsed_record = _parse_component_record(block)
-    if parsed_record is None:
-        return None
-
-    return parsed_record.to_restraint_template()
-
-
 def _read_cif_document_blocks(path: Path):
     """Return gemmi CIF blocks from one external component asset."""
 
     return tuple(gemmi.cif.read_file(str(path)))
 
 
-def _ingest_external_assets(
-    path: Path,
-) -> tuple[ComponentLibrary, RestraintLibrary]:
-    """Ingest one external asset into canonical component and restraint libraries."""
+def read_nonstandard_component_registry(path: Path) -> NonstandardComponentRegistry:
+    """Read one CCD or monomer-CIF asset into normalized component records."""
 
     parsed_records = tuple(
         parsed_record
@@ -119,20 +80,9 @@ def _ingest_external_assets(
         )
         if parsed_record is not None
     )
-    component_library = ComponentLibrary(
-        templates={
-            parsed_record.component_id: parsed_record.to_template()
-            for parsed_record in parsed_records
-        }
+    return NonstandardComponentRegistry(
+        records={record.component_id: record for record in parsed_records}
     )
-    restraint_library = RestraintLibrary(
-        templates={
-            parsed_record.component_id: parsed_record.to_restraint_template()
-            for parsed_record in parsed_records
-        },
-        alias_to_component_id=component_library.alias_to_component_id,
-    )
-    return component_library, restraint_library
 
 
 def _parse_component_record(block) -> NonstandardComponentRecord | None:

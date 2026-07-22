@@ -4,14 +4,11 @@ from protrepair.chemistry import (
     IdealGeometryHeavyAtomSemantics,
     IdealGeometryHydrogenSemantics,
 )
-from protrepair.chemistry.nonstandard.ingestion import (
+from protrepair.io.nonstandard_component_ingress import (
     angle_between,
     first_non_degenerate_plane_normal,
-    ingest_component_library,
-    ingest_component_template,
-    ingest_restraint_template,
+    read_nonstandard_component_registry,
 )
-from protrepair.io.gemmi_normalization import gemmi
 
 
 def test_ingestion_angle_returns_none_for_coincident_tuple_vector() -> None:
@@ -42,7 +39,9 @@ def test_ingestion_plane_normal_returns_none_for_collinear_positions() -> None:
     )
 
 
-def test_ingest_component_library_reads_custom_monomer_cif(tmp_path: Path) -> None:
+def test_read_nonstandard_component_registry_reads_custom_monomer_cif(
+    tmp_path: Path,
+) -> None:
     """Custom monomer-CIF assets should ingest into the canonical library."""
 
     cif_path = tmp_path / "custom-components.cif"
@@ -90,7 +89,9 @@ def test_ingest_component_library_reads_custom_monomer_cif(tmp_path: Path) -> No
         encoding="utf-8",
     )
 
-    library = ingest_component_library(cif_path)
+    registry = read_nonstandard_component_registry(cif_path)
+    library = registry.component_library()
+    restraint_library = registry.restraint_library()
     template = library.require("MSE")
 
     assert template.component_id == "MSE"
@@ -106,15 +107,14 @@ def test_ingest_component_library_reads_custom_monomer_cif(tmp_path: Path) -> No
         "CE",
     )
     assert template.definition.bonded_atom_names("SE") == frozenset({"CG", "CE"})
+    assert restraint_library.alias_to_component_id == library.alias_to_component_id
 
-    block = gemmi.cif.read_file(str(cif_path)).sole_block()
-    ingested_template = ingest_component_template(block)
-    restraint_template = ingest_restraint_template(block)
+    record = registry.get("MSE")
 
-    assert ingested_template is not None
-    assert restraint_template is not None
-    heavy_atom_semantics = ingested_template.heavy_atom_semantics
-    hydrogen_semantics = ingested_template.hydrogen_semantics
+    assert record is not None
+    heavy_atom_semantics = record.to_template().heavy_atom_semantics
+    hydrogen_semantics = record.to_template().hydrogen_semantics
+    restraint_template = record.to_restraint_template()
     assert isinstance(heavy_atom_semantics, IdealGeometryHeavyAtomSemantics)
     assert isinstance(hydrogen_semantics, IdealGeometryHydrogenSemantics)
     atom_by_name = {
@@ -129,7 +129,7 @@ def test_ingest_component_library_reads_custom_monomer_cif(tmp_path: Path) -> No
     assert restraint_template.bond_target("CG", "SE") is not None
 
 
-def test_ingest_component_library_tolerates_missing_parent_mapping(
+def test_read_nonstandard_component_registry_tolerates_missing_parent_mapping(
     tmp_path: Path,
 ) -> None:
     """External assets without parent residue metadata should still ingest."""
@@ -165,7 +165,7 @@ def test_ingest_component_library_tolerates_missing_parent_mapping(
         encoding="utf-8",
     )
 
-    library = ingest_component_library(cif_path)
+    library = read_nonstandard_component_registry(cif_path).component_library()
 
     assert library.require("NSP").component_id == "NSP"
 
@@ -224,10 +224,10 @@ def test_ingest_component_record_derives_planarity_targets_from_ideal_geometry(
         encoding="utf-8",
     )
 
-    block = gemmi.cif.read_file(str(cif_path)).sole_block()
-    restraint_template = ingest_restraint_template(block)
+    record = read_nonstandard_component_registry(cif_path).get("PTRX")
 
-    assert restraint_template is not None
+    assert record is not None
+    restraint_template = record.to_restraint_template()
     assert restraint_template.plane_targets
     assert any(
         {"CG", "CD1", "CE1", "CZ"} <= set(target.atom_names)

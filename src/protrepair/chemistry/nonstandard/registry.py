@@ -45,7 +45,7 @@ IdealPosition = tuple[float, float, float]
 
 @dataclass(frozen=True, slots=True)
 class NonstandardComponentAtom:
-    """One packaged nonstandard-component atom record."""
+    """One normalized nonstandard-component atom record."""
 
     atom_name: str
     element: str
@@ -102,7 +102,7 @@ class NonstandardComponentAtom:
 
 @dataclass(frozen=True, slots=True)
 class NonstandardComponentRecord:
-    """One bundled nonstandard residue normalized into canonical asset form."""
+    """One nonstandard residue normalized into canonical asset form."""
 
     component_id: str
     parent_standard_id: str | None
@@ -159,7 +159,7 @@ class NonstandardComponentRecord:
             )
 
     def heavy_atoms(self) -> tuple[NonstandardComponentAtom, ...]:
-        """Return only non-hydrogen atom records in packaged order."""
+        """Return only non-hydrogen atom records in normalized order."""
 
         return tuple(atom for atom in self.atoms if not atom.is_hydrogen())
 
@@ -175,7 +175,7 @@ class NonstandardComponentRecord:
         )
 
     def to_template(self) -> ResidueTemplate:
-        """Project the packaged record into a canonical residue template."""
+        """Project the normalized record into a canonical residue template."""
 
         idealized_component = self.to_idealized_component()
         heavy_atom_names = idealized_component.heavy_atom_names()
@@ -223,7 +223,7 @@ class NonstandardComponentRecord:
         )
 
     def to_idealized_component(self) -> IdealizedComponent:
-        """Project the packaged record into the canonical ideal-geometry model."""
+        """Project the normalized record into the canonical ideal-geometry model."""
 
         return IdealizedComponent(
             component_id=self.component_id,
@@ -233,7 +233,7 @@ class NonstandardComponentRecord:
         )
 
     def to_restraint_template(self) -> ResidueRestraintTemplate:
-        """Project the packaged record into a canonical restraint template."""
+        """Project the normalized record into a canonical restraint template."""
 
         return ResidueRestraintTemplate(
             component_id=self.component_id,
@@ -245,8 +245,8 @@ class NonstandardComponentRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class BundledNonstandardRegistry:
-    """Lazy-loaded bundled registry for curated nonstandard residue records."""
+class NonstandardComponentRegistry:
+    """Canonical registry of normalized nonstandard component records."""
 
     records: Mapping[str, NonstandardComponentRecord]
 
@@ -258,13 +258,13 @@ class BundledNonstandardRegistry:
         object.__setattr__(self, "records", MappingProxyType(normalized_records))
 
     def get(self, component_id: str) -> NonstandardComponentRecord | None:
-        """Return one bundled component record if present."""
+        """Return one normalized component record if present."""
 
         normalized_component_id = component_id.strip().upper()
         return self.records.get(normalized_component_id)
 
     def component_library(self) -> ComponentLibrary:
-        """Project bundled records into a canonical component library."""
+        """Project normalized records into a canonical component library."""
 
         return ComponentLibrary(
             templates={
@@ -274,13 +274,15 @@ class BundledNonstandardRegistry:
         )
 
     def restraint_library(self) -> RestraintLibrary:
-        """Project bundled records into canonical restraint templates."""
+        """Project normalized records into canonical restraint templates."""
 
+        component_library = self.component_library()
         return RestraintLibrary(
             templates={
                 component_id: record.to_restraint_template()
                 for component_id, record in self.records.items()
-            }
+            },
+            alias_to_component_id=component_library.alias_to_component_id,
         )
 
 
@@ -293,7 +295,7 @@ def bundled_nonstandard_asset_path() -> str:
 
 
 @lru_cache(maxsize=1)
-def build_bundled_nonstandard_registry() -> BundledNonstandardRegistry:
+def build_bundled_nonstandard_registry() -> NonstandardComponentRegistry:
     """Return the packaged bundled registry for curated nonstandard residues."""
 
     asset_path = files("protrepair.chemistry.resources").joinpath(
@@ -322,7 +324,7 @@ def build_bundled_nonstandard_restraint_library() -> RestraintLibrary:
 
 def parse_bundled_nonstandard_registry(
     payload: object,
-) -> BundledNonstandardRegistry:
+) -> NonstandardComponentRegistry:
     """Parse one packaged nonstandard-registry payload."""
 
     payload_mapping = expect_mapping(payload, path="root")
@@ -337,7 +339,7 @@ def parse_bundled_nonstandard_registry(
             for index, item in enumerate(components)
         )
     }
-    return BundledNonstandardRegistry(records=records)
+    return NonstandardComponentRegistry(records=records)
 
 
 def parse_nonstandard_component_record(
