@@ -20,6 +20,8 @@
 
 ### Changed
 
+- move external CCD and monomer-CIF file parsing to the I/O boundary while
+  keeping normalized nonstandard-component registry projections in chemistry
 - separate source-format connection parsing from canonical structure
   normalization through one internal source-connection contract, while
   preserving LINK/struct_conn precedence over fallback PDB CONECT records

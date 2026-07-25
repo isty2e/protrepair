@@ -23,10 +23,6 @@ from protrepair.chemistry import (
     UnknownElementRadiusError,
     build_default_component_library,
 )
-from protrepair.chemistry.nonstandard.ingestion import (
-    ingest_component_library,
-    ingest_restraint_library,
-)
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import (
     ValidationIssueKind,
@@ -37,6 +33,9 @@ from protrepair.diagnostics.geometry import (
     severe_intrinsic_geometry_residues,
 )
 from protrepair.geometry import Vec3
+from protrepair.io.nonstandard_component_ingress import (
+    read_nonstandard_component_registry,
+)
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
     ResidueId,
@@ -438,8 +437,9 @@ def test_detect_heavy_geometry_accepts_external_ingested_restraints(
         ),
         encoding="utf-8",
     )
-    component_library = ingest_component_library(cif_path)
-    restraint_library = ingest_restraint_library(cif_path)
+    registry = read_nonstandard_component_registry(cif_path)
+    component_library = registry.component_library()
+    restraint_library = registry.restraint_library()
     structure = build_structure(
         (
             build_residue(
