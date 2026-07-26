@@ -101,6 +101,10 @@ write_structure(result.structure, Path("output.pdb"))
 contains structured warnings and errors, and `result.analyses` contains the
 requested analysis results.
 
+Each requested goal pairs a scope with a target state. The example repeats
+`WholeStructureScope()` because heavy-atom and hydrogen completeness are
+separate state axes applied to the same whole structure.
+
 ## Common Choices
 
 Retained ligands are kept in the example above. Use
@@ -123,6 +127,9 @@ B factors are rejected rather than silently repaired. The exact ingress rules
 are documented in the [ingress policy](docs/ingress-policy.md).
 
 ## Further Reading
+
+The complete documentation map and public facade guide are in
+[docs/README.md](docs/README.md).
 
 - [Ingress normalization](docs/ingress-policy.md)
 - [Retained-ligand chemistry](docs/retained-ligand-policy.md)

@@ -20,9 +20,6 @@
 
 ### Changed
 
-- refocus the README on installation and first use while moving exact ingress,
-  retained-ligand, histidine, analysis, and FASPR contracts to domain-owned
-  reference documents
 - move external CCD and monomer-CIF file parsing to the I/O boundary while
   keeping normalized nonstandard-component registry projections in chemistry
 - separate source-format connection parsing from canonical structure
@@ -70,6 +67,12 @@
   contradictions, remove them through planner-selected topology-preserving
   normalization, and report chemistry work under the broader
   `CHEMISTRY_NORMALIZATION` workflow phase
+
+### Documentation
+
+- refocus the README on installation and first use while moving exact ingress,
+  retained-ligand, histidine, analysis, and FASPR contracts to domain-owned
+  reference documents
 
 ## 0.1.0
 

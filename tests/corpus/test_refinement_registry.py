@@ -55,6 +55,17 @@ def test_refinement_fixture_sources_use_unique_output_paths() -> None:
     assert len(output_paths) == len(set(output_paths))
 
 
+def test_refinement_fixture_registry_owns_every_checked_in_pdb() -> None:
+    """Every checked-in local refinement PDB should have one source record."""
+
+    fixture_directory = Path("tests/fixtures/pdb/refinement")
+    registered_paths = {
+        source.output_path for source in ALL_REFINEMENT_FIXTURE_SOURCES.values()
+    }
+
+    assert registered_paths == set(fixture_directory.glob("*.pdb"))
+
+
 @pytest.mark.parametrize(
     ("fixture_path", "expected_residue"),
     (

@@ -23,8 +23,8 @@ Atom coordinates, occupancy, and B factors must be finite.
 
 - Occupancy must be in the closed interval `[0.0, 1.0]`.
 - B factors must be non-negative. There is no additional upper bound.
-- Coordinates may be any finite value accepted by the canonical geometry
-  model.
+- Coordinates outside the canonical geometry model's finite domain are
+  rejected.
 
 Ingress rejects values outside these domains, including boundary-adjacent
 values such as occupancy `1.0000001` and B factor `-0.0000001`. It does not

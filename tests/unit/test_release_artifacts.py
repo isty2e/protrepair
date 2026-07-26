@@ -470,14 +470,32 @@ def test_retained_ligand_policy_documents_fallback_contract() -> None:
 def test_domain_policy_docs_preserve_detailed_reference_contracts() -> None:
     """Detailed policies removed from README should remain discoverable."""
 
+    docs_index = Path("docs/README.md").read_text()
     ingress_policy = Path("docs/ingress-policy.md").read_text()
     histidine_policy = Path("docs/histidine-protonation.md").read_text()
     analysis_policy = Path("docs/analysis-policy.md").read_text()
+
+    for document_name in (
+        "analysis-policy.md",
+        "faspr-runtime-policy.md",
+        "histidine-protonation.md",
+        "ingress-policy.md",
+        "radius-policy.md",
+        "release-checklist.md",
+        "retained-ligand-policy.md",
+        "topology-bond-policy.md",
+    ):
+        assert f"]({document_name})" in docs_index
+    assert "`protrepair.workflow.contracts`" in docs_index
+    assert "`protrepair.structure`" in docs_index
 
     assert "`[0.0, 1.0]`" in ingress_policy
     assert "`1.0000001`" in ingress_policy
     assert "`-0.0000001`" in ingress_policy
     assert "first model" in ingress_policy
+    assert "Coordinates outside the canonical geometry model's finite domain" in (
+        ingress_policy
+    )
 
     assert "`PrasRatioHistidineProtonationRequest`" in histidine_policy
     assert "`floor(number_of_histidines * ratio)`" in histidine_policy
