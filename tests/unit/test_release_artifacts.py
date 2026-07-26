@@ -326,19 +326,19 @@ def test_release_constraints_pin_release_environment() -> None:
 def test_release_docs_state_faspr_installed_asset_contract() -> None:
     """Release docs should not imply arbitrary source-tree FASPR availability."""
 
-    readme = Path("README.md").read_text()
-    normalized_readme = " ".join(readme.split())
+    policy = Path("docs/faspr-runtime-policy.md").read_text()
+    normalized_policy = " ".join(policy.split())
 
     assert "Built packages and wheels include the vendored FASPR executable" in (
-        normalized_readme
+        normalized_policy
     )
-    assert "Prefer a built wheel" in normalized_readme
-    assert "direct GitHub installs" in normalized_readme
-    assert "CMake 3.18 or newer" in normalized_readme
-    assert "working C++ compiler toolchain" in normalized_readme
-    assert "Direct source-tree imports are not guaranteed" in normalized_readme
-    assert "explicit FASPR `executable_path`" in normalized_readme
-    assert "dun2010bbdep.bin" in normalized_readme
+    assert "Prefer a built wheel" in normalized_policy
+    assert "direct GitHub installs" in normalized_policy
+    assert "CMake 3.18 or newer" in normalized_policy
+    assert "working C++ compiler toolchain" in normalized_policy
+    assert "Direct source-tree imports are not guaranteed" in normalized_policy
+    assert "explicit FASPR `executable_path`" in normalized_policy
+    assert "dun2010bbdep.bin" in normalized_policy
 
 
 def test_faspr_runtime_policy_documents_hydrogen_merge_contract() -> None:
@@ -455,15 +455,38 @@ def test_faspr_provenance_checksums_match_vendored_files() -> None:
     )
 
 
-def test_readme_documents_retained_ligand_fallback_contract() -> None:
-    """README should document the retained-ligand fallback contract."""
+def test_retained_ligand_policy_documents_fallback_contract() -> None:
+    """The retained-ligand owner doc should pin its fallback contract."""
 
-    readme = Path("README.md").read_text()
+    policy = Path("docs/retained-ligand-policy.md").read_text()
 
-    assert "RETAINED_NON_POLYMER_FALLBACK_USED" in readme
-    assert "RETAINED_NON_POLYMER_FALLBACK_BLOCKED" in readme
-    assert "optional RDKit" not in readme
-    assert "refinement extra" not in readme
+    assert "RETAINED_NON_POLYMER_FALLBACK_USED" in policy
+    assert "RETAINED_NON_POLYMER_FALLBACK_BLOCKED" in policy
+    assert "allow_retained_non_polymer_rdkit_fallback=False" in policy
+    assert "optional RDKit" not in policy
+    assert "refinement extra" not in policy
+
+
+def test_domain_policy_docs_preserve_detailed_reference_contracts() -> None:
+    """Detailed policies removed from README should remain discoverable."""
+
+    ingress_policy = Path("docs/ingress-policy.md").read_text()
+    histidine_policy = Path("docs/histidine-protonation.md").read_text()
+    analysis_policy = Path("docs/analysis-policy.md").read_text()
+
+    assert "`[0.0, 1.0]`" in ingress_policy
+    assert "`1.0000001`" in ingress_policy
+    assert "`-0.0000001`" in ingress_policy
+    assert "first model" in ingress_policy
+
+    assert "`PrasRatioHistidineProtonationRequest`" in histidine_policy
+    assert "`floor(number_of_histidines * ratio)`" in histidine_policy
+    assert "`protonate_histidines=True`" in histidine_policy
+
+    assert "`helix`: phi in `[-160, -20]`" in analysis_policy
+    assert "`beta`: phi in `[-180, -40]`" in analysis_policy
+    assert "`left_handed`: phi in `[20, 120]`" in analysis_policy
+    assert "not a DSSP replacement" in analysis_policy
 
 
 def sha256_file(path: Path) -> str:

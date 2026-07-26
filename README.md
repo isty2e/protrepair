@@ -1,42 +1,26 @@
 # ProtRepair
 
-`protrepair` repairs protein structure files for downstream parsers and
-modeling workflows. It reads PDB/mmCIF structures, completes supported missing
-atoms and hydrogens, preserves supported retained ligands and cofactors, and
-writes topology-aware structures back out.
+[![CI](https://github.com/isty2e/protrepair/actions/workflows/ci.yml/badge.svg)](https://github.com/isty2e/protrepair/actions/workflows/ci.yml)
 
-Current implemented scope:
+ProtRepair prepares protein structure files for downstream modeling. It reads
+PDB and mmCIF files, repairs supported missing heavy atoms, adds hydrogens,
+preserves retained ligands and cofactors, and writes the repaired structure
+with its connectivity.
 
-- PDB and mmCIF ingress and egress through `gemmi`
-- missing heavy-atom repair for supported residues
-- hydrogen placement for supported polymer and retained non-polymer chemistry
-- retained ligand/cofactor preservation where component support is bundled or
-  supplied
-- topology-backed connection emission
-- structured Ramachandran and coarse secondary-structure analyses
-- canonical workflow entrypoint via `process_structure()`
-- optional packaged FASPR backend for side-chain packing guidance
-- RDKit-backed hydrogenation and local refinement
+## What It Does
 
-Topology policy is documented in
-[`docs/topology-bond-policy.md`](docs/topology-bond-policy.md). In short,
-canonical topology owns bond truth; execution, readiness, and PDB/mmCIF egress
-project from that topology instead of carrying separate connectivity stories.
+- Repairs missing backbone and side-chain heavy atoms for supported residues.
+- Adds polymer and retained-ligand hydrogens using component chemistry or
+  RDKit-backed inference.
+- Preserves supported ligands, cofactors, metals, ions, and source
+  connectivity.
+- Uses topology-aware local refinement and optional FASPR side-chain packing.
+- Reports structured issues and optional Ramachandran or coarse
+  secondary-structure analyses.
 
-Ingress normalizes each source into one canonical structure realization.
-For multi-model PDB or mmCIF files, ProtRepair currently reads the first model
-only; choose a different model upstream before calling `process_structure()` if
-you need another realization.
-
-Numeric atom scalar validation at ingress is strict. Occupancy must be finite
-and within the closed interval `[0.0, 1.0]`; B factors must be finite and
-non-negative. ProtRepair rejects boundary-adjacent invalid values such as
-`1.0000001` occupancy or `-0.0000001` B factor instead of clamping them, because
-silent normalization would hide source data quality problems.
-
-Current deferred scope:
-
-- generic arbitrary nonstandard chemistry beyond supported component templates
+ProtRepair repairs the atoms present in a structure model. It does not
+currently build missing residue spans or arbitrary nonstandard heavy-atom
+chemistry.
 
 ## Installation
 
@@ -52,34 +36,22 @@ Or install directly from GitHub:
 pip install "git+https://github.com/isty2e/protrepair.git"
 ```
 
-Prefer a built wheel when you need the optional FASPR side-chain packing
-backend. Built packages and wheels include the vendored FASPR executable and
-rotamer library.
+Built wheels include the FASPR executable and rotamer library. Building from
+source requires CMake 3.18 or newer and a C++ compiler; see the
+[FASPR runtime policy](docs/faspr-runtime-policy.md) for source-tree and custom
+executable setups.
 
-Source installs, including direct GitHub installs, build the vendored FASPR
-executable through `scikit-build-core` and CMake. They require CMake 3.18 or
-newer and a working C++ compiler toolchain. Direct source-tree imports are not
-guaranteed to have compiled FASPR assets available; install the package/wheel
-first. For advanced transformer-layer development with a separately built
-FASPR binary, construct the FASPR backend with an explicit FASPR
-`executable_path` whose directory also contains `dun2010bbdep.bin`.
+## Quick Start
 
-## Usage
-
-The release-facing import surface is intentionally small:
-
-- `protrepair` exposes the workflow entrypoint and top-level request helpers.
-- `protrepair.structure` exposes canonical structure and label types.
-- `protrepair.scope` exposes semantic scopes used by requested goals.
-- `protrepair.state` exposes closed state axes used by requested goals.
-- `protrepair.workflow.contracts` exposes ingress policies and request/result contracts.
-- `protrepair.analysis` exposes structured analysis request and result types.
-- `protrepair.io` exposes coordinate-format read/write boundaries.
+The example below keeps retained ligands, requests complete heavy atoms and
+hydrogens, runs both available analyses, and writes a repaired PDB file.
 
 ```python
 from pathlib import Path
 
 from protrepair import process_structure
+from protrepair.analysis import AnalysisKind
+from protrepair.io import write_structure
 from protrepair.scope import WholeStructureScope
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
@@ -111,97 +83,6 @@ result = process_structure(
             value=HydrogenCoverageState.COMPLETE,
         ),
     ),
-)
-
-structure = result.structure
-if result.has_errors():
-    raise RuntimeError(result.issues)
-```
-
-`StructureIngressOptions(ligand_policy=LigandPolicy.REJECT)` rejects selected
-ligand-bearing inputs during ingress instead of silently dropping ligands.
-
-Retained non-polymer hydrogen completion uses supported bundled templates or
-explicit chemistry overrides when available. For otherwise unknown retained
-ligands, the default RDKit coordinate/proximity fallback is permissive and
-emits a `RETAINED_NON_POLYMER_FALLBACK_USED` warning issue when used. To require
-templates or explicit chemistry evidence, keep retained ligands, request hydrogen
-completion, and disable that fallback:
-
-The fallback is still conservative: existing retained-ligand hydrogens are reused
-only when local H-anchor geometry and any source topology agree, and unsupported
-hetero multiple-bond or stereochemistry-changing fallback inferences leave the
-retained ligand unchanged with a warning instead of guessing chemistry.
-
-Explicit retained-ligand chemistry overrides are validated at ingress. Invalid
-SMILES/evidence mappings or overrides that do not match the kept heavy-atom set
-raise `ValueError` before workflow execution rather than falling back silently.
-
-```python
-from protrepair.workflow.contracts import WorkflowTransformRequests
-
-strict_result = process_structure(
-    Path("tests/fixtures/pdb/1aho.pdb"),
-    ingress=StructureIngressOptions(
-        ligand_policy=LigandPolicy.KEEP,
-    ),
-    requested_goals=(
-        requested_process_goal(
-            scope=WholeStructureScope(),
-            value=HydrogenCoverageState.COMPLETE,
-        ),
-    ),
-    transform_requests=WorkflowTransformRequests(
-        allow_retained_non_polymer_rdkit_fallback=False,
-    ),
-)
-```
-
-When strict policy blocks an otherwise required RDKit fallback, the result emits
-a `RETAINED_NON_POLYMER_FALLBACK_BLOCKED` warning issue and leaves the retained
-ligand unchanged.
-
-Histidine delta protonation is available as an explicit workflow request, not as
-an automatic pKa or hydrogen-bond-network inference. The legacy PRAS behavior
-assumes roughly pH 7 and protonates the first `floor(total_chain_HIS * 0.2)`
-histidines in chain order. That ratio is exposed as
-`PrasRatioHistidineProtonationRequest` so callers can opt in, choose a different
-ratio in `[0.0, 1.0]`, or keep the default disabled behavior. The older
-`protonate_histidines=True` flag remains a shorthand for the default PRAS-ratio
-request at the workflow boundary.
-
-```python
-from protrepair.workflow.contracts import (
-    PrasRatioHistidineProtonationRequest,
-    WorkflowTransformRequests,
-)
-
-his_result = process_structure(
-    Path("tests/fixtures/pdb/1aho.pdb"),
-    requested_goals=(
-        requested_process_goal(
-            scope=WholeStructureScope(),
-            value=HydrogenCoverageState.COMPLETE,
-        ),
-    ),
-    transform_requests=WorkflowTransformRequests(
-        histidine_protonation=PrasRatioHistidineProtonationRequest(ratio=0.2),
-    ),
-)
-```
-
-The request resolves to explicit histidine assignments before hydrogen
-directives are built. Future explicit-residue, tautomer, pKa-backed, or
-environment-aware methods should produce the same assignment contract instead of
-changing the PRAS-ratio request into a general protonation policy.
-
-If you want structured analyses in the result:
-
-```python
-from protrepair.analysis import AnalysisKind
-
-analysis_result = process_structure(
-    Path("tests/fixtures/pdb/1aho.pdb"),
     analyses=frozenset(
         {
             AnalysisKind.SECONDARY_STRUCTURE,
@@ -210,29 +91,47 @@ analysis_result = process_structure(
     ),
 )
 
-assert analysis_result.analyses is not None
+if result.has_errors():
+    raise RuntimeError(result.issues)
+
+write_structure(result.structure, Path("output.pdb"))
 ```
 
-Analysis categories are intentionally coarse. Ramachandran points report a
-closed `RamachandranCategory` value: `helix` for phi in `[-160, -20]` and psi
-in `[-90, 45]`, `beta` for phi in `[-180, -40]` with psi at least `90` or at
-most `-120`, `left_handed` for phi in `[20, 120]` and psi in `[-20, 120]`,
-and `other` outside those broad regions when both torsions are available.
-Coarse secondary-structure output projects those categories to `H` for helix,
-`E` for beta, and `C` for everything else, including left-handed, other,
-missing-torsion, and gap-disconnected residues. This analysis is not a DSSP
-replacement: it does not infer hydrogen-bond patterns, turns, bends, strand
-registration, or a separate PPII assignment.
+`result.structure` is the canonical repaired structure. `result.issues`
+contains structured warnings and errors, and `result.analyses` contains the
+requested analysis results.
 
-If you want to write the repaired structure back out:
+## Common Choices
 
-```python
-from pathlib import Path
+Retained ligands are kept in the example above. Use
+`LigandPolicy.REJECT` when ligand-bearing input should fail at ingress instead.
+Known components use bundled chemistry; unknown retained ligands can use the
+default RDKit fallback. You can require templates or explicit chemistry
+evidence by setting
+`WorkflowTransformRequests(allow_retained_non_polymer_rdkit_fallback=False)`.
+See the [retained-ligand policy](docs/retained-ligand-policy.md) for fallback,
+override, and diagnostic behavior.
 
-from protrepair.io import write_structure
+Histidine protonation is disabled by default. Opt into deterministic PRAS-style
+delta protonation with `PrasRatioHistidineProtonationRequest`; see
+[histidine protonation](docs/histidine-protonation.md) for its ratio semantics
+and limitations.
 
-write_structure(structure, Path("output.pdb"))
-```
+ProtRepair reads the first model from multi-model inputs and resolves source
+variants into one canonical realization. Invalid coordinates, occupancies, and
+B factors are rejected rather than silently repaired. The exact ingress rules
+are documented in the [ingress policy](docs/ingress-policy.md).
+
+## Further Reading
+
+- [Ingress normalization](docs/ingress-policy.md)
+- [Retained-ligand chemistry](docs/retained-ligand-policy.md)
+- [Histidine protonation](docs/histidine-protonation.md)
+- [Analysis categories](docs/analysis-policy.md)
+- [Topology and bond egress](docs/topology-bond-policy.md)
+- [FASPR runtime and hydrogen ownership](docs/faspr-runtime-policy.md)
+- [Atomic radii](docs/radius-policy.md)
+- [Release checklist](docs/release-checklist.md)
 
 ## Development
 
@@ -244,24 +143,17 @@ basedpyright src/protrepair tests
 pytest tests/unit -q
 ```
 
-## License
+## License And Provenance
 
-This repository is licensed under [MIT](LICENSE).
-Third-party provenance is summarized in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-## Provenance
+This repository is licensed under [MIT](LICENSE). Third-party provenance is
+listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ProtRepair descends from the original
-[PRAS](https://github.com/osita-sunday-nnyigide/Pras_Server) project. The public
-distribution name and import package are now `protrepair`.
-
-Rotatable donor-hydrogen placement uses an axis-specific scientific contract:
-it retains the PRAS AMBER-derived nonbonded model and torsion-search lineage
-while correcting the cumulative scan and unconditional O-H bond-length
-override. Family-specific donor-H bond geometry follows the protein parameters
-in [AMBER ff14SB](https://doi.org/10.1021/acs.jctc.5b00255). RDKit readability
-is an interoperability gate, not the scientific ranking oracle.
-
-## Changelog
+[PRAS](https://github.com/osita-sunday-nnyigide/Pras_Server) project. Donor
+hydrogen geometry follows the protein parameters in
+[AMBER ff14SB](https://doi.org/10.1021/acs.jctc.5b00255), while donor-hydrogen
+ranking retains PRAS's AMBER-derived nonbonded and torsion-search lineage.
+RDKit readability is an interoperability check, not the scientific ranking
+criterion.
 
 Release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
