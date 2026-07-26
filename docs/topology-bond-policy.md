@@ -67,6 +67,8 @@ canonical topology, or deliberately report that topology is incomplete. This
 applies to missing heavy atoms, polymer hydrogens, and retained non-polymer
 hydrogens.
 
+### Source Bond Preservation
+
 Topology rebuilds must preserve existing `SOURCE_EXPLICIT` bonds unless their
 endpoints are removed by a canonical normalization or rewrite. Source endpoint
 identity includes the source component id and altloc before lowering; a
@@ -89,6 +91,8 @@ Source bond metadata is canonical metadata, not raw boundary text. Reported
 distances are stored only as finite positive numeric angstrom values; corrupt,
 non-finite, or non-numeric boundary distances are ignored before lowering.
 
+### Hydrogen Bond Provenance
+
 Polymer hydrogen completion uses the strongest available support mode for each
 new H anchor:
 
@@ -110,6 +114,8 @@ mode for each generated H anchor:
 
 Existing source-explicit retained-ligand H bonds remain authoritative when the
 same endpoint pair is regenerated during hydrogen completion.
+
+### Disulfide Chemistry
 
 A canonical `COVALENT` or `DISULFIDE` bond between two CYS `SG` atoms defines
 disulfide chemistry independently of provenance, source record class, distance,
@@ -137,6 +143,8 @@ distinct names such as `HG` and `DG`; each explicitly present isotope is part of
 the canonical atom inventory and must be normalized when the same sulfur is in
 a canonical disulfide.
 
+### Disulfide Candidate Resolution
+
 Continuous relaxation likewise projects inter-residue disulfide constraints
 from canonical topology only. A likely geometry candidate must pass through an
 explicit topology-writing transformer before it becomes an execution bond; the
@@ -150,6 +158,8 @@ context. A unique candidate may therefore be promoted only by the explicit
 topology-resolution action, after ambiguity and conflicting canonical
 relationships have been excluded. Source-explicit or otherwise conflicting
 topology is preserved and reported rather than overwritten by proximity.
+
+### Retained-Ligand Readiness
 
 Retained non-polymer readiness uses the same expected H atom naming policy as
 hydrogen coverage. When RDKit fallback infers generated hydrogens for a residue

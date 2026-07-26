@@ -1,7 +1,6 @@
 # Fixture Taxonomy
 
-`tests/fixtures/` contains repository-local fixture material used by the redesign
-test suite.
+`tests/fixtures/` contains repository-local material used by the test suite.
 
 The fixture set is intentionally realistic rather than toy-only. The corpus is
 therefore heavier than a minimal unit-test fixture set, but it preserves CI
@@ -20,10 +19,9 @@ axes:
 - Evidence basis and coverage tags: internal regression, literature-backed, or
   known problematic deposition with chemistry/topology/operator coverage tags.
 
-The current metadata classifies 47 cases: 27 whole-structure representative
-cases and 20 local refinement benchmark cases. Of those, 19 are must-pass
-gating cases and 28 are tracking-only cases. Panel coverage counts: 12 active,
-7 extended, and 28 exploratory cases.
+`ALL_CORPUS_METADATA` is the current case inventory. Query helpers in
+`tests/support/refinement_corpus.py` expose panel, execution-policy, and coverage
+membership without requiring a second hand-maintained count in this document.
 
 ## Repository-Resident Fixture Families
 
@@ -33,7 +31,8 @@ gating cases and 28 are tracking-only cases. Panel coverage counts: 12 active,
   FASPR backend.
 - `pdb/refinement/*.pdb`: extracted local neighborhoods for local refinement,
   chemistry-admissibility, and literature-backed regression. These are small
-  derived fixtures rather than full deposited structures.
+  derived fixtures rather than full deposited structures. Their canonical case
+  registry is `tests/support/refinement_cases.py`.
 - `corpus/*.ent` and `corpus/*.cif`: deposited whole-structure fixtures for
   representative, exploratory, and known-problematic behavior. These are the
   heavy realistic cases that keep CI and benchmark registries reproducible.

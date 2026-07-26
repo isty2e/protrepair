@@ -54,20 +54,17 @@ Local compatibility runs may still skip version-bound coordinate digests when
 RDKit is present but unregistered. Missing RDKit is a broken required-dependency
 installation, not a supported runtime mode. Current release constraints pin
 `rdkit==2026.3.2`, which corresponds to RDKit backend version `2026.03.2`.
-The current axis-specific rotatable-hydrogen contract combines protein-specific
-AMBER donor-H geometry with corrected PRAS torsion search and nonbonded scoring.
-It has the same verified 1AFC coordinate digest under RDKit `2026.03.2` and
-`2026.03.3`; RDKit readability remains an interoperability gate rather than a
-scientific ranking oracle.
-Digests from older code are not retained as acceptable variants because doing
-so would hide a regression to the incomplete torsion scan.
+The current rotatable-hydrogen implementation has the same verified 1AFC
+coordinate digest under RDKit `2026.03.2` and `2026.03.3`. Digests from older
+code are not accepted because they represent the former incomplete torsion
+scan.
 
 Element-radius diagnostics use a static `rdkit==2026.3.2` PeriodicTable
 snapshot generated from `GetRvdw` and `GetRcovalent`, not runtime RDKit lookup.
-See `docs/radius-policy.md` for the canonical unknown-element and batch-lookup
-contract. Update `src/protrepair/chemistry/radii.py`, `THIRD_PARTY_NOTICES.md`,
-`vendor/rdkit/LICENSE`, and the radius sentinel/quality tests together if the
-release RDKit pin changes.
+See `docs/radius-policy.md` for the scientific scope, unknown-element behavior,
+and batch-lookup contract. If the release RDKit pin changes, update
+`src/protrepair/chemistry/radii.py`, `THIRD_PARTY_NOTICES.md`,
+`vendor/rdkit/LICENSE`, and the radius sentinel/quality tests together.
 `tests/unit/test_radii.py` includes a live RDKit PeriodicTable verifier that
 compares all atomic numbers 1 through 118 when the installed RDKit backend
 version matches the committed snapshot version; the release constraints make
@@ -105,7 +102,8 @@ should not rely on speculative build-directory probing.
 Source installs and GitHub installs build the vendored FASPR executable through
 `scikit-build-core` and CMake. The documented native-build prerequisite is CMake
 3.18 or newer plus a working C++ compiler toolchain. Prefer wheels for users who
-need FASPR but do not want to build native assets locally.
+need FASPR but do not want to build native assets locally. Runtime ownership and
+custom executable rules live in `docs/faspr-runtime-policy.md`.
 
 ## Artifact Contents
 
