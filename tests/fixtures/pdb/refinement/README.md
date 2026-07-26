@@ -1,39 +1,31 @@
 # Local Refinement Fixtures
 
-This directory contains extracted local neighborhoods used for local refinement
-benchmarking and regression.
+This directory contains small neighborhoods extracted from wwPDB structures for
+local refinement, chemistry-admissibility, and repair regression tests. The
+files are derived fixtures, not complete deposited structures.
 
-These files are derived from wwPDB archive entries tracked by
-`tests/support/refinement_cases.py` and
-`tests/support/scenario_fixture_matrix.py`.
+## Canonical Inventory
 
-First-wave extracted cases:
+`tests/support/refinement_cases.py` owns the executable case definitions,
+including fixture path, focus residues or atoms, and reference geometry.
+`tests/support/refinement_corpus.py` owns panel membership, execution policy,
+evidence basis, and coverage tags. Tests in
+`tests/corpus/test_refinement_registry.py` verify that registered fixture paths
+exist and retain their expected anchor content.
 
-- `1bkr_thr101_local.pdb`
-- `1bkr_his42_local.pdb`
-- `1jd0_gln92_local.pdb`
-- `1lxa_his125_local.pdb`
-- `1uaq_gln55_local.pdb`
-- `1xgo_leu253_local.pdb`
-- `1xgs_leu253_reference_local.pdb`
-- `1ywr_his148_local.pdb`
-- `1ywr_asn155_local.pdb`
-- `3g8l_asn182_local.pdb`
-- `2q6f_cys143_pje_local.pdb`
+Do not maintain a second filename inventory here. Add or remove a fixture
+through the owning registry and its corpus metadata so execution and
+documentation cannot drift independently.
 
-Nonstandard exploratory cases:
+## Fixture Families
 
-- `4pep_sep68_local.pdb`
-- `1uhg_sep68_local.pdb`
-- `8pyr_sep164_local.pdb`
-- `8pyr_tpo170_local.pdb`
-- `4jfx_ptr8_local.pdb`
+The registry currently covers:
 
-Literature/problematic exploratory cases:
+- residue-local side-chain and amide-orientation cases
+- paired perturbation/reference cases
+- nonstandard peptide-linking components
+- backbone-window and multi-residue correction pressure cases
+- glycan, metal-site, and other chemistry-admissibility cases
 
-- `3j6b_terminal_helix_misthread_local.pdb`
-- `3j9e_loop_backbone_error_local.pdb`
-- `2h6o_glycan_problematic_local.pdb`
-- `5xm5_metal_sites_local.pdb`
-
-These are small neighborhood fixtures, not full deposited structures.
+Filenames retain the source PDB identifier and local focus as a human-readable
+lookup aid; registry metadata defines their test meaning.

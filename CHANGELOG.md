@@ -68,6 +68,12 @@
   normalization, and report chemistry work under the broader
   `CHEMISTRY_NORMALIZATION` workflow phase
 
+### Documentation
+
+- refocus the README on installation and first use while moving exact ingress,
+  retained-ligand, histidine, analysis, and FASPR contracts to domain-owned
+  reference documents
+
 ## 0.1.0
 
 Initial public release candidate of the rewritten `protrepair` package.
