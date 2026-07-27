@@ -131,8 +131,8 @@ def test_ci_action_refs_follow_release_pinning_policy() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text()
     checklist = Path("docs/release-checklist.md").read_text()
     allowed_major_tag_refs = {
-        "actions/checkout@v4",
-        "actions/setup-python@v5",
+        "actions/checkout@v7",
+        "actions/setup-python@v7",
     }
     sha_pinned_ref = re.compile(r".+@[0-9a-f]{40}$")
     action_refs = re.findall(r"^\s*uses:\s*(\S+)\s*$", workflow, re.MULTILINE)
@@ -147,8 +147,8 @@ def test_ci_action_refs_follow_release_pinning_policy() -> None:
     assert "first-party GitHub actions pinned to reviewed major-version tags" in (
         normalized_checklist
     )
-    assert "actions/checkout@v4" in normalized_checklist
-    assert "actions/setup-python@v5" in normalized_checklist
+    assert "actions/checkout@v7" in normalized_checklist
+    assert "actions/setup-python@v7" in normalized_checklist
     assert "full 40-character commit SHA" in normalized_checklist
     assert "contents: read" in normalized_checklist
 

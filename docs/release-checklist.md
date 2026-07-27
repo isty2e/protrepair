@@ -139,7 +139,7 @@ Confirm that the sdist contains the release gate sources:
 ## GitHub Actions Policy
 
 CI may use first-party GitHub actions pinned to reviewed major-version tags for
-readability, currently `actions/checkout@v4` and `actions/setup-python@v5`.
+readability, currently `actions/checkout@v7` and `actions/setup-python@v7`.
 Review those major tags before each release. Any other action reference must be
 pinned to a full 40-character commit SHA before it is added to release CI.
 Workflow token permissions are constrained to `contents: read`; widen them only
