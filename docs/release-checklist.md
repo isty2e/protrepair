@@ -20,7 +20,8 @@ version gates are added.
 Install release-constrained dependencies before running release gates:
 
 ```bash
-python -m pip install -c constraints/release.txt ".[dev]"
+python -m pip install -c constraints/release.txt \
+  ".[dev]" hatchling hatch-vcs scikit-build-core
 ```
 
 Run the permanent code-quality and unit surface:
@@ -154,6 +155,8 @@ Before tagging:
 - `constraints/release.txt` matches the dependency set used by CI and release
   smoke checks.
 - `pyproject.toml` classifiers and dependency groups match the release.
+- The Hatch VCS fallback version matches the release tag so VCS-free source
+  archives report the released version.
 - Release-facing documentation contains no stale historical-plan, old import-root,
   or removed package-path references.
 - `git status --short` is empty.

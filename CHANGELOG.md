@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-07-27
+
 ### Breaking changes
 
 - require RDKit at runtime through the `rdkit` package and remove the former

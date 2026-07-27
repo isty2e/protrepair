@@ -29,12 +29,14 @@ def test_release_metadata_declares_dependency_boundary() -> None:
 
     pyproject = Path("pyproject.toml").read_text()
     changelog = Path("CHANGELOG.md").read_text()
-    unreleased_changelog = changelog.split("## 0.1.0", maxsplit=1)[0]
+    release_history_since_0_1 = changelog.split("## 0.1.0", maxsplit=1)[0]
     project_dependencies, optional_dependencies = pyproject.split(
         "[project.optional-dependencies]",
         maxsplit=1,
     )
 
+    assert "## 0.2.0 - 2026-07-27" in changelog
+    assert 'fallback-version = "0.2.0"' in pyproject
     assert 'requires-python = ">=3.10,<3.13"' in pyproject
     assert '"Programming Language :: Python :: 3.10"' in pyproject
     assert '"Programming Language :: Python :: 3.11"' in pyproject
@@ -52,8 +54,8 @@ def test_release_metadata_declares_dependency_boundary() -> None:
     assert "refinement = [" not in pyproject
     assert '"rdkit",' not in optional_dependencies
     assert "dev = [" in pyproject
-    assert "require RDKit at runtime" in unreleased_changelog
-    assert "optional `refinement` dependency" not in unreleased_changelog
+    assert "require RDKit at runtime" in release_history_since_0_1
+    assert "optional `refinement` dependency" not in release_history_since_0_1
     assert "bundled RDKit PeriodicTable radius snapshot" in changelog
 
 
