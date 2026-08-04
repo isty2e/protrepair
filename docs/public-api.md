@@ -63,6 +63,9 @@ are not target states:
 - histidine protonation
 - retained non-polymer RDKit fallback permission
 
+Import `PackingSpec` from the same `protrepair.workflow.contracts` facade when
+configuring reference or committed side-chain packing.
+
 Default construction requests no optional packing, refinement, external span,
 or histidine operation. RDKit fallback remains enabled for retained components
 whose chemistry cannot otherwise be resolved.

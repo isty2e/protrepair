@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- export `PackingSpec` from `protrepair.workflow.contracts` so callers can
+  configure side-chain packing without importing an internal transformer module
+
 ### Documentation
 
 - organize the documentation around tutorial, how-to, explanation, and

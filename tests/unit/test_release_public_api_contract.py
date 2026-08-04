@@ -145,6 +145,7 @@ RELEASE_PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
         "MutationPolicy",
         "OccupancyPolicy",
         "OrphanFragmentPolicy",
+        "PackingSpec",
         "ProcessResult",
         "PrasRatioHistidineProtonationRequest",
         "RamachandranAnalysis",

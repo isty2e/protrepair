@@ -83,8 +83,7 @@ Use committed packing when the returned structure should include the FASPR
 side-chain result:
 
 ```python
-from protrepair.transformer.packing import PackingSpec
-from protrepair.workflow.contracts import WorkflowTransformRequests
+from protrepair.workflow.contracts import PackingSpec, WorkflowTransformRequests
 
 transform_requests = WorkflowTransformRequests(
     committed_sidechain_packing=PackingSpec(backend_name="faspr"),
