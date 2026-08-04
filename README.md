@@ -45,6 +45,8 @@ executable setups.
 
 The example below keeps retained ligands, requests complete heavy atoms and
 hydrogens, runs both available analyses, and writes a repaired PDB file.
+Replace `input.pdb` with the path to your structure. For a walkthrough using a
+repository fixture, follow the [getting-started tutorial](docs/getting-started.md).
 
 ```python
 from pathlib import Path
@@ -65,7 +67,7 @@ from protrepair.workflow.contracts import (
 )
 
 result = process_structure(
-    Path("tests/fixtures/pdb/1aho.pdb"),
+    Path("input.pdb"),
     ingress=StructureIngressOptions(
         ligand_policy=LigandPolicy.KEEP,
     ),
@@ -128,17 +130,16 @@ are documented in the [ingress policy](docs/ingress-policy.md).
 
 ## Further Reading
 
-The complete documentation map and public facade guide are in
-[docs/README.md](docs/README.md).
+Choose the document that matches your task:
 
-- [Ingress normalization](docs/ingress-policy.md)
-- [Retained-ligand chemistry](docs/retained-ligand-policy.md)
-- [Histidine protonation](docs/histidine-protonation.md)
-- [Analysis categories](docs/analysis-policy.md)
-- [Topology and bond egress](docs/topology-bond-policy.md)
-- [FASPR runtime and hydrogen ownership](docs/faspr-runtime-policy.md)
-- [Atomic radii](docs/radius-policy.md)
-- [Release checklist](docs/release-checklist.md)
+- [Getting started](docs/getting-started.md): complete a first repair run.
+- [How-to recipes](docs/how-to.md): configure common repair tasks.
+- [Workflow concepts](docs/concepts.md): understand goals, state, planning, and
+  transformation.
+- [Public API reference](docs/public-api.md): look up supported entrypoints and
+  result contracts.
+- [Documentation index](docs/README.md): find scientific, format, runtime, and
+  maintainer reference material.
 
 ## Development
 
