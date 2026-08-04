@@ -60,35 +60,57 @@ blocked and the result contains a structured issue explaining why.
 ## Request PRAS-Ratio Histidine Protonation
 
 Histidine protonation is opt-in. Supply an explicit request through the
-transform request boundary:
+transform request boundary and request complete hydrogen coverage:
 
 ```python
+from protrepair.scope import WholeStructureScope
+from protrepair.state import HydrogenCoverageState
 from protrepair.workflow.contracts import (
     PrasRatioHistidineProtonationRequest,
     WorkflowTransformRequests,
+    requested_process_goal,
 )
 
+requested_goals = (
+    requested_process_goal(
+        scope=WholeStructureScope(),
+        value=HydrogenCoverageState.COMPLETE,
+    ),
+)
 transform_requests = WorkflowTransformRequests(
     histidine_protonation=PrasRatioHistidineProtonationRequest(ratio=0.2),
 )
 ```
 
-This is a deterministic chain-order ratio method, not a pKa or environment
-model. Read [histidine protonation](histidine-protonation.md) before changing
-the ratio.
+Pass both values to `process_structure()`. The method is a deterministic
+chain-order ratio method, not a pKa or environment model. Read
+[histidine protonation](histidine-protonation.md) before changing the ratio.
 
-## Run FASPR Side-Chain Packing
+## Pack Selected Side Chains With FASPR
 
-Use committed packing when the returned structure should include the FASPR
-side-chain result:
+Name the residues that FASPR may change and use committed packing when the
+returned structure should include the result:
 
 ```python
-from protrepair.workflow.contracts import PackingSpec, WorkflowTransformRequests
+from protrepair.structure import ResidueId
+from protrepair.workflow.contracts import (
+    PackingScope,
+    PackingSpec,
+    WorkflowTransformRequests,
+)
 
 transform_requests = WorkflowTransformRequests(
-    committed_sidechain_packing=PackingSpec(backend_name="faspr"),
+    committed_sidechain_packing=PackingSpec(
+        backend_name="faspr",
+        scope=PackingScope.LOCAL,
+        mutable_residue_ids=(ResidueId(chain_id="A", seq_num=42),),
+    ),
 )
 ```
+
+Replace the example residue ID with a residue present in the input structure.
+Without explicit targets, committed packing is limited to residues that are
+missing side-chain heavy atoms.
 
 Installed packages include the FASPR executable and rotamer library. Source
 build and custom executable requirements are documented in the

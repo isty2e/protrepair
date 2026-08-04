@@ -123,12 +123,9 @@ def test_terminal_augmentation_capability_keeps_boundary_goal_distinct() -> None
         ),
         value=OxtPresenceState.PRESENT,
     )
-    n_terminal_goal = requested_process_goal(
-        scope=ResidueBoundaryScope(
-            residue_id=residue_id,
-            side=ResidueBoundarySide.N_TERMINUS,
-        ),
-        value=OxtPresenceState.PRESENT,
+    n_terminal_scope = ResidueBoundaryScope(
+        residue_id=residue_id,
+        side=ResidueBoundarySide.N_TERMINUS,
     )
 
     assert capability.reducible_deficit_families == ()
@@ -138,8 +135,8 @@ def test_terminal_augmentation_capability_keeps_boundary_goal_distinct() -> None
         value=c_terminal_goal.value,
     )
     assert not capability.supports_proposition(
-        scope=n_terminal_goal.scope,
-        value=n_terminal_goal.value,
+        scope=n_terminal_scope,
+        value=OxtPresenceState.PRESENT,
     )
 
 

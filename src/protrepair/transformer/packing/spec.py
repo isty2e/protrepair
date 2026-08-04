@@ -24,7 +24,23 @@ class PackingMode(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class PackingSpec:
-    """Boundary configuration for one side-chain packing transformation."""
+    """Configure one side-chain packing transformation.
+
+    Parameters
+    ----------
+    backend_name : str
+        Registered packing backend name.
+    mode : PackingMode
+        Whether to pack a target sequence or refine the existing sequence.
+    scope : PackingScope
+        Whether the transformation may target the full structure or a local set.
+    target_sequence : str | None
+        Optional one-letter sequence supplied to the packing backend.
+    mutable_residue_ids : tuple[ResidueId, ...] | None
+        Optional residues whose side chains the backend may change.
+    frozen_residue_ids : tuple[ResidueId, ...] | None
+        Optional residues whose side chains the backend must preserve.
+    """
 
     backend_name: str
     mode: PackingMode = PackingMode.PACK

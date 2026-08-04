@@ -29,7 +29,7 @@ canonical workflow goal. Supported target axes include:
 - `BackboneHeavyAtomCompletenessState`
 - `SidechainHeavyAtomCompletenessState`
 - `HydrogenCoverageState`
-- `OxtPresenceState`
+- `OxtPresenceState` with a C-terminal `ResidueBoundaryScope`
 - `ClashState` for local scopes
 - `ClashPresenceState` for whole-structure scope
 
@@ -63,8 +63,9 @@ are not target states:
 - histidine protonation
 - retained non-polymer RDKit fallback permission
 
-Import `PackingSpec` from the same `protrepair.workflow.contracts` facade when
-configuring reference or committed side-chain packing.
+Import `PackingMode`, `PackingScope`, and `PackingSpec` from the same
+`protrepair.workflow.contracts` facade when configuring reference or committed
+side-chain packing.
 
 Default construction requests no optional packing, refinement, external span,
 or histidine operation. RDKit fallback remains enabled for retained components
@@ -80,7 +81,7 @@ whose chemistry cannot otherwise be resolved.
 | `repairs` | Ordered repair events applied to the selected result |
 | `issues` | Structured warnings and errors |
 | `analyses` | Optional `AnalysisBundle` |
-| `requested_goal_report` | Per-goal outcomes, or `None` when no goals were requested |
+| `requested_goal_report` | Per-goal outcomes; `process_structure()` returns an empty report when no goals were requested |
 | `terminal_branch_report` | Branch evaluation details when available |
 
 Useful methods include `has_errors()`, `has_warnings()`, `repair_count()`,

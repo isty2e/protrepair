@@ -36,12 +36,18 @@ from protrepair.errors import ModelInvariantError, StructureNormalizationError
 from protrepair.geometry import Vec3
 from protrepair.io.ingress_policy import LigandHandling, StructureNormalizationPolicy
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
-from protrepair.scope import ResidueSetScope, WholeStructureScope
+from protrepair.scope import (
+    ResidueBoundaryScope,
+    ResidueBoundarySide,
+    ResidueSetScope,
+    WholeStructureScope,
+)
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
     ClashPresenceState,
     ClashState,
     HydrogenCoverageState,
+    OxtPresenceState,
     SidechainHeavyAtomCompletenessState,
 )
 from protrepair.structure import (
@@ -643,9 +649,7 @@ def test_requested_goal_set_separates_clash_scope_axes() -> None:
         scope=WholeStructureScope(),
         value=ClashPresenceState.NONE,
     )
-    requested_goals = RequestedGoalSet(
-        (local_clash_goal, whole_structure_clash_goal)
-    )
+    requested_goals = RequestedGoalSet((local_clash_goal, whole_structure_clash_goal))
 
     assert requested_goals.requests_whole_structure_clash_absence()
     assert (
@@ -673,6 +677,25 @@ def test_requested_goal_set_separates_clash_scope_axes() -> None:
                     value=ClashPresenceState.NONE,
                 ),
             )
+        )
+
+
+def test_oxt_goal_requires_c_terminal_boundary_scope() -> None:
+    """OXT goals should reject scopes that cannot identify a C terminus."""
+
+    with pytest.raises(ValueError, match="C-terminal ResidueBoundaryScope"):
+        requested_process_goal(
+            scope=WholeStructureScope(),
+            value=OxtPresenceState.PRESENT,
+        )
+
+    with pytest.raises(ValueError, match="C-terminal ResidueBoundaryScope"):
+        requested_process_goal(
+            scope=ResidueBoundaryScope(
+                residue_id=ResidueId(chain_id="A", seq_num=1),
+                side=ResidueBoundarySide.N_TERMINUS,
+            ),
+            value=OxtPresenceState.PRESENT,
         )
 
 

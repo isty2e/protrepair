@@ -4,8 +4,11 @@
 
 ### Added
 
-- export `PackingSpec` from `protrepair.workflow.contracts` so callers can
-  configure side-chain packing without importing an internal transformer module
+- export `PackingMode`, `PackingScope`, and `PackingSpec` from
+  `protrepair.workflow.contracts` so callers can configure side-chain packing
+  without importing an internal transformer module
+- reject OXT goals unless they target the C-terminal side of a
+  `ResidueBoundaryScope`
 
 ### Documentation
 
