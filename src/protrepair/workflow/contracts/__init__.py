@@ -14,6 +14,7 @@ from protrepair.transformer.completion.hydrogen.protonation import (
     HistidineProtonationRequest,
     PrasRatioHistidineProtonationRequest,
 )
+from protrepair.transformer.packing import PackingMode, PackingScope, PackingSpec
 from protrepair.workflow.contracts.external_reference import (
     ExternalSpanReconstructionSpec,
     build_alphafold_span_reconstruction_specs,
@@ -65,6 +66,9 @@ __all__ = [
     "MutationPolicy",
     "OccupancyPolicy",
     "OrphanFragmentPolicy",
+    "PackingMode",
+    "PackingScope",
+    "PackingSpec",
     "ProcessResult",
     "PrasRatioHistidineProtonationRequest",
     "RamachandranAnalysis",

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- export `PackingMode`, `PackingScope`, and `PackingSpec` from
+  `protrepair.workflow.contracts` so callers can configure side-chain packing
+  without importing an internal transformer module
+- reject OXT goals unless they target the C-terminal side of a
+  `ResidueBoundaryScope`
+
+### Documentation
+
+- organize the documentation around tutorial, how-to, explanation, and
+  reference needs; add an executable getting-started path, common repair
+  recipes, workflow concepts, and a supported public API reference
+
 ## 0.2.0 - 2026-07-27
 
 ### Breaking changes

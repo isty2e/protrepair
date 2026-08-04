@@ -301,9 +301,7 @@ class WorkflowTransformRequests:
     def __init__(
         self,
         orphan_fragment_policy: OrphanFragmentPolicy = OrphanFragmentPolicy.REBUILD,
-        external_span_reconstructions: Iterable[
-            ExternalSpanReconstructionSpec
-        ] = (),
+        external_span_reconstructions: Iterable[ExternalSpanReconstructionSpec] = (),
         reference_sidechain_packing: PackingSpec | None = None,
         committed_sidechain_packing: PackingSpec | None = None,
         backbone_window_refinements: Iterable[BackboneWindowRefinementSpec] = (),
@@ -510,3 +508,10 @@ def validate_workflow_goal_scope(goal: WorkflowGoal) -> None:
         WholeStructureScope,
     ):
         raise ValueError("ClashPresenceState goals require WholeStructureScope")
+    if isinstance(goal.value, OxtPresenceState) and (
+        not isinstance(goal.scope, ResidueBoundaryScope)
+        or goal.scope.side is not ResidueBoundarySide.C_TERMINUS
+    ):
+        raise ValueError(
+            "OxtPresenceState goals require a C-terminal ResidueBoundaryScope"
+        )
