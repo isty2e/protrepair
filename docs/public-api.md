@@ -63,6 +63,11 @@ are not target states:
 - histidine protonation
 - retained non-polymer RDKit fallback permission
 
+`ExternalSpanReconstructionSpec` pairs one canonical
+`AbsentResidueSpanScope` with a contiguous donor residue span. Use
+`build_alphafold_span_reconstruction_specs()` when a UniProt alignment and an
+`AlphaFoldStructureArtifact` already identify the missing coverage gaps.
+
 Import `PackingMode`, `PackingScope`, and `PackingSpec` from the same
 `protrepair.workflow.contracts` facade when configuring reference or committed
 side-chain packing.
@@ -113,8 +118,9 @@ separate writer-owned connectivity model.
 | `protrepair.state` | Target state axes and observation read models |
 | `protrepair.analysis` | Analysis kinds and structured analysis results |
 | `protrepair.io` | PDB/mmCIF ingress and egress |
+| `protrepair.sources` | UniProt and AlphaFold source records, retrieval outcomes, and sequence projection |
 | `protrepair.structure` | Canonical structure, topology, provenance, and labels |
 | `protrepair.geometry` | Public geometric value objects and transforms |
 
-These facades are covered by the release public-export contract. Symbols from
-deeper modules are implementation details unless a facade re-exports them.
+These are the supported application import paths. Symbols from deeper modules
+are implementation details unless a facade re-exports them.

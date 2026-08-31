@@ -53,9 +53,9 @@ from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
     AtomTopology,
     BondProvenance,
-    BondRelationshipType,
     StructureTopology,
     TopologyBond,
+    sequence_inferred_polymer_topology_bonds,
 )
 
 
@@ -226,7 +226,7 @@ def normalize_raw_structure(
     template_endpoint_pairs = frozenset(bond.endpoint_pair() for bond in template_bonds)
     sequence_bonds = tuple(
         bond
-        for bond in _sequence_inferred_topology_bonds(constitution)
+        for bond in sequence_inferred_polymer_topology_bonds(constitution)
         if bond.endpoint_pair() not in source_endpoint_pairs
         and bond.endpoint_pair() not in template_endpoint_pairs
     )
@@ -1188,57 +1188,6 @@ def _source_endpoint_survived(
     return bool(
         not require_altloc_match
         or geometry.atom_geometry(atom_index).altloc == endpoint.altloc
-    )
-
-
-def _sequence_inferred_topology_bonds(
-    constitution: StructureConstitution,
-) -> tuple[TopologyBond, ...]:
-    """Return sequence-inferred polymer backbone connectivity bonds."""
-
-    bonds: list[TopologyBond] = []
-    for chain_site in constitution.chains:
-        for left_residue, right_residue in zip(
-            chain_site.residues,
-            chain_site.residues[1:],
-            strict=False,
-        ):
-            if not _residue_sites_are_peptide_bonded(left_residue, right_residue):
-                continue
-
-            bonds.append(
-                TopologyBond(
-                    atom_index_1=constitution.atom_index_in_residue(
-                        constitution.residue_index(left_residue.residue_id),
-                        "C",
-                    ),
-                    atom_index_2=constitution.atom_index_in_residue(
-                        constitution.residue_index(right_residue.residue_id),
-                        "N",
-                    ),
-                    relationship_type=BondRelationshipType.COVALENT,
-                    provenance=BondProvenance.SEQUENCE_INFERRED,
-                )
-            )
-
-    return tuple(bonds)
-
-
-def _residue_sites_are_peptide_bonded(
-    left_residue: ResidueSite,
-    right_residue: ResidueSite,
-) -> bool:
-    """Return whether adjacent polymer residues imply a peptide C-N bond."""
-
-    return (
-        not left_residue.is_hetero
-        and not right_residue.is_hetero
-        and _residue_ids_are_sequential_peptide_neighbors(
-            left_residue.residue_id,
-            right_residue.residue_id,
-        )
-        and left_residue.has_atom_site("C")
-        and right_residue.has_atom_site("N")
     )
 
 

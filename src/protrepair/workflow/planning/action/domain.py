@@ -23,6 +23,9 @@ from protrepair.structure.labels import ResidueId
 from protrepair.transformer.local.projection import (
     LocalContinuousExecutionResidueProjection,
 )
+from protrepair.workflow.contracts.external_reference import (
+    ExternalSpanReconstructionSpec,
+)
 from protrepair.workflow.contracts.planning import WorkflowPlanningContext
 from protrepair.workflow.contracts.request import (
     RequestedGoalSet,
@@ -124,8 +127,7 @@ class WorkflowExplicitRepairReadView:
             return ()
 
         return (
-            repair_refinement.resolved_execution_scope_spec()
-            .referenced_residue_ids()
+            repair_refinement.resolved_execution_scope_spec().referenced_residue_ids()
         )
 
     def prerequisite_residue_ids(
@@ -303,10 +305,7 @@ class WorkflowBurdenReadView:
         """Return whether parser-profile compatibility burden is present."""
 
         parser_compatibility = self.state_deficit.parser_compatibility
-        return (
-            parser_compatibility is not None
-            and parser_compatibility.has_burden()
-        )
+        return parser_compatibility is not None and parser_compatibility.has_burden()
 
     def has_interaction_burden(self) -> bool:
         """Return whether ligand-aware interaction burden is present."""
@@ -327,16 +326,31 @@ class WorkflowBurdenReadView:
 class WorkflowSpanReconstructionReadView:
     """Read view over explicit span reconstruction request availability."""
 
+    structure: ProteinStructure
     planning_context: WorkflowPlanningContext
     transform_requests: WorkflowTransformRequests
+
+    def pending_reconstructions(
+        self,
+    ) -> tuple[ExternalSpanReconstructionSpec, ...]:
+        """Return donor requests whose target span is not fully materialized."""
+
+        if not self.planning_context.allows_span_reconstruction():
+            return ()
+
+        return tuple(
+            reconstruction
+            for reconstruction in self.transform_requests.external_span_reconstructions
+            if any(
+                self.structure.constitution.residue_or_ligand(residue_id) is None
+                for residue_id in reconstruction.scope.absent_residue_ids
+            )
+        )
 
     def allows_reconstruction(self) -> bool:
         """Return whether donor-backed span reconstruction is admissible."""
 
-        return (
-            self.planning_context.allows_span_reconstruction()
-            and bool(self.transform_requests.external_span_reconstructions)
-        )
+        return bool(self.pending_reconstructions())
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,6 +450,7 @@ class WorkflowActionDomain:
         """Return the donor-backed span reconstruction read view."""
 
         return WorkflowSpanReconstructionReadView(
+            structure=self.structure,
             planning_context=self.planning_context,
             transform_requests=self.transform_requests,
         )

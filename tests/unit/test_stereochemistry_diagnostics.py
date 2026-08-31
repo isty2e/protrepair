@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 from tests.support.canonical_builders import (
     build_structure,
@@ -10,6 +11,10 @@ from tests.support.canonical_builders import (
 
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import ValidationIssueKind, detect_sidechain_stereochemistry
+from protrepair.diagnostics.stereochemistry import (
+    detect_standard_alpha_carbon_chirality_violations,
+)
+from protrepair.geometry import Vec3
 from protrepair.io import read_structure
 from protrepair.structure import ProteinStructure, ResidueSite, StructureConstitution
 from protrepair.structure.labels import ResidueId
@@ -38,6 +43,55 @@ def test_detect_sidechain_stereochemistry_accepts_supported_native_orientation()
     )
 
     assert report.is_empty()
+
+
+def test_detect_standard_alpha_carbon_chirality_rejects_mirrored_sidechain() -> None:
+    """Standard alpha chirality should reject reflection across the N-CA-C plane."""
+
+    structure = read_structure(
+        Path("tests/fixtures/corpus/pdb1afc.ent"),
+        policy=StructureIngressOptions().structure_normalization_policy(),
+    )
+    residue_id = ResidueId("A", 47)
+
+    assert not detect_standard_alpha_carbon_chirality_violations(
+        structure,
+        residue_ids=(residue_id,),
+    )
+
+    residue_site = structure.constitution.chain("A").residue(residue_id)
+    residue_index = structure.constitution.residue_index(residue_id)
+    residue_geometry = structure.residue_geometry(residue_index)
+    alpha_carbon = residue_geometry.position("CA").to_array()
+    nitrogen_vector = residue_geometry.position("N").to_array() - alpha_carbon
+    carbon_vector = residue_geometry.position("C").to_array() - alpha_carbon
+    plane_normal = np.cross(nitrogen_vector, carbon_vector)
+    plane_normal /= np.linalg.norm(plane_normal)
+    beta_carbon = residue_geometry.position("CB").to_array()
+    reflected_beta_carbon = beta_carbon - (
+        2.0 * np.dot(beta_carbon - alpha_carbon, plane_normal) * plane_normal
+    )
+    mirrored_geometry = residue_geometry.with_atom_geometry(
+        "CB",
+        residue_geometry.atom_geometry("CB").with_position(
+            Vec3.from_iterable(reflected_beta_carbon)
+        ),
+    )
+    mirrored_structure = structure.with_updated_residue_facets(
+        residue_site,
+        residue_geometry=mirrored_geometry,
+        formal_charge_by_atom_name=(
+            structure.topology.residue_formal_charge_by_atom_name(
+                constitution=structure.constitution,
+                residue_index=residue_index,
+            )
+        ),
+    )
+
+    assert detect_standard_alpha_carbon_chirality_violations(
+        mirrored_structure,
+        residue_ids=(residue_id,),
+    ) == (residue_id,)
 
 
 def test_detect_sidechain_stereochemistry_flags_inverted_threonine_center() -> None:

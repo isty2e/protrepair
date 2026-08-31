@@ -19,6 +19,8 @@ explanation and reference material when you need more detail.
 
 - [Workflow concepts](concepts.md): canonical structure axes, observations,
   requested goals, planner-selected transformations, and partial outcomes.
+- [External span reconstruction](span-reconstruction.md): donor alignment,
+  anchor-constrained closure, acceptance gates, and failure semantics.
 
 ## Reference
 

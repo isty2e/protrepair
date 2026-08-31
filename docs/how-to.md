@@ -40,6 +40,52 @@ Hydrogen completion can still be blocked when required heavy atoms or chemistry
 are unavailable. Inspect `result.requested_goal_report` rather than assuming
 that a requested action succeeded.
 
+## Reconstruct A Missing Polymer Span From A Donor
+
+Use an explicit span request when another structure contains the residues that
+are absent from the source. The source and donor residue IDs do not need to use
+the same chain name, but each list must describe one contiguous chain span.
+
+```python
+from pathlib import Path
+
+from protrepair import process_structure
+from protrepair.io import read_structure
+from protrepair.scope import AbsentResidueSpanScope
+from protrepair.structure import ResidueId
+from protrepair.workflow.contracts import (
+    ExternalSpanReconstructionSpec,
+    WorkflowTransformRequests,
+)
+
+source = read_structure(Path("source-with-gap.pdb"))
+donor = read_structure(Path("donor.pdb"))
+
+reconstruction = ExternalSpanReconstructionSpec(
+    scope=AbsentResidueSpanScope(
+        preceding_residue_id=ResidueId("A", 41),
+        absent_residue_ids=(ResidueId("A", 42), ResidueId("A", 43)),
+        following_residue_id=ResidueId("A", 44),
+    ),
+    donor_structure=donor,
+    donor_residue_ids=(ResidueId("X", 42), ResidueId("X", 43)),
+)
+
+result = process_structure(
+    source,
+    transform_requests=WorkflowTransformRequests(
+        external_span_reconstructions=(reconstruction,),
+    ),
+)
+```
+
+Internal spans use both flanks and deterministic cyclic coordinate descent.
+Terminal spans are opt-in when specifications are built from AlphaFold
+coverage gaps. Check `result.issues` before using the reconstructed model; a
+failed reconstruction leaves the source span absent. The
+[span reconstruction reference](span-reconstruction.md) describes the
+acceptance gates and scientific limits.
+
 ## Disable Retained-Ligand Chemistry Fallback
 
 RDKit fallback is enabled by default for retained components that lack explicit

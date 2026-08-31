@@ -38,8 +38,8 @@ from protrepair.chemistry import (
 from protrepair.diagnostics.parser_readability import RDKitProximityBondCluster
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure
-from protrepair.relation.blueprint import StructureBlueprintCoverageGap
 from protrepair.scope import (
+    AbsentResidueSpanScope,
     AtomSetScope,
     ResidueBoundaryScope,
     ResidueBoundarySide,
@@ -162,7 +162,6 @@ def _hydrogenated_1afc_structure() -> ProteinStructure:
         component_library=build_default_component_library(),
         protonate_histidines=True,
     ).structure
-
 
 
 def test_plan_workflow_actions_emits_heavy_action_before_hydrogen() -> None:
@@ -306,8 +305,7 @@ def test_plan_workflow_actions_keeps_parser_witness_ahead_of_global_geometry(
     assert len(outcome.transformers) == 1
     assert isinstance(outcome.transformers[0], LocalRefinementTransformer)
     assert (
-        outcome.transformers[0].repair_refinement
-        == parser_candidate.repair_refinement
+        outcome.transformers[0].repair_refinement == parser_candidate.repair_refinement
     )
 
 
@@ -417,8 +415,7 @@ def test_plan_workflow_actions_emits_retained_non_polymer_hydrogen_completion() 
     )
 
 
-def test_plan_workflow_actions_emits_retained_glycan_h_for_partial_template_surface(
-) -> None:
+def test_plan_workflow_actions_emits_glycan_h_for_partial_template_surface() -> None:
     """Linked glycan hydrogen planning should not require full component topology."""
 
     component_library = build_default_component_library()
@@ -461,8 +458,7 @@ def test_plan_workflow_actions_emits_retained_glycan_h_for_partial_template_surf
     )
 
 
-def test_plan_workflow_actions_prefers_stereochemistry_correction_before_refinement(
-) -> None:
+def test_plan_workflow_actions_prefers_stereo_correction_before_refinement() -> None:
     """Stereo-invalid correction should be planned before local refinement."""
 
     structure = _inverted_threonine_workflow_structure()
@@ -486,8 +482,9 @@ def test_plan_workflow_actions_prefers_stereochemistry_correction_before_refinem
     assert outcome.transformers[0].scope.residue_ids == (ResidueId("A", 30),)
 
 
-def test_plan_workflow_actions_explicit_repair_requires_local_heavy_then_hydrogen(
-) -> None:
+def test_plan_workflow_actions_explicit_repair_requires_local_heavy_then_hydrogen() -> (
+    None
+):
     """Explicit repair should stage local heavy/H prerequisites before refinement."""
 
     residue_id = ResidueId("A", 1)
@@ -514,9 +511,7 @@ def test_plan_workflow_actions_explicit_repair_requires_local_heavy_then_hydroge
     )
     repair_refinement = RepairRefinementSpec(
         scope_spec=LocalScopeSpec.from_residues((residue_id,)),
-        binding=ManualContinuousRelaxationBinding(
-            ContinuousRelaxationForceField.UFF
-        ),
+        binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.UFF),
     )
 
     initial_outcome = plan_workflow_actions(
@@ -547,8 +542,9 @@ def test_plan_workflow_actions_explicit_repair_requires_local_heavy_then_hydroge
     assert hydrogen_outcome.transformers[0].scope.residue_ids == (residue_id,)
 
 
-def test_plan_workflow_actions_emits_override_backed_retained_non_polymer_h_completion(
-) -> None:
+def test_plan_workflow_actions_emits_override_retained_non_polymer_h_completion() -> (
+    None
+):
     """Override-backed retained non-polymers should plan hydrogen completion."""
 
     structure = build_structure(
@@ -591,8 +587,7 @@ def test_plan_workflow_actions_emits_override_backed_retained_non_polymer_h_comp
     )
 
 
-def test_plan_workflow_actions_emits_rdkit_fallback_retained_non_polymer_h_completion(
-) -> None:
+def test_plan_workflow_actions_emits_rdkit_retained_non_polymer_h_completion() -> None:
     """Fallback-hydrogenatable retained non-polymers should plan completion."""
 
     structure = build_structure(
@@ -660,9 +655,7 @@ def test_workflow_planning_context_projects_holo_from_kept_ligands() -> None:
     assert (
         planning_context_is_holo_for_structure(
             WorkflowPlanningContext(
-                ligand_context_mode=(
-                    WorkflowLigandContextMode.CONSIDER_IF_PRESENT
-                )
+                ligand_context_mode=(WorkflowLigandContextMode.CONSIDER_IF_PRESENT)
             ),
             structure,
         )
@@ -703,8 +696,10 @@ def test_plan_workflow_actions_rejects_external_spans_without_donor_context() ->
             chain_payload(
                 "X",
                 (
+                    _build_residue("ALA", "X", 1, ("N", "CA", "C", "O", "CB")),
                     _build_residue("ASP", "X", 2, ("N", "CA", "C", "O", "CB")),
                     _build_residue("GLU", "X", 3, ("N", "CA", "C", "O", "CB", "CG")),
+                    _build_residue("GLY", "X", 4, ("N", "CA", "C", "O")),
                 ),
             ),
         ),
@@ -719,10 +714,11 @@ def test_plan_workflow_actions_rejects_external_spans_without_donor_context() ->
             transform_requests=WorkflowTransformRequests(
                 external_span_reconstructions=(
                     ExternalSpanReconstructionSpec(
-                        blueprint_coverage_gap=StructureBlueprintCoverageGap(
-                            structure_chain_id="A",
-                            blueprint_chain_id="A",
-                            absent_sequence_positions=(2, 3),
+                        scope=AbsentResidueSpanScope(
+                            absent_residue_ids=(
+                                ResidueId("A", 2),
+                                ResidueId("A", 3),
+                            ),
                             preceding_residue_id=ResidueId("A", 1),
                             following_residue_id=ResidueId("A", 4),
                         ),
@@ -865,8 +861,10 @@ def test_plan_workflow_actions_ranks_span_reconstruction_before_atom_completion(
             chain_payload(
                 "X",
                 (
+                    _build_residue("ALA", "X", 1, ("N", "CA", "C", "O", "CB")),
                     _build_residue("ASP", "X", 2, ("N", "CA", "C", "O", "CB")),
                     _build_residue("GLU", "X", 3, ("N", "CA", "C", "O", "CB", "CG")),
+                    _build_residue("GLY", "X", 4, ("N", "CA", "C", "O")),
                 ),
             ),
         ),
@@ -884,10 +882,11 @@ def test_plan_workflow_actions_ranks_span_reconstruction_before_atom_completion(
         transform_requests=WorkflowTransformRequests(
             external_span_reconstructions=(
                 ExternalSpanReconstructionSpec(
-                    blueprint_coverage_gap=StructureBlueprintCoverageGap(
-                        structure_chain_id="A",
-                        blueprint_chain_id="A",
-                        absent_sequence_positions=(2, 3),
+                    scope=AbsentResidueSpanScope(
+                        absent_residue_ids=(
+                            ResidueId("A", 2),
+                            ResidueId("A", 3),
+                        ),
                         preceding_residue_id=ResidueId("A", 1),
                         following_residue_id=ResidueId("A", 4),
                     ),
@@ -1250,8 +1249,7 @@ def test_plan_workflow_actions_emits_local_refinement_after_coverage_adoption() 
     assert isinstance(outcome.transformers[0], HydrogenCompletionTransformer)
 
 
-def test_plan_workflow_actions_prioritizes_chemistry_before_interaction_correction(
-) -> None:
+def test_plan_workflow_actions_prioritizes_chemistry_before_interactions() -> None:
     """Hydrogen augmentation should precede holo-aware correction planning."""
 
     residue_id = ResidueId(chain_id="A", seq_num=92)
@@ -1280,8 +1278,6 @@ def test_plan_workflow_actions_prioritizes_chemistry_before_interaction_correcti
         outcome.transformers[0],
         HydrogenCompletionTransformer,
     )
-
-
 
 
 def test_plan_workflow_actions_emits_terminal_augmentation_action() -> None:
@@ -1696,8 +1692,7 @@ def test_plan_workflow_actions_blocks_auto_joint_refinement_after_adoption() -> 
     )
 
 
-def test_plan_workflow_actions_promotes_backbone_joint_refinement_to_residue_scope(
-) -> None:
+def test_plan_workflow_actions_promotes_joint_refinement_to_residue_scope() -> None:
     """Backbone-local severe contacts should plan residue-local refinement first."""
 
     structure = build_structure(
@@ -1781,8 +1776,9 @@ def test_plan_workflow_actions_promotes_backbone_joint_refinement_to_residue_sco
     )
 
 
-def test_plan_workflow_actions_keeps_backbone_joint_scope_semantic_but_widens_execution(
-) -> None:
+def test_plan_workflow_actions_keeps_joint_scope_semantic_but_widens_execution() -> (
+    None
+):
     """Backbone joint refinement should widen execution without widening scope."""
 
     structure = build_structure(
@@ -1877,15 +1873,14 @@ def test_plan_workflow_actions_keeps_backbone_joint_scope_semantic_but_widens_ex
     assert outcome.transformers[0].scope == ResidueSetScope(
         residue_ids=(ResidueId("A", 2), ResidueId("A", 4))
     )
-    assert (
-        outcome.transformers[0].repair_refinement.execution_scope_spec
-        == LocalScopeSpec.from_residues(
-            (
-                ResidueId("A", 1),
-                ResidueId("A", 2),
-                ResidueId("A", 3),
-                ResidueId("A", 4),
-            )
+    assert outcome.transformers[
+        0
+    ].repair_refinement.execution_scope_spec == LocalScopeSpec.from_residues(
+        (
+            ResidueId("A", 1),
+            ResidueId("A", 2),
+            ResidueId("A", 3),
+            ResidueId("A", 4),
         )
     )
 
@@ -1942,10 +1937,7 @@ def test_plan_workflow_actions_routes_backbone_window_operator_deficit() -> None
     )
     assert outcome.state_deficit is not None
     assert len(outcome.state_deficit.backbone_window_operator) == 1
-    assert (
-        outcome.state_deficit.backbone_window_operator[0].window_spec
-        == window_spec
-    )
+    assert outcome.state_deficit.backbone_window_operator[0].window_spec == window_spec
     assert (
         outcome.state_deficit.backbone_window_operator[0].disposition.value
         == "required"
@@ -1982,9 +1974,7 @@ def test_exploratory_backbone_window_metadata_routes_to_operator(
         structure,
         component_library=component_library,
     ).structure
-    window_spec = BackboneWindowRefinementSpec(
-        residue_ids=source.seed_residue_ids
-    )
+    window_spec = BackboneWindowRefinementSpec(residue_ids=source.seed_residue_ids)
 
     outcome = plan_workflow_actions(
         structure,

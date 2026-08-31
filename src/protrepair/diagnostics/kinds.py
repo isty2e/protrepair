@@ -28,6 +28,7 @@ class ValidationIssueKind(str, Enum):
     MISSING_COMPONENT_DEFINITION = "missing_component_definition"
     UNEXPECTED_ATOMS = "unexpected_atoms"
     INVALID_BACKBONE = "invalid_backbone"
+    SPAN_RECONSTRUCTION_FAILED = "span_reconstruction_failed"
     INVALID_GEOMETRY = "invalid_geometry"
     GEOMETRY_PLACEMENT_SKIPPED = "geometry_placement_skipped"
     INVALID_STEREOCHEMISTRY = "invalid_stereochemistry"

@@ -1,12 +1,16 @@
-"""Side-chain stereochemistry diagnostics over canonical structures."""
+"""Tetrahedral stereochemistry diagnostics over canonical structures."""
 
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
+from math import isfinite
 
 from protrepair.chemistry import (
     ComponentLibrary,
     ResidueTemplate,
     TetrahedralCenterSemantics,
+)
+from protrepair.chemistry.standard.components import (
+    build_standard_component_library,
 )
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
@@ -17,6 +21,11 @@ from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import ResidueIndex
 
 STEREOCHEMISTRY_DEGENERACY_EPSILON = 1.0e-6
+_STANDARD_ALPHA_CARBON_SEMANTICS = TetrahedralCenterSemantics(
+    center_atom_name="CA",
+    ordered_neighbor_atom_names=("N", "C", "CB"),
+    expected_orientation_sign=1,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +134,64 @@ def detect_sidechain_stereochemistry(
     return StereochemistryReport(violations=tuple(violations))
 
 
+def detect_standard_alpha_carbon_chirality_violations(
+    structure: ProteinStructure,
+    *,
+    residue_ids: Collection[ResidueId],
+) -> tuple[ResidueId, ...]:
+    """Return selected standard L residues with invalid alpha chirality.
+
+    The fixed ``(N, C, CB)`` ordering expresses geometric handedness rather
+    than CIP labels, so CYS follows the same positive-volume convention as
+    the other standard L amino acids. GLY and incomplete centers are outside
+    this diagnostic.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Canonical structure containing the selected residues.
+    residue_ids : Collection[ResidueId]
+        Residues to inspect; missing and retained non-polymer identifiers are
+        ignored.
+
+    Returns
+    -------
+    tuple[ResidueId, ...]
+        Invalid standard L residues in canonical structure order.
+    """
+
+    standard_component_library = build_standard_component_library()
+    violations: list[ResidueId] = []
+    for residue_index, residue in _focused_polymer_residue_entries(
+        structure,
+        residue_ids,
+    ):
+        component_id = standard_component_library.normalize_component_id(
+            residue.component_id
+        )
+        if (
+            component_id == "GLY"
+            or not standard_component_library.has(component_id)
+            or not residue_has_tetrahedral_center(
+                residue,
+                _STANDARD_ALPHA_CARBON_SEMANTICS,
+            )
+        ):
+            continue
+
+        signed_volume = tetrahedral_signed_volume(
+            structure.residue_geometry(residue_index),
+            center_semantics=_STANDARD_ALPHA_CARBON_SEMANTICS,
+        )
+        if (
+            not isfinite(signed_volume)
+            or signed_volume <= STEREOCHEMISTRY_DEGENERACY_EPSILON
+        ):
+            violations.append(residue.residue_id)
+
+    return tuple(violations)
+
+
 def _focused_polymer_residue_entries(
     structure: ProteinStructure,
     residue_ids: Collection[ResidueId],
@@ -132,9 +199,7 @@ def _focused_polymer_residue_entries(
     """Return selected polymer residues in canonical structure order."""
 
     constitution = structure.constitution
-    polymer_residue_count = len(constitution.residue_slots) - len(
-        constitution.ligands
-    )
+    polymer_residue_count = len(constitution.residue_slots) - len(constitution.ligands)
     indexed_residues = []
     for residue_id in frozenset(residue_ids):
         residue = constitution.residue_or_ligand(residue_id)
@@ -168,9 +233,9 @@ def detect_residue_stereochemistry_violations(
             residue_geometry,
             center_semantics=center_semantics,
         )
-        if signed_volume * center_semantics.expected_orientation_sign > (
-            STEREOCHEMISTRY_DEGENERACY_EPSILON
-        ):
+        if isfinite(signed_volume) and signed_volume * (
+            center_semantics.expected_orientation_sign
+        ) > (STEREOCHEMISTRY_DEGENERACY_EPSILON):
             continue
 
         violations.append(

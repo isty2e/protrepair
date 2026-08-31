@@ -2,8 +2,21 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- normalize `ExternalSpanReconstructionSpec` around a canonical
+  `AbsentResidueSpanScope`; remove the source-specific
+  `blueprint_coverage_gap` field, the behavior-free `supporting_role` field,
+  and the duplicate transformer scope
+
 ### Added
 
+- reconstruct explicitly mapped missing polymer spans from external donor
+  structures with anchor-frame placement, bounded donor-seeded CCD closure,
+  chemistry and stereochemistry gates, atomic topology updates, and structured
+  failure reporting
+- export observed-chain sequence alignment helpers from `protrepair.sources`
+  for building AlphaFold-backed reconstruction requests
 - export `PackingMode`, `PackingScope`, and `PackingSpec` from
   `protrepair.workflow.contracts` so callers can configure side-chain packing
   without importing an internal transformer module

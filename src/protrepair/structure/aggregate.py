@@ -134,7 +134,7 @@ def _structure_from_residue_entries(
     residue_entries_by_index: Sequence[ResidueFacetPayload | None],
     polymer_blueprint: PolymerBlueprint | None,
     provenance: StructureProvenance,
-    source_bonds: Sequence[TopologyBond] = (),
+    topology_bonds: Sequence[TopologyBond] = (),
 ) -> StructureT:
     """Build one canonical structure from slot-aligned residue payloads."""
 
@@ -151,7 +151,7 @@ def _structure_from_residue_entries(
         topology=_topology_from_residue_entries(
             constitution=constitution,
             residue_entries_by_index=complete_residue_entries,
-            source_bonds=source_bonds,
+            topology_bonds=topology_bonds,
         ),
         polymer_blueprint=polymer_blueprint,
         provenance=provenance,
@@ -183,7 +183,7 @@ def _topology_from_residue_entries(
     *,
     constitution: StructureConstitution,
     residue_entries_by_index: Sequence[ResidueFacetPayload],
-    source_bonds: Sequence[TopologyBond] = (),
+    topology_bonds: Sequence[TopologyBond] = (),
 ) -> StructureTopology:
     """Build slot-aligned topology from residue-local formal-charge payloads."""
 
@@ -205,7 +205,7 @@ def _topology_from_residue_entries(
                 dict(residue_entry.formal_charge_by_atom_name).get(atom_site.name),
             )
         ),
-        bonds=tuple(source_bonds),
+        bonds=tuple(topology_bonds),
     )
 
 
@@ -368,7 +368,7 @@ class ProteinStructure:
                 else self.polymer_blueprint.select_chains(normalized_chain_ids)
             ),
             provenance=self.provenance,
-            source_bonds=self.topology.bonds_for_constitution(
+            topology_bonds=self.topology.bonds_for_constitution(
                 source_constitution=self.constitution,
                 target_constitution=selected_structure_constitution,
             ),
@@ -439,7 +439,7 @@ class ProteinStructure:
             residue_entries_by_index=updated_entries_by_index,
             polymer_blueprint=self.polymer_blueprint,
             provenance=self.provenance,
-            source_bonds=self.topology.bonds_for_constitution(
+            topology_bonds=self.topology.bonds_for_constitution(
                 source_constitution=self.constitution,
                 target_constitution=updated_constitution,
             ),
@@ -484,10 +484,40 @@ class ProteinStructure:
         *,
         residue_sites: Sequence[ResidueSite],
         residue_geometries: Sequence[ResidueGeometry],
+        additional_topology_bonds: Sequence[TopologyBond] = (),
         residue_formal_charge_payloads: Sequence[tuple[tuple[str, int | None], ...]]
         | None = None,
     ) -> Self:
-        """Return a copy with newly inserted residue facets merged into one chain."""
+        """Return a copy with inserted facets and their topology bonds.
+
+        Parameters
+        ----------
+        chain_id : str
+            Existing polymer chain receiving the residues.
+        residue_sites : Sequence[ResidueSite]
+            New constitution facets, addressed by their final residue IDs.
+        residue_geometries : Sequence[ResidueGeometry]
+            Geometry facets aligned one-to-one with ``residue_sites``.
+        additional_topology_bonds : Sequence[TopologyBond]
+            Bonds addressed in the post-insertion constitution.
+        residue_formal_charge_payloads :
+            Sequence[tuple[tuple[str, int | None], ...]] | None
+            Optional atom-name charge payloads aligned with the inserted residues.
+
+        Returns
+        -------
+        Self
+            A new aggregate with existing facets remapped and inserted facets
+            committed atomically.
+
+        Raises
+        ------
+        ChainNotFoundError
+            If ``chain_id`` is absent from the source constitution.
+        ModelInvariantError
+            If facet counts, residue identities, atom sets, or topology
+            addresses are inconsistent.
+        """
 
         normalized_residue_sites = tuple(residue_sites)
         normalized_residue_geometries = tuple(residue_geometries)
@@ -581,9 +611,12 @@ class ProteinStructure:
             residue_entries_by_index=updated_entries_by_index,
             polymer_blueprint=self.polymer_blueprint,
             provenance=self.provenance,
-            source_bonds=self.topology.bonds_for_constitution(
-                source_constitution=self.constitution,
-                target_constitution=updated_constitution,
+            topology_bonds=(
+                *self.topology.bonds_for_constitution(
+                    source_constitution=self.constitution,
+                    target_constitution=updated_constitution,
+                ),
+                *tuple(additional_topology_bonds),
             ),
         )
 
@@ -636,7 +669,7 @@ class ProteinStructure:
             residue_entries_by_index=updated_entries_by_index,
             polymer_blueprint=self.polymer_blueprint,
             provenance=self.provenance,
-            source_bonds=self.topology.bonds_for_constitution(
+            topology_bonds=self.topology.bonds_for_constitution(
                 source_constitution=self.constitution,
                 target_constitution=updated_constitution,
             ),
@@ -723,7 +756,7 @@ class ProteinStructure:
             residue_entries_by_index=updated_entries_by_index,
             polymer_blueprint=self.polymer_blueprint,
             provenance=self.provenance,
-            source_bonds=self.topology.bonds_for_constitution(
+            topology_bonds=self.topology.bonds_for_constitution(
                 source_constitution=self.constitution,
                 target_constitution=updated_constitution,
             ),
@@ -828,7 +861,7 @@ class ProteinStructure:
             residue_entries_by_index=updated_entries_by_index,
             polymer_blueprint=self.polymer_blueprint,
             provenance=self.provenance,
-            source_bonds=self.topology.bonds_for_constitution(
+            topology_bonds=self.topology.bonds_for_constitution(
                 source_constitution=self.constitution,
                 target_constitution=stripped_constitution,
             ),
@@ -965,7 +998,7 @@ class ProteinStructure:
             residue_entries_by_index=updated_entries_by_index,
             polymer_blueprint=self.polymer_blueprint,
             provenance=self.provenance,
-            source_bonds=self.topology.bonds_for_constitution(
+            topology_bonds=self.topology.bonds_for_constitution(
                 source_constitution=self.constitution,
                 target_constitution=stripped_constitution,
             ),

@@ -1,5 +1,6 @@
 """External source DTOs and retrieval boundaries."""
 
+from protrepair.relation.sequence_alignment import ObservedChainSequence
 from protrepair.sources.alphafold import (
     AlphaFoldFetchFailureKind,
     AlphaFoldModelFetchFailure,
@@ -18,6 +19,7 @@ from protrepair.sources.chemistry import (
     RetainedNonPolymerChemistryOverride,
     override_by_residue_id,
 )
+from protrepair.sources.projection import align_observed_chain_to_uniprot_record
 from protrepair.sources.uniprot import (
     UniProtSequenceFamily,
     UniProtSequenceFamilyFetchOutcome,
@@ -42,6 +44,7 @@ __all__ = [
     "AlphaFoldStructureArtifact",
     "AlphaFoldStructureFetchFailure",
     "AlphaFoldStructureFetchOutcome",
+    "ObservedChainSequence",
     "RetainedNonPolymerChemistryOverride",
     "UniProtSequenceFamily",
     "UniProtSequenceFamilyFetchOutcome",
@@ -51,6 +54,7 @@ __all__ = [
     "UniProtSequenceFetchOutcome",
     "UniProtSequenceRecord",
     "UniProtSequenceReference",
+    "align_observed_chain_to_uniprot_record",
     "fetch_alphafold_model_set",
     "fetch_alphafold_structure_artifact",
     "fetch_uniprot_sequence",

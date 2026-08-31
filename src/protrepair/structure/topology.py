@@ -185,6 +185,91 @@ def is_model_resolved_provenance(bond: TopologyBond) -> bool:
     return not is_source_provenance(bond)
 
 
+def sequence_inferred_polymer_topology_bonds(
+    constitution: StructureConstitution,
+) -> tuple[TopologyBond, ...]:
+    """Return peptide C-N bonds implied by canonical polymer sequence slots.
+
+    Parameters
+    ----------
+    constitution : StructureConstitution
+        Canonical atom and residue address space to inspect.
+
+    Returns
+    -------
+    tuple[TopologyBond, ...]
+        Sequence-inferred covalent bonds between adjacent polymer residues.
+    """
+
+    bonds: list[TopologyBond] = []
+    for chain_site in constitution.chains:
+        for left_residue, right_residue in zip(
+            chain_site.residues,
+            chain_site.residues[1:],
+            strict=False,
+        ):
+            if (
+                left_residue.is_hetero
+                or right_residue.is_hetero
+                or not left_residue.residue_id.immediately_precedes(
+                    right_residue.residue_id
+                )
+                or not left_residue.has_atom_site("C")
+                or not right_residue.has_atom_site("N")
+            ):
+                continue
+
+            bonds.append(
+                TopologyBond(
+                    atom_index_1=constitution.atom_index_in_residue(
+                        constitution.residue_index(left_residue.residue_id),
+                        "C",
+                    ),
+                    atom_index_2=constitution.atom_index_in_residue(
+                        constitution.residue_index(right_residue.residue_id),
+                        "N",
+                    ),
+                    relationship_type=BondRelationshipType.COVALENT,
+                    provenance=BondProvenance.SEQUENCE_INFERRED,
+                )
+            )
+
+    return tuple(bonds)
+
+
+def sequence_inferred_polymer_topology_bonds_for_new_atoms(
+    *,
+    source_constitution: StructureConstitution,
+    target_constitution: StructureConstitution,
+) -> tuple[TopologyBond, ...]:
+    """Return sequence bonds whose endpoints include newly materialized atoms.
+
+    Parameters
+    ----------
+    source_constitution : StructureConstitution
+        Constitution before atom materialization.
+    target_constitution : StructureConstitution
+        Constitution after atom materialization.
+
+    Returns
+    -------
+    tuple[TopologyBond, ...]
+        Target-addressed sequence bonds with at least one new endpoint.
+    """
+
+    return tuple(
+        bond
+        for bond in sequence_inferred_polymer_topology_bonds(target_constitution)
+        if any(
+            source_constitution.resolve_atom_index(
+                target_constitution.atom_ref_at(atom_index)
+            )
+            is None
+            for atom_index in bond.endpoint_pair()
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class StructureTopology:
     """Structure-level topology aligned to constitution-owned atom slots."""
