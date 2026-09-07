@@ -38,8 +38,9 @@ ProtRepair first maps the donor flank into a local frame defined by the source
 anchor. It then handles the two span classes differently:
 
 1. For an internal span, deterministic cyclic coordinate descent rotates donor
-   backbone phi and psi degrees of freedom until the opposite donor flank
-   matches the source anchor triad within the closure endpoint tolerance.
+   backbone phi and psi degrees of freedom to fit the opposite source anchor.
+   If this does not close the span, a joint fit adjusts the donor's rigid pose
+   and the same legal torsions against both anchors.
 2. For a terminal span, the donor is projected from its one available anchor.
    No second-anchor closure claim is made.
 
@@ -47,23 +48,37 @@ Rotations follow the donor's covalent graph and component chemistry. Only
 single, non-aromatic bonds that separate the moving atoms from the fixed stem
 can act as independent torsions. This preserves Pro's ring and amide-N geometry,
 and leaves an acyclic N-substituent on the nitrogen side of a phi rotation.
-The preceding anchor's CA-C bond is not a closure axis: its oxygen stays fixed.
+The preceding anchor's CA-C bond is not a torsion axis. In particular, the fixed
+source oxygen is not rotated out of its carbonyl plane to make closure easier.
 
 CCD starts with the axis that most reduces endpoint error in a one-rotation
 probe. If it does not close, it retries from the same donor seed with reversed
 and original axis orders. Each distinct order has the full configured iteration
-limit, with at most four orders. No random restart or force-field minimization
-is hidden in this step. Endpoint fit guides this search; it is not a score for
-clashes or similarity to an unknown native loop.
+limit, with at most four orders.
+
+The joint fit addresses a different limitation: holding the donor's first frame
+fixed can leave all the mismatch at the second anchor. It fits both donor anchor
+triads while also matching distances across the actual source/donor peptide
+junctions to their donor values. These distance terms discourage improving the
+anchor fit by compressing or stretching the new C-N connections. Heavy amide-N
+substituents shared with the source anchor are included. The fit uses damped
+least squares, with the same iteration limit as a CCD order.
+
+Neither step changes donor bond lengths or bond angles. There is no hidden
+force-field minimization or random restart. The fitting objective guides
+placement; it is not an energy, a clash score, or a measure of similarity to an
+unknown native loop.
 
 The operation moves only donor-derived coordinates. Atoms that were already in
 the source retain their original coordinates.
 
 ## Acceptance And Failure
 
-A low endpoint RMSD is necessary for an internal closure, but it is not enough
-to accept the result. Before accepting the aggregate change, ProtRepair also
-requires:
+For an internal closure, each donor/source anchor triad must separately meet the
+endpoint tolerance (0.1 A by default). A good fit at one end cannot compensate
+for a bad fit at the other. Repair details report the larger of these two RMSDs
+and the total fitting iterations. Meeting this numerical target is not enough
+to accept the result. ProtRepair also requires:
 
 - plausible peptide C-N distances, junction angles, and peptide-plane torsions
   at both source boundaries and between every pair of inserted residues

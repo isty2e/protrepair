@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- retry unsuccessful donor-span closure with joint donor pose/torsion fitting
+  against both fixed source anchors and their actual peptide junctions, without
+  deforming donor bonds or angles. Each anchor must meet the existing tolerance;
+  repair details report the maximum anchor RMSD and total fitting iterations
 - keep explicit refinement requests usable alongside span reconstruction and
   atom completion; planning no longer tries to bind missing atoms before earlier
   transformations can create them. Unresolved scopes produce refinement diagnostics

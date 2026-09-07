@@ -222,11 +222,11 @@ class ExternalSpanReconstructionTransformer(WorkflowStructureTransformer):
                 provenance_origins=provenance_origins,
             )
         closure_details = "one-anchor donor projection"
-        if closure_outcome.endpoint_rmsd_angstrom is not None:
+        if closure_outcome.maximum_anchor_rmsd_angstrom is not None:
             closure_details = (
-                "donor-seeded CCD closure; endpoint RMSD "
-                f"{closure_outcome.endpoint_rmsd_angstrom:.3f} A after "
-                f"{closure_outcome.iteration_count} CCD iteration(s)"
+                "donor-seeded closure; maximum anchor RMSD "
+                f"{closure_outcome.maximum_anchor_rmsd_angstrom:.3f} A after "
+                f"{closure_outcome.iteration_count} fitting iteration(s)"
             )
         repair_event = RepairEvent.for_residue_span(
             kind=RepairEventKind.ABSENT_RESIDUE_SPAN_RECONSTRUCTED,

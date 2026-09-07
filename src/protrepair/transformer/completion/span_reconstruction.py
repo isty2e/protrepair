@@ -1,6 +1,6 @@
 """Anchor-constrained reconstruction of missing polymer residue spans."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from math import atan2, isfinite
 from numbers import Real
@@ -41,15 +41,16 @@ class SpanReconstructionFailureKind(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class SpanClosureSettings:
-    """Deterministic numerical bounds for donor-seeded CCD closure.
+    """Deterministic numerical bounds for donor-seeded span closure.
 
     Parameters
     ----------
     maximum_iterations : int
         Maximum complete CCD sweeps per axis order. Up to four deterministic
-        orders are tried from the same seed, each with this full limit.
+        orders are tried from the same seed, each with this full limit. Joint
+        pose/torsion fitting, when needed, has the same iteration limit.
     endpoint_rmsd_tolerance_angstrom : float
-        Maximum RMSD between the moving and source endpoint triads.
+        Maximum RMSD for each donor/source anchor triad, separately.
     convergence_delta_angstrom : float
         Minimum sweep-to-sweep RMSD change treated as continued progress.
 
@@ -97,10 +98,10 @@ class ReconstructedSpanCandidate:
     ----------
     residue_payloads : tuple[CompletionResiduePayload, ...]
         Ordered heavy-atom facets for the missing source residues.
-    endpoint_rmsd_angstrom : float | None
-        Final endpoint-triad RMSD, or ``None`` when only one anchor exists.
+    maximum_anchor_rmsd_angstrom : float | None
+        Maximum of the two anchor-triad RMSDs, or ``None`` for one anchor.
     iteration_count : int
-        Number of complete CCD sweeps used for closure.
+        Total CCD sweeps and joint fitting iterations attempted.
 
     Raises
     ------
@@ -111,7 +112,7 @@ class ReconstructedSpanCandidate:
     """
 
     residue_payloads: tuple[CompletionResiduePayload, ...]
-    endpoint_rmsd_angstrom: float | None
+    maximum_anchor_rmsd_angstrom: float | None
     iteration_count: int
 
     def __post_init__(self) -> None:
@@ -125,7 +126,7 @@ class ReconstructedSpanCandidate:
             raise TypeError(
                 "reconstructed span candidates require CompletionResiduePayload values"
             )
-        endpoint_rmsd_angstrom = self.endpoint_rmsd_angstrom
+        endpoint_rmsd_angstrom = self.maximum_anchor_rmsd_angstrom
         if endpoint_rmsd_angstrom is not None:
             if isinstance(endpoint_rmsd_angstrom, bool) or not isinstance(
                 endpoint_rmsd_angstrom,
@@ -148,7 +149,7 @@ class ReconstructedSpanCandidate:
             raise ValueError("reconstructed span iteration count must be non-negative")
 
         object.__setattr__(self, "residue_payloads", residue_payloads)
-        object.__setattr__(self, "endpoint_rmsd_angstrom", endpoint_rmsd_angstrom)
+        object.__setattr__(self, "maximum_anchor_rmsd_angstrom", endpoint_rmsd_angstrom)
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,6 +328,235 @@ class _DonorWindow:
             )
         return tuple(payloads)
 
+    def anchored_objective(
+        self,
+        source: ProteinStructure,
+        *,
+        source_anchor_ids: tuple[ResidueId, ResidueId],
+        seed: FloatArray,
+        axes: tuple[_RotationAxis, ...],
+    ) -> "_AnchoredSpanObjective":
+        fixed: dict[int, FloatArray] = {}
+        last = len(self.residue_payloads) - 1
+        for offset, source_id in zip((0, last), source_anchor_ids, strict=True):
+            source_index = source.constitution.residue_index(source_id)
+            geometry = source.residue_geometry(source_index)
+            for atom in self.residue_payloads[offset].atom_sites:
+                if geometry.has_atom(atom.name):
+                    fixed[self.atom_index(offset, atom.name)] = geometry.position(
+                        atom.name
+                    ).to_array()
+
+        pairs: list[tuple[int, int]] = []
+        for left, right in ((0, 1), (last - 1, last)):
+            carbon = self.atom_index(left, "C")
+            nitrogen = self.atom_index(right, "N")
+            neighbors = {nitrogen, *self.bonded_indices[nitrogen]} - {carbon}
+            if right == last:
+                # Unmatched donor substituents are not part of the source junction.
+                neighbors.intersection_update(fixed)
+            pairs.extend(
+                (self.atom_index(left, name), neighbor)
+                for name in ("CA", "C", "O")
+                for neighbor in sorted(neighbors)
+            )
+        pair_indices = np.asarray(pairs, dtype=np.int64)
+        fixed_rows = {index: row for row, index in enumerate(fixed)}
+        return _AnchoredSpanObjective(
+            seed=seed,
+            axes=axes,
+            anchor_rows=np.asarray(
+                [
+                    [fixed_rows[self.atom_index(offset, name)] for name in names]
+                    for offset, names in (
+                        (0, ("CA", "C", "O")),
+                        (last, ("N", "CA", "C")),
+                    )
+                ],
+                dtype=np.int64,
+            ),
+            junction_pairs=pair_indices,
+            fixed_indices=np.asarray(tuple(fixed), dtype=np.int64),
+            fixed_targets=np.asarray(tuple(fixed.values()), dtype=np.float64),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _AnchoredSpanObjective:
+    """Fit donor pose and legal torsions to fixed anchors and actual junctions."""
+
+    seed: FloatArray
+    axes: tuple[_RotationAxis, ...]
+    anchor_rows: IndexArray
+    junction_pairs: IndexArray
+    fixed_indices: IndexArray
+    fixed_targets: FloatArray
+    junction_distances: FloatArray = field(init=False)
+
+    def __post_init__(self) -> None:
+        with np.errstate(over="ignore", invalid="ignore"):
+            distances = np.linalg.norm(
+                self.seed[self.junction_pairs[:, 0]]
+                - self.seed[self.junction_pairs[:, 1]],
+                axis=1,
+            )
+        object.__setattr__(self, "junction_distances", distances)
+
+    @property
+    def anchor_indices(self) -> IndexArray:
+        return self.fixed_indices[self.anchor_rows]
+
+    @property
+    def anchor_targets(self) -> FloatArray:
+        return self.fixed_targets[self.anchor_rows]
+
+    def coordinates_at(self, parameters: FloatArray) -> FloatArray | None:
+        coordinates = self.seed.copy()
+        for axis, angle in zip(self.axes, parameters[6:], strict=True):
+            if not _rotate_points_in_place(
+                coordinates,
+                point_indices=axis.moved_indices,
+                axis_start=coordinates[axis.start_index].copy(),
+                axis_end=coordinates[axis.end_index].copy(),
+                theta_radians=float(angle),
+            ):
+                return None
+        with np.errstate(over="ignore", invalid="ignore"):
+            rotation = parameters[3:6]
+            theta = float(np.linalg.norm(rotation))
+            if not isfinite(theta):
+                return None
+            if theta > ROTATION_AXIS_NORM_EPSILON:
+                center = self.seed[self.anchor_indices].reshape(-1, 3).mean(axis=0)
+                if not _rotate_points_in_place(
+                    coordinates,
+                    point_indices=np.arange(len(coordinates), dtype=np.int64),
+                    axis_start=center,
+                    axis_end=center + rotation / theta,
+                    theta_radians=theta,
+                ):
+                    return None
+            coordinates += parameters[:3]
+        return coordinates if np.isfinite(coordinates).all() else None
+
+    def residuals(self, parameters: FloatArray) -> FloatArray | None:
+        coordinates = self.coordinates_at(parameters)
+        if coordinates is None:
+            return None
+        with np.errstate(over="ignore", invalid="ignore"):
+            anchor_residuals = (
+                coordinates[self.anchor_indices] - self.anchor_targets
+            ).ravel()
+            # These are the atoms that will form the junction after insertion,
+            # not the donor's virtual flank atoms used by the anchor objective.
+            coordinates[self.fixed_indices] = self.fixed_targets
+            distances = np.linalg.norm(
+                coordinates[self.junction_pairs[:, 0]]
+                - coordinates[self.junction_pairs[:, 1]],
+                axis=1,
+            )
+            residuals = np.concatenate(
+                (anchor_residuals, distances - self.junction_distances)
+            )
+        return residuals if np.isfinite(residuals).all() else None
+
+    def anchor_rmsds(self, coordinates: FloatArray) -> tuple[float, float]:
+        with np.errstate(over="ignore", invalid="ignore"):
+            values = np.sqrt(
+                np.mean(
+                    np.sum(
+                        (coordinates[self.anchor_indices] - self.anchor_targets) ** 2,
+                        axis=2,
+                    ),
+                    axis=1,
+                )
+            )
+        return float(values[0]), float(values[1])
+
+    def fit(
+        self, settings: SpanClosureSettings
+    ) -> tuple[FloatArray, float, int] | SpanReconstructionFailure:
+        parameters = np.zeros(6 + len(self.axes), dtype=np.float64)
+        identity = np.eye(len(parameters), dtype=np.float64)
+        residuals = self.residuals(parameters)
+        if residuals is None:
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                "joint span closure objective produced non-finite residuals",
+            )
+        damping = 0.01
+        iterations = 0
+        # Damped Gauss-Newton over translations (A) and rotations (radians).
+        # The stencil and damping control numerical steps, not chemical acceptance.
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            cost = float(residuals @ residuals)
+            for _ in range(settings.maximum_iterations):
+                columns = []
+                for direction in identity:
+                    plus = self.residuals(parameters + direction * 1.0e-5)
+                    minus = self.residuals(parameters - direction * 1.0e-5)
+                    if plus is None or minus is None:
+                        return SpanReconstructionFailure(
+                            SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                            "joint span closure derivative was non-finite",
+                        )
+                    columns.append((plus - minus) / 2.0e-5)
+                jacobian = np.column_stack(columns)
+                normal = jacobian.T @ jacobian + damping * identity
+                gradient = jacobian.T @ residuals
+                if not (
+                    isfinite(cost)
+                    and np.isfinite(normal).all()
+                    and np.isfinite(gradient).all()
+                ):
+                    return SpanReconstructionFailure(
+                        SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                        "joint span closure linearization overflowed",
+                    )
+                iterations += 1
+                try:
+                    step = np.linalg.solve(normal, -gradient)
+                except np.linalg.LinAlgError:
+                    step = None
+                candidate = (
+                    self.residuals(parameters + step)
+                    if step is not None and np.isfinite(step).all()
+                    else None
+                )
+                next_cost = (
+                    float(candidate @ candidate) if candidate is not None else np.inf
+                )
+                if isfinite(next_cost) and next_cost < cost:
+                    assert candidate is not None and step is not None
+                    change = (np.sqrt(cost) - np.sqrt(next_cost)) / np.sqrt(
+                        len(residuals)
+                    )
+                    parameters += step
+                    residuals, cost = candidate, next_cost
+                    damping = max(damping / 3.0, 1.0e-10)
+                    if change <= settings.convergence_delta_angstrom:
+                        break
+                else:
+                    damping *= 10.0
+                    if damping > 1.0e10:
+                        break
+        coordinates = self.coordinates_at(parameters)
+        assert coordinates is not None
+        rmsds = self.anchor_rmsds(coordinates)
+        if not all(isfinite(value) for value in rmsds):
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                "joint span closure anchor calculation overflowed",
+            )
+        if max(rmsds) > settings.endpoint_rmsd_tolerance_angstrom:
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.NON_CONVERGENT_CLOSURE,
+                f"joint pose/torsion fitting did not close the span after {iterations} "
+                f"iterations; preceding/following anchor RMSDs were "
+                f"{rmsds[0]:.3f}/{rmsds[1]:.3f} A",
+            )
+        return coordinates, max(rmsds), iterations
+
 
 def reconstruct_donor_span(
     source_structure: ProteinStructure,
@@ -482,7 +712,7 @@ def reconstruct_donor_span(
             inserted_residue_count=len(normalized_donor_residue_ids),
             following_offset=following_offset,
         )
-        closure_result = _close_endpoint_by_cyclic_coordinate_descent(
+        closure_result = _fit_endpoint_by_cyclic_coordinate_descent(
             working_coordinates,
             rotation_axes=rotation_axes,
             endpoint_indices=endpoint_indices,
@@ -491,7 +721,52 @@ def reconstruct_donor_span(
         )
         if isinstance(closure_result, SpanReconstructionFailure):
             return closure_result
-        working_coordinates, endpoint_rmsd, iteration_count = closure_result
+        fitted_coordinates, endpoint_rmsd, iteration_count = closure_result
+        preceding_source_residue_id = scope.preceding_residue_id
+        assert preceding_source_residue_id is not None
+        preceding_targets = _backbone_positions(
+            source_structure, preceding_source_residue_id, ("CA", "C", "O")
+        )
+        if isinstance(preceding_targets, SpanReconstructionFailure):
+            return preceding_targets
+        preceding_indices = np.asarray(
+            [
+                donor_window.atom_index(preceding_offset, name)
+                for name in ("CA", "C", "O")
+            ],
+            dtype=np.int64,
+        )
+        preceding_rmsd = _endpoint_rmsd(
+            fitted_coordinates,
+            endpoint_indices=preceding_indices,
+            endpoint_targets=preceding_targets,
+        )
+        if not isfinite(preceding_rmsd):
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                "preceding span closure anchor calculation overflowed",
+            )
+        endpoint_rmsd = max(preceding_rmsd, endpoint_rmsd)
+        if endpoint_rmsd > active_settings.endpoint_rmsd_tolerance_angstrom:
+            objective = donor_window.anchored_objective(
+                source_structure,
+                source_anchor_ids=(
+                    preceding_source_residue_id,
+                    following_source_residue_id,
+                ),
+                seed=working_coordinates,
+                axes=rotation_axes,
+            )
+            joint_result = objective.fit(active_settings)
+            if isinstance(joint_result, SpanReconstructionFailure):
+                return SpanReconstructionFailure(
+                    joint_result.kind,
+                    f"after {iteration_count} CCD sweeps (maximum anchor RMSD "
+                    f"{endpoint_rmsd:.3f} A), {joint_result.message}",
+                )
+            fitted_coordinates, endpoint_rmsd, joint_iterations = joint_result
+            iteration_count += joint_iterations
+        working_coordinates = fitted_coordinates
 
     inserted_payloads = donor_window.materialize_inserted_payloads(
         working_coordinates=working_coordinates,
@@ -509,7 +784,7 @@ def reconstruct_donor_span(
 
     return ReconstructedSpanCandidate(
         residue_payloads=inserted_payloads,
-        endpoint_rmsd_angstrom=endpoint_rmsd,
+        maximum_anchor_rmsd_angstrom=endpoint_rmsd,
         iteration_count=iteration_count,
     )
 
@@ -740,7 +1015,7 @@ def _orthonormal_frame(points: FloatArray) -> tuple[FloatArray, FloatArray] | No
     return origin, basis
 
 
-def _close_endpoint_by_cyclic_coordinate_descent(
+def _fit_endpoint_by_cyclic_coordinate_descent(
     coordinates: FloatArray,
     *,
     rotation_axes: tuple[_RotationAxis, ...],
@@ -763,6 +1038,7 @@ def _close_endpoint_by_cyclic_coordinate_descent(
 
     total_iterations = 0
     best_rmsd = initial_rmsd
+    best_coordinates = coordinates.copy()
     axis_objectives = tuple(
         (axis, np.isin(endpoint_indices, axis.moved_indices)) for axis in rotation_axes
     )
@@ -821,7 +1097,9 @@ def _close_endpoint_by_cyclic_coordinate_descent(
                     SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
                     "span closure endpoint calculation overflowed",
                 )
-            best_rmsd = min(best_rmsd, endpoint_rmsd)
+            if endpoint_rmsd < best_rmsd:
+                best_rmsd = endpoint_rmsd
+                best_coordinates = working.copy()
             if endpoint_rmsd <= settings.endpoint_rmsd_tolerance_angstrom:
                 return working, endpoint_rmsd, total_iterations
             if (
@@ -830,12 +1108,7 @@ def _close_endpoint_by_cyclic_coordinate_descent(
             ):
                 break
 
-    return SpanReconstructionFailure(
-        SpanReconstructionFailureKind.NON_CONVERGENT_CLOSURE,
-        f"donor-seeded CCD did not close the span after {total_iterations} sweeps "
-        f"across {len(orders)} deterministic axis orders; "
-        f"best endpoint RMSD was {best_rmsd:.3f} A",
-    )
+    return best_coordinates, best_rmsd, total_iterations
 
 
 def _endpoint_descent_seed_offset(

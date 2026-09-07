@@ -29,6 +29,7 @@ from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import BondProvenance
 from protrepair.transformer.base import ProjectedCodomainState, ProjectedDomainState
+from protrepair.transformer.completion import span_reconstruction as kernel
 from protrepair.transformer.completion.span_reconstruction import (
     ReconstructedSpanCandidate,
     SpanReconstructionFailure,
@@ -56,6 +57,326 @@ from protrepair.workflow.contracts import (
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/pdb/span-reconstruction"
+
+
+@pytest.mark.parametrize(
+    "start,accepted", [(4, True), (26, True), (49, True), (72, False)]
+)
+@pytest.mark.parametrize("native", [False, True])
+def test_real_short_gap_closure_preserves_source_and_donor_chemistry(
+    start: int, accepted: bool, native: bool
+) -> None:
+    reference = read_structure(FIXTURES / "1ubq-short-gaps.pdb")
+    donor = (
+        reference if native else read_structure(FIXTURES / "af-p0cg48-short-gaps.pdb")
+    )
+    gap = (ResidueId("A", start),)
+    source = _source(reference, gap)
+    result = process_structure(
+        source,
+        transform_requests=WorkflowTransformRequests(
+            external_span_reconstructions=(
+                ExternalSpanReconstructionSpec(
+                    scope=AbsentResidueSpanScope(
+                        preceding_residue_id=ResidueId("A", start - 1),
+                        following_residue_id=ResidueId("A", start + 1),
+                        absent_residue_ids=gap,
+                    ),
+                    donor_structure=donor,
+                    donor_residue_ids=gap,
+                ),
+            ),
+        ),
+    )
+    for index, atom in enumerate(source.geometry.atom_geometries):
+        ref = source.constitution.atom_ref_at(AtomIndex(index))
+        assert (
+            _position(result.structure, ref.residue_id, ref.atom_name) == atom.position
+        )
+    if not accepted:
+        assert result.structure.constitution == source.constitution
+        assert result.structure.topology == source.topology
+        assert len(result.issues) == 1
+        assert (
+            "intrinsic heavy-atom geometry"
+            if native
+            else "preceding/following anchor RMSDs"
+        ) in result.issues[0].message
+        return
+    assert not result.issues
+    residue = donor.constitution.residue_or_ligand(gap[0])
+    assert residue is not None
+    definition = (
+        build_default_component_library().require(residue.component_id).definition
+    )
+    for bond in definition.bonds:
+        if not all(
+            residue.has_atom_site(name) for name in (bond.atom_name_1, bond.atom_name_2)
+        ):
+            continue
+        assert _position(result.structure, gap[0], bond.atom_name_1).distance_to(
+            _position(result.structure, gap[0], bond.atom_name_2)
+        ) == pytest.approx(
+            _position(donor, gap[0], bond.atom_name_1).distance_to(
+                _position(donor, gap[0], bond.atom_name_2)
+            ),
+            abs=1e-8,
+        )
+    for name in residue.atom_site_names():
+        neighbors = sorted(
+            definition.bonded_atom_names(name) & frozenset(residue.atom_site_names())
+        )
+        for left, right in combinations(neighbors, 2):
+            refs = (
+                AtomRef(gap[0], left),
+                AtomRef(gap[0], name),
+                AtomRef(gap[0], right),
+            )
+            assert _angle(result.structure, refs) == pytest.approx(
+                _angle(donor, refs), abs=1e-8
+            )
+    assert (
+        Chem.MolFromPDBBlock(
+            write_structure_string(result.structure, FileFormat.PDB),
+            sanitize=True,
+            removeHs=False,
+            proximityBonding=True,
+        )
+        is not None
+    )
+
+
+def _short_gap_objective(start: int = 4) -> kernel._AnchoredSpanObjective:
+    reference = read_structure(FIXTURES / "1ubq-short-gaps.pdb")
+    donor = read_structure(FIXTURES / "af-p0cg48-short-gaps.pdb")
+    return _closure_objective(reference, donor, start)
+
+
+def _closure_objective(
+    reference: ProteinStructure, donor: ProteinStructure, start: int
+) -> kernel._AnchoredSpanObjective:
+    ids = tuple(ResidueId("A", n) for n in (start - 1, start, start + 1))
+    scope = AbsentResidueSpanScope(
+        preceding_residue_id=ids[0],
+        absent_residue_ids=(ids[1],),
+        following_residue_id=ids[2],
+    )
+    source = _source(reference, scope.absent_residue_ids)
+    window = kernel._build_donor_window(
+        donor,
+        ids,
+        preceding_offset=0,
+        following_offset=2,
+        component_library=build_default_component_library(),
+    )
+    assert not isinstance(window, SpanReconstructionFailure)
+    seed = kernel._place_donor_window_in_source_frame(
+        window,
+        source_structure=source,
+        scope=scope,
+        preceding_offset=0,
+        following_offset=2,
+    )
+    assert not isinstance(seed, SpanReconstructionFailure)
+    return window.anchored_objective(
+        source,
+        source_anchor_ids=(ids[0], ids[2]),
+        seed=seed,
+        axes=window.internal_span_rotation_axes(
+            preceding_offset=0,
+            first_inserted_offset=1,
+            inserted_residue_count=1,
+            following_offset=2,
+        ),
+    )
+
+
+@pytest.mark.parametrize("start", [4, 26])
+def test_joint_closure_resolves_failed_ccd_without_relaxing_either_anchor(
+    start: int,
+) -> None:
+    objective = _short_gap_objective(start)
+    settings = kernel.SpanClosureSettings()
+    coarse = kernel._fit_endpoint_by_cyclic_coordinate_descent(
+        objective.seed,
+        rotation_axes=objective.axes,
+        endpoint_indices=objective.anchor_indices[1],
+        endpoint_targets=objective.anchor_targets[1],
+        settings=settings,
+    )
+    assert not isinstance(coarse, SpanReconstructionFailure)
+    assert coarse[1] > settings.endpoint_rmsd_tolerance_angstrom
+    before = objective.seed.copy()
+    result = objective.fit(settings)
+    assert not isinstance(result, SpanReconstructionFailure)
+    coordinates, reported, _ = result
+    rmsds = objective.anchor_rmsds(coordinates)
+    assert reported == max(rmsds)
+    assert all(value <= settings.endpoint_rmsd_tolerance_angstrom for value in rmsds)
+    np.testing.assert_array_equal(objective.seed, before)
+
+
+@pytest.mark.parametrize("anchor", [0, 1])
+def test_joint_closure_rejects_one_unreachable_anchor_even_if_average_is_small(
+    anchor: int,
+) -> None:
+    objective = _short_gap_objective()
+    targets = objective.seed[objective.anchor_indices].copy()
+    targets[anchor] += np.array([0.15, 0.0, 0.0])
+    fixed = objective.fixed_targets.copy()
+    fixed[objective.anchor_rows] = targets
+    fixed_objective = replace(objective, fixed_targets=fixed)
+    rmsds = fixed_objective.anchor_rmsds(objective.seed)
+    assert np.mean(rmsds) < 0.1 < max(rmsds)
+    # An internally stretched anchor cannot be made congruent by any rigid pose.
+    targets[anchor, 0] += np.array([10.0, 0.0, 0.0])
+    fixed[objective.anchor_rows] = targets
+    result = replace(objective, fixed_targets=fixed).fit(kernel.SpanClosureSettings())
+    assert isinstance(result, SpanReconstructionFailure)
+    assert result.kind is SpanReconstructionFailureKind.NON_CONVERGENT_CLOSURE
+
+
+@pytest.mark.filterwarnings("error")
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), 1e308])
+def test_joint_closure_rejects_unusable_objective_values(value: float) -> None:
+    objective = _short_gap_objective()
+    targets = objective.fixed_targets.copy()
+    targets[objective.anchor_rows[0, 0], 0] = value
+    result = replace(objective, fixed_targets=targets).fit(kernel.SpanClosureSettings())
+    assert isinstance(result, SpanReconstructionFailure)
+    assert result.kind is SpanReconstructionFailureKind.NON_FINITE_COORDINATES
+
+
+def test_joint_fit_is_rigid_frame_equivariant() -> None:
+    objective = _short_gap_objective(26)
+    rotation = AxisRotation.from_points(Vec3(0.0, 0.0, 0.0), Vec3(1.0, 2.0, -1.0))
+
+    def move(points: kernel.FloatArray) -> kernel.FloatArray:
+        shape = points.shape
+        return np.asarray(
+            [
+                rotation.rotate_point(
+                    Vec3.from_iterable(point),
+                    origin=Vec3(0.0, 0.0, 0.0),
+                    theta_radians=1.2,
+                ).to_array()
+                + np.array([11.0, -8.0, 3.0])
+                for point in points.reshape(-1, 3)
+            ]
+        ).reshape(shape)
+
+    transformed = replace(
+        objective,
+        seed=move(objective.seed),
+        fixed_targets=move(objective.fixed_targets),
+    )
+    original_fit = objective.fit(kernel.SpanClosureSettings())
+    transformed_fit = transformed.fit(kernel.SpanClosureSettings())
+    assert not isinstance(original_fit, SpanReconstructionFailure)
+    assert not isinstance(transformed_fit, SpanReconstructionFailure)
+    np.testing.assert_allclose(
+        transformed_fit[0], move(original_fit[0]), atol=2e-5, rtol=0.0
+    )
+    assert transformed_fit[1] == pytest.approx(original_fit[1], abs=2e-5)
+
+
+def test_junction_residuals_use_actual_fixed_source_atoms() -> None:
+    objective = _short_gap_objective()
+    parameters = np.zeros(6 + len(objective.axes))
+    residuals = objective.residuals(parameters)
+    assert residuals is not None
+    actual = objective.seed.copy()
+    actual[objective.fixed_indices] = objective.fixed_targets
+    pairs = objective.junction_pairs
+    expected = (
+        np.linalg.norm(actual[pairs[:, 0]] - actual[pairs[:, 1]], axis=1)
+        - objective.junction_distances
+    )
+    assert np.linalg.norm(expected) > 0.1
+    np.testing.assert_allclose(residuals[18:], expected, atol=1e-12)
+
+
+def test_joint_objective_includes_source_proline_substituent_and_preserves_ring() -> (
+    None
+):
+    reference = read_structure(FIXTURES / "1ubq.pdb")
+    objective = _closure_objective(reference, reference, 36)
+    cd = _position(reference, ResidueId("A", 37), "CD").to_array()
+    cd_row = int(np.flatnonzero(np.all(objective.fixed_targets == cd, axis=1))[0])
+    cd_index = objective.fixed_indices[cd_row]
+    assert np.count_nonzero(objective.junction_pairs[:, 1] == cd_index) == 3
+    nitrogen_index = objective.anchor_indices[1, 0]
+    assert all(axis.start_index != nitrogen_index for axis in objective.axes)
+    moved_targets = objective.fixed_targets.copy()
+    moved_targets[min(objective.anchor_rows[1]) :] += np.array([0.1, 0.0, 0.0])
+    result = replace(objective, fixed_targets=moved_targets).fit(
+        kernel.SpanClosureSettings()
+    )
+    assert not isinstance(result, SpanReconstructionFailure)
+    coordinates = result[0]
+    assert np.linalg.norm(
+        coordinates[nitrogen_index] - coordinates[cd_index]
+    ) == pytest.approx(
+        np.linalg.norm(objective.seed[nitrogen_index] - objective.seed[cd_index]),
+        abs=1e-10,
+    )
+
+
+def test_joint_solver_failure_is_atomic_and_typed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    objective = _short_gap_objective()
+    before = objective.seed.copy()
+
+    def singular(
+        matrix: kernel.FloatArray, rhs: kernel.FloatArray
+    ) -> kernel.FloatArray:
+        raise np.linalg.LinAlgError("singular numerical system")
+
+    monkeypatch.setattr(np.linalg, "solve", singular)
+    result = objective.fit(kernel.SpanClosureSettings())
+    assert isinstance(result, SpanReconstructionFailure)
+    assert result.kind is SpanReconstructionFailureKind.NON_CONVERGENT_CLOSURE
+    np.testing.assert_array_equal(objective.seed, before)
+
+
+def test_joint_candidate_still_passes_through_actual_junction_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference = read_structure(FIXTURES / "1ubq-short-gaps.pdb")
+    donor = read_structure(FIXTURES / "af-p0cg48-short-gaps.pdb")
+    source = _source(reference, (ResidueId("A", 4),))
+
+    def broken_fit(
+        self: kernel._AnchoredSpanObjective, settings: kernel.SpanClosureSettings
+    ) -> tuple[kernel.FloatArray, float, int]:
+        coordinates = self.seed.copy()
+        inserted_oxygen = self.junction_pairs[-1, 0]
+        coordinates[inserted_oxygen] = self.anchor_targets[1, 0]
+        return coordinates, 0.0, 1
+
+    monkeypatch.setattr(kernel._AnchoredSpanObjective, "fit", broken_fit)
+    result = process_structure(
+        source,
+        transform_requests=WorkflowTransformRequests(
+            external_span_reconstructions=(
+                ExternalSpanReconstructionSpec(
+                    scope=AbsentResidueSpanScope(
+                        preceding_residue_id=ResidueId("A", 3),
+                        absent_residue_ids=(ResidueId("A", 4),),
+                        following_residue_id=ResidueId("A", 5),
+                    ),
+                    donor_structure=donor,
+                    donor_residue_ids=(ResidueId("A", 4),),
+                ),
+            ),
+        ),
+    )
+    assert result.structure.constitution == source.constitution
+    assert result.structure.geometry == source.geometry
+    assert result.structure.topology == source.topology
+    assert len(result.issues) == 1
+    assert "peptide-junction gate" in result.issues[0].message
 
 
 @pytest.mark.parametrize("local", [False, True])
@@ -427,8 +748,8 @@ def test_fixed_carbonyl_oxygen_remains_in_the_closed_peptide_plane(
         donor_following_residue_id=scope.following_residue_id,
     )
     assert isinstance(outcome, ReconstructedSpanCandidate)
-    assert outcome.endpoint_rmsd_angstrom is not None
-    assert outcome.endpoint_rmsd_angstrom <= 0.1
+    assert outcome.maximum_anchor_rmsd_angstrom is not None
+    assert outcome.maximum_anchor_rmsd_angstrom <= 0.1
     o = _position(source, ResidueId("A", 3), "O")
     c = _position(source, ResidueId("A", 3), "C")
     n = outcome.residue_payloads[0].position("N")

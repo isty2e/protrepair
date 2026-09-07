@@ -59,7 +59,7 @@ def test_endpoint_descent_uses_only_moving_endpoint_atoms() -> None:
         kernel._RotationAxis(0, 1, np.array([2], dtype=np.int64)),
     )
     for _ in range(2):
-        outcome = kernel._close_endpoint_by_cyclic_coordinate_descent(
+        outcome = kernel._fit_endpoint_by_cyclic_coordinate_descent(
             coordinates,
             rotation_axes=axes,
             endpoint_indices=endpoints,
@@ -87,18 +87,22 @@ def test_endpoint_descent_ties_keep_the_original_axis_order() -> None:
     assert offset == 0
 
 
-def test_unreachable_endpoint_without_a_legal_axis_fails_atomically() -> None:
+def test_unreachable_endpoint_retains_fit_evidence_without_claiming_closure() -> None:
     coordinates = np.array([(0.0, 0.0, 0.0)])
     original = coordinates.copy()
-    outcome = kernel._close_endpoint_by_cyclic_coordinate_descent(
+    outcome = kernel._fit_endpoint_by_cyclic_coordinate_descent(
         coordinates,
         rotation_axes=(),
         endpoint_indices=np.array([0], dtype=np.int64),
         endpoint_targets=np.array([(1.0, 0.0, 0.0)]),
         settings=SpanClosureSettings(maximum_iterations=1),
     )
-    assert isinstance(outcome, SpanReconstructionFailure)
-    assert outcome.kind is SpanReconstructionFailureKind.NON_CONVERGENT_CLOSURE
+    assert not isinstance(outcome, SpanReconstructionFailure)
+    fitted, residual, _ = outcome
+    assert residual == 1.0
+    assert residual > SpanClosureSettings().endpoint_rmsd_tolerance_angstrom
+    np.testing.assert_array_equal(fitted, original)
+    assert not np.shares_memory(fitted, coordinates)
     np.testing.assert_array_equal(coordinates, original)
 
 

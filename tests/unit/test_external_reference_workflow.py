@@ -1042,7 +1042,7 @@ def test_internal_span_reconstruction_closes_perturbed_donor_and_updates_topolog
 
     assert not result.issues
     assert len(result.repairs) == 1
-    assert "CCD closure" in (result.repairs[0].details or "")
+    assert "maximum anchor RMSD" in (result.repairs[0].details or "")
     assert tuple(
         _structure_position(result.structure, atom_ref)
         for atom_ref in (

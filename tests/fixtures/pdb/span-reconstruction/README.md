@@ -19,3 +19,19 @@ unrelated atom records were omitted. These are kinematic regression fixtures,
 not a held-out loop-prediction benchmark. Some deposited residues have existing
 restraint outliers, so the carbonyl-boundary test isolates the closure kernel
 without bypassing the public workflow's geometry checks.
+
+## Short-Gap Donor Comparison
+
+`1ubq-short-gaps.pdb` and `af-p0cg48-short-gaps.pdb` contain residues 3-5,
+25-27, 48-50, and 71-73 from 1UBQ chain A and
+[AF-P0CG48-F1-model_v6](https://alphafold.ebi.ac.uk/entry/P0CG48), respectively.
+The first 76 AlphaFold residues map to ubiquitin in 1UBQ; these excerpts use
+that explicit mapping and retain the original heavy-atom coordinates.
+The AlphaFold model was retrieved on 2026-09-08.
+
+Tests remove residues 4, 26, 49, or 72 from the experimental structure and use
+the corresponding donor residue for reconstruction. The reference's missing
+coordinates are used only to assess the result, never as fitting input. These
+cases distinguish rigid-frame mismatch from changes to covalent geometry and
+include an unresolved closure. They are regression examples from one protein,
+not independent evidence of loop-prediction accuracy.
