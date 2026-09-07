@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- keep explicit refinement requests usable alongside span reconstruction and
+  atom completion; planning no longer tries to bind missing atoms before earlier
+  transformations can create them. Unresolved scopes produce refinement diagnostics
+  instead of aborting the workflow
 - preserve cross-residue covalent geometry during donor-backed span closure;
   Pro ring bonds and fixed source carbonyl planes no longer act as independent
   torsions. Amide-N substituents are checked before insertion. CCD chooses its

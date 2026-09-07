@@ -65,15 +65,16 @@ class LocalRefinementProposalPolicy:
     ) -> tuple[RepairRefinementSpec, ...]:
         """Return explicit refinement specs ordered by joint-expansion policy."""
 
-        if not repair_refinement.scope_spec.is_residuewise():
+        if (
+            not repair_refinement.scope_spec.is_residuewise()
+            or domain.explicit_repair.execution_projection is None
+        ):
             return (repair_refinement,)
 
         requested_residue_ids = repair_refinement.scope_spec.referenced_residue_ids()
         joint_focus_residue_ids = requested_residue_ids
         if domain.memory.has_prior_augmentation_adoption():
-            prerequisite_residue_ids = (
-                domain.explicit_repair.prerequisite_residue_ids()
-            )
+            prerequisite_residue_ids = domain.explicit_repair.prerequisite_residue_ids()
             if prerequisite_residue_ids:
                 joint_focus_residue_ids = prerequisite_residue_ids
 
@@ -195,9 +196,7 @@ class LocalRefinementProposalPolicy:
             for finding in severe_intrinsic_geometry_residues(geometry_report)
             if finding.residue_id in failing_residue_ids
         )
-        for finding in severe_geometry_residues[
-            : self.severe_geometry_fallback_limit
-        ]:
+        for finding in severe_geometry_residues[: self.severe_geometry_fallback_limit]:
             scope_spec = LocalScopeSpec.from_residues((finding.residue_id,))
             scope_spec_key = (scope_spec, None)
             if scope_spec_key in seen_scope_specs:

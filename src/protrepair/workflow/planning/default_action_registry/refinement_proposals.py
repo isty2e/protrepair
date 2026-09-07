@@ -22,19 +22,17 @@ from protrepair.workflow.planning.local_refinement_policy import (
     LocalRefinementProposalPolicy,
 )
 
-__all__ = [
-    "backbone_window_refinement_is_admissible",
-    "backbone_window_refinement_proposals",
-    "local_refinement_is_admissible",
-    "local_refinement_proposals",
-]
-
 DEFAULT_LOCAL_REFINEMENT_PROPOSAL_POLICY = LocalRefinementProposalPolicy()
 
 
 def local_refinement_is_admissible(domain: WorkflowActionDomain) -> bool:
     """Return whether local refinement is admissible in the active domain."""
 
+    if (
+        domain.explicit_repair.is_requested()
+        and domain.explicit_repair.execution_projection is None
+    ):
+        return True
     if (
         domain.intrinsic_geometry_facts is not None
         and domain.intrinsic_geometry_facts.stereochemistry_state
@@ -79,14 +77,10 @@ def backbone_window_refinement_proposals(
                 operator_deficit.window_spec
             ),
         )
-        if _atom_input_has_realizable_disulfide_topology(
+        if not _backbone_window_has_known_disulfide_conflict(
             domain,
             snapshot=snapshot,
-            atom_input=atom_input_from_backbone_window_refinement_spec(
-                snapshot,
-                operator_deficit.window_spec,
-            ),
-            context_radius_angstrom=transformer.settings.context_radius_angstrom,
+            transformer=transformer,
         )
     )
 
@@ -110,7 +104,7 @@ def local_refinement_proposals(
                 explicitly_requested=False,
             )
             for repair_refinement_spec in repair_refinement_specs
-            if _refinement_spec_has_realizable_disulfide_topology(
+            if not _refinement_spec_has_known_disulfide_conflict(
                 domain,
                 repair_refinement_spec,
             )
@@ -129,39 +123,64 @@ def local_refinement_proposals(
             explicitly_requested=True,
         )
         for repair_refinement_spec in repair_refinement_specs
-        if _refinement_spec_has_realizable_disulfide_topology(
+        if not _refinement_spec_has_known_disulfide_conflict(
             domain,
             repair_refinement_spec,
         )
     )
 
 
-def _refinement_spec_has_realizable_disulfide_topology(
+def _backbone_window_has_known_disulfide_conflict(
+    domain: WorkflowActionDomain,
+    *,
+    snapshot: ProteinStructureSnapshot,
+    transformer: BackboneWindowRefinementTransformer,
+) -> bool:
+    if not domain.disulfide_topology_facts.endpoint_multiplicity_contradictions:
+        return False
+    try:
+        atom_input = atom_input_from_backbone_window_refinement_spec(
+            snapshot, transformer.window_spec
+        )
+    except ValueError:
+        # No current atom projection is not evidence of a topology conflict.
+        # The transformer validates the eventual scope and reports rejection.
+        return False
+    return not _atom_input_has_realizable_disulfide_topology(
+        domain,
+        snapshot=snapshot,
+        atom_input=atom_input,
+        context_radius_angstrom=transformer.settings.context_radius_angstrom,
+    )
+
+
+def _refinement_spec_has_known_disulfide_conflict(
     domain: WorkflowActionDomain,
     repair_refinement_spec: RepairRefinementSpec,
 ) -> bool:
-    """Return whether one proposed FF region excludes endpoint multiplicity."""
+    """Return whether a currently bindable FF region has endpoint multiplicity."""
 
     contradictions = (
         domain.disulfide_topology_facts.endpoint_multiplicity_contradictions
     )
     if not contradictions:
-        return True
+        return False
 
     snapshot = ProteinStructureSnapshot.from_structure(domain.structure)
-    atom_input = (
-        repair_refinement_spec.resolved_execution_scope_spec().lower_to_atom_input(
-            snapshot,
-            component_library=domain.component_library,
+    try:
+        atom_input = (
+            repair_refinement_spec.resolved_execution_scope_spec().lower_to_atom_input(
+                snapshot,
+                component_library=domain.component_library,
+            )
         )
-    )
-    return _atom_input_has_realizable_disulfide_topology(
+    except ValueError:
+        return False
+    return not _atom_input_has_realizable_disulfide_topology(
         domain,
         snapshot=snapshot,
         atom_input=atom_input,
-        context_radius_angstrom=(
-            repair_refinement_spec.config.context_radius_angstrom
-        ),
+        context_radius_angstrom=(repair_refinement_spec.config.context_radius_angstrom),
     )
 
 
@@ -190,8 +209,14 @@ def _atom_input_has_realizable_disulfide_topology(
         for residue_index in region.included_residue_indices
     )
     return not any(
-        contradiction.is_contradictory_in_residue_projection(
-            included_residue_ids
-        )
+        contradiction.is_contradictory_in_residue_projection(included_residue_ids)
         for contradiction in contradictions
     )
+
+
+__all__ = [
+    "backbone_window_refinement_is_admissible",
+    "backbone_window_refinement_proposals",
+    "local_refinement_is_admissible",
+    "local_refinement_proposals",
+]

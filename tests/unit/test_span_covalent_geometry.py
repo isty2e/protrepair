@@ -11,6 +11,8 @@ from rdkit import Chem
 
 from protrepair.api import process_structure
 from protrepair.chemistry.component.defaults import build_default_component_library
+from protrepair.diagnostics import RepairEventKind, ValidationIssueKind
+from protrepair.diagnostics.events import IssueSeverity, ValidationIssue
 from protrepair.geometry import Vec3
 from protrepair.geometry.rotation import AxisRotation
 from protrepair.io import (
@@ -26,18 +28,140 @@ from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import BondProvenance
+from protrepair.transformer.base import ProjectedCodomainState, ProjectedDomainState
 from protrepair.transformer.completion.span_reconstruction import (
     ReconstructedSpanCandidate,
     SpanReconstructionFailure,
     SpanReconstructionFailureKind,
     reconstruct_donor_span,
 )
+from protrepair.transformer.continuous.binding import (
+    RecommendedContinuousRelaxationBinding,
+)
+from protrepair.transformer.local.models import LocalScopeSpec
+from protrepair.transformer.refinement.spec import (
+    BackboneWindowRefinementSpec,
+    RepairRefinementSpec,
+)
+from protrepair.transformer.result import TransformationResult
+from protrepair.workflow.actions.backbone_window_refinement import (
+    BackboneWindowRefinementTransformer,
+)
+from protrepair.workflow.actions.base import WorkflowStructureTransformer
+from protrepair.workflow.actions.context import TransformerExecutionContext
+from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.contracts import (
     ExternalSpanReconstructionSpec,
     WorkflowTransformRequests,
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/pdb/span-reconstruction"
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_refinement_request_survives_absent_span_until_reconstruction(
+    monkeypatch: pytest.MonkeyPatch,
+    local: bool,
+) -> None:
+    reference = read_structure(FIXTURES / "1ubq.pdb")
+    gap = tuple(ResidueId("A", number) for number in (36, 37, 38))
+    source = _source(reference, gap)
+    calls = []
+
+    def record_execution(
+        self: WorkflowStructureTransformer,
+        projected_domain: ProjectedDomainState[ProteinStructure],
+        *,
+        carrier: TransformationResult,
+        context: TransformerExecutionContext,
+    ) -> ProjectedCodomainState[ProteinStructure]:
+        assert all(
+            projected_domain.state.constitution.residue_or_ligand(rid) for rid in gap
+        )
+        assert any(
+            event.kind is RepairEventKind.ABSENT_RESIDUE_SPAN_RECONSTRUCTED
+            for event in carrier.repairs
+        )
+        calls.append(self.workflow_scope)
+        return ProjectedCodomainState(
+            scope=self.workflow_scope,
+            state=projected_domain.state,
+            issues=(
+                ValidationIssue(
+                    kind=ValidationIssueKind.REFINEMENT_REJECTED,
+                    severity=IssueSeverity.WARNING,
+                    message="test backend rejected candidate",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(
+        LocalRefinementTransformer if local else BackboneWindowRefinementTransformer,
+        "transform_projected_domain",
+        record_execution,
+    )
+    result = process_structure(
+        source,
+        transform_requests=WorkflowTransformRequests(
+            external_span_reconstructions=(
+                ExternalSpanReconstructionSpec(
+                    scope=AbsentResidueSpanScope(
+                        preceding_residue_id=ResidueId("A", 35),
+                        absent_residue_ids=gap,
+                        following_residue_id=ResidueId("A", 39),
+                    ),
+                    donor_structure=reference,
+                    donor_residue_ids=gap,
+                ),
+            ),
+            backbone_window_refinements=()
+            if local
+            else (BackboneWindowRefinementSpec(gap),),
+            repair_refinement=RepairRefinementSpec(
+                scope_spec=LocalScopeSpec.from_residues(gap),
+                binding=RecommendedContinuousRelaxationBinding(),
+            )
+            if local
+            else None,
+        ),
+    )
+    assert calls
+    assert any(
+        issue.message == "test backend rejected candidate" for issue in result.issues
+    )
+    for index, atom in enumerate(source.geometry.atom_geometries):
+        ref = source.constitution.atom_ref_at(AtomIndex(index))
+        assert (
+            _position(result.structure, ref.residue_id, ref.atom_name) == atom.position
+        )
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_unmaterializable_refinement_request_reports_rejection(local: bool) -> None:
+    reference = read_structure(FIXTURES / "1ubq.pdb")
+    gap = tuple(ResidueId("A", number) for number in (36, 37, 38))
+    source = _source(reference, gap)
+    result = process_structure(
+        source,
+        transform_requests=WorkflowTransformRequests(
+            backbone_window_refinements=()
+            if local
+            else (BackboneWindowRefinementSpec(gap),),
+            repair_refinement=RepairRefinementSpec(
+                scope_spec=LocalScopeSpec.from_residues(gap),
+                binding=RecommendedContinuousRelaxationBinding(),
+            )
+            if local
+            else None,
+        ),
+    )
+    assert result.structure == source
+    assert not result.repairs
+    assert any(
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
+        and "unknown residue A:" in issue.message
+        for issue in result.issues
+    )
 
 
 def _position(structure: ProteinStructure, rid: ResidueId, name: str) -> Vec3:

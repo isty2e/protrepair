@@ -96,17 +96,24 @@ def apply_repair_stage_local_refinement(
         prerequisite_policy
         is RepairStageRefinementPrerequisitePolicy.STAGE_MISSING_PREREQUISITES
     ):
-        staged_result = _apply_local_refinement_prerequisites(
-            result,
-            local_refinement=local_refinement,
-            component_library=component_library,
-            allow_retained_non_polymer_rdkit_fallback=(
-                allow_retained_non_polymer_rdkit_fallback
-            ),
-            retained_non_polymer_chemistry_evidence=(
-                retained_non_polymer_chemistry_evidence
-            ),
-        )
+        try:
+            staged_result = _apply_local_refinement_prerequisites(
+                result,
+                local_refinement=local_refinement,
+                component_library=component_library,
+                allow_retained_non_polymer_rdkit_fallback=(
+                    allow_retained_non_polymer_rdkit_fallback
+                ),
+                retained_non_polymer_chemistry_evidence=(
+                    retained_non_polymer_chemistry_evidence
+                ),
+            )
+        except (RefinementError, ValueError) as error:
+            return _merge_rejected_refinement_outcome(
+                result,
+                local_refinement=local_refinement,
+                message=str(error),
+            )
         if _has_new_retained_non_polymer_fallback_blocker(result, staged_result):
             return staged_result
     snapshot = ProteinStructureSnapshot.from_structure(staged_result.structure)
@@ -283,9 +290,7 @@ def _apply_local_refinement_prerequisites(
                 component_library=component_library,
                 reference_structure=None,
                 augment_c_terminal_oxt=False,
-                target_residue_ids=frozenset(
-                    prerequisite_targets.heavy_residue_ids
-                ),
+                target_residue_ids=frozenset(prerequisite_targets.heavy_residue_ids),
                 local_refinement=None,
             )
             staged_result = _merge_completion_stage_result(
@@ -302,9 +307,7 @@ def _apply_local_refinement_prerequisites(
             hydrogen_result = materialize_hydrogens_core(
                 staged_result.structure,
                 component_library=component_library,
-                target_residue_ids=frozenset(
-                    prerequisite_targets.hydrogen_residue_ids
-                ),
+                target_residue_ids=frozenset(prerequisite_targets.hydrogen_residue_ids),
             )
             staged_result = _merge_completion_stage_result(
                 staged_result,
@@ -376,11 +379,10 @@ def _local_refinement_prerequisite_targets(
     continuous_region_readiness_facts = (
         atom_scope_facts.continuous_region_readiness_facts
     )
+    region_chemistry = continuous_region_readiness_facts.chemistry_readiness_facts
     chemistry_by_residue_id = {
         residue_facts.residue_id: residue_facts
-        for residue_facts in (
-            continuous_region_readiness_facts.chemistry_readiness_facts.residue_facts
-        )
+        for residue_facts in region_chemistry.residue_facts
     }
     heavy_residue_ids: list[ResidueId] = []
     hydrogen_residue_ids: list[ResidueId] = []
@@ -388,9 +390,9 @@ def _local_refinement_prerequisite_targets(
     explicit_evidence_by_residue_id = evidence_by_residue_id(
         retained_non_polymer_chemistry_evidence
     )
-    for coverage_facts in (
-        continuous_region_readiness_facts.coverage_facts.residue_facts
-    ):
+    for (
+        coverage_facts
+    ) in continuous_region_readiness_facts.coverage_facts.residue_facts:
         chemistry_facts = chemistry_by_residue_id.get(coverage_facts.residue_id)
         if chemistry_facts is None or not chemistry_facts.is_supported():
             continue
@@ -405,9 +407,7 @@ def _local_refinement_prerequisite_targets(
         if chemistry_facts.needs_hydrogenation():
             hydrogen_residue_ids.append(coverage_facts.residue_id)
 
-    for retained_fact in (
-        continuous_region_readiness_facts.chemistry_readiness_facts.retained_non_polymer_facts
-    ):
+    for retained_fact in region_chemistry.retained_non_polymer_facts:
         if not (
             retained_fact.requires_hydrogen_completion()
             or _strict_policy_blocks_retained_non_polymer_hydrogen_prerequisite(

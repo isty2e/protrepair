@@ -92,6 +92,13 @@ Clash assessment remains part of workflow state and candidate ranking rather
 than the closure kernel. A geometrically admissible insertion may therefore be
 followed by local refinement when the planned target state requires it.
 
+An explicit refinement request can address residues that a reconstruction in the
+same workflow will create. Planning keeps that request and resolves its atoms
+against the updated structure. If the span cannot be inserted, refinement reports
+the unavailable scope rather than stopping the workflow with an exception.
+Refinement still has its own chemistry prerequisites and candidate acceptance
+checks; requesting it does not guarantee that a changed candidate will be kept.
+
 The closure gate does not apply a probability-based Ramachandran score. Request
 Ramachandran analysis separately when the reconstructed backbone conformation
 is part of the acceptance decision.
