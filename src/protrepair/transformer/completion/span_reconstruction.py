@@ -2,27 +2,26 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from math import acos, atan2, degrees, isfinite
+from math import atan2, isfinite
 from numbers import Real
 
 import numpy as np
 import numpy.typing as npt
 
+from protrepair.chemistry.component.defaults import build_default_component_library
+from protrepair.chemistry.component.library import ComponentLibrary
+from protrepair.diagnostics.peptide_geometry import PeptideJunctionGeometry
 from protrepair.geometry import Vec3
 from protrepair.scope import AbsentResidueSpanScope
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.topology import is_covalent_like_relationship
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
 FloatArray = npt.NDArray[np.float64]
 IndexArray = npt.NDArray[np.int64]
 
-PEPTIDE_CN_DISTANCE_MIN_ANGSTROM = 1.1
-PEPTIDE_CN_DISTANCE_MAX_ANGSTROM = 1.6
-PEPTIDE_BOND_ANGLE_MIN_DEGREES = 85.0
-PEPTIDE_BOND_ANGLE_MAX_DEGREES = 145.0
-PEPTIDE_PLANARITY_MAX_DEVIATION_DEGREES = 30.0
 ROTATION_AXIS_NORM_EPSILON = 1.0e-10
 
 
@@ -47,7 +46,8 @@ class SpanClosureSettings:
     Parameters
     ----------
     maximum_iterations : int
-        Maximum complete CCD sweeps before returning non-convergence.
+        Maximum complete CCD sweeps per axis order. Up to four deterministic
+        orders are tried from the same seed, each with this full limit.
     endpoint_rmsd_tolerance_angstrom : float
         Maximum RMSD between the moving and source endpoint triads.
     convergence_delta_angstrom : float
@@ -199,6 +199,8 @@ class _DonorWindow:
     coordinates: FloatArray
     atom_index_by_residue_and_name: dict[tuple[int, str], int]
     atom_indices_by_residue: tuple[IndexArray, ...]
+    bonded_indices: tuple[frozenset[int], ...]
+    rigid_bond_pairs: frozenset[tuple[int, int]]
 
     def atom_index(self, residue_offset: int, atom_name: str) -> int:
         return self.atom_index_by_residue_and_name[
@@ -220,14 +222,6 @@ class _DonorWindow:
             dtype=np.float64,
         )
 
-    def indices_after_residue(self, residue_offset: int) -> IndexArray:
-        """Return atom indices belonging to residues after one offset."""
-
-        later = self.atom_indices_by_residue[residue_offset + 1 :]
-        if not later:
-            return np.asarray((), dtype=np.int64)
-        return np.concatenate(later)
-
     def internal_span_rotation_axes(
         self,
         *,
@@ -236,76 +230,63 @@ class _DonorWindow:
         inserted_residue_count: int,
         following_offset: int,
     ) -> tuple[_RotationAxis, ...]:
-        """Return donor-window torsion axes used by internal closure."""
+        """Cut covalent bridges without moving the fixed preceding anchor."""
 
-        axes: list[_RotationAxis] = [
-            _RotationAxis(
-                start_index=self.atom_index(preceding_offset, "CA"),
-                end_index=self.atom_index(preceding_offset, "C"),
-                moved_indices=self.indices_after_residue(preceding_offset),
-            )
-        ]
+        fixed_indices = frozenset(
+            int(index) for index in self.atom_indices_by_residue[preceding_offset]
+        )
+        axes: list[_RotationAxis] = []
         for residue_offset in range(
-            first_inserted_offset,
-            first_inserted_offset + inserted_residue_count,
+            first_inserted_offset, first_inserted_offset + inserted_residue_count
         ):
-            later_indices = self.indices_after_residue(residue_offset)
-            residue_indices = self.atom_indices_by_residue[residue_offset]
-            fixed_phi_indices = {
-                self.atom_index(residue_offset, "N"),
-                self.atom_index(residue_offset, "CA"),
-            }
-            phi_local_indices = np.asarray(
-                [
-                    atom_index
-                    for atom_index in residue_indices
-                    if int(atom_index) not in fixed_phi_indices
-                ],
-                dtype=np.int64,
-            )
-            axes.append(
-                _RotationAxis(
-                    start_index=self.atom_index(residue_offset, "N"),
-                    end_index=self.atom_index(residue_offset, "CA"),
-                    moved_indices=np.concatenate((phi_local_indices, later_indices)),
+            for start_name, end_name in (("N", "CA"), ("CA", "C")):
+                axis = self.bridge_rotation_axis(
+                    self.atom_index(residue_offset, start_name),
+                    self.atom_index(residue_offset, end_name),
+                    fixed_indices=fixed_indices,
                 )
-            )
-            axes.append(
-                _RotationAxis(
-                    start_index=self.atom_index(residue_offset, "CA"),
-                    end_index=self.atom_index(residue_offset, "C"),
-                    moved_indices=np.concatenate(
-                        (
-                            np.asarray(
-                                [self.atom_index(residue_offset, "O")],
-                                dtype=np.int64,
-                            ),
-                            later_indices,
-                        )
-                    ),
-                )
-            )
+                if axis is not None:
+                    axes.append(axis)
 
-        following_indices = self.atom_indices_by_residue[following_offset]
-        fixed_following_indices = {
+        following_phi = self.bridge_rotation_axis(
             self.atom_index(following_offset, "N"),
             self.atom_index(following_offset, "CA"),
-        }
-        axes.append(
-            _RotationAxis(
-                start_index=self.atom_index(following_offset, "N"),
-                end_index=self.atom_index(following_offset, "CA"),
-                moved_indices=np.asarray(
-                    [
-                        atom_index
-                        for atom_index in following_indices
-                        if int(atom_index) not in fixed_following_indices
-                    ],
-                    dtype=np.int64,
-                ),
-            )
+            fixed_indices=fixed_indices,
         )
+        if following_phi is not None:
+            axes.append(following_phi)
         return tuple(axes)
+
+    def bridge_rotation_axis(
+        self, start_index: int, end_index: int, *, fixed_indices: frozenset[int]
+    ) -> _RotationAxis | None:
+        """Return the moving bond component, or None for a ring or fixed cut."""
+
+        if (
+            end_index not in self.bonded_indices[start_index]
+            or (min(start_index, end_index), max(start_index, end_index))
+            in self.rigid_bond_pairs
+        ):
+            return None
+        moving: set[int] = set()
+        pending = [end_index]
+        while pending:
+            index = pending.pop()
+            if index in moving:
+                continue
+            if index == start_index or index in fixed_indices:
+                return None
+            moving.add(index)
+            pending.extend(
+                neighbor
+                for neighbor in self.bonded_indices[index]
+                if not (index == end_index and neighbor == start_index)
+                and neighbor not in moving
+            )
+        moving.discard(end_index)
+        return _RotationAxis(
+            start_index, end_index, np.asarray(sorted(moving), dtype=np.int64)
+        )
 
     def materialize_inserted_payloads(
         self,
@@ -356,6 +337,7 @@ def reconstruct_donor_span(
     donor_preceding_residue_id: ResidueId | None,
     donor_following_residue_id: ResidueId | None,
     settings: SpanClosureSettings | None = None,
+    component_library: ComponentLibrary | None = None,
 ) -> ReconstructedSpanCandidate | SpanReconstructionFailure:
     """Return a closed donor-backed span or a typed atomic failure.
 
@@ -375,6 +357,9 @@ def reconstruct_donor_span(
         Donor flank corresponding to the following source anchor.
     settings : SpanClosureSettings | None
         Optional numerical closure settings.
+    component_library : ComponentLibrary | None
+        Chemistry defining covalent motion constraints and nitrogen neighbors;
+        defaults to the bundled library.
 
     Returns
     -------
@@ -426,6 +411,16 @@ def reconstruct_donor_span(
             "span reconstruction donor flanks must correspond to source anchors"
         )
 
+    active_library = (
+        build_default_component_library()
+        if component_library is None
+        else component_library
+    )
+    if not isinstance(active_library, ComponentLibrary):
+        raise TypeError(
+            "span reconstruction component_library must be ComponentLibrary"
+        )
+
     donor_window_ids = tuple(
         residue_id
         for residue_id in (
@@ -445,6 +440,7 @@ def reconstruct_donor_span(
         donor_window_ids,
         preceding_offset=preceding_offset,
         following_offset=following_offset,
+        component_library=active_library,
     )
     if isinstance(donor_window, SpanReconstructionFailure):
         return donor_window
@@ -506,6 +502,7 @@ def reconstruct_donor_span(
         source_structure,
         scope=scope,
         inserted_payloads=inserted_payloads,
+        component_library=active_library,
     )
     if junction_failure is not None:
         return junction_failure
@@ -523,6 +520,7 @@ def _build_donor_window(
     *,
     preceding_offset: int | None,
     following_offset: int | None,
+    component_library: ComponentLibrary,
 ) -> _DonorWindow | SpanReconstructionFailure:
     residue_payloads: list[CompletionResiduePayload] = []
     coordinates: list[FloatArray] = []
@@ -604,11 +602,58 @@ def _build_donor_window(
             message="donor span contains non-finite atom coordinates",
         )
 
+    # This is a window-local kinematic projection, not output connectivity.
+    neighbors: list[set[int]] = [set() for _ in coordinates]
+    rigid_pairs: set[tuple[int, int]] = set()
+    for residue_offset, payload in enumerate(residue_payloads):
+        template = component_library.get(payload.component_id)
+        if template is None:
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.UNSUPPORTED_COMPONENT_CHEMISTRY,
+                f"donor component {payload.component_id} "
+                "lacks covalent motion constraints",
+            )
+        for bond in template.definition.bonds:
+            left = atom_index_by_residue_and_name.get(
+                (residue_offset, bond.atom_name_1)
+            )
+            right = atom_index_by_residue_and_name.get(
+                (residue_offset, bond.atom_name_2)
+            )
+            if left is not None and right is not None:
+                neighbors[left].add(right)
+                neighbors[right].add(left)
+                if bond.order != 1 or bond.aromatic:
+                    rigid_pairs.add((min(left, right), max(left, right)))
+    for offset in range(len(residue_ids) - 1):
+        left = atom_index_by_residue_and_name[(offset, "C")]
+        right = atom_index_by_residue_and_name[(offset + 1, "N")]
+        neighbors[left].add(right)
+        neighbors[right].add(left)
+    local_indices = {
+        donor_structure.constitution.atom_index(
+            AtomRef(residue_ids[offset], name)
+        ): index
+        for (offset, name), index in atom_index_by_residue_and_name.items()
+    }
+    for bond in donor_structure.topology.bonds:
+        if not is_covalent_like_relationship(bond):
+            continue
+        left = local_indices.get(bond.atom_index_1)
+        right = local_indices.get(bond.atom_index_2)
+        if left is not None and right is not None:
+            neighbors[left].add(right)
+            neighbors[right].add(left)
+            if bond.order != 1 or bond.aromatic:
+                rigid_pairs.add((min(left, right), max(left, right)))
+
     return _DonorWindow(
         residue_payloads=tuple(residue_payloads),
         coordinates=coordinate_array,
         atom_index_by_residue_and_name=atom_index_by_residue_and_name,
         atom_indices_by_residue=tuple(atom_indices_by_residue),
+        bonded_indices=tuple(frozenset(indices) for indices in neighbors),
+        rigid_bond_pairs=frozenset(rigid_pairs),
     )
 
 
@@ -703,69 +748,147 @@ def _close_endpoint_by_cyclic_coordinate_descent(
     endpoint_targets: FloatArray,
     settings: SpanClosureSettings,
 ) -> tuple[FloatArray, float, int] | SpanReconstructionFailure:
-    working = coordinates.copy()
-    endpoint_rmsd = _endpoint_rmsd(
-        working,
+    initial_rmsd = _endpoint_rmsd(
+        coordinates,
         endpoint_indices=endpoint_indices,
         endpoint_targets=endpoint_targets,
     )
-    if not isfinite(endpoint_rmsd):
+    if not isfinite(initial_rmsd):
         return SpanReconstructionFailure(
-            kind=SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
-            message="span closure endpoint calculation overflowed",
+            SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+            "span closure endpoint calculation overflowed",
         )
-    if endpoint_rmsd <= settings.endpoint_rmsd_tolerance_angstrom:
-        return working, endpoint_rmsd, 0
+    if initial_rmsd <= settings.endpoint_rmsd_tolerance_angstrom:
+        return coordinates.copy(), initial_rmsd, 0
 
-    for iteration_count in range(1, settings.maximum_iterations + 1):
-        previous_rmsd = endpoint_rmsd
-        for axis in rotation_axes:
-            axis_start = working[axis.start_index].copy()
-            axis_end = working[axis.end_index].copy()
-            rotation_outcome = _optimal_axis_rotation(
+    total_iterations = 0
+    best_rmsd = initial_rmsd
+    axis_objectives = tuple(
+        (axis, np.isin(endpoint_indices, axis.moved_indices)) for axis in rotation_axes
+    )
+    seed_offset = _endpoint_descent_seed_offset(
+        coordinates,
+        axis_objectives=axis_objectives,
+        endpoint_indices=endpoint_indices,
+        endpoint_targets=endpoint_targets,
+    )
+    if isinstance(seed_offset, SpanReconstructionFailure):
+        return seed_offset
+    forward = tuple(range(len(axis_objectives)))
+    seeded = forward[seed_offset:] + forward[:seed_offset]
+    orders = tuple(dict.fromkeys((seeded, seeded[::-1], forward, forward[::-1])))
+    # A different sweep start can avoid distributing one correctable torsion
+    # across the whole span. Retries restart from the unchanged donor seed.
+    for order in orders:
+        working = coordinates.copy()
+        endpoint_rmsd = initial_rmsd
+        for _ in range(settings.maximum_iterations):
+            previous_rmsd = endpoint_rmsd
+            for axis_index in order:
+                axis, moving_endpoints = axis_objectives[axis_index]
+                if not moving_endpoints.any():
+                    continue
+                axis_start = working[axis.start_index].copy()
+                axis_end = working[axis.end_index].copy()
+                rotation = _optimal_axis_rotation(
+                    working,
+                    endpoint_indices=endpoint_indices[moving_endpoints],
+                    endpoint_targets=endpoint_targets[moving_endpoints],
+                    axis_start=axis_start,
+                    axis_end=axis_end,
+                )
+                if isinstance(rotation, SpanReconstructionFailure):
+                    return rotation
+                if not _rotate_points_in_place(
+                    working,
+                    point_indices=axis.moved_indices,
+                    axis_start=axis_start,
+                    axis_end=axis_end,
+                    theta_radians=rotation,
+                ):
+                    return SpanReconstructionFailure(
+                        SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                        "span closure rotation produced non-finite coordinates",
+                    )
+            total_iterations += 1
+            endpoint_rmsd = _endpoint_rmsd(
                 working,
                 endpoint_indices=endpoint_indices,
                 endpoint_targets=endpoint_targets,
-                axis_start=axis_start,
-                axis_end=axis_end,
             )
-            if isinstance(rotation_outcome, SpanReconstructionFailure):
-                return rotation_outcome
-            if not _rotate_points_in_place(
-                working,
-                point_indices=axis.moved_indices,
-                axis_start=axis_start,
-                axis_end=axis_end,
-                theta_radians=rotation_outcome,
-            ):
+            if not isfinite(endpoint_rmsd):
                 return SpanReconstructionFailure(
-                    kind=SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
-                    message="span closure rotation produced non-finite coordinates",
+                    SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                    "span closure endpoint calculation overflowed",
                 )
-
-        endpoint_rmsd = _endpoint_rmsd(
-            working,
-            endpoint_indices=endpoint_indices,
-            endpoint_targets=endpoint_targets,
-        )
-        if not isfinite(endpoint_rmsd):
-            return SpanReconstructionFailure(
-                kind=SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
-                message="span closure endpoint calculation overflowed",
-            )
-        if endpoint_rmsd <= settings.endpoint_rmsd_tolerance_angstrom:
-            return working, endpoint_rmsd, iteration_count
-        if abs(previous_rmsd - endpoint_rmsd) <= settings.convergence_delta_angstrom:
-            break
+            best_rmsd = min(best_rmsd, endpoint_rmsd)
+            if endpoint_rmsd <= settings.endpoint_rmsd_tolerance_angstrom:
+                return working, endpoint_rmsd, total_iterations
+            if (
+                abs(previous_rmsd - endpoint_rmsd)
+                <= settings.convergence_delta_angstrom
+            ):
+                break
 
     return SpanReconstructionFailure(
-        kind=SpanReconstructionFailureKind.NON_CONVERGENT_CLOSURE,
-        message=(
-            "donor-seeded CCD did not close the span within "
-            f"{settings.maximum_iterations} iterations; endpoint RMSD was "
-            f"{endpoint_rmsd:.3f} A"
-        ),
+        SpanReconstructionFailureKind.NON_CONVERGENT_CLOSURE,
+        f"donor-seeded CCD did not close the span after {total_iterations} sweeps "
+        f"across {len(orders)} deterministic axis orders; "
+        f"best endpoint RMSD was {best_rmsd:.3f} A",
     )
+
+
+def _endpoint_descent_seed_offset(
+    coordinates: FloatArray,
+    *,
+    axis_objectives: tuple[tuple[_RotationAxis, npt.NDArray[np.bool_]], ...],
+    endpoint_indices: IndexArray,
+    endpoint_targets: FloatArray,
+) -> int | SpanReconstructionFailure:
+    """Choose the sweep start with the smallest one-axis endpoint residual."""
+
+    best_rmsd = float("inf")
+    best_offset = 0
+    local_endpoint_indices = np.arange(len(endpoint_indices), dtype=np.int64)
+    for offset, (axis, moving_endpoints) in enumerate(axis_objectives):
+        if not moving_endpoints.any():
+            continue
+        axis_start = coordinates[axis.start_index]
+        axis_end = coordinates[axis.end_index]
+        rotation = _optimal_axis_rotation(
+            coordinates,
+            endpoint_indices=endpoint_indices[moving_endpoints],
+            endpoint_targets=endpoint_targets[moving_endpoints],
+            axis_start=axis_start,
+            axis_end=axis_end,
+        )
+        if isinstance(rotation, SpanReconstructionFailure):
+            return rotation
+        trial_endpoints = coordinates[endpoint_indices].copy()
+        if not _rotate_points_in_place(
+            trial_endpoints,
+            point_indices=local_endpoint_indices[moving_endpoints],
+            axis_start=axis_start,
+            axis_end=axis_end,
+            theta_radians=rotation,
+        ):
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                "span closure endpoint descent probe produced non-finite coordinates",
+            )
+        rmsd = _endpoint_rmsd(
+            trial_endpoints,
+            endpoint_indices=local_endpoint_indices,
+            endpoint_targets=endpoint_targets,
+        )
+        if not isfinite(rmsd):
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                "span closure endpoint descent probe overflowed",
+            )
+        if rmsd < best_rmsd:
+            best_rmsd, best_offset = rmsd, offset
+    return best_offset
 
 
 def _optimal_axis_rotation(
@@ -858,167 +981,99 @@ def _validate_materialized_peptide_junctions(
     *,
     scope: AbsentResidueSpanScope,
     inserted_payloads: tuple[CompletionResiduePayload, ...],
+    component_library: ComponentLibrary,
 ) -> SpanReconstructionFailure | None:
-    first_payload = inserted_payloads[0]
-    last_payload = inserted_payloads[-1]
-    preceding_residue_id = scope.preceding_residue_id
-    if preceding_residue_id is not None:
-        preceding_positions = _backbone_positions(
-            source_structure,
-            preceding_residue_id,
-            ("CA", "C", "O"),
-        )
-        if isinstance(preceding_positions, SpanReconstructionFailure):
-            return preceding_positions
-        if not _peptide_junction_is_plausible(
-            preceding_ca=preceding_positions[0],
-            preceding_c=preceding_positions[1],
-            preceding_o=preceding_positions[2],
-            following_n=first_payload.position("N").to_array(),
-            following_ca=first_payload.position("CA").to_array(),
-        ):
-            return SpanReconstructionFailure(
-                kind=SpanReconstructionFailureKind.INVALID_PEPTIDE_JUNCTION,
-                message="reconstructed span failed the preceding peptide-junction gate",
-            )
-
-    for preceding_payload, following_payload in zip(
-        inserted_payloads,
-        inserted_payloads[1:],
-        strict=False,
+    payloads = list(inserted_payloads)
+    for residue_id, names, at_start in (
+        (scope.preceding_residue_id, ("CA", "C", "O"), True),
+        (scope.following_residue_id, ("N", "CA"), False),
     ):
-        if not _peptide_junction_is_plausible(
-            preceding_ca=preceding_payload.position("CA").to_array(),
-            preceding_c=preceding_payload.position("C").to_array(),
-            preceding_o=preceding_payload.position("O").to_array(),
-            following_n=following_payload.position("N").to_array(),
-            following_ca=following_payload.position("CA").to_array(),
-        ):
-            return SpanReconstructionFailure(
-                kind=SpanReconstructionFailureKind.INVALID_PEPTIDE_JUNCTION,
-                message=(
-                    "reconstructed span failed the internal peptide-junction "
-                    "gate between "
-                    f"{preceding_payload.residue_id.display_token()} and "
-                    f"{following_payload.residue_id.display_token()}"
-                ),
-            )
-
-    following_residue_id = scope.following_residue_id
-    if following_residue_id is not None:
-        following_positions = _backbone_positions(
-            source_structure,
-            following_residue_id,
-            ("N", "CA"),
+        if residue_id is None:
+            continue
+        positions = _backbone_positions(source_structure, residue_id, names)
+        if isinstance(positions, SpanReconstructionFailure):
+            return positions
+        index = source_structure.constitution.residue_index(residue_id)
+        payload = CompletionResiduePayload(
+            source_structure.constitution.residue_site_at(index),
+            source_structure.residue_geometry(index),
         )
-        if isinstance(following_positions, SpanReconstructionFailure):
-            return following_positions
-        if not _peptide_junction_is_plausible(
-            preceding_ca=last_payload.position("CA").to_array(),
-            preceding_c=last_payload.position("C").to_array(),
-            preceding_o=last_payload.position("O").to_array(),
-            following_n=following_positions[0],
-            following_ca=following_positions[1],
-        ):
+        if at_start:
+            payloads.insert(0, payload)
+        else:
+            payloads.append(payload)
+
+    for preceding, following in zip(payloads, payloads[1:], strict=False):
+        template = component_library.get(following.component_id)
+        if template is None:
             return SpanReconstructionFailure(
-                kind=SpanReconstructionFailureKind.INVALID_PEPTIDE_JUNCTION,
-                message="reconstructed span failed the following peptide-junction gate",
+                SpanReconstructionFailureKind.UNSUPPORTED_COMPONENT_CHEMISTRY,
+                f"component {following.component_id} lacks amide-N chemistry",
+            )
+        heavy_names = frozenset(template.expected_heavy_atom_names()) | frozenset(
+            atom.name for atom in following.atom_sites if not atom.is_hydrogen()
+        )
+        neighbor_names = template.definition.bonded_atom_names("N") & heavy_names
+        missing = sorted(
+            name for name in neighbor_names if not following.has_atom(name)
+        )
+        if missing:
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.MISSING_BACKBONE_CONTEXT,
+                f"residue {following.residue_id.display_token()} "
+                f"lacks amide-N neighbor(s) {', '.join(missing)}",
+            )
+        substituents = [
+            following.position(name) for name in sorted(neighbor_names - {"CA"})
+        ]
+        if following.residue_id == scope.following_residue_id:
+            # Source N can have explicit substituents beyond its component graph.
+            nitrogen_index = source_structure.constitution.atom_index(
+                AtomRef(following.residue_id, "N")
+            )
+            excluded = {AtomRef(following.residue_id, name) for name in neighbor_names}
+            excluded.add(AtomRef(preceding.residue_id, "C"))
+            for bond in source_structure.topology.bonds:
+                if not is_covalent_like_relationship(bond) or not bond.involves(
+                    nitrogen_index
+                ):
+                    continue
+                other = (
+                    bond.atom_index_2
+                    if bond.atom_index_1 == nitrogen_index
+                    else bond.atom_index_1
+                )
+                ref = source_structure.constitution.atom_ref_at(other)
+                if (
+                    ref not in excluded
+                    and not source_structure.constitution.atom_site_at(
+                        other
+                    ).is_hydrogen()
+                ):
+                    substituents.append(source_structure.geometry.position(other))
+        junction = PeptideJunctionGeometry(
+            preceding_ca=preceding.position("CA"),
+            carbonyl_c=preceding.position("C"),
+            carbonyl_o=preceding.position("O"),
+            nitrogen=following.position("N"),
+            following_ca=following.position("CA"),
+            nitrogen_substituents=tuple(substituents),
+        )
+        if not junction.is_plausible():
+            location = (
+                "preceding"
+                if preceding.residue_id == scope.preceding_residue_id
+                else "following"
+                if following.residue_id == scope.following_residue_id
+                else "internal"
+            )
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.INVALID_PEPTIDE_JUNCTION,
+                f"reconstructed span failed the {location} peptide-junction gate "
+                f"between {preceding.residue_id.display_token()} "
+                f"and {following.residue_id.display_token()}",
             )
     return None
-
-
-def _peptide_junction_is_plausible(
-    *,
-    preceding_ca: FloatArray,
-    preceding_c: FloatArray,
-    preceding_o: FloatArray,
-    following_n: FloatArray,
-    following_ca: FloatArray,
-) -> bool:
-    distance = float(np.linalg.norm(following_n - preceding_c))
-    if not (
-        PEPTIDE_CN_DISTANCE_MIN_ANGSTROM <= distance <= PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
-    ):
-        return False
-
-    angles = (
-        _bond_angle_degrees(preceding_ca, preceding_c, following_n),
-        _bond_angle_degrees(preceding_o, preceding_c, following_n),
-        _bond_angle_degrees(preceding_c, following_n, following_ca),
-    )
-    if not all(
-        angle is not None
-        and PEPTIDE_BOND_ANGLE_MIN_DEGREES <= angle <= PEPTIDE_BOND_ANGLE_MAX_DEGREES
-        for angle in angles
-    ):
-        return False
-
-    planar_dihedrals = (
-        _dihedral_degrees(preceding_ca, preceding_c, following_n, following_ca),
-        _dihedral_degrees(preceding_o, preceding_c, following_n, following_ca),
-    )
-    return all(
-        angle is not None
-        and _planarity_deviation_degrees(angle)
-        <= PEPTIDE_PLANARITY_MAX_DEVIATION_DEGREES
-        for angle in planar_dihedrals
-    )
-
-
-def _bond_angle_degrees(
-    first: FloatArray,
-    center: FloatArray,
-    third: FloatArray,
-) -> float | None:
-    with np.errstate(over="ignore", invalid="ignore"):
-        first_vector = first - center
-        third_vector = third - center
-        denominator = float(np.linalg.norm(first_vector) * np.linalg.norm(third_vector))
-    if not isfinite(denominator) or denominator <= ROTATION_AXIS_NORM_EPSILON:
-        return None
-    with np.errstate(over="ignore", invalid="ignore"):
-        cosine = float(np.dot(first_vector, third_vector)) / denominator
-    if not isfinite(cosine):
-        return None
-    return degrees(acos(min(1.0, max(-1.0, cosine))))
-
-
-def _dihedral_degrees(
-    first: FloatArray,
-    second: FloatArray,
-    third: FloatArray,
-    fourth: FloatArray,
-) -> float | None:
-    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-        first_bond = -(second - first)
-        central_bond = third - second
-        last_bond = fourth - third
-        central_norm = float(np.linalg.norm(central_bond))
-        if not isfinite(central_norm) or central_norm <= ROTATION_AXIS_NORM_EPSILON:
-            return None
-        central_unit = central_bond / central_norm
-        first_plane = first_bond - np.dot(first_bond, central_unit) * central_unit
-        last_plane = last_bond - np.dot(last_bond, central_unit) * central_unit
-        first_plane_norm = float(np.linalg.norm(first_plane))
-        last_plane_norm = float(np.linalg.norm(last_plane))
-        if (
-            not isfinite(first_plane_norm)
-            or not isfinite(last_plane_norm)
-            or first_plane_norm <= ROTATION_AXIS_NORM_EPSILON
-            or last_plane_norm <= ROTATION_AXIS_NORM_EPSILON
-        ):
-            return None
-        cosine_component = float(np.dot(first_plane, last_plane))
-        sine_component = float(np.dot(np.cross(central_unit, first_plane), last_plane))
-    if not isfinite(cosine_component) or not isfinite(sine_component):
-        return None
-    angle = degrees(atan2(sine_component, cosine_component))
-    return angle if isfinite(angle) else None
-
-
-def _planarity_deviation_degrees(angle_degrees: float) -> float:
-    absolute_angle = abs(angle_degrees)
-    return min(absolute_angle, abs(180.0 - absolute_angle))
 
 
 def _backbone_positions(

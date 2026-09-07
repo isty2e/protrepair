@@ -2,6 +2,7 @@
 
 from typing import cast
 
+import numpy as np
 import pytest
 from tests.support.canonical_builders import (
     CanonicalResiduePayload,
@@ -15,6 +16,7 @@ from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
 from protrepair.scope import AbsentResidueSpanScope
 from protrepair.structure.labels import ResidueId
+from protrepair.transformer.completion import span_reconstruction as kernel
 from protrepair.transformer.completion.span_reconstruction import (
     SpanClosureSettings,
     SpanReconstructionFailure,
@@ -37,6 +39,67 @@ def test_span_closure_settings_reject_non_numeric_tolerances() -> None:
         SpanClosureSettings(endpoint_rmsd_tolerance_angstrom=True)
     with pytest.raises(TypeError, match="must be numeric"):
         SpanClosureSettings(convergence_delta_angstrom=cast(float, "small"))
+
+
+def test_endpoint_descent_uses_only_moving_endpoint_atoms() -> None:
+    coordinates = np.array(
+        [
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 0.0),
+            (2.0, 0.0, 1.0),
+            (3.0, 0.0, 2.0),
+        ]
+    )
+    original = coordinates.copy()
+    endpoints = np.array([2, 3, 4], dtype=np.int64)
+    targets = np.array([(0.0, 1.0, 0.0), (2.0, 0.0, 1.0), (3.0, 0.0, 2.0)])
+    axes = (
+        kernel._RotationAxis(0, 1, endpoints),
+        kernel._RotationAxis(0, 1, np.array([2], dtype=np.int64)),
+    )
+    for _ in range(2):
+        outcome = kernel._close_endpoint_by_cyclic_coordinate_descent(
+            coordinates,
+            rotation_axes=axes,
+            endpoint_indices=endpoints,
+            endpoint_targets=targets,
+            settings=SpanClosureSettings(maximum_iterations=1),
+        )
+        assert not isinstance(outcome, SpanReconstructionFailure)
+        positions, residual, iterations = outcome
+        assert iterations == 1
+        assert residual < 1e-12
+        np.testing.assert_allclose(positions[endpoints], targets, atol=1e-12)
+        np.testing.assert_array_equal(coordinates, original)
+
+
+def test_endpoint_descent_ties_keep_the_original_axis_order() -> None:
+    coordinates = np.array([(0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0)])
+    endpoints = np.array([2], dtype=np.int64)
+    axis = kernel._RotationAxis(0, 1, endpoints)
+    offset = kernel._endpoint_descent_seed_offset(
+        coordinates,
+        axis_objectives=((axis, np.array([True])), (axis, np.array([True]))),
+        endpoint_indices=endpoints,
+        endpoint_targets=np.array([(0.0, 1.0, 0.0)]),
+    )
+    assert offset == 0
+
+
+def test_unreachable_endpoint_without_a_legal_axis_fails_atomically() -> None:
+    coordinates = np.array([(0.0, 0.0, 0.0)])
+    original = coordinates.copy()
+    outcome = kernel._close_endpoint_by_cyclic_coordinate_descent(
+        coordinates,
+        rotation_axes=(),
+        endpoint_indices=np.array([0], dtype=np.int64),
+        endpoint_targets=np.array([(1.0, 0.0, 0.0)]),
+        settings=SpanClosureSettings(maximum_iterations=1),
+    )
+    assert isinstance(outcome, SpanReconstructionFailure)
+    assert outcome.kind is SpanReconstructionFailureKind.NON_CONVERGENT_CLOSURE
+    np.testing.assert_array_equal(coordinates, original)
 
 
 def test_span_reconstruction_rejects_mismatched_donor_mapping() -> None:
@@ -146,7 +209,7 @@ def test_span_anchor_frame_rejects_finite_coordinate_overflow() -> None:
 def test_span_axis_rotation_classifies_finite_arithmetic_overflow() -> None:
     """Finite inputs that overflow CCD arithmetic should remain a typed failure."""
 
-    base = 1.0e154
+    base = 3.0e154
     step = 1.0e140
     source_structure = build_structure(
         chains=(

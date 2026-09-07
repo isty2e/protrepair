@@ -43,6 +43,19 @@ anchor. It then handles the two span classes differently:
 2. For a terminal span, the donor is projected from its one available anchor.
    No second-anchor closure claim is made.
 
+Rotations follow the donor's covalent graph and component chemistry. Only
+single, non-aromatic bonds that separate the moving atoms from the fixed stem
+can act as independent torsions. This preserves Pro's ring and amide-N geometry,
+and leaves an acyclic N-substituent on the nitrogen side of a phi rotation.
+The preceding anchor's CA-C bond is not a closure axis: its oxygen stays fixed.
+
+CCD starts with the axis that most reduces endpoint error in a one-rotation
+probe. If it does not close, it retries from the same donor seed with reversed
+and original axis orders. Each distinct order has the full configured iteration
+limit, with at most four orders. No random restart or force-field minimization
+is hidden in this step. Endpoint fit guides this search; it is not a score for
+clashes or similarity to an unknown native loop.
+
 The operation moves only donor-derived coordinates. Atoms that were already in
 the source retain their original coordinates.
 
@@ -54,6 +67,8 @@ requires:
 
 - plausible peptide C-N distances, junction angles, and peptide-plane torsions
   at both source boundaries and between every pair of inserted residues
+- complete heavy-atom neighborhoods around amide N and planar N-substituents,
+  including those on the following source anchor
 - supported component chemistry for every inserted residue
 - residue-local heavy-atom geometry within the accepted template or restraint
   bounds
@@ -70,6 +85,8 @@ result carries `SPAN_RECONSTRUCTION_FAILED`. No partial span is committed.
 The junction planarity gate accepts both cis and trans families, but rejects a
 torsion more than 30 degrees from either plane. This follows the twisted-peptide
 boundary used by MolProbity and wwPDB validation.
+Amide-N substituents are screened separately with a 30-degree planarity
+tolerance; backbone omega alone cannot detect a pyramidalized Pro nitrogen.
 
 Clash assessment remains part of workflow state and candidate ranking rather
 than the closure kernel. A geometrically admissible insertion may therefore be

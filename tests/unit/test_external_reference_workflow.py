@@ -1492,8 +1492,8 @@ def test_span_reconstruction_reports_missing_source_anchor_without_crashing() ->
     assert "source anchor A:2 is absent" in result.issues[0].message
 
 
-def test_span_reconstruction_rejects_twisted_peptide_junction_atomically() -> None:
-    """Endpoint closure must not conceal a nonplanar carbonyl junction."""
+def test_span_reconstruction_rejects_displaced_anchor_atomically() -> None:
+    """Closure must not move a fixed carbonyl plane to reach another anchor."""
 
     source_structure = build_structure(
         chains=(
@@ -1555,7 +1555,7 @@ def test_span_reconstruction_rejects_twisted_peptide_junction_atomically() -> No
     assert tuple(issue.kind for issue in result.issues) == (
         ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED,
     )
-    assert "peptide-junction" in result.issues[0].message
+    assert "did not close" in result.issues[0].message
 
 
 def test_terminal_span_reconstruction_rejects_invalid_internal_junction() -> None:
@@ -1774,13 +1774,13 @@ def _test_atom_position(
         position = _ideal_backbone_position(seq_num, "N").with_offset(0.0, 0.0, 1.0)
     else:
         position = _ideal_backbone_position(seq_num, atom_name)
-    if donor_perturbation and seq_num >= 3:
+    if donor_perturbation and (seq_num > 3 or (seq_num == 3 and atom_name == "O")):
         position = AxisRotation.from_points(
-            _ideal_backbone_position(2, "CA"),
-            _ideal_backbone_position(2, "C"),
+            _ideal_backbone_position(3, "CA"),
+            _ideal_backbone_position(3, "C"),
         ).rotate_point(
             position,
-            origin=_ideal_backbone_position(2, "CA"),
+            origin=_ideal_backbone_position(3, "CA"),
             theta_radians=0.35,
         )
     if donor_perturbation:

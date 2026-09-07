@@ -118,6 +118,7 @@ class ExternalSpanReconstructionTransformer(WorkflowStructureTransformer):
             donor_residue_ids=self.reconstruction.donor_residue_ids,
             donor_preceding_residue_id=donor_preceding_residue_id,
             donor_following_residue_id=donor_following_residue_id,
+            component_library=context.component_library,
         )
         if isinstance(closure_outcome, SpanReconstructionFailure):
             return self._failed_codomain(

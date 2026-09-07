@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- preserve cross-residue covalent geometry during donor-backed span closure;
+  Pro ring bonds and fixed source carbonyl planes no longer act as independent
+  torsions. Amide-N substituents are checked before insertion. CCD chooses its
+  initial sweep from measured endpoint descent and retains deterministic
+  retries without moving source atoms
+
 ### Breaking changes
 
 - normalize `ExternalSpanReconstructionSpec` around a canonical
