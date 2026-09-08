@@ -61,10 +61,12 @@ fixed can leave all the mismatch at the second anchor. It fits both donor anchor
 triads while also matching distances across the actual source/donor peptide
 junctions to their donor values. These distance terms discourage improving the
 anchor fit by compressing or stretching the new C-N connections. Heavy amide-N
-substituents shared with the source anchor are included. The fit uses damped
-least squares, with the same iteration limit as a CCD order.
+substituents shared with the source anchor are included. The fit starts with
+damped least squares. If its best pose still misses either anchor's tolerance,
+a constrained fit minimizes the same residuals with a separate bound on each
+anchor. Both fitting stages have the same iteration limit as a CCD order.
 
-Neither step changes donor bond lengths or bond angles. There is no hidden
+None of these steps changes donor bond lengths or bond angles. There is no hidden
 force-field minimization or random restart. The fitting objective guides
 placement; it is not an energy, a clash score, or a measure of similarity to an
 unknown native loop.

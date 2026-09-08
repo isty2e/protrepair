@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from itertools import combinations
 from math import atan2, isfinite
 from numbers import Real
 
@@ -48,7 +49,8 @@ class SpanClosureSettings:
     maximum_iterations : int
         Maximum complete CCD sweeps per axis order. Up to four deterministic
         orders are tried from the same seed, each with this full limit. Joint
-        pose/torsion fitting, when needed, has the same iteration limit.
+        pose/torsion fitting and its constrained fallback, when needed, each
+        have the same iteration limit.
     endpoint_rmsd_tolerance_angstrom : float
         Maximum RMSD for each donor/source anchor triad, separately.
     convergence_delta_angstrom : float
@@ -473,6 +475,142 @@ class _AnchoredSpanObjective:
             )
         return float(values[0]), float(values[1])
 
+    def _jacobian(self, parameters: FloatArray) -> FloatArray | None:
+        columns = []
+        for direction in np.eye(len(parameters), dtype=np.float64):
+            plus = self.residuals(parameters + direction * 1.0e-5)
+            minus = self.residuals(parameters - direction * 1.0e-5)
+            if plus is None or minus is None:
+                return None
+            columns.append((plus - minus) / 2.0e-5)
+        jacobian = np.column_stack(columns)
+        return jacobian if np.isfinite(jacobian).all() else None
+
+    def _anchor_constraint_values(
+        self, residuals: FloatArray, bound: float
+    ) -> FloatArray:
+        anchor_size = self.anchor_indices.size * 3
+        anchor_residuals = residuals[:anchor_size].reshape(2, -1)
+        return np.sum(anchor_residuals**2, axis=1) / 3 - bound**2
+
+    def _constrained_step(
+        self,
+        residuals: FloatArray,
+        jacobian: FloatArray,
+        *,
+        bound: float,
+        damping: float,
+    ) -> tuple[FloatArray, float] | None:
+        dimension = jacobian.shape[1]
+        normal = jacobian.T @ jacobian + damping * np.eye(dimension)
+        gradient = jacobian.T @ residuals
+        constraints = self._anchor_constraint_values(residuals, bound)
+        anchor_size = self.anchor_indices.size * 3
+        derivative = (2.0 / 3.0) * np.einsum(
+            "ij,ijk->ik",
+            residuals[:anchor_size].reshape(2, -1),
+            jacobian[:anchor_size].reshape(2, -1, dimension),
+        )
+        if not all(
+            np.isfinite(value).all()
+            for value in (normal, gradient, constraints, derivative)
+        ):
+            return None
+        best: tuple[FloatArray, float] | None = None
+        best_cost = np.inf
+        # Two scalar inequalities have only four possible active sets. Solve
+        # their local quadratic subproblems without a general optimizer backend.
+        for count in range(3):
+            for active in combinations(range(2), count):
+                rows = derivative[list(active)]
+                system = np.block([[normal, rows.T], [rows, np.zeros((count, count))]])
+                rhs = np.concatenate((-gradient, -constraints[list(active)]))
+                try:
+                    solution = np.asarray(
+                        np.linalg.solve(system, rhs), dtype=np.float64
+                    )
+                except np.linalg.LinAlgError:
+                    continue
+                if not np.isfinite(solution).all():
+                    continue
+                step, multipliers = solution[:dimension], solution[dimension:]
+                if np.any(multipliers < -1.0e-8) or np.any(
+                    constraints + derivative @ step > 1.0e-8
+                ):
+                    continue
+                cost = float(0.5 * step @ normal @ step + gradient @ step)
+                if isfinite(cost) and cost < best_cost:
+                    best_cost = cost
+                    best = step, float(np.max(np.abs(multipliers), initial=0.0))
+        return best
+
+    def _fit_anchor_bounds(
+        self, parameters: FloatArray, settings: SpanClosureSettings
+    ) -> tuple[FloatArray, int] | SpanReconstructionFailure:
+        parameters = parameters.copy()
+        residuals = self.residuals(parameters)
+        assert residuals is not None
+        # An inward round-off margin does not relax the final per-anchor gate.
+        bound = settings.endpoint_rmsd_tolerance_angstrom * (1.0 - 1.0e-8)
+        damping, penalty = 0.01, 1.0
+        iterations = 0
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            for _ in range(settings.maximum_iterations):
+                jacobian = self._jacobian(parameters)
+                if jacobian is None:
+                    return SpanReconstructionFailure(
+                        SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                        "constrained span closure derivative was non-finite",
+                    )
+                iterations += 1
+                proposal = self._constrained_step(
+                    residuals, jacobian, bound=bound, damping=damping
+                )
+                if proposal is None:
+                    break
+                step, multiplier = proposal
+                penalty = max(penalty, 1.1 * multiplier)
+                constraints = self._anchor_constraint_values(residuals, bound)
+                merit = float(
+                    0.5 * residuals @ residuals
+                    + penalty * np.maximum(constraints, 0.0).sum()
+                )
+                if not isfinite(merit):
+                    return SpanReconstructionFailure(
+                        SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                        "constrained span closure objective overflowed",
+                    )
+                accepted = False
+                change = np.inf
+                for fraction in 0.5 ** np.arange(25):
+                    candidate = self.residuals(parameters + fraction * step)
+                    if candidate is None:
+                        continue
+                    violations = self._anchor_constraint_values(candidate, bound)
+                    next_merit = float(
+                        0.5 * candidate @ candidate
+                        + penalty * np.maximum(violations, 0.0).sum()
+                    )
+                    if isfinite(next_merit) and next_merit < merit:
+                        change = (np.sqrt(merit) - np.sqrt(next_merit)) / np.sqrt(
+                            len(residuals)
+                        )
+                        parameters += fraction * step
+                        residuals = candidate
+                        damping = max(damping / 3.0, 1.0e-10)
+                        accepted = True
+                        break
+                if accepted:
+                    if change <= settings.convergence_delta_angstrom and np.all(
+                        self._anchor_constraint_values(residuals, bound) <= 0.0
+                    ):
+                        break
+                else:
+                    damping *= 10.0
+                    if damping > 1.0e10:
+                        break
+        return parameters, iterations
+
     def fit(
         self, settings: SpanClosureSettings
     ) -> tuple[FloatArray, float, int] | SpanReconstructionFailure:
@@ -491,17 +629,12 @@ class _AnchoredSpanObjective:
         with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
             cost = float(residuals @ residuals)
             for _ in range(settings.maximum_iterations):
-                columns = []
-                for direction in identity:
-                    plus = self.residuals(parameters + direction * 1.0e-5)
-                    minus = self.residuals(parameters - direction * 1.0e-5)
-                    if plus is None or minus is None:
-                        return SpanReconstructionFailure(
-                            SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
-                            "joint span closure derivative was non-finite",
-                        )
-                    columns.append((plus - minus) / 2.0e-5)
-                jacobian = np.column_stack(columns)
+                jacobian = self._jacobian(parameters)
+                if jacobian is None:
+                    return SpanReconstructionFailure(
+                        SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                        "joint span closure derivative was non-finite",
+                    )
                 normal = jacobian.T @ jacobian + damping * identity
                 gradient = jacobian.T @ residuals
                 if not (
@@ -547,6 +680,20 @@ class _AnchoredSpanObjective:
             return SpanReconstructionFailure(
                 SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
                 "joint span closure anchor calculation overflowed",
+            )
+        if max(rmsds) > settings.endpoint_rmsd_tolerance_angstrom:
+            bounded_result = self._fit_anchor_bounds(parameters, settings)
+            if isinstance(bounded_result, SpanReconstructionFailure):
+                return bounded_result
+            parameters, bounded_iterations = bounded_result
+            iterations += bounded_iterations
+            coordinates = self.coordinates_at(parameters)
+            assert coordinates is not None
+            rmsds = self.anchor_rmsds(coordinates)
+        if not all(isfinite(value) for value in rmsds):
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.NON_FINITE_COORDINATES,
+                "constrained span closure anchor calculation overflowed",
             )
         if max(rmsds) > settings.endpoint_rmsd_tolerance_angstrom:
             return SpanReconstructionFailure(

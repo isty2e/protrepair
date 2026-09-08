@@ -59,12 +59,10 @@ from protrepair.workflow.contracts import (
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/pdb/span-reconstruction"
 
 
-@pytest.mark.parametrize(
-    "start,accepted", [(4, True), (26, True), (49, True), (72, False)]
-)
+@pytest.mark.parametrize("start", [4, 26, 49, 72])
 @pytest.mark.parametrize("native", [False, True])
 def test_real_short_gap_closure_preserves_source_and_donor_chemistry(
-    start: int, accepted: bool, native: bool
+    start: int, native: bool
 ) -> None:
     reference = read_structure(FIXTURES / "1ubq-short-gaps.pdb")
     donor = (
@@ -93,15 +91,11 @@ def test_real_short_gap_closure_preserves_source_and_donor_chemistry(
         assert (
             _position(result.structure, ref.residue_id, ref.atom_name) == atom.position
         )
-    if not accepted:
+    if native and start == 72:
         assert result.structure.constitution == source.constitution
         assert result.structure.topology == source.topology
         assert len(result.issues) == 1
-        assert (
-            "intrinsic heavy-atom geometry"
-            if native
-            else "preceding/following anchor RMSDs"
-        ) in result.issues[0].message
+        assert "intrinsic heavy-atom geometry" in result.issues[0].message
         return
     assert not result.issues
     residue = donor.constitution.residue_or_ligand(gap[0])
@@ -191,7 +185,7 @@ def _closure_objective(
     )
 
 
-@pytest.mark.parametrize("start", [4, 26])
+@pytest.mark.parametrize("start", [4, 26, 72])
 def test_joint_closure_resolves_failed_ccd_without_relaxing_either_anchor(
     start: int,
 ) -> None:
@@ -247,8 +241,9 @@ def test_joint_closure_rejects_unusable_objective_values(value: float) -> None:
     assert result.kind is SpanReconstructionFailureKind.NON_FINITE_COORDINATES
 
 
-def test_joint_fit_is_rigid_frame_equivariant() -> None:
-    objective = _short_gap_objective(26)
+@pytest.mark.parametrize("start", [26, 72])
+def test_joint_fit_is_rigid_frame_equivariant(start: int) -> None:
+    objective = _short_gap_objective(start)
     rotation = AxisRotation.from_points(Vec3(0.0, 0.0, 0.0), Vec3(1.0, 2.0, -1.0))
 
     def move(points: kernel.FloatArray) -> kernel.FloatArray:
@@ -278,6 +273,126 @@ def test_joint_fit_is_rigid_frame_equivariant() -> None:
         transformed_fit[0], move(original_fit[0]), atol=2e-5, rtol=0.0
     )
     assert transformed_fit[1] == pytest.approx(original_fit[1], abs=2e-5)
+
+
+def test_anchor_bounds_recover_a_failed_unconstrained_optimum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    objective = _short_gap_objective(72)
+    settings = kernel.SpanClosureSettings()
+    with monkeypatch.context() as context:
+        context.setattr(
+            kernel._AnchoredSpanObjective,
+            "_fit_anchor_bounds",
+            lambda self, parameters, settings: (parameters, 0),
+        )
+        failure = objective.fit(settings)
+    assert isinstance(failure, SpanReconstructionFailure)
+    assert failure.kind is SpanReconstructionFailureKind.NON_CONVERGENT_CLOSURE
+    result = objective.fit(settings)
+    assert not isinstance(result, SpanReconstructionFailure)
+    assert max(objective.anchor_rmsds(result[0])) <= 0.1
+
+
+def test_already_feasible_joint_fit_does_not_run_constrained_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*args: object) -> None:
+        raise AssertionError("already feasible joint fit must remain unchanged")
+
+    monkeypatch.setattr(kernel._AnchoredSpanObjective, "_fit_anchor_bounds", forbidden)
+    assert not isinstance(
+        _short_gap_objective(4).fit(kernel.SpanClosureSettings()),
+        SpanReconstructionFailure,
+    )
+
+
+@pytest.mark.parametrize("anchor", [0, 1])
+def test_constrained_step_checks_both_inequalities(anchor: int) -> None:
+    objective = _short_gap_objective()
+    residuals = np.zeros(20)
+    jacobian = np.zeros((20, 2))
+    for index in range(2):
+        residuals[index * 9] = np.sqrt(3) * 0.1
+        jacobian[index * 9, index] = np.sqrt(3)
+    residuals[18 + anchor] = -1.0
+    jacobian[18 + anchor, anchor] = 1.0
+    result = objective._constrained_step(residuals, jacobian, bound=0.1, damping=0.01)
+    assert result is not None
+    step, multiplier = result
+    assert step[anchor] == pytest.approx(0.0, abs=1e-10)
+    assert step[1 - anchor] < 0.0
+    assert multiplier > 0.0
+
+
+def test_constrained_step_enforces_two_simultaneous_active_bounds() -> None:
+    objective = _short_gap_objective()
+    residuals = np.zeros(20)
+    jacobian = np.zeros((20, 2))
+    for index in range(2):
+        residuals[index * 9] = np.sqrt(3) * 0.1
+        jacobian[index * 9, index] = np.sqrt(3)
+        residuals[18 + index] = -1.0
+        jacobian[18 + index, index] = 1.0
+    result = objective._constrained_step(residuals, jacobian, bound=0.1, damping=0.01)
+    assert result is not None
+    np.testing.assert_allclose(result[0], 0.0, atol=1e-10)
+    assert result[1] > 0.0
+
+
+def test_constrained_step_rejects_incompatible_linearized_bounds() -> None:
+    objective = _short_gap_objective()
+    residuals = np.zeros(18)
+    jacobian = np.zeros((18, 1))
+    residuals[[0, 9]] = np.sqrt(3) * 0.2
+    jacobian[0, 0], jacobian[9, 0] = np.sqrt(3), -np.sqrt(3)
+    assert (
+        objective._constrained_step(residuals, jacobian, bound=0.1, damping=0.01)
+        is None
+    )
+
+
+@pytest.mark.filterwarnings("error")
+@pytest.mark.parametrize("failure", ["derivative", "step", "merit"])
+def test_constrained_fallback_failures_preserve_the_seed(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    objective = _short_gap_objective(72)
+    before = objective.seed.copy()
+    if failure == "derivative":
+        monkeypatch.setattr(
+            kernel._AnchoredSpanObjective, "_jacobian", lambda self, parameters: None
+        )
+        result = objective._fit_anchor_bounds(
+            np.zeros(6 + len(objective.axes)), kernel.SpanClosureSettings()
+        )
+    else:
+
+        def broken_step(self: object, *args: object, **kwargs: object):
+            if failure == "step":
+                return None
+            return np.zeros(6 + len(objective.axes)), np.inf
+
+        monkeypatch.setattr(
+            kernel._AnchoredSpanObjective, "_constrained_step", broken_step
+        )
+        result = objective.fit(kernel.SpanClosureSettings())
+    assert isinstance(result, SpanReconstructionFailure)
+    assert result.kind is (
+        SpanReconstructionFailureKind.NON_CONVERGENT_CLOSURE
+        if failure == "step"
+        else SpanReconstructionFailureKind.NON_FINITE_COORDINATES
+    )
+    np.testing.assert_array_equal(objective.seed, before)
+
+
+def test_constrained_anchor_limits_remain_user_configurable() -> None:
+    objective = _short_gap_objective(72)
+    result = objective.fit(
+        kernel.SpanClosureSettings(endpoint_rmsd_tolerance_angstrom=0.09)
+    )
+    assert not isinstance(result, SpanReconstructionFailure)
+    assert max(objective.anchor_rmsds(result[0])) <= 0.09
 
 
 def test_junction_residuals_use_actual_fixed_source_atoms() -> None:

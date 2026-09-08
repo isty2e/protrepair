@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- constrain each donor-span anchor separately when joint least-squares fitting
+  leaves one outside its tolerance. Existing successful fits and the geometry
+  checks after fitting are unchanged; no optimizer dependency is added
 - retry unsuccessful donor-span closure with joint donor pose/torsion fitting
   against both fixed source anchors and their actual peptide junctions, without
   deforming donor bonds or angles. Each anchor must meet the existing tolerance;

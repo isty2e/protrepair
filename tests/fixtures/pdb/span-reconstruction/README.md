@@ -32,6 +32,6 @@ The AlphaFold model was retrieved on 2026-09-08.
 Tests remove residues 4, 26, 49, or 72 from the experimental structure and use
 the corresponding donor residue for reconstruction. The reference's missing
 coordinates are used only to assess the result, never as fitting input. These
-cases distinguish rigid-frame mismatch from changes to covalent geometry and
-include an unresolved closure. They are regression examples from one protein,
+cases distinguish rigid-frame mismatch, constrained anchor fitting, and
+inherited donor geometry rejection. They are regression examples from one protein,
 not independent evidence of loop-prediction accuracy.
