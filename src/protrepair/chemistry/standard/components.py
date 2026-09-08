@@ -281,6 +281,8 @@ STANDARD_COMPONENT_BOND_PAIRS: dict[str, tuple[tuple[str, str], ...]] = {
 }
 HISTIDINE_ALIASES: tuple[str, ...] = ("HSD", "HSE", "HIE", "HSP")
 
+_SIDECHAIN_AMIDE_CARBONYLS = frozenset({("ASN", "CG", "OD1"), ("GLN", "CD", "OE1")})
+
 STANDARD_HYDROGEN_SEMANTICS: dict[str, HydrogenSemantics] = {
     component_id: HydrogenSemantics(plan_with_backbone=plan)
     for component_id, plan in STANDARD_HYDROGEN_PLANS.items()
@@ -340,7 +342,15 @@ def build_standard_component_library() -> ComponentLibrary:
             component_id=component_id,
             atom_names=atom_names,
             bonds=tuple(
-                BondDefinition(atom_name_1=atom_name_1, atom_name_2=atom_name_2)
+                BondDefinition(
+                    atom_name_1=atom_name_1,
+                    atom_name_2=atom_name_2,
+                    order=2
+                    if (atom_name_1, atom_name_2) == ("C", "O")
+                    or (component_id, atom_name_1, atom_name_2)
+                    in _SIDECHAIN_AMIDE_CARBONYLS
+                    else 1,
+                )
                 for atom_name_1, atom_name_2 in STANDARD_COMPONENT_BOND_PAIRS[
                     component_id
                 ]

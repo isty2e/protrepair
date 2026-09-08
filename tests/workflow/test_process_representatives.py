@@ -64,12 +64,12 @@ WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, frozenset[str]]] = {
     "1afc-hydrogen-his-protonated": {
         "2026.03.2": frozenset(
             {
-                "222fcdf1b738d90a5ef2762a82317b0fcabbfc78210ed3eeb9f54847e0522834",
+                "0f70c9476311a0c537186ed812630315239a95a175bb1924adff426366b34fde",
             }
         ),
         "2026.03.3": frozenset(
             {
-                "222fcdf1b738d90a5ef2762a82317b0fcabbfc78210ed3eeb9f54847e0522834",
+                "0f70c9476311a0c537186ed812630315239a95a175bb1924adff426366b34fde",
             }
         ),
     },
@@ -177,7 +177,7 @@ def test_registered_rdkit_coordinate_digest_accepts_current_contract(
         _patch_rdkit_version(monkeypatch, rdkit_version)
         _assert_rdkit_coordinate_digest_matches(
             "1afc-hydrogen-his-protonated",
-            "222fcdf1b738d90a5ef2762a82317b0fcabbfc78210ed3eeb9f54847e0522834",
+            "0f70c9476311a0c537186ed812630315239a95a175bb1924adff426366b34fde",
         )
 
 
@@ -249,20 +249,15 @@ def test_process_structure_repairs_1afc_to_no_conect_rdkit_readable_output() -> 
         "1afc-hydrogen-his-protonated",
     )
 
-    assert (
-        measure_rdkit_no_conect_sanitize_readability(result.structure)
-        is True
-    )
+    assert measure_rdkit_no_conect_sanitize_readability(result.structure) is True
 
 
 @pytest.mark.representative_regression
-def test_process_structure_explicit_repair_keeps_3j6b_no_conect_rdkit_readable_output(
-) -> None:
+def test_explicit_3j6b_repair_keeps_no_conect_rdkit_readability() -> None:
     """Explicit 3J6B repair should keep no-CONECT RDKit sanitize readability."""
 
     source = Path(
-        "tests/fixtures/pdb/refinement/"
-        "3j6b_terminal_helix_misthread_local.pdb"
+        "tests/fixtures/pdb/refinement/3j6b_terminal_helix_misthread_local.pdb"
     )
 
     assert (
@@ -295,8 +290,7 @@ def test_process_structure_explicit_repair_keeps_3j6b_no_conect_rdkit_readable_o
 
 
 @pytest.mark.representative_regression
-def test_process_structure_2dn2_heme_cofactor_output_stays_no_conect_rdkit_readable(
-) -> None:
+def test_2dn2_heme_hydrogenation_preserves_no_conect_rdkit_readability() -> None:
     """2DN2 should stay RDKit-readable after template-backed HEM hydrogenation."""
 
     source = WHOLE_STRUCTURE_CORPUS_SOURCES["2dn2-whole-structure"]
@@ -313,8 +307,7 @@ def test_process_structure_2dn2_heme_cofactor_output_stays_no_conect_rdkit_reada
 
 
 @pytest.mark.representative_regression
-def test_process_structure_2qls_heme_cofactor_uses_template_backed_hydrogens(
-) -> None:
+def test_process_structure_2qls_heme_cofactor_uses_template_backed_hydrogens() -> None:
     """2QLS HEM ligands should use bundled template hydrogens, not generic fallback."""
 
     source = WHOLE_STRUCTURE_CORPUS_SOURCES["2qls-whole-structure"]
@@ -336,9 +329,7 @@ def test_process_structure_2qls_heme_cofactor_uses_template_backed_hydrogens(
 
     for ligand in hem_ligands:
         hydrogen_names = tuple(
-            atom.name
-            for atom in ligand.atom_sites
-            if atom.element == "H"
+            atom.name for atom in ligand.atom_sites if atom.element == "H"
         )
         assert len(hydrogen_names) == 32
         assert all(not name.startswith("H0") for name in hydrogen_names)
@@ -362,8 +353,7 @@ def test_process_structure_2qls_output_stays_no_conect_rdkit_readable() -> None:
 
     assert measure_rdkit_no_conect_sanitize_readability(result.structure) is True
     assert not any(
-        issue.kind is ValidationIssueKind.PARSER_READABILITY
-        for issue in result.issues
+        issue.kind is ValidationIssueKind.PARSER_READABILITY for issue in result.issues
     )
     assert not diagnose_rdkit_no_conect_sanitize_readability(result.structure)
     assert not rdkit_no_conect_parser_failing_residue_ids(result.structure)
@@ -394,15 +384,12 @@ def test_2qls_parser_witness_exposes_extra_leu32_proximity_bond() -> None:
         component_library=component_library,
     )
     leu32_witnesses = tuple(
-        witness
-        for witness in witnesses
-        if witness.residue_id == ResidueId("D", 32)
+        witness for witness in witnesses if witness.residue_id == ResidueId("D", 32)
     )
 
     assert len(leu32_witnesses) == 1
     extra_bond_tokens = tuple(
-        bond.display_token()
-        for bond in leu32_witnesses[0].extra_proximity_bonds()
+        bond.display_token() for bond in leu32_witnesses[0].extra_proximity_bonds()
     )
     assert (
         "D:32.CD1-D:32.CD2" in extra_bond_tokens
@@ -430,8 +417,7 @@ def test_process_structure_2dn2_has_no_parser_readability_issue() -> None:
     )
 
     assert not any(
-        issue.kind is ValidationIssueKind.PARSER_READABILITY
-        for issue in result.issues
+        issue.kind is ValidationIssueKind.PARSER_READABILITY for issue in result.issues
     )
 
 
@@ -455,6 +441,7 @@ def test_process_structure_6nbb_nad_output_stays_no_conect_rdkit_readable() -> N
         and issue.residue_id == ResidueId("A", 401)
         for issue in result.issues
     )
+
 
 def run_workflow_representative_case(
     source: Path,

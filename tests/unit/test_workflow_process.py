@@ -30,6 +30,7 @@ from protrepair.diagnostics import (
     ValidationIssueKind,
     detect_sidechain_stereochemistry,
 )
+from protrepair.diagnostics.geometry import detect_heavy_geometry
 from protrepair.diagnostics.parser_readability import (
     RDKitNoConectParserReadabilityProbe,
     RDKitNoConectSanitizeReadabilityMetrics,
@@ -856,9 +857,15 @@ def test_process_structure_routes_stereochemistry_correction_before_refinement()
     )
     assert corrected_residue is not None
     assert any(atom_site.element == "H" for atom_site in corrected_residue.atom_sites)
-    assert any(
-        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
+    repair_kinds = [repair.kind for repair in result.repairs]
+    assert repair_kinds.index(RepairEventKind.STEREOCHEMISTRY_CORRECTED) < (
+        repair_kinds.index(RepairEventKind.LOCAL_REFINEMENT_APPLIED)
     )
+    assert detect_heavy_geometry(
+        result.structure,
+        component_library=build_default_component_library(),
+    ).is_empty()
+    assert not result.issues
     assert not any(
         "requires hydrogens to be fully realized" in issue.message
         for issue in result.issues

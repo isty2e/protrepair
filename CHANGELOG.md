@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- give standard backbone and ASN/GLN side-chain carbonyls their double bonds
+  in the component library, so force-field binding no longer treats them as
+  saturated radical centers. This changes some local refinement coordinates;
+  protonation-dependent bond orders and charges are not resolved by this fix
 - constrain each donor-span anchor separately when joint least-squares fitting
   leaves one outside its tolerance. Existing successful fits and the geometry
   checks after fitting are unchanged; no optimizer dependency is added

@@ -27,6 +27,25 @@ readiness, and serialized output must not carry separate chemistry stories.
 These are orthogonal axes. Provenance is not an execution flag, not a writer
 flag, and not a lifecycle flag.
 
+## Standard Component Chemistry
+
+The built-in standard residues assign double bonds to backbone C=O and the
+ASN CG=OD1 and GLN CD=OE1 amides, matching the corresponding
+[wwPDB chemical component definitions](https://www.wwpdb.org/data/ccd).
+C-OXT remains single. These definitions feed topology construction and
+force-field binding; the backend does not repair their chemistry privately.
+
+This is not a complete polymer microstate model. Charge-dependent groups,
+including guanidinium, carboxylates, and histidine, still need coordinated
+bond-order, charge, and hydrogen resolution. Source charges are not changed by
+the carbonyl correction.
+
+Bond-order roundtrip fidelity is also currently limited: PDB CONECT output
+records connectivity without multiplicity, and re-ingress can replace a
+template-resolved double bond with a source-explicit single bond. RDKit may
+recognize standard-residue chemistry independently, so successful PDB parsing
+does not prove that the internal topology retained its bond orders.
+
 ## Projection Rules
 
 Execution may treat only covalent-like relationship types as force-field planned
