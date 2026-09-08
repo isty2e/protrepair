@@ -27,6 +27,45 @@ readiness, and serialized output must not carry separate chemistry stories.
 These are orthogonal axes. Provenance is not an execution flag, not a writer
 flag, and not a lifecycle flag.
 
+`TopologyBond.order` is a positive integer, or `None` when the order is
+unresolved. A source record can establish connectivity without supplying a
+bond order. In that case, ingress can use matching component or sequence
+chemistry without discarding the source provenance or metadata.
+
+## Source Bond Orders
+
+An explicit order takes precedence over a default template. A missing order
+does not: for example, a connectivity-only record for a known backbone C-O
+pair retains the component's double bond. Source charges, hydrogen atoms,
+and coordinates are unchanged by this resolution. It does not establish
+that an explicitly supplied microstate is chemically valid.
+
+PDB `LINK` records supply no order; `SSBOND` identifies a single disulfide
+bond. For `CONECT`, ProtRepair accepts the repeated-neighbor convention used
+by [RDKit's PDB parser](https://github.com/rdkit/rdkit/blob/Release_2026_03_2/Code/GraphMol/FileParsers/PDBParser.cpp).
+Two, three, or four occurrences in one direction supply a double, triple,
+or quadruple order. Counts include distinct continuation rows, but identical
+rows are treated as redundant. Reciprocal records are not added together.
+Contradictory multiple orders in the two directions are rejected. One
+occurrence supplies connectivity only, not an explicit single-bond assertion.
+The reader accepts RDKit's extension through the sixth neighbor field; the
+writer uses four fields per row and keeps each multiplicity together.
+Legacy pre-3.2 hydrogen/salt-bridge column semantics are not supported.
+
+mmCIF carries explicit `sing`, `doub`, `trip`, and `quad` values in
+[`_struct_conn.pdbx_value_order`](https://mmcif.wwpdb.org/dictionaries/mmcif_pdbx_v50.dic/Items/_struct_conn.pdbx_value_order.html),
+including connections within a residue. An absent field or `?`/`.` supplies
+no order evidence. Unsupported explicit values are rejected rather than
+replaced with single bonds. The writer projects canonical orders into this
+field and writes `?` for unresolved orders.
+
+These records do not provide a general aromaticity encoding. Ingress retains
+aromatic support from a matching component definition, but arbitrary ligand
+aromaticity recovery or writer-side Kekulization is outside this policy.
+PDB also cannot distinguish unresolved order from an unannotated single bond.
+Use mmCIF when that distinction matters. Neither format is a lossless archive
+of all internal chemistry provenance.
+
 ## Standard Component Chemistry
 
 The built-in standard residues assign double bonds to backbone C=O and the
@@ -40,17 +79,17 @@ including guanidinium, carboxylates, and histidine, still need coordinated
 bond-order, charge, and hydrogen resolution. Source charges are not changed by
 the carbonyl correction.
 
-Bond-order roundtrip fidelity is also currently limited: PDB CONECT output
-records connectivity without multiplicity, and re-ingress can replace a
-template-resolved double bond with a source-explicit single bond. RDKit may
-recognize standard-residue chemistry independently, so successful PDB parsing
-does not prove that the internal topology retained its bond orders.
-
 ## Projection Rules
 
 Execution may treat only covalent-like relationship types as force-field planned
 bonds. `SOURCE_EXPLICIT` metal coordination remains topology truth, but it is
 not a covalent force-field bond merely because the source reported it.
+Resolved canonical orders take precedence over execution fallback templates.
+An unresolved covalent order can remain in region planning, but cannot be
+bound to RDKit as an assumed single bond. An unresolved bond outside the
+included region does not block local refinement. An `UNKNOWN` relationship
+is not proof of a non-covalent relationship; existing supported ligand
+chemistry inference remains available for those endpoints.
 
 Egress must project from canonical topology instead of inventing writer-local
 connectivity. Source-explicit bonds preserve source roundtrip behavior.
@@ -66,7 +105,8 @@ carry source-explicit bonds except source records that originally came from PDB
 `CONECT`. Source hydrogen bonds are omitted because PDB has no corresponding
 typed connection record. PDB `CONECT` is an untyped connectivity table, so it
 is appended from canonical topology after gemmi serialization and includes
-source PDB `CONECT` records plus covalent-like model-resolved bonds. mmCIF has a
+source PDB `CONECT` records plus covalent-like bonds, whether source-reported
+or model-resolved. mmCIF has a
 single `_struct_conn` projection because that boundary can carry typed
 relationships and repaired/model-resolved covalent-like bonds in the same
 table. Serialized connection distances are derived from current coordinates;
@@ -101,10 +141,11 @@ fields; the wwPDB format guide explicitly calls this out as a known ambiguity
 for disordered SG atoms. ProtRepair therefore lowers a source `SSBOND` onto the
 selected canonical SG variants when the residue component identities survive.
 PDB `LINK` and mmCIF `_struct_conn`, which can carry endpoint altloc identity,
-continue to require the declared variants to survive. A duplicate untyped PDB
-`CONECT` pair is ordered after typed source records and fills only an endpoint
-pair that no surviving typed record claimed. Conflicting typed declarations
-remain invalid canonical topology rather than silently becoming first-wins.
+continue to require the declared variants to survive. Typed records take
+precedence over `CONECT` for relationship type and source metadata. A matching
+`CONECT` record can still supply a missing order. Conflicting explicit orders
+or typed declarations remain invalid rather than silently becoming first-wins.
+Disulfide declarations cannot be combined with multiple-bond orders.
 
 Source bond metadata is canonical metadata, not raw boundary text. Reported
 distances are stored only as finite positive numeric angstrom values; corrupt,

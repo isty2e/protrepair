@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- preserve bond-order evidence through PDB CONECT and mmCIF `struct_conn`
+  roundtrips, including intra-residue and repaired bonds. Connectivity-only
+  records no longer erase known component orders; explicit source orders
+  survive template and force-field projection
 - give standard backbone and ASN/GLN side-chain carbonyls their double bonds
   in the component library, so force-field binding no longer treats them as
   saturated radical centers. This changes some local refinement coordinates;
@@ -27,6 +31,10 @@
 
 ### Breaking changes
 
+- allow `TopologyBond.order` to be `None` for unresolved source connectivity,
+  instead of reporting an unsupported single-bond assumption. Contradictory
+  explicit orders are rejected; unresolved covalent orders cannot be bound
+  to RDKit as single bonds
 - normalize `ExternalSpanReconstructionSpec` around a canonical
   `AbsentResidueSpanScope`; remove the source-specific
   `blueprint_coverage_gap` field, the behavior-free `supporting_role` field,

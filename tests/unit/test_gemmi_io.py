@@ -2026,9 +2026,9 @@ def test_mmcif_branched_entity_remains_retained_non_polymer() -> None:
     )
 
     assert structure.constitution.chains == ()
-    assert tuple(
-        ligand.component_id for ligand in structure.constitution.ligands
-    ) == ("NAG",)
+    assert tuple(ligand.component_id for ligand in structure.constitution.ligands) == (
+        "NAG",
+    )
 
 
 def test_read_structure_string_rejects_ligands_via_public_ligand_policy() -> None:
@@ -2409,8 +2409,7 @@ def test_normalize_raw_structure_drops_source_connection_from_discarded_componen
     )
 
 
-def test_normalize_raw_structure_rejects_conflicting_typed_source_connections(
-) -> None:
+def test_normalize_raw_structure_rejects_conflicting_typed_source_connections() -> None:
     """Distinct typed declarations cannot silently claim one canonical edge."""
 
     raw_structure = build_raw_source_connection_structure()
@@ -2430,9 +2429,7 @@ def test_normalize_raw_structure_rejects_conflicting_typed_source_connections(
         normalize_raw_structure(
             raw_structure,
             file_format=FileFormat.PDB,
-            policy=StructureNormalizationPolicy(
-                ligand_handling=LigandHandling.KEEP
-            ),
+            policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
             source_connections=(source_connection, conflicting_connection),
         )
 
@@ -2540,6 +2537,7 @@ def test_read_structure_string_surfaces_pdb_conect_inter_residue_bonds() -> None
             atom_index_2=structure.constitution.atom_index(
                 AtomRef(ResidueId("L", 1), "O1")
             ),
+            order=None,
             relationship_type=BondRelationshipType.UNKNOWN,
             provenance=BondProvenance.SOURCE_EXPLICIT,
             source_metadata=SourceBondMetadata(
@@ -3244,8 +3242,7 @@ def test_pdb_ssbond_ignores_gemmi_altloc_and_takes_precedence_over_conect() -> N
     )
     assert altloc_disulfide.source_metadata is not None
     assert (
-        altloc_disulfide.source_metadata.record_type
-        is SourceBondRecordType.PDB_SSBOND
+        altloc_disulfide.source_metadata.record_type is SourceBondRecordType.PDB_SSBOND
     )
     assert altloc_disulfide.source_metadata.reported_distance_angstrom == 2.01
 
@@ -3499,9 +3496,7 @@ def test_write_mmcif_recomputes_hydrogen_connection_distance() -> None:
 
     assert roundtripped_bond.relationship_type is BondRelationshipType.HYDROGEN_BOND
     assert roundtripped_bond.source_metadata is not None
-    reported_distance = (
-        roundtripped_bond.source_metadata.reported_distance_angstrom
-    )
+    reported_distance = roundtripped_bond.source_metadata.reported_distance_angstrom
     assert reported_distance == pytest.approx(2.0)
 
 
@@ -3551,9 +3546,7 @@ def test_write_pdb_recomputes_typed_connection_distance(
                     residue_payload(
                         component_id=component_id,
                         residue_id=ResidueId("A", 1),
-                        atoms=(
-                            atom_payload(atom_name, element, Vec3(0.0, 0.0, 0.0)),
-                        ),
+                        atoms=(atom_payload(atom_name, element, Vec3(0.0, 0.0, 0.0)),),
                     ),
                 ),
             ),
@@ -3563,9 +3556,7 @@ def test_write_pdb_recomputes_typed_connection_distance(
                     residue_payload(
                         component_id=component_id,
                         residue_id=ResidueId("B", 1),
-                        atoms=(
-                            atom_payload(atom_name, element, Vec3(2.0, 0.0, 0.0)),
-                        ),
+                        atoms=(atom_payload(atom_name, element, Vec3(2.0, 0.0, 0.0)),),
                     ),
                 ),
             ),
@@ -3606,9 +3597,7 @@ def test_write_pdb_recomputes_typed_connection_distance(
 
     assert any(line.startswith(record_prefix) for line in pdb_text.splitlines())
     assert roundtripped_bond.source_metadata is not None
-    reported_distance = (
-        roundtripped_bond.source_metadata.reported_distance_angstrom
-    )
+    reported_distance = roundtripped_bond.source_metadata.reported_distance_angstrom
     assert reported_distance == pytest.approx(2.0)
 
 

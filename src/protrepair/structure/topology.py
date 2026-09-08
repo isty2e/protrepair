@@ -107,11 +107,38 @@ class SourceBondMetadata:
 
 @dataclass(frozen=True, slots=True)
 class TopologyBond:
-    """One canonical bond in the structure topology bond graph."""
+    """One canonical bond in the structure topology bond graph.
+
+    ``order=None`` means unresolved, not single. Endpoint provenance does not
+    imply that the source supplied an order; ingress may resolve it from
+    component or sequence chemistry while retaining source metadata.
+
+    Parameters
+    ----------
+    atom_index_1, atom_index_2 : AtomIndex
+        Distinct endpoints in the owning constitution, stored in ascending order.
+    order : int or None, default=1
+        Positive integral bond order, or unresolved order evidence.
+    aromatic : bool, default=False
+        Aromatic chemistry support, separate from the integral order representation.
+    relationship_type : BondRelationshipType, default=COVALENT
+        Physical relationship, independent of execution support.
+    provenance : BondProvenance, default=TEMPLATE_RESOLVED
+        Evidence family supporting the endpoint pair.
+    source_metadata : SourceBondMetadata or None, default=None
+        Source record metadata, permitted only for SOURCE_EXPLICIT bonds.
+
+    Raises
+    ------
+    TypeError
+        The order or enum fields have invalid types.
+    ValueError
+        Endpoints coincide, order is nonpositive, or metadata conflicts with provenance.
+    """
 
     atom_index_1: AtomIndex
     atom_index_2: AtomIndex
-    order: int = 1
+    order: int | None = 1
     aromatic: bool = False
     relationship_type: BondRelationshipType = BondRelationshipType.COVALENT
     provenance: BondProvenance = BondProvenance.TEMPLATE_RESOLVED
@@ -125,10 +152,11 @@ class TopologyBond:
         if atom_index_2.value < atom_index_1.value:
             atom_index_1, atom_index_2 = atom_index_2, atom_index_1
 
-        if isinstance(self.order, bool) or not isinstance(self.order, int):
-            raise TypeError("topology bond order must be an integer")
-        if self.order <= 0:
-            raise ValueError("topology bond order must be positive")
+        if self.order is not None:
+            if isinstance(self.order, bool) or not isinstance(self.order, int):
+                raise TypeError("topology bond order must be an integer or None")
+            if self.order <= 0:
+                raise ValueError("topology bond order must be positive")
 
         if not isinstance(self.relationship_type, BondRelationshipType):
             raise TypeError(

@@ -52,7 +52,6 @@ from protrepair.structure.provenance import (
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
     AtomTopology,
-    BondProvenance,
     StructureTopology,
     TopologyBond,
     sequence_inferred_polymer_topology_bonds,
@@ -207,30 +206,30 @@ def normalize_raw_structure(
         constitution=constitution,
         residue_payloads=normalized_residue_payloads,
     )
-    source_topology_bonds = _topology_bonds_from_source_connections(
-        source_connections,
-        constitution=constitution,
-        geometry=geometry,
-    )
-    source_endpoint_pairs = frozenset(
-        bond.endpoint_pair() for bond in source_topology_bonds
-    )
-    template_bonds = tuple(
-        bond
+    expected_bonds_by_pair = {
+        bond.endpoint_pair(): bond
         for bond in template_resolved_topology_bonds(
             constitution,
             component_library=build_default_component_library(),
         )
-        if bond.endpoint_pair() not in source_endpoint_pairs
+    }
+    for bond in sequence_inferred_polymer_topology_bonds(constitution):
+        expected_bonds_by_pair.setdefault(bond.endpoint_pair(), bond)
+    source_topology_bonds = _topology_bonds_from_source_connections(
+        source_connections,
+        constitution=constitution,
+        geometry=geometry,
+        expected_bonds_by_pair=expected_bonds_by_pair,
     )
-    template_endpoint_pairs = frozenset(bond.endpoint_pair() for bond in template_bonds)
-    sequence_bonds = tuple(
+    source_endpoint_pairs = frozenset(
+        bond.endpoint_pair() for bond in source_topology_bonds
+    )
+    remaining_expected_bonds = tuple(
         bond
-        for bond in sequence_inferred_polymer_topology_bonds(constitution)
+        for bond in expected_bonds_by_pair.values()
         if bond.endpoint_pair() not in source_endpoint_pairs
-        and bond.endpoint_pair() not in template_endpoint_pairs
     )
-    topology_bonds = source_topology_bonds + template_bonds + sequence_bonds
+    topology_bonds = source_topology_bonds + remaining_expected_bonds
     return ProteinStructure.from_payload(
         constitution=constitution,
         geometry=geometry,
@@ -1126,11 +1125,11 @@ def _topology_bonds_from_source_connections(
     *,
     constitution: StructureConstitution,
     geometry: StructureGeometry,
+    expected_bonds_by_pair: dict[tuple[AtomIndex, AtomIndex], TopologyBond],
 ) -> tuple[TopologyBond, ...]:
     """Lower surviving source connections into canonical topology bonds."""
 
-    bonds: list[TopologyBond] = []
-    claimed_endpoint_pairs: set[tuple[AtomIndex, AtomIndex]] = set()
+    connections_by_pair: dict[tuple[AtomIndex, AtomIndex], SourceConnection] = {}
     for connection in connections:
         endpoint_1 = connection.endpoint_1
         endpoint_2 = connection.endpoint_2
@@ -1148,24 +1147,22 @@ def _topology_bonds_from_source_connections(
         ):
             continue
 
-        bond = TopologyBond(
-            atom_index_1=constitution.atom_index(endpoint_1.atom_ref),
-            atom_index_2=constitution.atom_index(endpoint_2.atom_ref),
-            order=1,
-            relationship_type=connection.relationship_type,
-            provenance=BondProvenance.SOURCE_EXPLICIT,
-            source_metadata=connection.source_metadata,
+        index_1 = constitution.atom_index(endpoint_1.atom_ref)
+        index_2 = constitution.atom_index(endpoint_2.atom_ref)
+        pair = (
+            (index_1, index_2) if index_1.value < index_2.value else (index_2, index_1)
         )
-        endpoint_pair = bond.endpoint_pair()
-        if connection.is_fallback_record() and endpoint_pair in claimed_endpoint_pairs:
-            continue
+        existing = connections_by_pair.get(pair)
+        connections_by_pair[pair] = (
+            connection if existing is None else existing.merge(connection)
+        )
 
-        # Typed conflicts remain visible to StructureTopology invariants. Only
-        # later fallback records yield to an already surviving source fact.
-        bonds.append(bond)
-        claimed_endpoint_pairs.add(endpoint_pair)
-
-    return tuple(bonds)
+    return tuple(
+        connection.to_topology_bond(
+            *pair, expected_bond=expected_bonds_by_pair.get(pair)
+        )
+        for pair, connection in connections_by_pair.items()
+    )
 
 
 def _source_endpoint_survived(

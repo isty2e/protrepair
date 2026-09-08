@@ -1,7 +1,7 @@
 """Bond planning and materialization for continuous-relaxation problems."""
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from protrepair.chemistry import BondDefinition, HydrogenSemantics, ResidueTemplate
@@ -18,7 +18,11 @@ from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
-from protrepair.structure.topology import BondRelationshipType, TopologyBond
+from protrepair.structure.topology import (
+    BondRelationshipType,
+    TopologyBond,
+    is_covalent_like_relationship,
+)
 from protrepair.transformer.continuous.support import (
     LocalBondPlanningSupportMode,
     LocalBondPlanningSupportResolution,
@@ -29,14 +33,6 @@ if TYPE_CHECKING:
 
 PEPTIDE_BOND_ORDER = 1
 HYDROGEN_ATTACHMENT_DISTANCE_MAX_ANGSTROM = 1.35
-EXECUTION_ADMISSIBLE_TOPOLOGY_BOND_RELATIONSHIPS: frozenset[BondRelationshipType] = (
-    frozenset(
-        {
-            BondRelationshipType.COVALENT,
-            BondRelationshipType.DISULFIDE,
-        }
-    )
-)
 
 
 def residue_ids_are_sequential_peptide_neighbors(
@@ -50,11 +46,26 @@ def residue_ids_are_sequential_peptide_neighbors(
 
 @dataclass(frozen=True, order=True, slots=True)
 class PlannedBond:
-    """Normalized bond relationship between two constitution-native atom slots."""
+    """A covalent edge selected for a region, with order resolved before binding.
+
+    Parameters
+    ----------
+    atom_index_1, atom_index_2 : AtomIndex
+        Distinct constitution-native endpoints, stored in ascending order.
+    order : int or None, default=1
+        Integral order or unresolved evidence retained during context selection.
+    aromatic : bool, default=False
+        Whether binding uses an aromatic rather than integral RDKit bond type.
+
+    Raises
+    ------
+    ValueError
+        Endpoints coincide or a supplied order is nonpositive.
+    """
 
     atom_index_1: AtomIndex
     atom_index_2: AtomIndex
-    order: int = 1
+    order: int | None = 1
     aromatic: bool = False
 
     def __post_init__(self) -> None:
@@ -66,7 +77,7 @@ class PlannedBond:
         if atom_index_2.value < atom_index_1.value:
             atom_index_1, atom_index_2 = atom_index_2, atom_index_1
 
-        if self.order <= 0:
+        if self.order is not None and self.order <= 0:
             raise ValueError("planned bond order must be positive")
 
         object.__setattr__(self, "atom_index_1", atom_index_1)
@@ -94,16 +105,10 @@ class PlannedBond:
         return (self.atom_index_1.value, self.atom_index_2.value)
 
 
-def topology_bond_is_execution_admissible(bond: TopologyBond) -> bool:
-    """Return whether one canonical topology bond may become a planned FF bond."""
-
-    return bond.relationship_type in EXECUTION_ADMISSIBLE_TOPOLOGY_BOND_RELATIONSHIPS
-
-
 def planned_bond_from_topology_bond(bond: TopologyBond) -> PlannedBond | None:
-    """Project one canonical topology bond into execution, if admissible."""
+    """Project a covalent-like edge for planning; binding also requires chemistry."""
 
-    if not topology_bond_is_execution_admissible(bond):
+    if not is_covalent_like_relationship(bond):
         return None
 
     return PlannedBond(
@@ -119,9 +124,20 @@ def inter_residue_bonds(
 ) -> tuple[PlannedBond, ...]:
     """Return inter-residue bonds across one whole snapshot."""
 
-    bond_set = set(_peptide_bonds(snapshot))
-    bond_set.update(_topology_inter_residue_bonds(snapshot))
-    return tuple(sorted(bond_set, key=lambda bond: bond.sort_key()))
+    canonical_pairs = {
+        (bond.atom_index_1.value, bond.atom_index_2.value)
+        for bond in snapshot.structure.topology.bonds
+        if bond.relationship_type is not BondRelationshipType.UNKNOWN
+    }
+    by_pair = {
+        bond.sort_key(): bond
+        for bond in _peptide_bonds(snapshot)
+        if bond.sort_key() not in canonical_pairs
+    }
+    by_pair.update(
+        (bond.sort_key(), bond) for bond in _topology_inter_residue_bonds(snapshot)
+    )
+    return tuple(by_pair[pair] for pair in sorted(by_pair))
 
 
 def directly_bonded_context_residue_indices(
@@ -242,9 +258,7 @@ def plan_continuous_region_bonds(
                 residue_site,
                 residue_geometry=residue_geometry,
                 explicit_hydrogen_atom_names={
-                    region.snapshot.structure.constitution.atom_site_at(
-                        atom_index
-                    ).name
+                    region.snapshot.structure.constitution.atom_site_at(atom_index).name
                     for bond in template_hydrogen_bonds
                     for atom_index in (
                         bond.atom_index_1,
@@ -265,7 +279,30 @@ def plan_continuous_region_bonds(
         and constitution.residue_index_for_atom_index(bond.atom_index_2)
         in included_residue_index_set
     )
-    return tuple(sorted(bond_set, key=lambda bond: bond.sort_key()))
+    by_pair = {bond.sort_key(): bond for bond in bond_set}
+    # Fallback templates supply missing edges, never competing orders for a
+    # canonical edge whose chemistry may differ from the default microstate.
+    for topology_bond in region.snapshot.structure.topology.bonds:
+        if any(
+            constitution.residue_index_for_atom_index(index)
+            not in included_residue_index_set
+            for index in topology_bond.endpoint_pair()
+        ):
+            continue
+        planned = planned_bond_from_topology_bond(topology_bond)
+        if planned is not None:
+            by_pair[planned.sort_key()] = planned
+        elif topology_bond.relationship_type is not BondRelationshipType.UNKNOWN:
+            by_pair.pop(
+                (topology_bond.atom_index_1.value, topology_bond.atom_index_2.value),
+                None,
+            )
+        elif topology_bond.order is not None:
+            pair = (topology_bond.atom_index_1.value, topology_bond.atom_index_2.value)
+            fallback = by_pair.get(pair)
+            if fallback is not None:
+                by_pair[pair] = replace(fallback, order=topology_bond.order)
+    return tuple(by_pair[pair] for pair in sorted(by_pair))
 
 
 def _require_disulfide_endpoint_multiplicity_realizability(
@@ -285,9 +322,7 @@ def _require_disulfide_endpoint_multiplicity_realizability(
         for contradiction in (
             DisulfideEndpointMultiplicityContradiction.all_from_structure(structure)
         )
-        if contradiction.is_contradictory_in_residue_projection(
-            included_residue_ids
-        )
+        if contradiction.is_contradictory_in_residue_projection(included_residue_ids)
     )
     if not contradictions:
         return

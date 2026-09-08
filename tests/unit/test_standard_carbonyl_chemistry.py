@@ -99,13 +99,13 @@ def test_new_amide_oxygen_projects_a_double_bond(
     assert bond.order == 2
 
 
-@pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
+@pytest.mark.parametrize("file_format", (None, FileFormat.PDB, FileFormat.MMCIF))
 @pytest.mark.parametrize(
     "residue_number,carbon_name,oxygen_name",
     ((4, "C", "O"), (25, "CG", "OD1"), (49, "CD", "OE1")),
 )
 def test_actual_rdkit_carbonyl_is_sp2_without_artificial_radicals(
-    file_format: FileFormat,
+    file_format: FileFormat | None,
     residue_number: int,
     carbon_name: str,
     oxygen_name: str,
@@ -122,9 +122,9 @@ def test_actual_rdkit_carbonyl_is_sp2_without_artificial_radicals(
         ),
         FileFormat.PDB,
     )
-    if file_format is FileFormat.MMCIF:
+    if file_format is not None:
         structure = read_structure_string(
-            write_structure_string(structure, FileFormat.MMCIF), FileFormat.MMCIF
+            write_structure_string(structure, file_format), file_format
         )
     library = build_standard_component_library()
     residue_id = ResidueId("A", residue_number)

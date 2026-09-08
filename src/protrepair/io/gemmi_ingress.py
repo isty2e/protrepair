@@ -1,5 +1,6 @@
 """gemmi-backed canonical structure ingress for coordinate formats."""
 
+from collections import Counter
 from collections.abc import Iterator
 from math import isfinite
 from os import PathLike
@@ -128,11 +129,12 @@ def _normalize_structure_text(
     """Parse and normalize one coordinate payload through one boundary path."""
 
     _assert_structure_text_size(contents, source_name=source_name)
+    source_orders_by_id: dict[str, int | None] = {}
     if file_format is FileFormat.PDB:
         raw_structure = gemmi.read_pdb_string(contents)
         pdb_conect_source_connections = _pdb_conect_source_connections(contents)
-        source_element_by_atom_identity = (
-            _pdb_source_isotope_element_by_atom_identity(contents)
+        source_element_by_atom_identity = _pdb_source_isotope_element_by_atom_identity(
+            contents
         )
     else:
         source_document = gemmi.cif.Document()
@@ -146,6 +148,7 @@ def _normalize_structure_text(
         source_element_by_atom_identity = (
             _mmcif_source_isotope_element_by_atom_identity(source_document)
         )
+        source_orders_by_id = _mmcif_connection_orders(source_document)
 
     # Typed Gemmi declarations precede untyped PDB CONECT fallback so the
     # canonical endpoint keeps the strongest surviving source fact.
@@ -153,6 +156,7 @@ def _normalize_structure_text(
         *_source_connections_from_raw_structure(
             raw_structure,
             file_format=file_format,
+            orders_by_id=source_orders_by_id,
         ),
         *pdb_conect_source_connections,
     )
@@ -196,6 +200,7 @@ def _source_connections_from_raw_structure(
     raw_structure: gemmi.Structure,
     *,
     file_format: FileFormat,
+    orders_by_id: dict[str, int | None] | None = None,
 ) -> tuple[SourceConnection, ...]:
     """Project Gemmi connection records into boundary-normalized facts."""
 
@@ -205,7 +210,12 @@ def _source_connections_from_raw_structure(
         endpoint_2 = _source_atom_identity_from_connection_partner(connection.partner2)
         if endpoint_1 is None or endpoint_2 is None:
             continue
-        if endpoint_1.atom_ref.residue_id == endpoint_2.atom_ref.residue_id:
+        if endpoint_1.atom_ref == endpoint_2.atom_ref:
+            continue
+        if (
+            file_format is FileFormat.PDB
+            and endpoint_1.atom_ref.residue_id == endpoint_2.atom_ref.residue_id
+        ):
             continue
 
         relationship_type = _relationship_type_from_connection(connection.type)
@@ -214,6 +224,9 @@ def _source_connections_from_raw_structure(
                 endpoint_1=endpoint_1,
                 endpoint_2=endpoint_2,
                 relationship_type=relationship_type,
+                order=None
+                if orders_by_id is None
+                else orders_by_id.get(connection.name),
                 source_metadata=SourceBondMetadata(
                     record_type=_source_connection_record_type(
                         file_format=file_format,
@@ -228,6 +241,32 @@ def _source_connections_from_raw_structure(
         )
 
     return tuple(dict.fromkeys(source_connections))
+
+
+def _mmcif_connection_orders(document: gemmi.cif.Document) -> dict[str, int | None]:
+    """Read order evidence that Gemmi's Connection object does not expose."""
+    orders: dict[str, int | None] = {}
+    if not document:
+        return orders
+    tokens = {"sing": 1, "doub": 2, "trip": 3, "quad": 4}
+    for row in document[0].find("_struct_conn.", ["id", "?pdbx_value_order"]):
+        source_id = gemmi.cif.as_string(row[0])
+        raw_token = row[1] if row.has(1) else "?"
+        if raw_token in {"?", "."}:
+            order = None
+        else:
+            token = gemmi.cif.as_string(raw_token).lower()
+            order = tokens.get(token)
+            if order is None:
+                raise StructureNormalizationError(
+                    f"unsupported struct_conn bond order: {token!r}"
+                )
+        if source_id in orders and orders[source_id] != order:
+            raise StructureNormalizationError(
+                f"conflicting struct_conn orders for id {source_id!r}"
+            )
+        orders[source_id] = order
+    return orders
 
 
 def _source_connection_record_type(
@@ -306,7 +345,11 @@ def _pdb_conect_source_connections(
 
     atom_identity_by_serial = _first_model_unambiguous_pdb_atom_identities(contents)
 
-    source_connections: list[SourceConnection] = []
+    connections_by_pair: dict[
+        tuple[SourceAtomIdentity, SourceAtomIdentity], SourceConnection
+    ] = {}
+    directed_counts: Counter[tuple[int, int]] = Counter()
+    seen_rows: set[tuple[int, tuple[int, ...]]] = set()
     for line in contents.splitlines():
         if not line.startswith("CONECT"):
             continue
@@ -315,31 +358,43 @@ def _pdb_conect_source_connections(
         if len(serials) < 2:
             continue
 
-        source_identity = atom_identity_by_serial.get(serials[0])
-        if source_identity is None:
+        if serials[0] not in atom_identity_by_serial:
             continue
+        row = (serials[0], tuple(sorted(serials[1:])))
+        if row in seen_rows:
+            continue
+        seen_rows.add(row)
+        directed_counts.update((serials[0], target) for target in serials[1:])
 
-        for target_serial in serials[1:]:
-            target_identity = atom_identity_by_serial.get(target_serial)
-            if (
-                target_identity is None
-                or target_identity.atom_ref == source_identity.atom_ref
-            ):
-                continue
-
-            source_connections.append(
-                SourceConnection(
-                    endpoint_1=source_identity,
-                    endpoint_2=target_identity,
-                    relationship_type=BondRelationshipType.UNKNOWN,
-                    source_metadata=SourceBondMetadata(
-                        record_type=SourceBondRecordType.PDB_CONECT,
-                        source_id="CONECT",
-                    ),
-                )
+    for (source_serial, target_serial), multiplicity in directed_counts.items():
+        source_identity = atom_identity_by_serial[source_serial]
+        target_identity = atom_identity_by_serial.get(target_serial)
+        if (
+            target_identity is None
+            or target_identity.atom_ref == source_identity.atom_ref
+        ):
+            continue
+        if multiplicity > 4:
+            raise StructureNormalizationError(
+                "CONECT bond order exceeds quadruple multiplicity"
             )
+        connection = SourceConnection(
+            endpoint_1=source_identity,
+            endpoint_2=target_identity,
+            relationship_type=BondRelationshipType.UNKNOWN,
+            order=multiplicity if multiplicity > 1 else None,
+            source_metadata=SourceBondMetadata(
+                record_type=SourceBondRecordType.PDB_CONECT,
+                source_id="CONECT",
+            ),
+        )
+        pair = connection.endpoint_pair()
+        existing = connections_by_pair.get(pair)
+        connections_by_pair[pair] = (
+            connection if existing is None else existing.merge(connection)
+        )
 
-    return tuple(dict.fromkeys(source_connections))
+    return tuple(connections_by_pair.values())
 
 
 def _first_model_unambiguous_pdb_atom_identities(
@@ -460,8 +515,7 @@ def _mmcif_source_isotope_element_by_atom_identity(
             continue
         if (
             first_model_number
-            and _non_null_cif_value(model_numbers[row_index])
-            != first_model_number
+            and _non_null_cif_value(model_numbers[row_index]) != first_model_number
         ):
             continue
 
@@ -628,8 +682,12 @@ def _pdb_atom_serial_and_identity(
 def _pdb_conect_serials(line: str) -> tuple[int, ...]:
     """Return serial numbers encoded in one fixed-width PDB CONECT line."""
 
-    serials: list[int] = []
-    for offset in range(6, len(line), 5):
+    try:
+        serials = [int(line[6:11])]
+    except ValueError:
+        return ()
+    # Accept RDKit's extended fifth/sixth neighbor fields through column 41.
+    for offset in range(11, min(len(line), 41), 5):
         token = line[offset : offset + 5].strip()
         if not token:
             continue
