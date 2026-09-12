@@ -11,8 +11,10 @@ from protrepair.chemistry.microstate.catalog import (
     PolymerChemicalSite,
     standard_microstate_candidates,
 )
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.graph import MicrostateAtom, MicrostateGraph
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.chemistry.microstate.resolution import (
     HydrogenAttachmentBasis,
     MicrostateConstraints,
@@ -129,6 +131,55 @@ def _with_source_bonds(
             ingress=replace(structure.provenance.ingress, observation=observed),
         )
     )
+
+
+@pytest.mark.parametrize("element", ("H", "D", "T"))
+def test_fixed_h_identity_retains_source_alias_and_isotope(element: str) -> None:
+    source = _source("SER", hydrogens=(("HB3", element),))
+    preparation = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(source), build_standard_component_library()
+    )
+    selected = preparation.fixed_hydrogen_atom_sites(ResidueId("A", 1))
+    cb = [(atom.name, atom.element) for atom, parent in selected if parent == "CB"]
+    assert len(cb) == 2
+    assert ("HB3", element) in cb
+
+
+def test_fixed_h_identity_uses_explicit_source_parent_for_nonstandard_name() -> None:
+    source = _with_source_bonds(
+        _source("SER", hydrogens=(("DX", "D"),)),
+        ("CB", "DX", BondRelationshipType.COVALENT, 1),
+    )
+    preparation = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(source), build_standard_component_library()
+    )
+    selected = preparation.fixed_hydrogen_atom_sites(ResidueId("A", 1))
+    assert (AtomSite("DX", "D"), "CB") in selected
+    assert len([atom for atom, parent in selected if parent == "CB"]) == 2
+
+
+@pytest.mark.parametrize("failure", ("overfull", "unresolved", "charged", "multiple"))
+def test_fixed_h_identity_refuses_incompatible_source(failure: str) -> None:
+    source = _source(
+        "SER",
+        hydrogens=(
+            (("HB1", "H"), ("HB2", "H"), ("HB3", "H"))
+            if failure == "overfull"
+            else (("HX" if failure == "unresolved" else "HB2", "H"),)
+        ),
+        charges=(("HB2", 1),) if failure == "charged" else (),
+    )
+    if failure == "multiple":
+        source = _with_source_bonds(
+            source,
+            ("CB", "HB2", BondRelationshipType.COVALENT, 1),
+            ("CA", "HB2", BondRelationshipType.COVALENT, 1),
+        )
+    preparation = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(source), build_standard_component_library()
+    )
+    with pytest.raises(ValueError):
+        preparation.fixed_hydrogen_atom_sites(ResidueId("A", 1))
 
 
 def _native_graph(graph: MicrostateGraph) -> Chem.Mol:

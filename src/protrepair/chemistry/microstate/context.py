@@ -9,7 +9,6 @@ from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.microstate.catalog import (
     PeptideLinkage,
     PolymerChemicalSite,
-    standard_microstate_candidates,
 )
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
@@ -132,9 +131,7 @@ class PolymerMicrostateContext:
                 details=("polymer microstates require a polymer residue",),
             )
         residue = constitution.residue_site_at(index)
-        catalog = standard_microstate_candidates(
-            site.template.component_id, site.kind, site.linkage
-        )
+        catalog = site.candidates()
         names = (
             set()
             if catalog is None
@@ -447,6 +444,107 @@ class PolymerMicrostateContext:
                 raise ValueError("microstate H identity collides with a heavy atom")
             hydrogens[name] = parent
         return hydrogens
+
+    def hydrogen_parents(
+        self,
+        residue_id: ResidueId,
+        site: PolymerMicrostateSite,
+        *,
+        original: bool = False,
+    ) -> dict[str, str]:
+        """Interpret H attachment from explicit bonds, then unambiguous names.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Residue whose fixed-template H identities are being selected.
+        site : PolymerMicrostateSite
+            Owner of the component's H naming grammar.
+        original : bool
+            Read immutable observations instead of the current graph.
+
+        Returns
+        -------
+        dict[str, str]
+            Local H name to heavy parent name; no connectivity is manufactured.
+
+        Raises
+        ------
+        ValueError
+            A hydrogen has unresolved, nonlocal, charged or contradictory chemistry.
+        """
+        observation = self.source.provenance.ingress.observation
+        if original and observation is None:
+            return {}
+        constitution = (
+            observation.constitution
+            if original and observation is not None
+            else self.source.constitution
+        )
+        residue = constitution.residue_or_ligand(residue_id)
+        if residue is None:
+            return {}
+        by_atom = self._bonds_by_atom
+        if original and observation is not None:
+            indexed: dict[AtomIndex, list[TopologyBond]] = defaultdict(list)
+            for bond in observation.bonds_for_residue(residue_id):
+                for index in bond.endpoint_pair():
+                    indexed[index].append(bond)
+            by_atom = {index: tuple(bonds) for index, bonds in indexed.items()}
+
+        named = site.named_hydrogen_parents(residue)
+        original_parents = (
+            {} if original else self.hydrogen_parents(residue_id, site, original=True)
+        )
+        named.update(original_parents)
+        result = {}
+        for atom in residue.atom_sites:
+            if not atom.is_hydrogen():
+                continue
+            ref = AtomRef(residue_id, atom.name)
+            index = constitution.atom_index(ref)
+            charge = (
+                observation.formal_charge(ref)
+                if original and observation is not None
+                else self.source.topology.formal_charge(index)
+            )
+            if charge not in (None, 0):
+                raise ValueError("charged H is outside fixed-template chemistry")
+            parents = []
+            untyped = []
+            for bond in by_atom.get(index, ()):
+                if bond.relationship_type is BondRelationshipType.HYDROGEN_BOND:
+                    continue
+                other = (
+                    bond.atom_index_2
+                    if index == bond.atom_index_1
+                    else bond.atom_index_1
+                )
+                other_ref = constitution.atom_ref_at(other)
+                if (
+                    other_ref.residue_id != residue_id
+                    or constitution.atom_site_at(other).is_hydrogen()
+                    or bond.order not in (None, 1)
+                ):
+                    raise ValueError("H attachment requires one local heavy parent")
+                if bond.relationship_type is BondRelationshipType.COVALENT:
+                    parents.append(other_ref.atom_name)
+                elif (
+                    bond.relationship_type is BondRelationshipType.UNKNOWN
+                    and bond.provenance is BondProvenance.SOURCE_EXPLICIT
+                ):
+                    untyped.append(other_ref.atom_name)
+                else:
+                    raise ValueError("unsupported H relationship")
+            if len(parents) > 1:
+                raise ValueError("H has multiple covalent parents")
+            parent = parents[0] if parents else named.get(atom.name)
+            if parent is None or any(other != parent for other in untyped):
+                raise ValueError(f"unresolved H attachment: {atom.name}")
+            if atom.name in original_parents and parent != original_parents[atom.name]:
+                raise ValueError("current H attachment contradicts its source parent")
+            result[atom.name] = parent
+        return result
 
     def is_realized(
         self,

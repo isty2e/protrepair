@@ -18,7 +18,9 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateResolution,
     MicrostateResolutionStatus,
 )
+from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite
+from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.labels import ResidueId
 
 
@@ -159,6 +161,9 @@ class PolymerMicrostatePreparation:
     """
 
     _targets: Mapping[ResidueId, tuple[PolymerSitePreparation, ...]]
+    context: PolymerMicrostateContext
+    component_library: ComponentLibrary
+    _disulfides: frozenset[ResidueId]
 
     def __init__(
         self,
@@ -179,7 +184,7 @@ class PolymerMicrostatePreparation:
                     continue
                 if (
                     standard_microstate_candidates(
-                        template.component_id,
+                        template.backbone_family_component_id,
                         PolymerChemicalSite.BACKBONE_N,
                         PeptideLinkage.LINKED,
                     )
@@ -205,6 +210,117 @@ class PolymerMicrostatePreparation:
         if pending:
             raise ValueError("microstate request targets an absent polymer site")
         object.__setattr__(self, "_targets", MappingProxyType(targets))
+        object.__setattr__(self, "context", context)
+        object.__setattr__(self, "component_library", component_library)
+        object.__setattr__(
+            self, "_disulfides", disulfide_bonded_cysteine_residue_ids(context.source)
+        )
+
+    def matches_chemistry(self, structure: ProteinStructure) -> bool:
+        """Allow coordinate-only reuse, never a changed graph or source evidence.
+
+        Returns
+        -------
+        bool
+            Whether all inputs to identity selection and realization are equal.
+            This does not authorize reuse of coordinate placements.
+        """
+        source = self.context.source
+        return (
+            source.constitution == structure.constitution
+            and source.topology == structure.topology
+            and source.provenance == structure.provenance
+        )
+
+    def fixed_hydrogen_atom_sites(
+        self, residue_id: ResidueId
+    ) -> tuple[tuple[AtomSite, str], ...]:
+        """Select fixed-template H identities outside coupled chemical sites.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Polymer residue in this snapshot.
+
+        Returns
+        -------
+        tuple[tuple[AtomSite, str], ...]
+            H identity and parent. Original identities precede current generated
+            identities, then template names. No coordinates or bonds are inferred.
+
+        Raises
+        ------
+        ValueError
+            Original fixed-parent H exceed the template inventory, or a required
+            identity collides with another atom.
+        """
+        residue = self.context.source.constitution.residue_or_ligand(residue_id)
+        if residue is None:
+            raise ValueError("fixed H preparation requires a present residue")
+        template = self.component_library.get(residue.component_id)
+        if template is None or not template.can_add_hydrogens():
+            return ()
+        controlled = frozenset(
+            name
+            for target in self.targets_for(residue_id)
+            for name in target.controlled_parent_names()
+        )
+        expected = template.expected_hydrogen_atom_names()
+        anchors = template.template_hydrogen_anchor_by_name(expected)
+        names_by_parent: dict[str, list[str]] = {}
+        for name in expected:
+            parent = anchors.get(name)
+            if parent is None or parent in controlled:
+                continue
+            if residue_id in self._disulfides and parent == "SG":
+                continue
+            names_by_parent.setdefault(parent, []).append(name)
+
+        observation = self.context.source.provenance.ingress.observation
+        original = (
+            None
+            if observation is None
+            else observation.constitution.residue_or_ligand(residue_id)
+        )
+        grammar = PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN)
+        selected: dict[str, list[AtomSite]] = {parent: [] for parent in names_by_parent}
+        for candidate in (original, residue):
+            if candidate is None or candidate.component_id != residue.component_id:
+                continue
+            named = self.context.hydrogen_parents(
+                residue_id, grammar, original=candidate is original
+            )
+            for atom in candidate.atom_sites:
+                parent = named.get(atom.name)
+                if parent not in selected:
+                    continue
+                entries = selected[parent]
+                if any(entry.name == atom.name for entry in entries):
+                    continue
+                if len(entries) >= len(names_by_parent[parent]):
+                    if candidate is original:
+                        raise ValueError(
+                            f"source H exceed fixed template inventory at {parent}"
+                        )
+                    continue
+                entries.append(atom)
+        result = []
+        used = {atom.name for entries in selected.values() for atom in entries}
+        for parent, names in names_by_parent.items():
+            entries = selected[parent]
+            for name in names:
+                if len(entries) == len(names):
+                    break
+                if name in used:
+                    continue
+                if residue.has_atom_site(name):
+                    raise ValueError(f"fixed H identity collides with {name}")
+                entries.append(AtomSite(name, "H"))
+                used.add(name)
+            if len(entries) != len(names):
+                raise ValueError(f"fixed H names exhausted at {parent}")
+            result.extend((atom, parent) for atom in entries)
+        return tuple(result)
 
     def targets_for(self, residue_id: ResidueId) -> tuple[PolymerSitePreparation, ...]:
         """Return all chemical targets for a polymer residue.
@@ -315,7 +431,14 @@ def pras_microstate_preferences(
         if site.kind is PolymerChemicalSite.BACKBONE_N:
             return (
                 MicrostateConstraints(
-                    hydrogens=(("N", 2 if component == "PRO" else 3),)
+                    hydrogens=(
+                        (
+                            "N",
+                            2
+                            if site.template.backbone_family_component_id == "PRO"
+                            else 3,
+                        ),
+                    )
                 ),
             )
         if site.kind is PolymerChemicalSite.BACKBONE_C:

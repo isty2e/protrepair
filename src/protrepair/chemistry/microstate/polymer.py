@@ -3,7 +3,9 @@
 from collections import Counter
 from dataclasses import dataclass, replace
 
+from protrepair.chemistry.component.defaults import build_default_component_library
 from protrepair.chemistry.component.graph import BondDefinition
+from protrepair.chemistry.component.semantics import IdealGeometryHeavyAtomSemantics
 from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.microstate.catalog import (
     PeptideLinkage,
@@ -17,9 +19,9 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateConstraints,
     MicrostateResolution,
     MicrostateResolutionStatus,
+    MicrostateSite,
     ObservedHydrogenAttachment,
 )
-from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import AtomRef
 from protrepair.structure.observation import StructureObservation
@@ -120,7 +122,7 @@ class PolymerMicrostateSite:
         ValueError
             An otherwise applicable resolution receives an empty override.
         """
-        library = build_standard_component_library()
+        library = build_default_component_library()
         stock = library.get(self.template.component_id)
         if (
             stock is None
@@ -140,9 +142,7 @@ class PolymerMicrostateSite:
                 MicrostateResolutionStatus.INSUFFICIENT,
                 details=("backbone linkage is unknown",),
             )
-        site = standard_microstate_candidates(
-            stock.component_id, self.kind, self.linkage
-        )
+        site = self.candidates()
         if site is None:
             return MicrostateResolution(
                 MicrostateResolutionStatus.UNSUPPORTED,
@@ -430,12 +430,36 @@ class PolymerMicrostateSite:
         )
 
     def _scaffold_matches_template(self, residue: ResidueSite) -> bool:
-        expected = set(self.template.expected_atom_names())
+        expected = set(self.template.expected_atom_names()) | {"OXT"}
+        semantics = self.template.heavy_atom_semantics
+        elements = (
+            {atom.atom_name: atom.element for atom in semantics.component.atoms}
+            if isinstance(semantics, IdealGeometryHeavyAtomSemantics)
+            else {}
+        )
         return all(
-            atom.element == atom.name[0]
+            atom.element == elements.get(atom.name, atom.name[0])
             if atom.name in expected
             else atom.is_hydrogen()
             for atom in residue.atom_sites
+        )
+
+    def candidates(self) -> MicrostateSite | None:
+        """Project supported backbone family or exact side-chain catalog.
+
+        Returns
+        -------
+        MicrostateSite or None
+            Backbone graphs may serve bundled peptide-like modifications. The
+            resolver still checks the complete active template against the bundle;
+            a custom family label alone never authorizes stock chemistry.
+        """
+        return standard_microstate_candidates(
+            self.template.component_id
+            if self.kind is PolymerChemicalSite.SIDECHAIN
+            else self.template.backbone_family_component_id,
+            self.kind,
+            self.linkage,
         )
 
     def named_hydrogen_parents(self, residue: ResidueSite) -> dict[str, str]:
@@ -468,6 +492,10 @@ class PolymerMicrostateSite:
             aliases.update({"HD1": "ND1", "HE2": "NE2"})
         elif self.template.component_id == "ARG":
             aliases.update({"HH11": "NH1", "HH12": "NH1", "HH21": "NH2", "HH22": "NH2"})
+        elif self.template.component_id == "ASN":
+            aliases.update({"HD21": "ND2", "HD22": "ND2"})
+        elif self.template.component_id == "GLN":
+            aliases.update({"HE21": "NE2", "HE22": "NE2"})
         elif self.template.component_id == "ASP":
             aliases.update({"HD1": "OD1", "HD2": "OD2"})
         elif self.template.component_id == "GLU":
@@ -490,6 +518,22 @@ class PolymerMicrostateSite:
             names[atom.name] = canonical
         anchors = self.template.template_hydrogen_anchor_by_name(names.values())
         aliases.update(anchors)
+        # PDB suffix numbering and PRAS prefix numbering describe the same
+        # carbon-bound H families. Keep ambiguous families unresolved.
+        carbon_parents: dict[str, set[str]] = {}
+        for atom_name in self.template.expected_heavy_atom_names():
+            if not atom_name.startswith("C"):
+                continue
+            stem = "H" + atom_name[1:]
+            for name in (
+                stem,
+                *(f"{stem}{i}" for i in (1, 2, 3)),
+                *(f"{i}{stem}" for i in (1, 2, 3)),
+            ):
+                carbon_parents.setdefault(name, set()).add(atom_name)
+        for name, parents in carbon_parents.items():
+            if len(parents) == 1:
+                aliases.setdefault(name, next(iter(parents)))
         return {
             name: aliases[canonical]
             for name, canonical in names.items()
