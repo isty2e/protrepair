@@ -110,6 +110,37 @@ bond-order, charge, and hydrogen resolution. Source charges are not changed by
 these fixed carbonyl and ring corrections. Custom component definitions are
 unchanged.
 
+### Coupled Microstate Resolution
+
+The internal `chemistry.microstate` resolver represents each protonatable site
+as a coupled graph: formal charges, exact H counts, integral bond orders, and
+the valence used by bonds outside the site. It covers ARG, HIS, ASP, GLU, LYS,
+and explicitly linked or free backbone N/C sites, including Pro N. These are
+separate decisions, so a charged N terminus does not determine the side-chain
+charge.
+
+Original charges, H/D/T attachments, and reported orders constrain the candidate
+graphs. Observed H counts are lower bounds; missing H is not evidence for a
+neutral state. Source-localized charge or bond orders are checked before choosing a
+resonance representation. Compatible alternatives remain ambiguous; conflicting
+facts are reported rather than silently replaced. An explicit site override
+can replace interpretable source constraints and retains those constraints in
+the result. A caller-supplied default can only narrow source-compatible choices.
+
+The resolver retains the original identities of interpreted H attachments and
+distinguishes covalent source records from standard-name interpretation. It
+does not use proximity, resolution, or a pKa model to select protonation.
+Unknown H names without covalent attachment, missing heavy atoms, unknown
+backbone linkage, custom chemistry, unreconciled component aliases, and
+unsupported external bonds remain unresolved or unsupported. A missing bond
+record is not proof of a free terminus.
+
+This is currently a pure chemistry component, not a change to `process_structure`
+or hydrogen placement. Atomic application to H atoms, charges, topology, and
+readiness is not yet connected. The existing histidine ratio method is unchanged;
+native validation of the candidate graphs alone does not establish repaired
+structure quality.
+
 ## Projection Rules
 
 Execution may treat only covalent-like relationship types as force-field planned

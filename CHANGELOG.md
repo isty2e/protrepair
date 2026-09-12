@@ -60,6 +60,10 @@
 
 ### Added
 
+- add an internal, pure standard-polymer microstate resolver that keeps H counts,
+  formal charges, and bond orders coupled. It preserves source evidence and
+  distinguishes ambiguity, conflicts, and unsupported chemistry; runtime
+  hydrogen placement and workflow integration are not yet changed
 - reconstruct explicitly mapped missing polymer spans from external donor
   structures with anchor-frame placement, bounded donor-seeded CCD closure,
   chemistry and stereochemistry gates, atomic topology updates, and structured
