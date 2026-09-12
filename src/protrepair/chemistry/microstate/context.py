@@ -19,6 +19,7 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateResolutionStatus,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.constitution import AtomSite
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
@@ -504,3 +505,113 @@ class PolymerMicrostateContext:
             ):
                 return False
         return True
+
+    def hydrogen_atom_sites(
+        self,
+        residue_id: ResidueId,
+        site: PolymerMicrostateSite,
+        resolution: MicrostateResolution,
+    ) -> tuple[tuple[AtomSite, str], ...]:
+        """Select final H identities and parents for a resolved site.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Current polymer residue identity.
+        site : PolymerMicrostateSite
+            Standard chemical site with established linkage.
+        resolution : MicrostateResolution
+            Desired coupled graph and original H attachment evidence.
+
+        Returns
+        -------
+        tuple[tuple[AtomSite, str], ...]
+            Final atoms and their parent names, preserving original H/D/T first,
+            then current H identities, then choosing unoccupied standard names.
+            No coordinates or source-removal authority are inferred here.
+
+        Raises
+        ------
+        ValueError
+            Chemistry is unresolved, current attachments are unsupported, or
+            standard names cannot represent the selected graph without collision.
+        """
+        current = self.hydrogen_attachments(residue_id, site, resolution)
+        graph = resolution.graph
+        assert graph is not None
+        constitution = self.source.constitution
+        residue = constitution.residue_site_at(constitution.residue_index(residue_id))
+        observation = self.source.provenance.ingress.observation
+        original: dict[str, tuple[AtomSite, str]] = {}
+        for attachment in resolution.observed_hydrogens:
+            assert observation is not None
+            index = observation.constitution.resolve_atom_index(attachment.hydrogen)
+            assert index is not None
+            original[attachment.hydrogen.atom_name] = (
+                observation.constitution.atom_site_at(index),
+                attachment.parent.atom_name,
+            )
+
+        reserved = dict(current)
+        reserved.update((name, parent) for name, (_atom, parent) in original.items())
+        final: list[tuple[AtomSite, str]] = []
+        for parent in graph.atoms:
+            candidates = [
+                atom
+                for name, (atom, owner) in sorted(original.items())
+                if owner == parent.name
+            ]
+            candidates.extend(
+                residue.atom_site(name)
+                for name, owner in sorted(current.items())
+                if owner == parent.name and name not in original
+            )
+            selected = candidates[: parent.hydrogens]
+            for name in site.hydrogen_name_candidates(parent.name):
+                if len(selected) == parent.hydrogens:
+                    break
+                if name in reserved or residue.has_atom_site(name):
+                    continue
+                selected.append(AtomSite(name, "H"))
+                reserved[name] = parent.name
+            if len(selected) != parent.hydrogens:
+                raise ValueError(
+                    "microstate H identities collide with occupied atom names"
+                )
+            final.extend((atom, parent.name) for atom in selected)
+        return tuple(final)
+
+    def covalent_neighbors(
+        self, atom_ref: AtomRef, *, order: int | None = None
+    ) -> tuple[AtomRef, ...]:
+        """Read current covalent neighbors through the snapshot adjacency index.
+
+        Parameters
+        ----------
+        atom_ref : AtomRef
+            Atom identity in this snapshot.
+        order : int or None
+            Restrict to an effective integral bond order; None admits any order.
+
+        Returns
+        -------
+        tuple[AtomRef, ...]
+            Stable, sorted neighbor identities. Absent atoms have no neighbors;
+            untyped and non-covalent relationships are not guessed as covalent.
+        """
+        constitution = self.source.constitution
+        index = constitution.resolve_atom_index(atom_ref)
+        return (
+            tuple(
+                sorted(
+                    constitution.atom_ref_at(other)
+                    for bond in self._bonds_by_atom.get(index, ())
+                    if bond.relationship_type is BondRelationshipType.COVALENT
+                    and (order is None or bond.order == order)
+                    for other in bond.endpoint_pair()
+                    if other != index
+                )
+            )
+            if index is not None
+            else ()
+        )

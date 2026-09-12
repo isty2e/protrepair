@@ -159,6 +159,9 @@ choice.
 The internal `transformer.polymer_microstate` application takes complete H
 placements and updates H atoms, charges, and bonds together. It preserves heavy
 coordinates, surviving H geometry and isotopes, and original observations.
+A hydrogen-placement action can explicitly replace selected H coordinates while
+keeping their identities, isotopes, atom scalars and original observations.
+Chemistry-only application does not reposition them.
 Patches are bound to their source snapshot, and application checks current
 boundary bonds so that a new crosslink cannot inherit an obsolete site decision.
 An applied explicit override is retained separately from the original input.
@@ -173,10 +176,23 @@ snapshot, sharing a bond index across sites. Selecting a graph does not mean the
 structure already satisfies it, and satisfying it says nothing about coordinate
 quality.
 
-This application and preparation policy are not yet connected to
-`process_structure`, automatic H placement, or FF readiness. The existing
+The internal `place_polymer_microstate_hydrogens` operation generates the
+complete site's H coordinates from the selected graph. It keeps original H
+identities first, then surviving generated H, and uses standard names for new
+atoms. RDKit receives the selected H counts and charges; it does not choose
+protonation. Other standard heavy atoms provide a local coordinate stencil,
+not replacement topology or force-field chemistry. Linked amide N placement
+requires the actual partner C=O connection. Only the selected H coordinates
+are copied back, and failed placement produces no structure update.
+
+By default this operation keeps existing or original H coordinates as anchors.
+When heavy atoms have moved, the caller can request H rebuilding instead of
+restoring stale original positions. Neither mode certifies clash-free geometry.
+
+These internal operations and preparation policy are not yet connected to
+`process_structure`, the default hydrogen workflow, or FF readiness. The existing
 histidine ratio execution is unchanged.
-The graph and application tests do not establish repaired structure quality.
+Local graph and placement checks do not establish whole-structure repair quality.
 
 ## Projection Rules
 

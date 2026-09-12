@@ -462,6 +462,7 @@ class PolymerMicrostateSite:
             "2H": "N",
             "3H": "N",
             "HXT": "OXT",
+            "HO": "O",
         }
         if self.template.component_id == "HIS":
             aliases.update({"HD1": "ND1", "HE2": "NE2"})
@@ -494,3 +495,34 @@ class PolymerMicrostateSite:
             for name, canonical in names.items()
             if canonical in aliases
         }
+
+    def hydrogen_name_candidates(self, parent_name: str) -> tuple[str, ...]:
+        """Return preferred new H names, without selecting a protonation state.
+
+        Parameters
+        ----------
+        parent_name : str
+            Canonical site heavy-atom name.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Template names followed by supported microstate-specific names.
+            Existing and original identities take precedence in the context.
+        """
+        if parent_name == "N":
+            return (
+                ("H",) if self.linkage is PeptideLinkage.LINKED else ("H1", "H2", "H3")
+            )
+        template_names = self.template.expected_hydrogen_atom_names()
+        anchors = self.template.template_hydrogen_anchor_by_name(template_names)
+        names = [name for name in template_names if anchors.get(name) == parent_name]
+        extra = {
+            "HIS": {"ND1": "HD1", "NE2": "HE2"},
+            "ASP": {"OD1": "HD1", "OD2": "HD2"},
+            "GLU": {"OE1": "HE1", "OE2": "HE2"},
+        }.get(self.template.component_id, {})
+        extra.update({"O": "HO", "OXT": "HXT"})
+        if parent_name in extra and extra[parent_name] not in names:
+            names.append(extra[parent_name])
+        return tuple(names)

@@ -68,6 +68,9 @@
   observations, and add a snapshot-bound check of current H/charge/bond realization
 - add marked free-terminal assumptions to the internal PRAS preparation policy,
   without replacing current peptide connections or contrary original chemistry
+- generate graph-constrained H coordinates for internal polymer microstate
+  application, with separate chemistry-only preservation and explicit H
+  rebuilding. Default hydrogen workflow and FF-readiness integration are pending
 - reconstruct explicitly mapped missing polymer spans from external donor
   structures with anchor-frame placement, bounded donor-seeded CCD closure,
   chemistry and stereochemistry gates, atomic topology updates, and structured
