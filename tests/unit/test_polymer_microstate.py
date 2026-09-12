@@ -25,6 +25,7 @@ from protrepair.chemistry.microstate.resolution import (
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.io import read_structure_string
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.constitution import AtomSite
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
 from protrepair.structure.provenance import FileFormat
@@ -683,3 +684,23 @@ def test_resolved_graph_rejects_attachment_from_another_site() -> None:
             (graph,),
             observed_hydrogens=(attachment,),
         )
+
+
+@pytest.mark.parametrize("element", ("H", "D", "T"))
+def test_named_heavy_boundary_atom_cannot_be_a_hydrogen_isotope(element: str) -> None:
+    source = _source("LYS", charges=(("NZ", 0),))
+    residue = source.constitution.residue_site_at(ResidueIndex(0))
+    malformed = replace(
+        residue,
+        atom_sites=tuple(
+            AtomSite(atom.name, element) if atom.name == "CE" else atom
+            for atom in residue.atom_sites
+        ),
+    )
+    site = PolymerMicrostateSite(
+        build_standard_component_library().require("LYS"), PolymerChemicalSite.SIDECHAIN
+    )
+    assert (
+        site.resolve(malformed, source.provenance.ingress.observation).status
+        is MicrostateResolutionStatus.UNSUPPORTED
+    )

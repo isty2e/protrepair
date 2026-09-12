@@ -141,14 +141,7 @@ class PolymerMicrostateSite:
                 MicrostateResolutionStatus.INSUFFICIENT,
                 details=(f"missing heavy atoms: {', '.join(sorted(missing))}",),
             )
-        if any(
-            not atom.is_hydrogen()
-            and (
-                atom.name not in stock.expected_atom_names()
-                or atom.element != atom.name[0]
-            )
-            for atom in residue.atom_sites
-        ):
+        if not self._scaffold_matches_template(residue):
             return MicrostateResolution(
                 MicrostateResolutionStatus.UNSUPPORTED,
                 details=("current heavy scaffold differs from standard chemistry",),
@@ -212,14 +205,7 @@ class PolymerMicrostateSite:
                     "source component alias or identity needs explicit reconciliation",
                 ),
             )
-        if any(
-            not atom.is_hydrogen()
-            and (
-                atom.name not in self.template.expected_atom_names()
-                or atom.element != atom.name[0]
-            )
-            for atom in source.atom_sites
-        ):
+        if not self._scaffold_matches_template(source):
             return MicrostateResolution(
                 MicrostateResolutionStatus.UNSUPPORTED,
                 details=("original heavy scaffold differs from standard chemistry",),
@@ -412,6 +398,15 @@ class PolymerMicrostateSite:
             ),
             tuple(attachments),
             (),
+        )
+
+    def _scaffold_matches_template(self, residue: ResidueSite) -> bool:
+        expected = set(self.template.expected_atom_names())
+        return all(
+            atom.element == atom.name[0]
+            if atom.name in expected
+            else atom.is_hydrogen()
+            for atom in residue.atom_sites
         )
 
     def _hydrogen_names(self, source: ResidueSite) -> dict[str, str]:
