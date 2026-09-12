@@ -125,7 +125,9 @@ neutral state. Source-localized charge or bond orders are checked before choosin
 resonance representation. Compatible alternatives remain ambiguous; conflicting
 facts are reported rather than silently replaced. An explicit site override
 can replace interpretable source constraints and retains those constraints in
-the result. A caller-supplied default can only narrow source-compatible choices.
+the result. Ordered preparation preferences can only narrow source-compatible
+choices. A preference with no compatible candidate is ignored; later preferences
+cannot restore a candidate eliminated earlier.
 
 The resolver retains the original identities of interpreted H attachments and
 distinguishes covalent source records from standard-name interpretation. It
@@ -135,11 +137,26 @@ backbone linkage, custom chemistry, unreconciled component aliases, and
 unsupported external bonds remain unresolved or unsupported. A missing bond
 record is not proof of a free terminus.
 
-This is currently a pure chemistry component, not a change to `process_structure`
-or hydrogen placement. Atomic application to H atoms, charges, topology, and
-readiness is not yet connected. The existing histidine ratio method is unchanged;
-native validation of the candidate graphs alone does not establish repaired
-structure quality.
+The PRAS-style preparation policy prefers charged ARG/LYS, deprotonated ASP/GLU,
+neutral HIS, and zwitterionic free termini. For HIS it first prefers neutral
+states, then the epsilon tautomer. This keeps an observed delta H compatible
+with neutral delta HIS instead of overwriting it with the epsilon convention.
+The policy follows the H counts in
+[PRAS's placement routines](https://github.com/osita-sunday-nnyigide/Pras_Server/blob/master/Pras_Server/MissingHydrogenAtoms.py)
+and its [histidine convention](https://www.protein-science.com/protonation/).
+It is not an environmental pKa prediction. A predictor can supply site-level
+preferences to the same resolver; explicit source replacement remains a separate
+choice.
+
+The internal `transformer.polymer_microstate` application takes complete H
+placements and updates H atoms, charges, and bonds together. It preserves heavy
+coordinates, surviving H geometry and isotopes, and original observations.
+Patches are bound to their source snapshot, and application checks current
+boundary bonds so that a new crosslink cannot inherit an obsolete site decision.
+
+This application is not yet connected to `process_structure`, automatic H
+placement, or FF readiness. The existing histidine ratio execution is unchanged.
+The graph and application tests do not establish repaired structure quality.
 
 ## Projection Rules
 

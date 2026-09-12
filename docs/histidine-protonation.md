@@ -25,6 +25,12 @@ deterministic selection rule, not an environment-aware protonation model.
 
 The request is resolved into explicit
 `HistidineDeltaProtonationAssignment` values before hydrogen directives are
-built. A future explicit-residue, tautomer, pKa-backed, or environment-aware
-method should produce the same assignment contract rather than broadening the
-meaning of the PRAS-ratio request.
+built. For coupled graph application, each assignment can express the complete
+request: one H on each ring nitrogen, with charge and bond orders resolved
+together. This application path is still separate from the default hydrogen
+workflow; see [coupled microstate resolution](topology-bond-policy.md#coupled-microstate-resolution).
+
+A future pKa-backed or environment-aware method should supply site-level
+chemical preferences or explicit constraints to that resolver, not pretend to
+be another histidine-ratio rule. Neither method should update H, charge, and
+bond order independently.
