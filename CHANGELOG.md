@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- stop copying the first atom's formal charge onto newly placed atoms during
+  heavy-atom and hydrogen completion. Existing atom charges and charges
+  explicitly assigned to new atoms are preserved
 - retain explicitly reported source bond orders separately from template-filled
   topology orders, including through atom repair and hydrogen placement. This
   preserves evidence for later chemistry decisions without changing the graph

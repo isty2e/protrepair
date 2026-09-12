@@ -139,18 +139,15 @@ class OrderedAtomPatch:
         updated_formal_charge_by_name = dict(formal_charge_by_atom_name)
         default_atom_site = next(iter(original_atom_sites.values()))
         default_atom_geometry = residue_geometry.atom_geometry(default_atom_site.name)
-        default_formal_charge = updated_formal_charge_by_name.get(
-            default_atom_site.name
-        )
+
         for placement in self.placements:
             existing_atom_site = original_atom_sites.get(placement.atom_name)
             if existing_atom_site is None:
                 updated_residue_site = updated_residue_site.with_atom_site(
                     AtomSite(
                         name=placement.atom_name,
-                        element=placement.element or self._infer_element(
-                            placement.atom_name
-                        ),
+                        element=placement.element
+                        or self._infer_element(placement.atom_name),
                     )
                 )
                 updated_residue_geometry = updated_residue_geometry.with_atom_geometry(
@@ -162,10 +159,6 @@ class OrderedAtomPatch:
                         altloc=default_atom_geometry.altloc,
                     ),
                 )
-                if default_formal_charge is not None:
-                    updated_formal_charge_by_name[placement.atom_name] = (
-                        default_formal_charge
-                    )
                 continue
 
             updated_residue_geometry = updated_residue_geometry.with_atom_geometry(
@@ -202,8 +195,9 @@ class OrderedAtomPatch:
         ) = self.materialize_on_payload(
             residue_site,
             residue_geometry=residue_geometry,
-            formal_charge_by_atom_name=snapshot.structure
-            .residue_formal_charge_by_atom_name(residue_index),
+            formal_charge_by_atom_name=snapshot.structure.residue_formal_charge_by_atom_name(
+                residue_index
+            ),
         )
         return snapshot.with_updated_residue_facets(
             updated_residue_site,

@@ -729,7 +729,7 @@ def test_source_order_evidence_survives_heavy_and_hydrogen_completion(
         repaired, target_residue_ids=target_residue_ids
     ).structure
     assert any(
-        atom_site.is_hydrogen for atom_site in hydrogenated.constitution.atom_slots
+        atom_site.is_hydrogen() for atom_site in hydrogenated.constitution.atom_slots
     )
 
     for structure in (repaired, hydrogenated, hydrogenated.without_hydrogens()):
