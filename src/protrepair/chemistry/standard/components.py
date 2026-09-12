@@ -281,7 +281,24 @@ STANDARD_COMPONENT_BOND_PAIRS: dict[str, tuple[tuple[str, str], ...]] = {
 }
 HISTIDINE_ALIASES: tuple[str, ...] = ("HSD", "HSE", "HIE", "HSP")
 
-_SIDECHAIN_AMIDE_CARBONYLS = frozenset({("ASN", "CG", "OD1"), ("GLN", "CD", "OE1")})
+# wwPDB CCD integral Kekule forms; aromaticity is perceived from the actual graph.
+# Do not force aromatic bond types over source orders or incomplete ring fragments.
+_FIXED_SIDECHAIN_DOUBLE_BONDS = frozenset(
+    {
+        ("ASN", "CG", "OD1"),
+        ("GLN", "CD", "OE1"),
+        ("PHE", "CG", "CD1"),
+        ("PHE", "CD2", "CE2"),
+        ("PHE", "CE1", "CZ"),
+        ("TYR", "CG", "CD1"),
+        ("TYR", "CD2", "CE2"),
+        ("TYR", "CE1", "CZ"),
+        ("TRP", "CG", "CD1"),
+        ("TRP", "CE2", "CD2"),
+        ("TRP", "CE3", "CZ3"),
+        ("TRP", "CZ2", "CH2"),
+    }
+)
 
 STANDARD_HYDROGEN_SEMANTICS: dict[str, HydrogenSemantics] = {
     component_id: HydrogenSemantics(plan_with_backbone=plan)
@@ -348,7 +365,7 @@ def build_standard_component_library() -> ComponentLibrary:
                     order=2
                     if (atom_name_1, atom_name_2) == ("C", "O")
                     or (component_id, atom_name_1, atom_name_2)
-                    in _SIDECHAIN_AMIDE_CARBONYLS
+                    in _FIXED_SIDECHAIN_DOUBLE_BONDS
                     else 1,
                 )
                 for atom_name_1, atom_name_2 in STANDARD_COMPONENT_BOND_PAIRS[

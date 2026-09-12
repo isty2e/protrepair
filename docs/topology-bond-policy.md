@@ -74,10 +74,23 @@ ASN CG=OD1 and GLN CD=OE1 amides, matching the corresponding
 C-OXT remains single. These definitions feed topology construction and
 force-field binding; the backend does not repair their chemistry privately.
 
+PHE, TYR, and TRP rings use the integral Kekule forms in the
+[PHE](https://files.rcsb.org/ligands/view/PHE.cif),
+[TYR](https://files.rcsb.org/ligands/view/TYR.cif), and
+[TRP](https://files.rcsb.org/ligands/view/TRP.cif) CCD entries. Their localized
+single/double pattern is a representation, not a claim that one resonance form
+has uniquely localized physical bonds. These defaults do not force aromatic
+bond types: RDKit perceives aromaticity from the graph it receives. This keeps
+source order overrides visible and lets incomplete rings retain ordinary
+integral bonds until atom repair closes them. The same integer orders feed
+PDB/mmCIF output. Use mmCIF for an alternate source Kekule form when explicit
+single orders must be distinguished from connectivity-only records.
+
 This is not a complete polymer microstate model. Charge-dependent groups,
 including guanidinium, carboxylates, and histidine, still need coordinated
 bond-order, charge, and hydrogen resolution. Source charges are not changed by
-the carbonyl correction.
+these fixed carbonyl and ring corrections. Custom component definitions are
+unchanged.
 
 ## Projection Rules
 

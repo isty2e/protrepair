@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- assign Kekule bond orders to standard PHE, TYR, and TRP rings so RDKit
+  recognizes their aromatic chemistry instead of saturated radical centers.
+  Source charges and hydrogens are unchanged; explicit source orders still
+  override the defaults
 - preserve bond-order evidence through PDB CONECT and mmCIF `struct_conn`
   roundtrips, including intra-residue and repaired bonds. Connectivity-only
   records no longer erase known component orders; explicit source orders
