@@ -1,6 +1,8 @@
 """Original structure observations, independent of the current repaired graph."""
 
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 
 from protrepair.errors import ModelInvariantError
 from protrepair.structure.constitution import StructureConstitution
@@ -38,6 +40,9 @@ class StructureObservation:
     constitution: StructureConstitution
     geometry: StructureGeometry
     topology: StructureTopology
+    _bonds_by_residue: Mapping[ResidueId, tuple[TopologyBond, ...]] = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if not self.geometry.is_aligned_to(self.constitution):
@@ -68,6 +73,21 @@ class StructureObservation:
                 raise ModelInvariantError(
                     "observation bonds must contain only source declarations"
                 )
+
+        by_residue: dict[ResidueId, list[TopologyBond]] = {}
+        for bond in self.topology.bonds:
+            first = self.constitution.atom_ref_at(bond.atom_index_1).residue_id
+            second = self.constitution.atom_ref_at(bond.atom_index_2).residue_id
+            by_residue.setdefault(first, []).append(bond)
+            if second != first:
+                by_residue.setdefault(second, []).append(bond)
+        object.__setattr__(
+            self,
+            "_bonds_by_residue",
+            MappingProxyType(
+                {residue_id: tuple(bonds) for residue_id, bonds in by_residue.items()}
+            ),
+        )
 
     @classmethod
     def from_source_facets(
@@ -186,4 +206,25 @@ class StructureObservation:
         atom_index = self.constitution.resolve_atom_index(atom_ref)
         if atom_index is None:
             return ()
-        return tuple(bond for bond in self.topology.bonds if bond.involves(atom_index))
+        return tuple(
+            bond
+            for bond in self.bonds_for_residue(atom_ref.residue_id)
+            if bond.involves(atom_index)
+        )
+
+    def bonds_for_residue(self, residue_id: ResidueId) -> tuple[TopologyBond, ...]:
+        """Return original bonds touching a residue, including external endpoints.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Identity in the original observation's address space.
+
+        Returns
+        -------
+        tuple[TopologyBond, ...]
+            Source declarations in topology order, each appearing once. Empty for
+            an absent residue or no declared bonds. The immutable index is built
+            once per observation, not once per chemistry decision.
+        """
+        return self._bonds_by_residue.get(residue_id, ())

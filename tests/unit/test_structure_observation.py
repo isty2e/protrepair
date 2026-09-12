@@ -23,7 +23,14 @@ from protrepair.structure.provenance import (
     StructureProvenance,
 )
 from protrepair.structure.slots import AtomIndex, ResidueIndex
-from protrepair.structure.topology import BondRelationshipType, StructureTopology
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    SourceBondMetadata,
+    SourceBondRecordType,
+    StructureTopology,
+    TopologyBond,
+)
 from protrepair.transformer.completion.heavy.core import repair_heavy_atoms_core
 from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
 from protrepair.transformer.completion.hydrogen.repair import add_hydrogens
@@ -39,6 +46,50 @@ from protrepair.transformer.completion.terminal.augmentation import (
 )
 from protrepair.transformer.packing import PackingPlan, PackingScope, PackingSpec
 from protrepair.transformer.packing.faspr.backend import FasprPackingBackend
+
+
+def test_source_bond_index_preserves_internal_and_external_endpoint_queries() -> None:
+    pdb = (
+        "ATOM      1  N   ALA A   1       0.000   0.000   0.000"
+        "  1.00 20.00           N\n"
+        "ATOM      2  CA  ALA A   1       1.400   0.000   0.000"
+        "  1.00 20.00           C\n"
+        "ATOM      3  C   ALA A   2       2.800   0.000   0.000"
+        "  1.00 20.00           C\n"
+        "END\n"
+    )
+    structure = read_structure_string(pdb, FileFormat.PDB)
+    bonds = tuple(
+        TopologyBond(
+            AtomIndex(first),
+            AtomIndex(second),
+            order=1,
+            relationship_type=BondRelationshipType.COVALENT,
+            provenance=BondProvenance.SOURCE_EXPLICIT,
+            source_metadata=SourceBondMetadata(
+                record_type=SourceBondRecordType.MMCIF_STRUCT_CONN,
+                reported_order=1,
+                reported_relationship_type=BondRelationshipType.COVALENT,
+            ),
+        )
+        for first, second in ((0, 1), (0, 2))
+    )
+    observation = StructureObservation.from_source_facets(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            bonds=bonds,
+            atom_topologies=structure.topology.atom_topologies,
+        ),
+    )
+    assert observation.bonds_for_residue(ResidueId("A", 1)) == bonds
+    assert observation.bonds_for_residue(ResidueId("A", 2)) == (bonds[1],)
+    assert observation.bonds_for_residue(ResidueId("A", 3)) == ()
+    assert observation.bonds_for_atom(AtomRef(ResidueId("A", 1), "CA")) == (bonds[0],)
+    assert observation.bonds_for_atom(AtomRef(ResidueId("A", 1), "N")) == bonds
+    assert observation.bonds_for_atom(AtomRef(ResidueId("A", 2), "C")) == (bonds[1],)
+    assert replace(observation).bonds_for_residue(ResidueId("A", 1)) == bonds
 
 
 def _atom_line(
