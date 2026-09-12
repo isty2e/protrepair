@@ -91,6 +91,7 @@ class PolymerMicrostateContext:
         *,
         override: MicrostateConstraints | None = None,
         preferences: tuple[MicrostateConstraints, ...] = (),
+        retain_applied_override: bool = True,
     ) -> MicrostateResolution:
         """Resolve a site, retaining a compatible previously applied override.
 
@@ -104,6 +105,9 @@ class PolymerMicrostateContext:
             New explicit request, taking precedence over a saved choice.
         preferences : tuple[MicrostateConstraints, ...]
             Ordered preparation preferences; never original observations.
+        retain_applied_override : bool
+            Reuse a saved choice when no new constraint is supplied. False resets
+            selection to original evidence and preferences, not neutral chemistry.
 
         Returns
         -------
@@ -118,6 +122,8 @@ class PolymerMicrostateContext:
         ValueError
             An applicable explicit request is empty.
         """
+        if type(retain_applied_override) is not bool:
+            raise TypeError("retaining an applied microstate choice requires a bool")
         constitution = self.source.constitution
         index = constitution.residue_index(residue_id)
         if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
@@ -136,7 +142,11 @@ class PolymerMicrostateContext:
         )
         saved = tuple(
             entry
-            for entry in self._overrides_by_residue.get(residue_id, ())
+            for entry in (
+                self._overrides_by_residue.get(residue_id, ())
+                if retain_applied_override
+                else ()
+            )
             if any(atom.name in names for atom in entry.graph.atoms)
         )
         if override is None and len(saved) > 1:

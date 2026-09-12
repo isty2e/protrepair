@@ -39,6 +39,7 @@ def place_polymer_microstate_hydrogens(
     override: MicrostateConstraints | None = None,
     preferences: tuple[MicrostateConstraints, ...] = (),
     rebuild_existing: bool = False,
+    retain_applied_override: bool = True,
 ) -> PolymerMicrostatePatch:
     """Construct a complete atomic patch with graph-constrained H coordinates.
 
@@ -58,6 +59,9 @@ def place_polymer_microstate_hydrogens(
         Regenerate selected H coordinates, including original H whose heavy anchors
         have moved. False preserves current or original H coordinates and uses
         them as anchors when adding missing H. Neither mode changes heavy atoms.
+    retain_applied_override : bool
+        Preserve a previous explicit choice without a new constraint. False
+        reapplies original evidence and preparation preferences instead.
 
     Returns
     -------
@@ -87,7 +91,11 @@ def place_polymer_microstate_hydrogens(
     if type(rebuild_existing) is not bool:
         raise TypeError("microstate coordinate rebuilding must be a boolean")
     resolution = context.resolve(
-        residue_id, site, override=override, preferences=preferences
+        residue_id,
+        site,
+        override=override,
+        preferences=preferences,
+        retain_applied_override=retain_applied_override,
     )
     graph = resolution.graph
     if graph is None:

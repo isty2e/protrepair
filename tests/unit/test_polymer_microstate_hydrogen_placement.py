@@ -14,7 +14,10 @@ from protrepair.chemistry.microstate.catalog import (
 )
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
-from protrepair.chemistry.microstate.preparation import pras_microstate_preferences
+from protrepair.chemistry.microstate.preparation import (
+    PolymerMicrostatePreparation,
+    pras_microstate_preferences,
+)
 from protrepair.chemistry.microstate.resolution import MicrostateConstraints
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.errors import RdkitUnavailableError
@@ -29,6 +32,11 @@ from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import BondRelationshipType, StructureTopology
 from protrepair.transformer.completion.heavy.core import repair_heavy_atoms_core
 from protrepair.transformer.completion.hydrogen import microstate
+from protrepair.transformer.completion.hydrogen.protonation import (
+    DisabledHistidineProtonationRequest,
+    PrasRatioHistidineProtonationRequest,
+    histidine_microstate_requests,
+)
 from protrepair.transformer.completion.terminal.augmentation import (
     augment_c_terminal_oxt,
 )
@@ -76,6 +84,82 @@ def _place(
         preferences=pras_microstate_preferences(site),
         **kwargs,
     )
+
+
+def test_preparation_distinguishes_saved_choice_from_changed_ratio(source):
+    cation = _place(
+        source,
+        "HIS",
+        override=MicrostateConstraints(hydrogens=(("ND1", 1), ("NE2", 1))),
+    )
+    charged = _assert_realized(source, cation)
+    library = build_standard_component_library()
+
+    unchanged = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(charged),
+        library,
+        requests=histidine_microstate_requests(
+            charged, DisabledHistidineProtonationRequest()
+        ),
+    ).targets_for(cation.residue_id)[0]
+    assert unchanged.is_realized()
+    assert unchanged.resolution.graph is not None
+    assert unchanged.resolution.graph.protonation_key()[0] == 1
+
+    reset = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(charged),
+        library,
+        requests=histidine_microstate_requests(
+            charged, PrasRatioHistidineProtonationRequest(0.0)
+        ),
+    ).targets_for(cation.residue_id)[0]
+    assert not reset.is_realized()
+    assert reset.resolution.graph is not None
+    assert reset.resolution.graph.protonation_key()[0] == 0
+    patch = microstate.place_polymer_microstate_hydrogens(
+        reset.context,
+        reset.residue_id,
+        reset.site,
+        override=reset.override,
+        retain_applied_override=reset.retain_applied_override,
+        preferences=pras_microstate_preferences(reset.site),
+    )
+    neutral = _assert_realized(charged, patch)
+    assert neutral.provenance.microstate_overrides == ()
+    assert (
+        PolymerMicrostatePreparation(PolymerMicrostateContext(neutral), library)
+        .targets_for(cation.residue_id)[0]
+        .is_realized()
+    )
+
+
+def test_preparation_retains_unresolved_site_instead_of_empty_success(source):
+    missing = next(
+        r
+        for r in source.constitution.chains[0].residues
+        if r.component_id == "LYS" and not r.has_atom_site("NZ")
+    )
+    targets = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(source), build_standard_component_library()
+    ).targets_for(missing.residue_id)
+    sidechain = targets[0]
+    assert sidechain.controlled_parent_names() == frozenset({"NZ"})
+    assert sidechain.resolution.graph is None
+    assert not sidechain.is_realized()
+    with pytest.raises(ValueError):
+        sidechain.hydrogen_atom_sites()
+
+
+def test_preparation_rejects_unmatched_request(source):
+    first = next(
+        r for r in source.constitution.chains[0].residues if r.component_id == "ALA"
+    )
+    with pytest.raises(ValueError, match="absent polymer site"):
+        PolymerMicrostatePreparation(
+            PolymerMicrostateContext(source),
+            build_standard_component_library(),
+            requests={(first.residue_id, PolymerChemicalSite.SIDECHAIN): None},
+        )
 
 
 def _assert_realized(

@@ -5,8 +5,11 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TypeAlias, TypeGuard
 
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.resolution import MicrostateConstraints
+from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ChainSite
+from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import ResidueIndex
 
 DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO = 0.2
@@ -140,6 +143,49 @@ def _is_histidine_protonation_request(
     """Return whether value belongs to the closed request variant set."""
 
     return type(value) in _HISTIDINE_PROTONATION_REQUEST_TYPES
+
+
+def histidine_microstate_requests(
+    structure: ProteinStructure,
+    request: HistidineProtonationRequest,
+) -> dict[tuple[ResidueId, PolymerChemicalSite], MicrostateConstraints | None]:
+    """Translate a ratio request into complete ring choices and explicit resets.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Polymer chains defining deterministic ratio membership.
+    request : HistidineProtonationRequest
+        Disabled means no new choice. A ratio replaces the previous ratio;
+        unselected HIS return to original evidence and preparation preferences.
+
+    Returns
+    -------
+    dict
+        Site-keyed requests for PolymerMicrostatePreparation. Selected HIS request
+        both ring protons; None resets saved choices without overriding source H.
+
+    Raises
+    ------
+    TypeError
+        The request is not a supported canonical variant.
+    """
+    if not _is_histidine_protonation_request(request):
+        raise TypeError("histidine protonation request must use a supported variant")
+    if isinstance(request, DisabledHistidineProtonationRequest):
+        return {}
+    requests = {}
+    for chain in structure.constitution.chains:
+        selected = {
+            assignment.residue_index.value: assignment.microstate_constraints()
+            for assignment in resolve_histidine_protonation_assignments(chain, request)
+        }
+        for index, residue in enumerate(chain.residues):
+            if residue.component_id == "HIS":
+                requests[(residue.residue_id, PolymerChemicalSite.SIDECHAIN)] = (
+                    selected.get(index)
+                )
+    return requests
 
 
 __all__ = [
