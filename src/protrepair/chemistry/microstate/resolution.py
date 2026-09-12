@@ -5,7 +5,7 @@ from enum import Enum
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.microstate.graph import MicrostateGraph
-from protrepair.structure.labels import AtomRef
+from protrepair.structure.labels import AtomRef, ResidueId
 
 
 class HydrogenAttachmentBasis(str, Enum):
@@ -152,6 +152,92 @@ class MicrostateConstraints:
                 for bond in self.bonds
                 if graph.bond_order(bond.atom_name_1, bond.atom_name_2) != bond.order
             ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AppliedMicrostateOverride:
+    """Retain an explicitly selected graph without rewriting original evidence.
+
+    Parameters
+    ----------
+    residue_id : ResidueId
+        Stable residue identity in the structure.
+    component_id : str
+        Canonical component identity at application time.
+    graph : MicrostateGraph
+        Complete selected site, including its chemical boundary valence.
+
+    Raises
+    ------
+    TypeError
+        Identity or graph has a noncanonical type.
+    ValueError
+        The component identity is empty or noncanonical.
+    """
+
+    residue_id: ResidueId
+    component_id: str
+    graph: MicrostateGraph
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.residue_id, ResidueId) or not isinstance(
+            self.graph, MicrostateGraph
+        ):
+            raise TypeError(
+                "applied microstate overrides require canonical identity and graph"
+            )
+        if not isinstance(self.component_id, str):
+            raise TypeError(
+                "applied microstate overrides require a string component identity"
+            )
+        if (
+            not self.component_id
+            or self.component_id != self.component_id.strip().upper()
+        ):
+            raise ValueError(
+                "applied microstate overrides require canonical component identity"
+            )
+
+    def constraints(self) -> MicrostateConstraints:
+        """Project the applied choice as explicit constraints, never source facts.
+
+        Returns
+        -------
+        MicrostateConstraints
+            Exact H counts, charges and integral site bonds.
+        """
+        return MicrostateConstraints(
+            charges=tuple((atom.name, atom.charge) for atom in self.graph.atoms),
+            hydrogens=tuple((atom.name, atom.hydrogens) for atom in self.graph.atoms),
+            bonds=self.graph.bonds,
+        )
+
+    def matches_site(
+        self, residue_id: ResidueId, component_id: str, graph: MicrostateGraph
+    ) -> bool:
+        """Check identity and boundary before reusing an applied choice.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Current residue identity.
+        component_id : str
+            Current canonical component identity.
+        graph : MicrostateGraph
+            Candidate describing the currently bound site and linkage.
+
+        Returns
+        -------
+        bool
+            False after changes to component, site atoms or boundary valence.
+            Actual boundary endpoints still require current-topology validation.
+        """
+        return (
+            self.residue_id == residue_id
+            and self.component_id == component_id
+            and tuple((a.name, a.element, a.boundary_order) for a in self.graph.atoms)
+            == tuple((a.name, a.element, a.boundary_order) for a in graph.atoms)
         )
 
 

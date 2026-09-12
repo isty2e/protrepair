@@ -12,6 +12,7 @@ from protrepair.chemistry.microstate.catalog import (
 )
 from protrepair.chemistry.microstate.graph import MicrostateGraph
 from protrepair.chemistry.microstate.resolution import (
+    AppliedMicrostateOverride,
     HydrogenAttachmentBasis,
     MicrostateConstraints,
     MicrostateResolution,
@@ -75,6 +76,7 @@ class PolymerMicrostateSite:
         observation: StructureObservation | None,
         *,
         override: MicrostateConstraints | None = None,
+        applied_override: AppliedMicrostateOverride | None = None,
         preferences: tuple[MicrostateConstraints, ...] = (),
     ) -> MicrostateResolution:
         """Resolve chemistry without treating generated atoms as source evidence.
@@ -87,6 +89,10 @@ class PolymerMicrostateSite:
             Original selected input. None is unavailable, not neutral chemistry.
         override : MicrostateConstraints or None
             Explicit site-scoped authority to supersede interpretable source facts.
+        applied_override : AppliedMicrostateOverride or None
+            Previously applied explicit choice. Reused only for the same component,
+            site atoms and boundary valence. A new override takes precedence.
+            Current boundary endpoints still require validation by the caller.
         preferences : tuple[MicrostateConstraints, ...]
             Ordered preferences among source-compatible candidates only.
 
@@ -132,6 +138,15 @@ class PolymerMicrostateSite:
             )
 
         reference = site.candidates[0]
+        if override is None and applied_override is not None:
+            if not applied_override.matches_site(
+                residue.residue_id, residue.component_id, reference
+            ):
+                return MicrostateResolution(
+                    MicrostateResolutionStatus.UNSUPPORTED,
+                    details=("applied override no longer matches the chemical site",),
+                )
+            override = applied_override.constraints()
         required = set(stock.expected_heavy_atom_names()) | {
             atom.name for atom in reference.atoms
         }
@@ -339,7 +354,7 @@ class PolymerMicrostateSite:
                 )
 
         hydrogens: Counter[str] = Counter()
-        anchors = self._hydrogen_names(source)
+        anchors = self.named_hydrogen_parents(source)
         for hydrogen in observation.hydrogen_atoms(residue.residue_id):
             parents = hydrogen_neighbors.get(hydrogen, [])
             if len(parents) > 1:
@@ -409,7 +424,21 @@ class PolymerMicrostateSite:
             for atom in residue.atom_sites
         )
 
-    def _hydrogen_names(self, source: ResidueSite) -> dict[str, str]:
+    def named_hydrogen_parents(self, residue: ResidueSite) -> dict[str, str]:
+        """Interpret standard H names without asserting actual connectivity.
+
+        Parameters
+        ----------
+        residue : ResidueSite
+            Original or current residue carrying H/D/T identities.
+
+        Returns
+        -------
+        dict[str, str]
+            Recognized H names and heavy parents, including terminal and isotope
+            aliases. Unrecognized names are omitted, not guessed geometrically.
+            Actual bonds must be checked separately by the consumer.
+        """
         aliases = {
             "H": "N",
             "H1": "N",
@@ -429,7 +458,7 @@ class PolymerMicrostateSite:
         elif self.template.component_id == "GLU":
             aliases.update({"HE1": "OE1", "HE2": "OE2"})
         names = {}
-        for atom in source.atom_sites:
+        for atom in residue.atom_sites:
             if not atom.is_hydrogen():
                 continue
             canonical = atom.name

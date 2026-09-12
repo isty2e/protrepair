@@ -7,9 +7,15 @@ from rdkit import Chem
 from rdkit.Chem import rdForceFieldHelpers
 
 from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import pras_microstate_preferences
-from protrepair.chemistry.microstate.resolution import MicrostateConstraints
+from protrepair.chemistry.microstate.resolution import (
+    AppliedMicrostateOverride,
+    MicrostateConstraints,
+    MicrostateResolutionStatus,
+    MicrostateSelectionBasis,
+)
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure_string, write_structure_string
@@ -80,6 +86,7 @@ def _patch(
     kind: PolymerChemicalSite = PolymerChemicalSite.SIDECHAIN,
     linkage: PeptideLinkage = PeptideLinkage.UNKNOWN,
     override: MicrostateConstraints | None = None,
+    applied_override: AppliedMicrostateOverride | None = None,
 ) -> PolymerMicrostatePatch:
     residue_id = ResidueId("A", residue_number)
     residue = structure.constitution.residue_or_ligand(residue_id)
@@ -92,6 +99,7 @@ def _patch(
         residue,
         structure.provenance.ingress.observation,
         override=override,
+        applied_override=applied_override,
         preferences=preferences,
     )
     assert result.graph is not None
@@ -119,6 +127,7 @@ def _patch(
         site,
         tuple(placements),
         override=override,
+        applied_override=applied_override,
         preferences=preferences,
     )
 
@@ -236,6 +245,272 @@ def test_regeneration_is_idempotent_and_request_change_removes_generated_h() -> 
     assert (
         changed.provenance.ingress.observation is source.provenance.ingress.observation
     )
+
+
+def test_applied_override_survives_rebinding_without_becoming_source_evidence() -> None:
+    source = _structure("HIS", charges=(("ND1", 1),))
+    constraints = MicrostateConstraints(hydrogens=(("ND1", 0), ("NE2", 1)))
+    patch = _patch(source, override=constraints)
+    first = apply_polymer_microstate_patches(source, (patch,))
+    (saved,) = first.provenance.microstate_overrides
+    assert saved.graph == patch.graph
+    assert saved.residue_id == ResidueId("A", 1)
+    assert saved.component_id == "HIS"
+    assert first.provenance.ingress is source.provenance.ingress
+    observation = first.provenance.ingress.observation
+    assert observation is not None
+    assert observation.formal_charge(AtomRef(saved.residue_id, "ND1")) == 1
+
+    residue = first.constitution.residue_site_at(ResidueIndex(0))
+    without_override = patch.site.resolve(
+        residue, observation, preferences=pras_microstate_preferences(patch.site)
+    )
+    assert without_override.graph is not None
+    assert without_override.graph.protonation_key()[0] == 1
+    replay = _patch(first, applied_override=saved)
+    assert replay.resolution.basis is MicrostateSelectionBasis.OVERRIDE
+    assert replay.resolution.superseded_source.charges == (("ND1", 1),)
+    assert replay.graph == patch.graph
+    assert apply_polymer_microstate_patches(first, (replay,)) == first
+
+
+def test_changed_override_replaces_prior_choice_and_omission_clears_it() -> None:
+    source = _structure("LYS")
+    first = apply_polymer_microstate_patches(
+        source, (_patch(source, override=MicrostateConstraints(charges=(("NZ", 0),))),)
+    )
+    (saved,) = first.provenance.microstate_overrides
+    changed_patch = _patch(
+        first,
+        override=MicrostateConstraints(charges=(("NZ", 1),)),
+        applied_override=saved,
+    )
+    changed = apply_polymer_microstate_patches(first, (changed_patch,))
+    (replacement,) = changed.provenance.microstate_overrides
+    assert replacement.graph.atom("NZ").charge == 1
+    assert replacement != saved
+    assert changed.provenance.ingress is source.provenance.ingress
+
+    cleared = apply_polymer_microstate_patches(changed, (_patch(changed),))
+    assert cleared.provenance.microstate_overrides == ()
+    assert cleared.constitution == changed.constitution
+    assert cleared.topology == changed.topology
+    assert cleared.geometry == changed.geometry
+
+
+def test_override_on_other_residue_survives_atom_remapping() -> None:
+    source = _structure("LYS", second_component="LYS")
+    first = apply_polymer_microstate_patches(
+        source,
+        (
+            _patch(
+                source,
+                residue_number=2,
+                override=MicrostateConstraints(charges=(("NZ", 0),)),
+            ),
+        ),
+    )
+    (saved,) = first.provenance.microstate_overrides
+    before_index = first.constitution.resolve_atom_index(
+        AtomRef(saved.residue_id, "NZ")
+    )
+    changed = apply_polymer_microstate_patches(first, (_patch(first),))
+    assert changed.provenance.microstate_overrides == (saved,)
+    assert (
+        changed.constitution.resolve_atom_index(AtomRef(saved.residue_id, "NZ"))
+        != before_index
+    )
+    replay = _patch(changed, residue_number=2, applied_override=saved)
+    assert replay.graph == saved.graph
+    assert apply_polymer_microstate_patches(changed, (replay,)) == changed
+
+
+def test_replaying_disjoint_overrides_is_independent_of_batch_order() -> None:
+    source = _structure("LYS", second_component="LYS")
+    first = apply_polymer_microstate_patches(
+        source,
+        tuple(
+            _patch(
+                source,
+                residue_number=number,
+                override=MicrostateConstraints(charges=(("NZ", 0),)),
+            )
+            for number in (1, 2)
+        ),
+    )
+    second = apply_polymer_microstate_patches(
+        first,
+        tuple(
+            _patch(
+                first, residue_number=saved.residue_id.seq_num, applied_override=saved
+            )
+            for saved in reversed(first.provenance.microstate_overrides)
+        ),
+    )
+    assert second == first
+
+
+@pytest.mark.parametrize("mismatch", ("residue", "component", "site", "linkage"))
+def test_stale_applied_override_is_not_silently_reused(mismatch: str) -> None:
+    source = _structure("LYS")
+    patch = _patch(source)
+    saved = AppliedMicrostateOverride(patch.residue_id, "LYS", patch.graph)
+    site = patch.site
+    if mismatch == "residue":
+        saved = replace(saved, residue_id=ResidueId("B", 1))
+    elif mismatch == "component":
+        saved = replace(saved, component_id="ARG")
+    else:
+        free_site = PolymerMicrostateSite(
+            site.template, PolymerChemicalSite.BACKBONE_N, PeptideLinkage.FREE
+        )
+        free_patch = _patch(
+            source, kind=PolymerChemicalSite.BACKBONE_N, linkage=PeptideLinkage.FREE
+        )
+        saved = AppliedMicrostateOverride(patch.residue_id, "LYS", free_patch.graph)
+        if mismatch == "linkage":
+            site = PolymerMicrostateSite(
+                free_site.template, free_site.kind, PeptideLinkage.LINKED
+            )
+    result = site.resolve(
+        source.constitution.residue_site_at(ResidueIndex(0)),
+        source.provenance.ingress.observation,
+        applied_override=saved,
+        preferences=pras_microstate_preferences(site),
+    )
+    assert result.status is MicrostateResolutionStatus.UNSUPPORTED
+    assert result.graph is None
+
+
+def test_provenance_rejects_overlapping_applied_site_choices() -> None:
+    source = _structure("LYS")
+    patch = _patch(source)
+    saved = AppliedMicrostateOverride(patch.residue_id, "LYS", patch.graph)
+    with pytest.raises(ValueError, match="overlap"):
+        replace(source.provenance, microstate_overrides=(saved, saved))
+    with pytest.raises(ValueError, match="canonical component"):
+        replace(saved, component_id="lys")
+
+
+@pytest.mark.parametrize("component", ("ARG", "LYS", "ASP", "GLU", "HIS"))
+def test_context_separates_selected_chemistry_from_current_realization(
+    component: str,
+) -> None:
+    source = _structure(component)
+    patch = _patch(source)
+    before = PolymerMicrostateContext(source)
+    selection = before.resolve(
+        patch.residue_id,
+        patch.site,
+        preferences=pras_microstate_preferences(patch.site),
+    )
+    assert selection.graph == patch.graph
+    if component in {"ARG", "LYS", "HIS"}:
+        assert not before.is_realized(patch.residue_id, patch.site, selection)
+    repaired = apply_polymer_microstate_patches(source, (patch,))
+    after = PolymerMicrostateContext(repaired)
+    selection = after.resolve(
+        patch.residue_id,
+        patch.site,
+        preferences=pras_microstate_preferences(patch.site),
+    )
+    assert after.is_realized(patch.residue_id, patch.site, selection)
+
+
+def test_context_replays_saved_authority_not_a_new_preparation_preference() -> None:
+    source = _structure("HIS", charges=(("ND1", 1),))
+    patch = _patch(
+        source, override=MicrostateConstraints(hydrogens=(("ND1", 0), ("NE2", 1)))
+    )
+    repaired = apply_polymer_microstate_patches(source, (patch,))
+    context = PolymerMicrostateContext(repaired)
+    resolution = context.resolve(patch.residue_id, patch.site)
+    assert resolution.graph == patch.graph
+    assert resolution.basis is MicrostateSelectionBasis.OVERRIDE
+    assert resolution.superseded_source == patch.resolution.superseded_source
+    assert context.is_realized(patch.residue_id, patch.site, resolution)
+    changed = context.resolve(
+        patch.residue_id,
+        patch.site,
+        override=MicrostateConstraints(charges=(("ND1", 1),)),
+    )
+    assert changed.graph is not None and changed.graph != patch.graph
+    assert not context.is_realized(patch.residue_id, patch.site, changed)
+
+
+@pytest.mark.parametrize(
+    "damage", ("charge", "order", "detached_h", "missing_h", "aromatic")
+)
+def test_context_detects_graph_damage_even_with_unchanged_selected_state(
+    damage: str,
+) -> None:
+    source = _structure("ARG")
+    patch = _patch(source)
+    repaired = apply_polymer_microstate_patches(source, (patch,))
+    damaged = repaired
+    if damage == "charge":
+        damaged = repaired.with_updated_residue_facets(
+            repaired.constitution.residue_site_at(ResidueIndex(0)),
+            residue_geometry=repaired.residue_geometry(ResidueIndex(0)),
+            formal_charge_by_atom_name=tuple(
+                (name, 0 if name == "NH2" else charge)
+                for name, charge in repaired.residue_formal_charge_by_atom_name(
+                    ResidueIndex(0)
+                )
+            ),
+        )
+    elif damage == "missing_h":
+        damaged = repaired.without_hydrogens()
+    else:
+        first = repaired.constitution.resolve_atom_index(
+            AtomRef(patch.residue_id, "CZ")
+        )
+        second = repaired.constitution.resolve_atom_index(
+            AtomRef(patch.residue_id, "NH2")
+        )
+        h_index = repaired.constitution.resolve_atom_index(
+            AtomRef(patch.residue_id, patch.hydrogens[0].atom.name)
+        )
+        assert first is not None and second is not None and h_index is not None
+        pair = {first, second}
+        bonds = []
+        for bond in repaired.topology.bonds:
+            if damage == "detached_h" and h_index in bond.endpoint_pair():
+                continue
+            if damage == "order" and set(bond.endpoint_pair()) == pair:
+                bond = replace(bond, order=1)
+            if damage == "aromatic" and set(bond.endpoint_pair()) == pair:
+                bond = replace(bond, aromatic=True)
+            bonds.append(bond)
+        damaged = _with_bonds(repaired, tuple(bonds))
+    context = PolymerMicrostateContext(damaged)
+    selection = context.resolve(
+        patch.residue_id,
+        patch.site,
+        preferences=pras_microstate_preferences(patch.site),
+    )
+    assert selection.graph == patch.graph
+    assert not context.is_realized(patch.residue_id, patch.site, selection)
+
+
+def test_context_reports_unsupported_current_boundary_not_just_missing_h() -> None:
+    source = _structure("LYS", second_component="ALA")
+    patch = _patch(source)
+    nitrogen = source.constitution.resolve_atom_index(AtomRef(patch.residue_id, "NZ"))
+    carbon = source.constitution.resolve_atom_index(AtomRef(ResidueId("A", 2), "C"))
+    assert nitrogen is not None and carbon is not None
+    changed = _with_bonds(
+        source, (*source.topology.bonds, TopologyBond(nitrogen, carbon))
+    )
+    context = PolymerMicrostateContext(changed)
+    selection = context.resolve(
+        patch.residue_id,
+        patch.site,
+        preferences=pras_microstate_preferences(patch.site),
+    )
+    assert selection.graph is not None
+    with pytest.raises(ValueError, match="boundary"):
+        context.is_realized(patch.residue_id, patch.site, selection)
 
 
 def test_coverage_complete_wrong_charge_is_still_repaired_without_moving_h() -> None:

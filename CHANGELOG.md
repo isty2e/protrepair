@@ -64,6 +64,8 @@
   formal charges, and bond orders coupled. It preserves source evidence and
   distinguishes ambiguity, conflicts, and unsupported chemistry; runtime
   hydrogen placement and workflow integration are not yet changed
+- retain explicitly applied polymer microstate choices separately from original
+  observations, and add a snapshot-bound check of current H/charge/bond realization
 - reconstruct explicitly mapped missing polymer spans from external donor
   structures with anchor-frame placement, bounded donor-seeded CCD closure,
   chemistry and stereochemistry gates, atomic topology updates, and structured

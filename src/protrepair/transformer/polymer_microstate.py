@@ -4,10 +4,11 @@ from collections import Counter, defaultdict
 from dataclasses import InitVar, dataclass, field, replace
 from math import isfinite
 
-from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.graph import MicrostateGraph
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
+    AppliedMicrostateOverride,
     MicrostateConstraints,
     MicrostateResolution,
     MicrostateSelectionBasis,
@@ -16,7 +17,6 @@ from protrepair.structure.aggregate import ProteinStructure, ResidueFacetPayload
 from protrepair.structure.constitution import AtomSite
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
-from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
     BondProvenance,
     BondRelationshipType,
@@ -84,6 +84,9 @@ class PolymerMicrostatePatch:
         All final H identities for the site, not only newly added atoms.
     override : MicrostateConstraints or None
         Explicit replacement authority passed to the chemical resolver.
+    applied_override : AppliedMicrostateOverride or None
+        Explicit choice retained by a prior transformation, if the caller requests
+        reuse. A new override supersedes it. Omission does not inherit authority.
     preferences : tuple[MicrostateConstraints, ...]
         Ordered, source-compatible preparation preferences.
 
@@ -101,12 +104,14 @@ class PolymerMicrostatePatch:
     site: PolymerMicrostateSite
     hydrogens: tuple[MicrostateHydrogenPlacement, ...]
     override: InitVar[MicrostateConstraints | None] = None
+    applied_override: InitVar[AppliedMicrostateOverride | None] = None
     preferences: InitVar[tuple[MicrostateConstraints, ...]] = ()
     resolution: MicrostateResolution = field(init=False)
 
     def __post_init__(
         self,
         override: MicrostateConstraints | None,
+        applied_override: AppliedMicrostateOverride | None,
         preferences: tuple[MicrostateConstraints, ...],
     ) -> None:
         index = self.source.constitution.residue_index(self.residue_id)
@@ -120,6 +125,7 @@ class PolymerMicrostatePatch:
             residue,
             self.source.provenance.ingress.observation,
             override=override,
+            applied_override=applied_override,
             preferences=preferences,
         )
         graph = resolution.graph
@@ -192,157 +198,6 @@ class PolymerMicrostatePatch:
                     "removing original H requires a reported explicit override"
                 )
 
-    def _current_hydrogens(
-        self,
-        bonds_by_atom: dict[AtomIndex, list[TopologyBond]],
-    ) -> dict[str, str]:
-        constitution = self.source.constitution
-        site_names = {atom.name for atom in self.graph.atoms}
-        template_heavy_names = set(self.site.template.expected_heavy_atom_names())
-        boundary_pairs = {
-            frozenset((bond.atom_name_1, bond.atom_name_2)): bond.order
-            for bond in self.site.template.definition.bonds
-            if (bond.atom_name_1 in site_names) != (bond.atom_name_2 in site_names)
-            and bond.atom_name_1 in template_heavy_names
-            and bond.atom_name_2 in template_heavy_names
-        }
-        boundary_orders: Counter[str] = Counter()
-        hydrogens: dict[str, str] = {}
-        external_partners: set[AtomRef] = set()
-        resolved_pairs = {
-            frozenset((bond.atom_name_1, bond.atom_name_2)) for bond in self.graph.bonds
-        }
-        resolved_pairs.update(
-            frozenset((entry.parent_name, entry.atom.name)) for entry in self.hydrogens
-        )
-        resolved_pairs.update(
-            frozenset((entry.parent.atom_name, entry.hydrogen.atom_name))
-            for entry in self.resolution.observed_hydrogens
-        )
-        for atom in self.graph.atoms:
-            index = constitution.resolve_atom_index(AtomRef(self.residue_id, atom.name))
-            assert index is not None
-            for bond in bonds_by_atom.get(index, ()):
-                if bond.relationship_type is BondRelationshipType.HYDROGEN_BOND:
-                    continue
-                other = (
-                    bond.atom_index_2
-                    if bond.atom_index_1 == index
-                    else bond.atom_index_1
-                )
-                other_ref = constitution.atom_ref_at(other)
-                other_atom = constitution.atom_site_at(other)
-                source_pair_resolved = (
-                    bond.relationship_type is BondRelationshipType.UNKNOWN
-                    and bond.provenance is BondProvenance.SOURCE_EXPLICIT
-                    and other_ref.residue_id == self.residue_id
-                    and frozenset((atom.name, other_atom.name)) in resolved_pairs
-                )
-                if (
-                    bond.relationship_type is not BondRelationshipType.COVALENT
-                    and not source_pair_resolved
-                ):
-                    raise ValueError("unsupported current microstate relationship")
-                if other_atom.is_hydrogen():
-                    if other_ref.residue_id != self.residue_id or (
-                        bond.order != 1
-                        and not (source_pair_resolved and bond.order is None)
-                    ):
-                        raise ValueError("unsupported current microstate H attachment")
-                    if (
-                        other_atom.name in hydrogens
-                        and hydrogens[other_atom.name] != atom.name
-                    ):
-                        raise ValueError("current microstate H has multiple parents")
-                    hydrogens[other_atom.name] = atom.name
-                    continue
-                if (
-                    other_ref.residue_id == self.residue_id
-                    and other_atom.name in site_names
-                ):
-                    if self.graph.bond_order(atom.name, other_atom.name) is None:
-                        raise ValueError("current bonds change the microstate skeleton")
-                    continue
-
-                if other_ref.residue_id == self.residue_id:
-                    expected_order = boundary_pairs.get(
-                        frozenset((atom.name, other_atom.name))
-                    )
-                    allowed = (
-                        expected_order is not None and bond.order == expected_order
-                    )
-                else:
-                    expected_names = (
-                        ("N", "C")
-                        if self.site.kind is PolymerChemicalSite.BACKBONE_N
-                        else ("C", "N")
-                    )
-                    allowed = (
-                        self.site.kind is not PolymerChemicalSite.SIDECHAIN
-                        and self.site.linkage is PeptideLinkage.LINKED
-                        and (atom.name, other_atom.name) == expected_names
-                        and other_atom.element == expected_names[1]
-                        and bond.order == 1
-                        and constitution.residue_index(other_ref.residue_id).value
-                        < len(constitution.residue_slots) - len(constitution.ligands)
-                    )
-                    external_partners.add(other_ref)
-                if not allowed or bond.order is None or len(external_partners) > 1:
-                    raise ValueError("current bonds disagree with microstate boundary")
-                boundary_orders[atom.name] += bond.order
-
-            if boundary_orders[atom.name] != atom.boundary_order:
-                raise ValueError("current microstate boundary is incomplete or changed")
-
-        for name in hydrogens:
-            index = constitution.resolve_atom_index(AtomRef(self.residue_id, name))
-            assert index is not None
-            covalent = [
-                bond
-                for bond in bonds_by_atom.get(index, ())
-                if bond.relationship_type is not BondRelationshipType.HYDROGEN_BOND
-            ]
-            if len(covalent) != 1 or self.source.topology.formal_charge(index) not in (
-                None,
-                0,
-            ):
-                raise ValueError("unsupported current microstate hydrogen chemistry")
-        expected_parents = {
-            entry.hydrogen.atom_name: entry.parent.atom_name
-            for entry in self.resolution.observed_hydrogens
-        }
-        expected_parents.update(
-            (entry.atom.name, entry.parent_name) for entry in self.hydrogens
-        )
-        for name, parent in expected_parents.items():
-            index = constitution.resolve_atom_index(AtomRef(self.residue_id, name))
-            if index is None:
-                continue
-            if self.source.topology.formal_charge(index) not in (None, 0):
-                raise ValueError("unsupported current microstate hydrogen chemistry")
-            for bond in bonds_by_atom.get(index, ()):
-                if bond.relationship_type is BondRelationshipType.HYDROGEN_BOND:
-                    continue
-                other = (
-                    bond.atom_index_2
-                    if bond.atom_index_1 == index
-                    else bond.atom_index_1
-                )
-                if (
-                    (
-                        bond.relationship_type is not BondRelationshipType.COVALENT
-                        and not (
-                            bond.relationship_type is BondRelationshipType.UNKNOWN
-                            and bond.provenance is BondProvenance.SOURCE_EXPLICIT
-                        )
-                    )
-                    or bond.order not in (None, 1)
-                    or constitution.atom_ref_at(other)
-                    != AtomRef(self.residue_id, parent)
-                ):
-                    raise ValueError("current H attachment disagrees with the patch")
-        return hydrogens
-
     def _materialize(
         self,
         payload: ResidueFacetPayload,
@@ -413,7 +268,9 @@ def apply_polymer_microstate_patches(
     -------
     ProteinStructure
         Updated H constitution, charges and bonds, preserving heavy coordinates,
-        surviving H geometry, unrelated facets and original observations.
+        surviving H geometry, unrelated facets and original observations. Applied
+        explicit overrides replace prior choices for the touched sites; applying
+        a site without override authority clears its previous choice.
 
     Raises
     ------
@@ -423,10 +280,7 @@ def apply_polymer_microstate_patches(
     """
     if not patches:
         return structure
-    bonds_by_atom: dict[AtomIndex, list[TopologyBond]] = defaultdict(list)
-    for bond in structure.topology.bonds:
-        for index in bond.endpoint_pair():
-            bonds_by_atom[index].append(bond)
+    context = PolymerMicrostateContext(structure)
 
     touched: set[AtomRef] = set()
     payloads: dict[ResidueId, ResidueFacetPayload] = {}
@@ -444,7 +298,14 @@ def apply_polymer_microstate_patches(
                 ),
             )
         }
-        current = patch._current_hydrogens(bonds_by_atom)
+        current = context.hydrogen_attachments(
+            patch.residue_id,
+            patch.site,
+            patch.resolution,
+            proposed_parents={
+                entry.atom.name: entry.parent_name for entry in patch.hydrogens
+            },
+        )
         refs.update(AtomRef(patch.residue_id, name) for name in current)
         if refs & touched:
             raise ValueError("microstate patches must not overlap")
@@ -541,6 +402,25 @@ def apply_polymer_microstate_patches(
                 )
             bonds[bond.endpoint_pair()] = bond
 
+    overrides = [
+        override
+        for override in structure.provenance.microstate_overrides
+        if not any(
+            AtomRef(override.residue_id, atom.name) in touched
+            for atom in override.graph.atoms
+        )
+    ]
+    overrides.extend(
+        AppliedMicrostateOverride(
+            patch.residue_id, patch.site.template.component_id, patch.graph
+        )
+        for patch in patches
+        if patch.resolution.basis is MicrostateSelectionBasis.OVERRIDE
+    )
+    provenance = structure.provenance
+    if tuple(overrides) != provenance.microstate_overrides:
+        provenance = replace(provenance, microstate_overrides=tuple(overrides))
+
     return ProteinStructure.from_payload(
         constitution=prepared.constitution,
         geometry=prepared.geometry,
@@ -550,5 +430,5 @@ def apply_polymer_microstate_patches(
             bonds=tuple(bonds.values()),
         ),
         polymer_blueprint=structure.polymer_blueprint,
-        provenance=structure.provenance,
+        provenance=provenance,
     )

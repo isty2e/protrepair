@@ -153,6 +153,17 @@ placements and updates H atoms, charges, and bonds together. It preserves heavy
 coordinates, surviving H geometry and isotopes, and original observations.
 Patches are bound to their source snapshot, and application checks current
 boundary bonds so that a new crosslink cannot inherit an obsolete site decision.
+An applied explicit override is retained separately from the original input.
+Later site resolution can reuse it only for the same residue, component, site
+atoms and boundary valence. A new explicit request replaces it; applying a site
+without override authority clears its prior choice. Current boundary endpoints
+are still checked before application.
+
+`PolymerMicrostateContext` distinguishes a selected graph from its current
+realization. It checks H attachments, charges and integral bonds against one
+snapshot, sharing a bond index across sites. Selecting a graph does not mean the
+structure already satisfies it, and satisfying it says nothing about coordinate
+quality.
 
 This application is not yet connected to `process_structure`, automatic H
 placement, or FF readiness. The existing histidine ratio execution is unchanged.
