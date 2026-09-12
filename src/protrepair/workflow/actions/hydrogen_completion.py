@@ -63,7 +63,7 @@ class HydrogenCompletionTransformer(ResidueSetWorkflowStructureTransformer):
         return ProjectedCodomainState(
             scope=self.scope,
             state=stage_result.structure.with_ligand_facets_from(
-                context.original_structure
+                projected_domain.state
             ),
             repairs=stage_result.repairs,
             issues=stage_result.issues,
