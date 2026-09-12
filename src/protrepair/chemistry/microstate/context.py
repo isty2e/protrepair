@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
+from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.microstate.catalog import (
     PeptideLinkage,
     PolymerChemicalSite,
@@ -148,6 +149,97 @@ class PolymerMicrostateContext:
             override=override,
             applied_override=saved[0] if len(saved) == 1 else None,
             preferences=preferences,
+        )
+
+    def backbone_site(
+        self,
+        residue_id: ResidueId,
+        template: ResidueTemplate,
+        kind: PolymerChemicalSite,
+        *,
+        assume_free_chain_ends: bool = False,
+    ) -> PolymerMicrostateSite:
+        """Bind a backbone site to actual links or an explicit preparation assumption.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Current polymer residue identity.
+        template : ResidueTemplate
+            Active component template, checked for applicability by resolution.
+        kind : PolymerChemicalSite
+            BACKBONE_N or BACKBONE_C, not a side-chain decision.
+        assume_free_chain_ends : bool
+            Permit FREE at the corresponding outer chain end only when no current
+            external relationship occupies that backbone atom. False leaves such
+            ends UNKNOWN. This does not certify biological chain completeness.
+
+        Returns
+        -------
+        PolymerMicrostateSite
+            LINKED for one supported canonical C-N bond, marked FREE for the
+            permitted preparation assumption, or UNKNOWN. Original observations
+            and the full current site boundary still require validation.
+
+        Raises
+        ------
+        ResidueNotFoundError
+            The residue is absent from this snapshot.
+        ValueError
+            The target is not a polymer backbone site.
+        TypeError
+            The kind is noncanonical or the assumption option is not boolean.
+        """
+        if not isinstance(kind, PolymerChemicalSite):
+            raise TypeError("backbone site kind must be canonical")
+        if kind not in (PolymerChemicalSite.BACKBONE_N, PolymerChemicalSite.BACKBONE_C):
+            raise ValueError("backbone binding requires a backbone site kind")
+        if type(assume_free_chain_ends) is not bool:
+            raise TypeError("chain-end assumption must be a boolean")
+        constitution = self.source.constitution
+        residue_index = constitution.residue_index(residue_id)
+        polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
+        if residue_index.value >= polymer_count:
+            raise ValueError("backbone binding requires a polymer residue")
+        name, partner_name = (
+            ("N", "C") if kind is PolymerChemicalSite.BACKBONE_N else ("C", "N")
+        )
+        index = constitution.resolve_atom_index(AtomRef(residue_id, name))
+        linkage = PeptideLinkage.UNKNOWN
+        assumed = False
+        if index is not None:
+            external = tuple(
+                (bond, other)
+                for bond in self._bonds_by_atom.get(index, ())
+                if bond.relationship_type is not BondRelationshipType.HYDROGEN_BOND
+                for other in bond.endpoint_pair()
+                if other != index
+                and constitution.atom_ref_at(other).residue_id != residue_id
+            )
+            if len(external) == 1:
+                bond, other = external[0]
+                partner = constitution.atom_ref_at(other)
+                if (
+                    bond.relationship_type is BondRelationshipType.COVALENT
+                    and bond.order == 1
+                    and not bond.aromatic
+                    and partner.atom_name == partner_name
+                    and constitution.atom_site_at(other).element == partner_name
+                    and constitution.atom_site_at(index).element == name
+                    and constitution.residue_index(partner.residue_id).value
+                    < polymer_count
+                ):
+                    linkage = PeptideLinkage.LINKED
+            elif not external and assume_free_chain_ends:
+                chain = constitution.chain(residue_id.chain_id)
+                end = chain.residues[
+                    0 if kind is PolymerChemicalSite.BACKBONE_N else -1
+                ]
+                if end.residue_id == residue_id:
+                    linkage = PeptideLinkage.FREE
+                    assumed = True
+        return PolymerMicrostateSite(
+            template, kind, linkage, free_terminal_assumption=assumed
         )
 
     def hydrogen_attachments(

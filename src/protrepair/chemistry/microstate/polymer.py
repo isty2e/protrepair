@@ -38,37 +38,49 @@ class PolymerMicrostateSite:
     kind : PolymerChemicalSite
         Independent side-chain or terminal decision unit.
     linkage : PeptideLinkage
-        Caller-established backbone linkage. Chain position or an absent bond
-        record alone cannot establish FREE. Must be UNKNOWN for a side chain.
+        Caller-established backbone linkage. Must be UNKNOWN for a side chain.
+    free_terminal_assumption : bool
+        Mark FREE supplied as a preparation assumption rather than established
+        chemical context. Only allowed for a free backbone site; it neither
+        becomes source evidence nor overrides contrary source chemistry.
 
     Notes
     -----
     This resolver neither mutates a structure nor selects a physiological pH.
-    Callers must establish current linkage and rebind after chemical edits;
-    original observations cannot describe newly introduced crosslinks.
+    Callers must bind current linkage or mark a preparation assumption, and
+    rebind after chemical edits. Original observations cannot describe newly
+    introduced crosslinks.
 
     Raises
     ------
     TypeError
-        Site or linkage is not a canonical enum member.
+        Site, linkage or assumption has a noncanonical type.
     ValueError
-        A backbone linkage is supplied for a side-chain site.
+        A backbone linkage is supplied for a side-chain site, or a free-terminal
+        assumption is attached to a site that is not FREE.
     """
 
     template: ResidueTemplate
     kind: PolymerChemicalSite
     linkage: PeptideLinkage = PeptideLinkage.UNKNOWN
+    free_terminal_assumption: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, PolymerChemicalSite) or not isinstance(
             self.linkage, PeptideLinkage
         ):
             raise TypeError("site and linkage must be canonical enum members")
+        if type(self.free_terminal_assumption) is not bool:
+            raise TypeError("free-terminal assumption must be a boolean")
         if (
             self.kind is PolymerChemicalSite.SIDECHAIN
             and self.linkage is not PeptideLinkage.UNKNOWN
         ):
             raise ValueError("side-chain sites do not have a backbone linkage")
+        if self.free_terminal_assumption and self.linkage is not PeptideLinkage.FREE:
+            raise ValueError(
+                "a free-terminal assumption requires FREE backbone linkage"
+            )
 
     def resolve(
         self,
@@ -183,6 +195,8 @@ class PolymerMicrostateSite:
         if isinstance(evidence, MicrostateResolution):
             return evidence
         constraints, attachments, details = evidence
+        if self.free_terminal_assumption:
+            details = (*details, "free-terminal linkage is a preparation assumption")
         return replace(
             site.resolve(constraints, override=override, preferences=preferences),
             details=details,

@@ -138,7 +138,15 @@ unsupported external bonds remain unresolved or unsupported. A missing bond
 record is not proof of a free terminus.
 
 The PRAS-style preparation policy prefers charged ARG/LYS, deprotonated ASP/GLU,
-neutral HIS, and zwitterionic free termini. For HIS it first prefers neutral
+neutral HIS, and zwitterionic free termini. At an outer chain end without an
+external chemical connection, it can assume free-terminal chemistry for
+preparation. The site and resolution record this assumption; it is not proof
+that the biological chain is complete. Actual C-N connectivity takes precedence,
+and unrecognized external connections prevent the assumption. Original chemical
+evidence still constrains the selected graph. A free C-terminal site needs OXT;
+when it is missing, heavy-atom completion must precede graph application.
+
+For HIS the policy first prefers neutral
 states, then the epsilon tautomer. This keeps an observed delta H compatible
 with neutral delta HIS instead of overwriting it with the epsilon convention.
 The policy follows the H counts in
@@ -165,8 +173,9 @@ snapshot, sharing a bond index across sites. Selecting a graph does not mean the
 structure already satisfies it, and satisfying it says nothing about coordinate
 quality.
 
-This application is not yet connected to `process_structure`, automatic H
-placement, or FF readiness. The existing histidine ratio execution is unchanged.
+This application and preparation policy are not yet connected to
+`process_structure`, automatic H placement, or FF readiness. The existing
+histidine ratio execution is unchanged.
 The graph and application tests do not establish repaired structure quality.
 
 ## Projection Rules

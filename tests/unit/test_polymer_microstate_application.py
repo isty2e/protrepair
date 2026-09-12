@@ -9,7 +9,10 @@ from rdkit.Chem import rdForceFieldHelpers
 from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
-from protrepair.chemistry.microstate.preparation import pras_microstate_preferences
+from protrepair.chemistry.microstate.preparation import (
+    pras_microstate_preferences,
+    pras_polymer_microstate_sites,
+)
 from protrepair.chemistry.microstate.resolution import (
     AppliedMicrostateOverride,
     MicrostateConstraints,
@@ -511,6 +514,231 @@ def test_context_reports_unsupported_current_boundary_not_just_missing_h() -> No
     assert selection.graph is not None
     with pytest.raises(ValueError, match="boundary"):
         context.is_realized(patch.residue_id, patch.site, selection)
+
+
+@pytest.mark.parametrize("component,nh", (("ALA", 3), ("PRO", 2)))
+def test_pras_prepares_free_chain_ends_as_assumptions(component: str, nh: int) -> None:
+    source = _structure(component, terminal=True)
+    context = PolymerMicrostateContext(source)
+    residue_id = ResidueId("A", 1)
+    template = build_standard_component_library().require(component)
+    sites = pras_polymer_microstate_sites(context, residue_id, template)
+    assert {site.kind for site in sites} == {
+        PolymerChemicalSite.BACKBONE_N,
+        PolymerChemicalSite.BACKBONE_C,
+    }
+    for site in sites:
+        assert site.linkage is PeptideLinkage.FREE
+        assert site.free_terminal_assumption
+        result = context.resolve(
+            residue_id, site, preferences=pras_microstate_preferences(site)
+        )
+        assert result.graph is not None
+        assert "free-terminal linkage is a preparation assumption" in result.details
+        if site.kind is PolymerChemicalSite.BACKBONE_N:
+            assert result.graph.atom("N").hydrogens == nh
+            assert result.graph.atom("N").charge == 1
+        else:
+            assert result.graph.protonation_key()[0] == -1
+    assert context.source is source
+    assert not source.provenance.microstate_overrides
+    observation = source.provenance.ingress.observation
+    assert observation is not None
+    assert observation.formal_charge(AtomRef(residue_id, "N")) is None
+
+
+def test_backbone_binding_without_preparation_permission_leaves_free_end_unknown() -> (
+    None
+):
+    source = _structure("ALA")
+    context = PolymerMicrostateContext(source)
+    site = context.backbone_site(
+        ResidueId("A", 1),
+        build_standard_component_library().require("ALA"),
+        PolymerChemicalSite.BACKBONE_N,
+    )
+    assert site.linkage is PeptideLinkage.UNKNOWN
+    assert not site.free_terminal_assumption
+
+
+def test_cyclic_peptide_links_take_precedence_over_chain_end_assumptions() -> None:
+    source = _structure("ALA", second_component="ALA")
+    n = source.constitution.resolve_atom_index(AtomRef(ResidueId("A", 1), "N"))
+    c = source.constitution.resolve_atom_index(AtomRef(ResidueId("A", 2), "C"))
+    assert n is not None and c is not None
+    cyclic = _with_bonds(source, (*source.topology.bonds, TopologyBond(c, n)))
+    context = PolymerMicrostateContext(cyclic)
+    template = build_standard_component_library().require("ALA")
+    for residue_id in (ResidueId("A", 1), ResidueId("A", 2)):
+        for site in pras_polymer_microstate_sites(context, residue_id, template):
+            assert site.linkage is PeptideLinkage.LINKED
+            assert not site.free_terminal_assumption
+            result = context.resolve(
+                residue_id, site, preferences=pras_microstate_preferences(site)
+            )
+            assert result.graph is not None
+            assert (
+                "free-terminal linkage is a preparation assumption"
+                not in result.details
+            )
+
+
+@pytest.mark.parametrize(
+    "relationship,order",
+    (
+        (BondRelationshipType.UNKNOWN, None),
+        (BondRelationshipType.METAL_COORDINATION, 1),
+        (BondRelationshipType.COVALENT, 2),
+    ),
+)
+def test_other_current_external_relationships_prevent_free_terminal_assumptions(
+    relationship: BondRelationshipType,
+    order: int | None,
+) -> None:
+    source = _structure("ALA", second_component="ALA")
+    n = source.constitution.resolve_atom_index(AtomRef(ResidueId("A", 1), "N"))
+    c = source.constitution.resolve_atom_index(AtomRef(ResidueId("A", 2), "C"))
+    assert n is not None and c is not None
+    connected = _with_bonds(
+        source,
+        (
+            *source.topology.bonds,
+            TopologyBond(c, n, relationship_type=relationship, order=order),
+        ),
+    )
+    context = PolymerMicrostateContext(connected)
+    site = context.backbone_site(
+        ResidueId("A", 1),
+        build_standard_component_library().require("ALA"),
+        PolymerChemicalSite.BACKBONE_N,
+        assume_free_chain_ends=True,
+    )
+    assert site.linkage is PeptideLinkage.UNKNOWN
+    assert not site.free_terminal_assumption
+
+
+def test_missing_interior_peptide_edge_is_not_reinterpreted_as_a_free_terminus() -> (
+    None
+):
+    source = _structure("ALA", second_component="ALA")
+    first = source.constitution.resolve_atom_index(AtomRef(ResidueId("A", 1), "C"))
+    second = source.constitution.resolve_atom_index(AtomRef(ResidueId("A", 2), "N"))
+    assert first is not None and second is not None
+    disconnected = _with_bonds(
+        source,
+        tuple(
+            b
+            for b in source.topology.bonds
+            if set(b.endpoint_pair()) != {first, second}
+        ),
+    )
+    context = PolymerMicrostateContext(disconnected)
+    template = build_standard_component_library().require("ALA")
+    for residue_id, kind in (
+        (ResidueId("A", 1), PolymerChemicalSite.BACKBONE_C),
+        (ResidueId("A", 2), PolymerChemicalSite.BACKBONE_N),
+    ):
+        site = context.backbone_site(
+            residue_id, template, kind, assume_free_chain_ends=True
+        )
+        assert site.linkage is PeptideLinkage.UNKNOWN
+        assert not site.free_terminal_assumption
+
+
+def test_terminal_assumption_cannot_replace_source_charge_or_missing_heavy() -> None:
+    source = _structure("ALA", charges=(("N", -1),))
+    context = PolymerMicrostateContext(source)
+    residue_id = ResidueId("A", 1)
+    sites = pras_polymer_microstate_sites(
+        context, residue_id, build_standard_component_library().require("ALA")
+    )
+    nitrogen, carbon = sites
+    assert nitrogen.free_terminal_assumption and carbon.free_terminal_assumption
+    assert (
+        context.resolve(
+            residue_id, nitrogen, preferences=pras_microstate_preferences(nitrogen)
+        ).status
+        is MicrostateResolutionStatus.CONFLICT
+    )
+    assert (
+        context.resolve(
+            residue_id, carbon, preferences=pras_microstate_preferences(carbon)
+        ).status
+        is MicrostateResolutionStatus.INSUFFICIENT
+    )
+
+
+def test_current_retained_cap_prevents_free_terminal_assumption() -> None:
+    source = _structure(
+        "ALA",
+        extra_pdb=(
+            f"HETATM{100:5d} {'C':^4} {'LIG':>3} L{1:4d}    "
+            f"{0.0:8.3f}{1.0:8.3f}{2.0:8.3f}{1.0:6.2f}{20.0:6.2f}          {'C':>2}\n"
+        ),
+    )
+    nitrogen = source.constitution.resolve_atom_index(AtomRef(ResidueId("A", 1), "N"))
+    carbon = source.constitution.resolve_atom_index(AtomRef(ResidueId("L", 1), "C"))
+    assert nitrogen is not None and carbon is not None
+    capped = _with_bonds(
+        source, (*source.topology.bonds, TopologyBond(nitrogen, carbon))
+    )
+    site = PolymerMicrostateContext(capped).backbone_site(
+        ResidueId("A", 1),
+        build_standard_component_library().require("ALA"),
+        PolymerChemicalSite.BACKBONE_N,
+        assume_free_chain_ends=True,
+    )
+    assert site.linkage is PeptideLinkage.UNKNOWN
+    assert not site.free_terminal_assumption
+
+
+def test_removed_current_link_does_not_erase_contrary_original_connectivity() -> None:
+    template = build_standard_component_library().require("ALA")
+    names = template.expected_heavy_atom_names()
+    n_serial = names.index("N") + 1
+    c_serial = len(names) + names.index("C") + 1
+    source = _structure(
+        "ALA", second_component="ALA", extra_pdb=f"CONECT{c_serial:5d}{n_serial:5d}\n"
+    )
+    first = source.constitution.resolve_atom_index(AtomRef(ResidueId("A", 1), "N"))
+    second = source.constitution.resolve_atom_index(AtomRef(ResidueId("A", 2), "C"))
+    assert first is not None and second is not None
+    opened = _with_bonds(
+        source,
+        tuple(
+            b
+            for b in source.topology.bonds
+            if set(b.endpoint_pair()) != {first, second}
+        ),
+    )
+    context = PolymerMicrostateContext(opened)
+    site = context.backbone_site(
+        ResidueId("A", 1),
+        template,
+        PolymerChemicalSite.BACKBONE_N,
+        assume_free_chain_ends=True,
+    )
+    assert site.free_terminal_assumption
+    result = context.resolve(
+        ResidueId("A", 1), site, preferences=pras_microstate_preferences(site)
+    )
+    assert result.status is MicrostateResolutionStatus.UNSUPPORTED
+    assert result.graph is None
+
+
+def test_preparation_assumption_cannot_be_attached_to_other_site_kinds() -> None:
+    template = build_standard_component_library().require("LYS")
+    with pytest.raises(ValueError, match="requires FREE"):
+        PolymerMicrostateSite(
+            template, PolymerChemicalSite.SIDECHAIN, free_terminal_assumption=True
+        )
+    with pytest.raises(ValueError, match="requires FREE"):
+        PolymerMicrostateSite(
+            template,
+            PolymerChemicalSite.BACKBONE_N,
+            PeptideLinkage.LINKED,
+            free_terminal_assumption=True,
+        )
 
 
 def test_coverage_complete_wrong_charge_is_still_repaired_without_moving_h() -> None:

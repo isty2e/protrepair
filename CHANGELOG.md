@@ -66,6 +66,8 @@
   hydrogen placement and workflow integration are not yet changed
 - retain explicitly applied polymer microstate choices separately from original
   observations, and add a snapshot-bound check of current H/charge/bond realization
+- add marked free-terminal assumptions to the internal PRAS preparation policy,
+  without replacing current peptide connections or contrary original chemistry
 - reconstruct explicitly mapped missing polymer spans from external donor
   structures with anchor-frame placement, bounded donor-seeded CCD closure,
   chemistry and stereochemistry gates, atomic topology updates, and structured
