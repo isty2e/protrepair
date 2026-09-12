@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- retain original charge, hydrogen/isotope, coordinate, and explicit-connection
+  observations across repair and canonical reprocessing, separately from the
+  current topology. Template-filled connection types remain distinguishable
+  from source declarations; these observations do not select a protonation state
+- preserve explicit zero formal charges rather than conflating them with
+  unspecified charges at PDB/mmCIF ingress and egress, including alternate-location
+  and duplicate-atom selection
 - stop copying the first atom's formal charge onto newly placed atoms during
   heavy-atom and hydrogen completion. Existing atom charges and charges
   explicitly assigned to new atoms are preserved

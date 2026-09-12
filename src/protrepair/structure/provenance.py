@@ -1,9 +1,10 @@
 """Canonical structure provenance facets."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from protrepair.structure.endpoint import StructureEndpoint
+from protrepair.structure.observation import StructureObservation
 
 
 class FileFormat(str, Enum):
@@ -15,15 +16,37 @@ class FileFormat(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class StructureIngress:
-    """Whole-structure ingress metadata detached from the aggregate root."""
+    """Input origin and observations, independent of the current structure.
+
+    Parameters
+    ----------
+    source_format : FileFormat
+        Coordinate format of the input.
+    source_name : str or None, default=None
+        Optional input name; blank names become None.
+    observation : StructureObservation or None, default=None
+        Selected original input facts. None denotes unavailable observations,
+        including manual structures without an explicitly supplied snapshot.
+
+    Raises
+    ------
+    TypeError
+        The source format or observation has a noncanonical type.
+    """
 
     source_format: FileFormat
     source_name: str | None = None
+    observation: StructureObservation | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_format, FileFormat):
+            raise TypeError("structure ingress requires a FileFormat source_format")
+
+        if self.observation is not None and not isinstance(
+            self.observation, StructureObservation
+        ):
             raise TypeError(
-                "structure ingress requires a FileFormat source_format"
+                "structure ingress observation must be a StructureObservation or None"
             )
 
         source_name = self.source_name
@@ -42,9 +65,7 @@ class StructureProvenance:
 
     def __post_init__(self) -> None:
         if not isinstance(self.ingress, StructureIngress):
-            raise TypeError(
-                "structure provenance requires a StructureIngress value"
-            )
+            raise TypeError("structure provenance requires a StructureIngress value")
 
         lineage_list: list[StructureEndpoint] = []
         for lineage_scope in self.lineage:

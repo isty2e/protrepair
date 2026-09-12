@@ -236,11 +236,14 @@ def _connection(
     return SourceConnection(
         SourceAtomIdentity(AtomRef(ResidueId("A", 1), "C"), "ALA", None),
         SourceAtomIdentity(AtomRef(ResidueId("A", 2), "N"), "ALA", None),
-        relationship_type=BondRelationshipType.UNKNOWN
-        if record_type is SourceBondRecordType.PDB_CONECT
-        else BondRelationshipType.COVALENT,
         source_metadata=SourceBondMetadata(
-            record_type, "connection", 1.33, reported_order=order
+            record_type,
+            "connection",
+            1.33,
+            reported_order=order,
+            reported_relationship_type=BondRelationshipType.UNKNOWN
+            if record_type is SourceBondRecordType.PDB_CONECT
+            else BondRelationshipType.COVALENT,
         ),
     )
 
@@ -261,7 +264,10 @@ def test_typed_metadata_survives_supplementary_conect_order(
     merged = typed.merge(fallback)
     assert merged == fallback.merge(typed)
     assert merged.source_metadata == replace(typed.source_metadata, reported_order=2)
-    assert merged.relationship_type == typed.relationship_type
+    assert (
+        merged.source_metadata.reported_relationship_type
+        == typed.source_metadata.reported_relationship_type
+    )
     assert merged.source_metadata.reported_order == 2
 
 
@@ -487,9 +493,13 @@ def test_source_hydrogen_charge_and_coordinates_survive_order_projection(
 
 
 def test_disulfide_source_type_cannot_be_combined_with_multiple_order() -> None:
+    original = _connection(SourceBondRecordType.MMCIF_STRUCT_CONN, 2)
     connection = replace(
-        _connection(SourceBondRecordType.MMCIF_STRUCT_CONN, 2),
-        relationship_type=BondRelationshipType.DISULFIDE,
+        original,
+        source_metadata=replace(
+            original.source_metadata,
+            reported_relationship_type=BondRelationshipType.DISULFIDE,
+        ),
     )
     with pytest.raises(ModelInvariantError, match="disulfide.*multiple"):
         connection.to_topology_bond(AtomIndex(0), AtomIndex(1), expected_bond=None)
@@ -499,9 +509,13 @@ def test_disulfide_source_type_cannot_be_combined_with_multiple_order() -> None:
 def test_disulfide_resolution_does_not_invent_explicit_order_evidence(
     reported_order: int | None,
 ) -> None:
+    original = _connection(SourceBondRecordType.PDB_SSBOND, reported_order)
     connection = replace(
-        _connection(SourceBondRecordType.PDB_SSBOND, reported_order),
-        relationship_type=BondRelationshipType.DISULFIDE,
+        original,
+        source_metadata=replace(
+            original.source_metadata,
+            reported_relationship_type=BondRelationshipType.DISULFIDE,
+        ),
     )
     bond = connection.to_topology_bond(AtomIndex(0), AtomIndex(1), expected_bond=None)
     assert bond.order == 1

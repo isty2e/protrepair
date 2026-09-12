@@ -1,6 +1,6 @@
 """Canonical raw-structure ingress normalization transformations."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from math import isfinite
@@ -44,6 +44,7 @@ from protrepair.structure.geometry import (
     StructureGeometry,
 )
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.observation import StructureObservation
 from protrepair.structure.provenance import (
     FileFormat,
     StructureIngress,
@@ -122,11 +123,45 @@ def normalize_raw_structure(
     source_name: str | None = None,
     source_connections: tuple[SourceConnection, ...],
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str] | None = None,
+    source_charges_by_atom_identity: Mapping[SourceAtomIdentity, Sequence[int | None]]
+    | None = None,
 ) -> ProteinStructure:
     """Normalize one first model from format-boundary-projected source facts.
 
     Raw Gemmi connection records are intentionally interpreted by the format
     adapter before this format-agnostic normalization seam.
+
+    Parameters
+    ----------
+    raw_structure : gemmi.Structure
+        Parsed models; only the first is normalized.
+    file_format : FileFormat
+        Source format recorded in provenance.
+    policy : StructureNormalizationPolicy
+        Selection and validation policy for the input.
+    source_name : str or None, default=None
+        Optional input name.
+    source_connections : tuple[SourceConnection, ...]
+        Boundary-decoded declarations, before selected-atom filtering.
+    source_element_by_atom_identity : Mapping[SourceAtomIdentity, str] or None
+        Source isotope symbols that the native parser may collapse.
+    source_charges_by_atom_identity : Mapping or None
+        SourceAtomIdentity keys mapped to ordered int-or-None charge sequences,
+        including explicit zero and unspecified None. Without these annotations,
+        native zero cannot be distinguished from an unspecified charge and is
+        treated as unspecified.
+
+    Returns
+    -------
+    ProteinStructure
+        Selected canonical structure with its original input observation.
+
+    Raises
+    ------
+    StructureNormalizationError
+        Input scalars, identities, roles, or annotations cannot be normalized.
+    ModelInvariantError
+        Selected facets or explicit connections violate canonical invariants.
     """
 
     chains: list[tuple[str, list[_NormalizedResiduePayload]]] = []
@@ -134,17 +169,23 @@ def normalize_raw_structure(
 
     if len(raw_structure) == 0:
         empty_constitution = StructureConstitution(chains=(), ligands=())
+        empty_geometry = StructureGeometry(
+            constitution=empty_constitution, atom_geometries=()
+        )
+        empty_topology = StructureTopology.empty(constitution=empty_constitution)
         return ProteinStructure.from_payload(
             constitution=empty_constitution,
-            geometry=StructureGeometry(
-                constitution=empty_constitution,
-                atom_geometries=(),
-            ),
-            topology=StructureTopology.empty(constitution=empty_constitution),
+            geometry=empty_geometry,
+            topology=empty_topology,
             provenance=StructureProvenance(
                 ingress=StructureIngress(
                     source_format=file_format,
                     source_name=source_name,
+                    observation=StructureObservation(
+                        constitution=empty_constitution,
+                        geometry=empty_geometry,
+                        topology=empty_topology,
+                    ),
                 )
             ),
         )
@@ -153,6 +194,16 @@ def normalize_raw_structure(
         {}
         if source_element_by_atom_identity is None
         else source_element_by_atom_identity
+    )
+    # Occurrences, not a first-wins map: duplicate atoms still participate in
+    # occupancy selection with their own charge declaration.
+    source_charges = (
+        None
+        if source_charges_by_atom_identity is None
+        else {
+            identity: iter(charges)
+            for identity, charges in source_charges_by_atom_identity.items()
+        }
     )
     entity_type_by_id = _entity_type_by_id(raw_structure)
     source_peptide_link_pairs = _source_peptide_link_pairs(
@@ -177,6 +228,7 @@ def normalize_raw_structure(
             policy,
             residue_role_by_id=residue_role_by_id,
             source_element_by_atom_identity=normalized_source_elements,
+            source_charges=source_charges,
         )
         if polymer_residues:
             chains.append((chain_id, polymer_residues))
@@ -230,21 +282,27 @@ def normalize_raw_structure(
         if bond.endpoint_pair() not in source_endpoint_pairs
     )
     topology_bonds = source_topology_bonds + remaining_expected_bonds
+    topology = StructureTopology(
+        constitution=constitution,
+        atom_topologies=_atom_topologies_from_payloads(
+            constitution=constitution,
+            residue_payloads=normalized_residue_payloads,
+        ),
+        bonds=topology_bonds,
+    )
     return ProteinStructure.from_payload(
         constitution=constitution,
         geometry=geometry,
-        topology=StructureTopology(
-            constitution=constitution,
-            atom_topologies=_atom_topologies_from_payloads(
-                constitution=constitution,
-                residue_payloads=normalized_residue_payloads,
-            ),
-            bonds=topology_bonds,
-        ),
+        topology=topology,
         provenance=StructureProvenance(
             ingress=StructureIngress(
                 source_format=file_format,
                 source_name=source_name,
+                observation=StructureObservation.from_source_facets(
+                    constitution=constitution,
+                    geometry=geometry,
+                    topology=topology,
+                ),
             )
         ),
     )
@@ -694,6 +752,7 @@ def _normalize_chain_residues(
     *,
     residue_role_by_id: Mapping[ResidueId, _CanonicalResidueRole],
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
+    source_charges: Mapping[SourceAtomIdentity, Iterator[int | None]] | None,
 ) -> tuple[list[_NormalizedResiduePayload], list[_NormalizedResiduePayload]]:
     """Materialize normalized polymer and retained residues in one chain pass."""
 
@@ -733,6 +792,7 @@ def _normalize_chain_residues(
             policy.occupancy_policy,
             is_hetero=is_hetero,
             source_element_by_atom_identity=source_element_by_atom_identity,
+            source_charges=source_charges,
         )
         if residue_id not in grouped_payloads:
             grouped_payloads[residue_id] = []
@@ -882,6 +942,7 @@ def _normalize_residue(
     *,
     is_hetero: bool,
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
+    source_charges: Mapping[SourceAtomIdentity, Iterator[int | None]] | None,
 ) -> _NormalizedResiduePayload:
     """Normalize one raw gemmi residue into the canonical residue entity."""
 
@@ -891,6 +952,7 @@ def _normalize_residue(
         residue_id=residue_id,
         occupancy_policy=occupancy_policy,
         source_element_by_atom_identity=source_element_by_atom_identity,
+        source_charges=source_charges,
     )
     return _NormalizedResiduePayload(
         constitution=ResidueSite(
@@ -919,6 +981,7 @@ def _select_atom_variants(
     residue_id: ResidueId,
     occupancy_policy: OccupancyPolicy,
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
+    source_charges: Mapping[SourceAtomIdentity, Iterator[int | None]] | None,
 ) -> list[tuple[AtomSite, AtomGeometry, int | None]]:
     """Resolve atom sites by residue altloc cohort, then by atom name."""
 
@@ -928,6 +991,7 @@ def _select_atom_variants(
             residue_id=residue_id,
             component_id=raw_residue.name,
             source_element_by_atom_identity=source_element_by_atom_identity,
+            source_charges=source_charges,
         )
         for raw_atom in raw_residue
     )
@@ -966,6 +1030,7 @@ def _atom_payload_from_raw_site(
     residue_id: ResidueId,
     component_id: str,
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
+    source_charges: Mapping[SourceAtomIdentity, Iterator[int | None]] | None,
 ) -> _RawAtomPayload:
     """Validate and project one raw gemmi atom before variant selection."""
 
@@ -995,6 +1060,22 @@ def _atom_payload_from_raw_site(
         component_id=component_id,
         altloc=altloc,
     )
+    if source_charges is None:
+        formal_charge = normalize_formal_charge(int(raw_atom.charge))
+    else:
+        try:
+            formal_charge = next(source_charges[source_identity])
+        except (KeyError, StopIteration) as error:
+            raise StructureNormalizationError(
+                "source charge annotations do not match "
+                f"{source_identity.atom_ref.display_token()}"
+            ) from error
+        if (0 if formal_charge is None else formal_charge) != int(raw_atom.charge):
+            raise StructureNormalizationError(
+                "source charge annotation disagrees with parsed atom "
+                f"{source_identity.atom_ref.display_token()}"
+            )
+
     return _RawAtomPayload(
         AtomSite(
             name=raw_atom.name,
@@ -1013,7 +1094,7 @@ def _atom_payload_from_raw_site(
             b_factor=b_factor,
             altloc=altloc,
         ),
-        formal_charge=normalize_formal_charge(int(raw_atom.charge)),
+        formal_charge=formal_charge,
     )
 
 

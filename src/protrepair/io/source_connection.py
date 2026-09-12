@@ -27,10 +27,8 @@ class SourceConnection:
     ----------
     endpoint_1, endpoint_2 : SourceAtomIdentity
         Source endpoints, including component and alternate-location identity.
-    relationship_type : BondRelationshipType
-        Source-declared type, before component or sequence resolution.
     source_metadata : SourceBondMetadata
-        Preferred connectivity declaration and any explicit source order evidence.
+        Source relationship and order, before component or sequence resolution.
 
     Raises
     ------
@@ -42,7 +40,6 @@ class SourceConnection:
 
     endpoint_1: SourceAtomIdentity
     endpoint_2: SourceAtomIdentity
-    relationship_type: BondRelationshipType
     source_metadata: SourceBondMetadata
 
     def __post_init__(self) -> None:
@@ -55,10 +52,6 @@ class SourceConnection:
             )
         if self.endpoint_1.atom_ref == self.endpoint_2.atom_ref:
             raise ValueError("source connections require two distinct atoms")
-        if not isinstance(self.relationship_type, BondRelationshipType):
-            raise TypeError(
-                "source connection relationship_type must be a BondRelationshipType"
-            )
         if not isinstance(self.source_metadata, SourceBondMetadata):
             raise TypeError("source connection metadata must be SourceBondMetadata")
 
@@ -82,7 +75,7 @@ class SourceConnection:
         residue_id_2 = self.endpoint_2.atom_ref.residue_id
         return bool(
             self.source_metadata.record_type is not SourceBondRecordType.PDB_CONECT
-            and self.relationship_type
+            and self.source_metadata.reported_relationship_type
             in {
                 BondRelationshipType.COVALENT,
                 BondRelationshipType.UNKNOWN,
@@ -191,7 +184,7 @@ class SourceConnection:
             raise ModelInvariantError(
                 "expected chemistry refers to a different atom pair"
             )
-        relationship = self.relationship_type
+        relationship = self.source_metadata.reported_relationship_type
         reported_order = self.source_metadata.reported_order
         order = reported_order
         aromatic = False

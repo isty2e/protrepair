@@ -47,6 +47,12 @@ by CONECT multiplicity, the metadata retains the typed record's identity and
 distance together with the supplementary order evidence. The typed record
 itself need not contain an order.
 
+`SourceBondMetadata.reported_relationship_type` likewise retains the source
+relationship before template resolution. A connectivity-only CONECT record
+can become a covalent bond in current topology while its reported relationship
+remains `UNKNOWN`. The [original input observation](ingress-policy.md#original-chemistry-observations)
+uses reported orders and relationships, never template-filled values.
+
 Remapping atoms preserves this evidence. Writers and force-field binding use
 `TopologyBond.order`, the current graph, rather than replaying the reported
 order. Reading an exported file treats its orders as declarations in that new

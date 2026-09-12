@@ -86,11 +86,13 @@ class SourceBondMetadata:
         Positive integral order explicitly supplied by source records. It may
         come from a supplementary CONECT record rather than the preferred typed
         declaration. None means no explicit order, even if topology resolves one.
+    reported_relationship_type : BondRelationshipType, default=UNKNOWN
+        Relationship declared by the source, before template-based resolution.
 
     Raises
     ------
     TypeError
-        The record type or reported order has a noncanonical type.
+        The record type, relationship type, or reported order is noncanonical.
     ValueError
         The reported order is nonpositive or the distance is not finite and positive.
     """
@@ -99,8 +101,13 @@ class SourceBondMetadata:
     source_id: str | None = None
     reported_distance_angstrom: float | None = None
     reported_order: int | None = None
+    reported_relationship_type: BondRelationshipType = BondRelationshipType.UNKNOWN
 
     def __post_init__(self) -> None:
+        if not isinstance(self.reported_relationship_type, BondRelationshipType):
+            raise TypeError(
+                "source bond reported_relationship_type must be a BondRelationshipType"
+            )
         if not isinstance(self.record_type, SourceBondRecordType):
             raise TypeError(
                 "source bond metadata record_type must be a SourceBondRecordType"

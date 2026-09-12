@@ -31,6 +31,27 @@ values such as occupancy `1.0000001` and B factor `-0.0000001`. It does not
 clamp them. Clamping would replace source evidence and hide a data-quality
 problem before repair starts.
 
+## Original Chemistry Observations
+
+The selected input is retained at `structure.provenance.ingress.observation`.
+It keeps original atom identities, coordinates, reported charges, and explicit
+connections, including observed H, D, and T. Repair can remove or recreate an
+atom without erasing that observation. Original labels stay original even if
+the current structure renames an atom.
+
+An explicitly reported charge of zero differs from an unspecified charge.
+ProtRepair preserves that distinction when reading and writing both formats;
+PDB output uses `0+` for an explicit zero. Missing source hydrogens do not show
+that a residue is neutral or deprotonated. Connections and their reported
+semantics are evidence, not a guarantee that the source chemistry is valid.
+See [Topology Bond Policy](topology-bond-policy.md#source-bond-orders).
+
+Passing a repaired `ProteinStructure` back into the workflow keeps its original
+observation; generated atoms do not become source observations. Manually built
+structures may have no observation. Output files describe the current structure,
+not the original snapshot. Reading an exported file starts a new observation;
+PDB and mmCIF output do not archive the processing history.
+
 ## Canonical Residue Roles
 
 Each source residue slot receives one canonical role before

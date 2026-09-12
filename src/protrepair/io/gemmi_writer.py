@@ -133,7 +133,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             structure,
             bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
         )
-        pdb_text = _restore_pdb_isotope_element_symbols(
+        pdb_text = _restore_pdb_atom_attributes(
             raw_structure.make_pdb_string(),
             structure,
         )
@@ -154,7 +154,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         )
         mmcif_document = raw_structure.make_mmcif_document()
         _set_mmcif_connection_orders(mmcif_document, bonds)
-        _restore_mmcif_isotope_element_symbols(mmcif_document, structure)
+        _restore_mmcif_atom_attributes(mmcif_document, structure)
         return mmcif_document.as_string()
 
     raise UnsupportedFileFormatError(f"unsupported file format: {file_format}")
@@ -194,21 +194,24 @@ def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> st
         structure,
         bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
     )
-    return _restore_pdb_isotope_element_symbols(
+    return _restore_pdb_atom_attributes(
         raw_structure.make_pdb_string(),
         structure,
     )
 
 
-def _restore_pdb_isotope_element_symbols(
+def _restore_pdb_atom_attributes(
     pdb_text: str,
     structure: ProteinStructure,
 ) -> str:
-    """Restore isotope aliases that Gemmi cannot represent as elements."""
+    """Restore isotope symbols and explicit zeros collapsed by Gemmi."""
 
     if not any(
         atom_site.element_identity.is_isotope_alias()
         for atom_site in structure.constitution.atom_slots
+    ) and not any(
+        atom is not None and atom.formal_charge == 0
+        for atom in structure.topology.atom_topologies
     ):
         return pdb_text
 
@@ -230,31 +233,38 @@ def _restore_pdb_isotope_element_symbols(
         strict=True,
     ):
         atom_site = structure.constitution.atom_site_at(AtomIndex(atom_index_value))
-        if not atom_site.element_identity.is_isotope_alias():
+        formal_charge = structure.topology.formal_charge(AtomIndex(atom_index_value))
+        if not atom_site.element_identity.is_isotope_alias() and formal_charge != 0:
             continue
 
         line = lines[line_index]
         line_ending = line[len(line.rstrip("\r\n")) :]
-        record = line.removesuffix(line_ending).ljust(78)
-        lines[line_index] = (
-            record[:76]
-            + f"{atom_site.element_identity.source_symbol:>2}"
-            + record[78:]
-            + line_ending
-        )
+        record = line.removesuffix(line_ending).ljust(80)
+        if atom_site.element_identity.is_isotope_alias():
+            record = (
+                record[:76]
+                + f"{atom_site.element_identity.source_symbol:>2}"
+                + record[78:]
+            )
+        if formal_charge == 0:
+            record = record[:78] + "0+" + record[80:]
+        lines[line_index] = record + line_ending
 
     return "".join(lines)
 
 
-def _restore_mmcif_isotope_element_symbols(
+def _restore_mmcif_atom_attributes(
     document: gemmi.cif.Document,
     structure: ProteinStructure,
 ) -> None:
-    """Restore source isotope aliases in one generated mmCIF document."""
+    """Restore canonical isotope symbols and explicit neutral charge values."""
 
     if not any(
         atom_site.element_identity.is_isotope_alias()
         for atom_site in structure.constitution.atom_slots
+    ) and not any(
+        atom is not None and atom.formal_charge == 0
+        for atom in structure.topology.atom_topologies
     ):
         return
 
@@ -264,6 +274,11 @@ def _restore_mmcif_isotope_element_symbols(
 
     block = document.sole_block()
     atom_site_type_symbols = block.find_loop("_atom_site.type_symbol")
+    atom_charges = block.find_loop("_atom_site.pdbx_formal_charge")
+    if len(atom_charges) != len(atom_index_values):
+        raise ModelInvariantError(
+            "mmCIF charge projection requires one row per atom slot"
+        )
     if len(atom_site_type_symbols) != len(atom_index_values):
         raise ModelInvariantError(
             "mmCIF isotope restoration requires one type symbol per atom slot"
@@ -273,6 +288,8 @@ def _restore_mmcif_isotope_element_symbols(
         atom_site = structure.constitution.atom_site_at(AtomIndex(atom_index_value))
         if atom_site.element_identity.is_isotope_alias():
             atom_site_type_symbols[row_index] = atom_site.element_identity.source_symbol
+        if structure.topology.formal_charge(AtomIndex(atom_index_value)) == 0:
+            atom_charges[row_index] = "0"
 
     atom_type_symbols = block.find_loop("_atom_type.symbol")
     if not atom_type_symbols:

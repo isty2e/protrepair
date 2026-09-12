@@ -133,7 +133,7 @@ def _normalize_structure_text(
     if file_format is FileFormat.PDB:
         raw_structure = gemmi.read_pdb_string(contents)
         pdb_conect_source_connections = _pdb_conect_source_connections(contents)
-        source_element_by_atom_identity = _pdb_source_isotope_element_by_atom_identity(
+        source_element_by_atom_identity, source_charges = _pdb_source_atom_attributes(
             contents
         )
     else:
@@ -145,8 +145,8 @@ def _normalize_structure_text(
             source_document,
         )
         pdb_conect_source_connections = ()
-        source_element_by_atom_identity = (
-            _mmcif_source_isotope_element_by_atom_identity(source_document)
+        source_element_by_atom_identity, source_charges = _mmcif_source_atom_attributes(
+            source_document
         )
         source_orders_by_id = _mmcif_connection_orders(source_document)
 
@@ -167,6 +167,7 @@ def _normalize_structure_text(
         source_name=source_name,
         source_connections=source_connections,
         source_element_by_atom_identity=source_element_by_atom_identity,
+        source_charges_by_atom_identity=source_charges,
     )
 
 
@@ -223,8 +224,8 @@ def _source_connections_from_raw_structure(
             SourceConnection(
                 endpoint_1=endpoint_1,
                 endpoint_2=endpoint_2,
-                relationship_type=relationship_type,
                 source_metadata=SourceBondMetadata(
+                    reported_relationship_type=relationship_type,
                     record_type=_source_connection_record_type(
                         file_format=file_format,
                         relationship_type=relationship_type,
@@ -381,7 +382,6 @@ def _pdb_conect_source_connections(
         connection = SourceConnection(
             endpoint_1=source_identity,
             endpoint_2=target_identity,
-            relationship_type=BondRelationshipType.UNKNOWN,
             source_metadata=SourceBondMetadata(
                 record_type=SourceBondRecordType.PDB_CONECT,
                 source_id="CONECT",
@@ -424,16 +424,27 @@ def _first_model_unambiguous_pdb_atom_identities(
     }
 
 
-def _pdb_source_isotope_element_by_atom_identity(
+def _pdb_source_atom_attributes(
     contents: str,
-) -> dict[SourceAtomIdentity, str]:
-    """Return first-model PDB isotope symbols before Gemmi element projection."""
+) -> tuple[dict[SourceAtomIdentity, str], dict[SourceAtomIdentity, list[int | None]]]:
+    """Read isotope symbols and ordered charge occurrences before Gemmi projection."""
 
     source_elements: dict[SourceAtomIdentity, str] = {}
+    source_charges: dict[SourceAtomIdentity, list[int | None]] = {}
     for line in _first_model_pdb_atom_lines(contents):
         atom_serial_and_identity = _pdb_atom_serial_and_identity(line)
         if atom_serial_and_identity is None:
             continue
+
+        identity = atom_serial_and_identity[1]
+        token = line[78:80].strip()
+        if not token:
+            charge = None
+        elif len(token) == 2 and token[0] in "0123456789" and token[1] in "+-":
+            charge = int(token[0]) * (-1 if token[1] == "-" else 1)
+        else:
+            raise StructureNormalizationError(f"invalid PDB formal charge {token!r}")
+        source_charges.setdefault(identity, []).append(charge)
 
         source_symbol = line[76:78].strip().upper()
         if source_symbol not in {"D", "T"}:
@@ -444,23 +455,29 @@ def _pdb_source_isotope_element_by_atom_identity(
             source_symbol,
         )
 
-    return source_elements
+    return source_elements, source_charges
 
 
-def _mmcif_source_isotope_element_by_atom_identity(
+def _mmcif_source_atom_attributes(
     document: gemmi.cif.Document,
-) -> dict[SourceAtomIdentity, str]:
-    """Return first-model mmCIF isotope symbols before Gemmi projection."""
+) -> tuple[dict[SourceAtomIdentity, str], dict[SourceAtomIdentity, list[int | None]]]:
+    """Read first-model isotope and charge annotations in source occurrence order."""
 
     if len(document) == 0:
-        return {}
+        return {}, {}
 
     block = document[0]
     type_symbols = tuple(block.find_values("_atom_site.type_symbol"))
     if not type_symbols:
-        return {}
+        return {}, {}
 
     row_count = len(type_symbols)
+    charge_tokens = _coalesced_mmcif_column(
+        block,
+        ("_atom_site.pdbx_formal_charge",),
+        row_count=row_count,
+        required=False,
+    )
     atom_names = _coalesced_mmcif_column(
         block,
         ("_atom_site.auth_atom_id", "_atom_site.label_atom_id"),
@@ -509,10 +526,9 @@ def _mmcif_source_isotope_element_by_atom_identity(
     )
 
     source_elements: dict[SourceAtomIdentity, str] = {}
+    source_charges: dict[SourceAtomIdentity, list[int | None]] = {}
     for row_index, source_symbol in enumerate(type_symbols):
         normalized_source_symbol = _non_null_cif_value(source_symbol).upper()
-        if normalized_source_symbol not in {"D", "T"}:
-            continue
         if (
             first_model_number
             and _non_null_cif_value(model_numbers[row_index]) != first_model_number
@@ -544,13 +560,20 @@ def _mmcif_source_isotope_element_by_atom_identity(
             component_id=component_id,
             altloc=normalize_altloc(_non_null_cif_value(altlocs[row_index])),
         )
-        _record_source_isotope_element(
-            source_elements,
-            identity,
-            normalized_source_symbol,
-        )
+        token = _non_null_cif_value(charge_tokens[row_index])
+        try:
+            charge = None if not token else int(token)
+        except ValueError as error:
+            raise StructureNormalizationError(
+                f"invalid mmCIF formal charge {token!r}"
+            ) from error
+        source_charges.setdefault(identity, []).append(charge)
+        if normalized_source_symbol in {"D", "T"}:
+            _record_source_isotope_element(
+                source_elements, identity, normalized_source_symbol
+            )
 
-    return source_elements
+    return source_elements, source_charges
 
 
 def _coalesced_mmcif_column(
@@ -585,7 +608,7 @@ def _coalesced_mmcif_column(
             (
                 value
                 for column in columns
-                if (value := _non_null_cif_value(column[row_index]))
+                if _non_null_cif_value(value := column[row_index])
             ),
             "",
         )
@@ -612,8 +635,7 @@ def _record_source_isotope_element(
 def _non_null_cif_value(value: str) -> str:
     """Normalize CIF null markers into an absent source token."""
 
-    normalized_value = value.strip()
-    return "" if normalized_value in {".", "?"} else normalized_value
+    return gemmi.cif.as_string(value).strip()
 
 
 def _first_model_pdb_atom_lines(contents: str) -> Iterator[str]:
