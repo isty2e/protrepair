@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- retain explicitly reported source bond orders separately from template-filled
+  topology orders, including through atom repair and hydrogen placement. This
+  preserves evidence for later chemistry decisions without changing the graph
+  used by writers or force-field binding
 - assign Kekule bond orders to standard PHE, TYR, and TRP rings so RDKit
   recognizes their aromatic chemistry instead of saturated radical centers.
   Source charges and hydrogens are unchanged; explicit source orders still

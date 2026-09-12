@@ -224,9 +224,6 @@ def _source_connections_from_raw_structure(
                 endpoint_1=endpoint_1,
                 endpoint_2=endpoint_2,
                 relationship_type=relationship_type,
-                order=None
-                if orders_by_id is None
-                else orders_by_id.get(connection.name),
                 source_metadata=SourceBondMetadata(
                     record_type=_source_connection_record_type(
                         file_format=file_format,
@@ -236,6 +233,9 @@ def _source_connections_from_raw_structure(
                     reported_distance_angstrom=_normalize_reported_connection_distance(
                         connection.reported_distance
                     ),
+                    reported_order=None
+                    if orders_by_id is None
+                    else orders_by_id.get(connection.name),
                 ),
             )
         )
@@ -382,10 +382,10 @@ def _pdb_conect_source_connections(
             endpoint_1=source_identity,
             endpoint_2=target_identity,
             relationship_type=BondRelationshipType.UNKNOWN,
-            order=multiplicity if multiplicity > 1 else None,
             source_metadata=SourceBondMetadata(
                 record_type=SourceBondRecordType.PDB_CONECT,
                 source_id="CONECT",
+                reported_order=multiplicity if multiplicity > 1 else None,
             ),
         )
         pair = connection.endpoint_pair()

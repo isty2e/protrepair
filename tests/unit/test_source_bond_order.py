@@ -36,6 +36,8 @@ from protrepair.structure.topology import (
     StructureTopology,
     TopologyBond,
 )
+from protrepair.transformer.completion.heavy.core import repair_heavy_atoms_core
+from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
 from protrepair.transformer.continuous.bonds import planned_bond_from_topology_bond
 from protrepair.transformer.continuous.rdkit import (
     build_rdkit_molecule,
@@ -95,6 +97,8 @@ def test_connectivity_only_is_not_an_explicit_single_order(
     assert bond.source_metadata == SourceBondMetadata(
         SourceBondRecordType.PDB_CONECT, "CONECT"
     )
+    assert bond.source_metadata is not None
+    assert bond.source_metadata.reported_order is None
     assert bond.relationship_type is (
         BondRelationshipType.UNKNOWN
         if expected is None
@@ -111,6 +115,9 @@ def test_conect_multiplicity_survives_reciprocal_and_duplicate_rows(order: int) 
     )
     assert len(structure.topology.bonds) == 1
     assert structure.topology.bonds[0].order == order
+    assert structure.topology.bonds[0].source_metadata == SourceBondMetadata(
+        SourceBondRecordType.PDB_CONECT, "CONECT", reported_order=order
+    )
     assert (
         read_structure_string(
             write_structure_string(structure, FileFormat.PDB), FileFormat.PDB
@@ -150,6 +157,8 @@ def test_mmcif_intra_residue_order_roundtrip(order: int | None, token: str) -> N
     assert bond.order == order
     assert bond.relationship_type is BondRelationshipType.COVALENT
     assert bond.provenance is BondProvenance.SOURCE_EXPLICIT
+    assert bond.source_metadata is not None
+    assert bond.source_metadata.reported_order == order
 
 
 @pytest.mark.parametrize("order", (1, 3))
@@ -230,8 +239,9 @@ def _connection(
         relationship_type=BondRelationshipType.UNKNOWN
         if record_type is SourceBondRecordType.PDB_CONECT
         else BondRelationshipType.COVALENT,
-        source_metadata=SourceBondMetadata(record_type, "connection", 1.33),
-        order=order,
+        source_metadata=SourceBondMetadata(
+            record_type, "connection", 1.33, reported_order=order
+        ),
     )
 
 
@@ -250,9 +260,31 @@ def test_typed_metadata_survives_supplementary_conect_order(
     fallback = _connection(SourceBondRecordType.PDB_CONECT, 2)
     merged = typed.merge(fallback)
     assert merged == fallback.merge(typed)
-    assert merged.source_metadata == typed.source_metadata
+    assert merged.source_metadata == replace(typed.source_metadata, reported_order=2)
     assert merged.relationship_type == typed.relationship_type
-    assert merged.order == 2
+    assert merged.source_metadata.reported_order == 2
+
+
+@pytest.mark.parametrize("order", (None, 1, 2, 3, 4))
+def test_compatible_typed_declarations_merge_order_evidence(order: int | None) -> None:
+    unspecified = _connection(SourceBondRecordType.MMCIF_STRUCT_CONN, None)
+    explicit = _connection(SourceBondRecordType.MMCIF_STRUCT_CONN, order)
+    assert unspecified.merge(explicit) == explicit
+    assert explicit.merge(unspecified) == explicit
+    assert explicit.merge(explicit) == explicit
+
+
+def test_compatible_orders_do_not_hide_conflicting_typed_metadata() -> None:
+    first = _connection(SourceBondRecordType.MMCIF_STRUCT_CONN, None)
+    second = replace(
+        first,
+        source_metadata=replace(
+            first.source_metadata, reported_order=2, reported_distance_angstrom=1.5
+        ),
+    )
+    for left, right in ((first, second), (second, first)):
+        with pytest.raises(ModelInvariantError, match="conflicting bonds.*typed"):
+            left.merge(right)
 
 
 def test_explicit_orders_conflict_even_when_one_record_has_lower_type_priority() -> (
@@ -268,8 +300,8 @@ def test_explicit_orders_conflict_even_when_one_record_has_lower_type_priority()
 @pytest.mark.parametrize("invalid", [0, -1, True, 1.5, "2"])
 def test_both_order_boundaries_reject_invalid_values(invalid: object) -> None:
     with pytest.raises((TypeError, ValueError)):
-        replace(
-            _connection(SourceBondRecordType.PDB_CONECT, None), order=cast(int, invalid)
+        SourceBondMetadata(
+            SourceBondRecordType.PDB_CONECT, reported_order=cast(int, invalid)
         )
     with pytest.raises((TypeError, ValueError)):
         TopologyBond(AtomIndex(0), AtomIndex(1), order=cast(int, invalid))
@@ -286,11 +318,20 @@ def test_mmcif_absent_and_explicit_order_have_different_precedence(
     )
     document = gemmi.cif.read_string(write_structure_string(original, FileFormat.MMCIF))
     if token is None:
-        document.sole_block().find(["_struct_conn.pdbx_value_order"]).erase()
+        loop = (
+            document.sole_block().find_loop("_struct_conn.pdbx_value_order").get_loop()
+        )
+        assert loop is not None
+        loop.remove_column("_struct_conn.pdbx_value_order")
     else:
         document.sole_block().find_values("_struct_conn.pdbx_value_order")[0] = token
     restored = read_structure_string(document.as_string(), FileFormat.MMCIF)
-    assert restored.topology.bonds[0].order == expected
+    (bond,) = restored.topology.bonds
+    assert bond.order == expected
+    assert bond.source_metadata is not None
+    assert bond.source_metadata.reported_order == (
+        None if token in {None, "?", "."} else expected
+    )
 
 
 def test_mmcif_unsupported_explicit_order_is_not_silently_defaulted() -> None:
@@ -454,6 +495,20 @@ def test_disulfide_source_type_cannot_be_combined_with_multiple_order() -> None:
         connection.to_topology_bond(AtomIndex(0), AtomIndex(1), expected_bond=None)
 
 
+@pytest.mark.parametrize("reported_order", (None, 1))
+def test_disulfide_resolution_does_not_invent_explicit_order_evidence(
+    reported_order: int | None,
+) -> None:
+    connection = replace(
+        _connection(SourceBondRecordType.PDB_SSBOND, reported_order),
+        relationship_type=BondRelationshipType.DISULFIDE,
+    )
+    bond = connection.to_topology_bond(AtomIndex(0), AtomIndex(1), expected_bond=None)
+    assert bond.order == 1
+    assert bond.source_metadata is not None
+    assert bond.source_metadata.reported_order == reported_order
+
+
 @pytest.mark.parametrize("layout", ("rdkit", "six_fields", "split_order"))
 def test_rdkit_phosphate_connectivity_and_multiplicity(layout: str) -> None:
     molecule = Chem.MolFromSmiles("P(=O)(O)(O)O")
@@ -548,13 +603,30 @@ def test_pdb_link_keeps_typed_metadata_while_conect_supplies_order() -> None:
     assert typed_only.topology.bonds[0].order is None
     assert bond.order == 2
     assert bond.relationship_type is BondRelationshipType.COVALENT
-    assert bond.source_metadata == typed_only.topology.bonds[0].source_metadata
+    metadata = typed_only.topology.bonds[0].source_metadata
+    assert metadata is not None
+    assert metadata.reported_order is None
+    assert bond.source_metadata == replace(metadata, reported_order=2)
 
 
-@pytest.mark.parametrize("order", (None, 2))
-def test_order_survives_constitution_remapping(order: int | None) -> None:
+@pytest.mark.parametrize(
+    "order,reported_order", [(None, None), (1, None), (2, None), (2, 2), (1, 2)]
+)
+def test_order_survives_constitution_remapping(
+    order: int | None, reported_order: int | None
+) -> None:
+    metadata = SourceBondMetadata(
+        SourceBondRecordType.MMCIF_STRUCT_CONN, reported_order=reported_order
+    )
     source = _with_bond(
-        _two_atoms(), TopologyBond(AtomIndex(0), AtomIndex(1), order=order)
+        _two_atoms(),
+        TopologyBond(
+            AtomIndex(0),
+            AtomIndex(1),
+            order=order,
+            provenance=BondProvenance.SOURCE_EXPLICIT,
+            source_metadata=metadata,
+        ),
     )
     target = build_structure(
         chains=(),
@@ -577,6 +649,102 @@ def test_order_survives_constitution_remapping(order: int | None) -> None:
     )
     assert remapped.endpoint_pair() == (AtomIndex(1), AtomIndex(2))
     assert remapped.order == order
+    assert remapped.source_metadata == metadata
+
+
+@pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
+@pytest.mark.parametrize("effective_order,reported_order", [(2, 1), (3, 2)])
+def test_writer_and_native_binding_use_effective_not_reported_order(
+    file_format: FileFormat, effective_order: int, reported_order: int
+) -> None:
+    metadata = SourceBondMetadata(
+        SourceBondRecordType.MMCIF_STRUCT_CONN, reported_order=reported_order
+    )
+    original = _with_bond(
+        _two_atoms("ALA"),
+        TopologyBond(
+            AtomIndex(0),
+            AtomIndex(1),
+            order=effective_order,
+            provenance=BondProvenance.SOURCE_EXPLICIT,
+            source_metadata=metadata,
+        ),
+    )
+    problem = build_continuous_relaxation_problem(
+        original,
+        LocalScopeSpec.from_residues((ResidueId("A", 1),)),
+        component_library=build_standard_component_library(),
+    )
+    molecule, _ = build_rdkit_molecule(problem)
+    assert [bond.GetBondTypeAsDouble() for bond in molecule.GetBonds()] == [
+        float(effective_order)
+    ]
+
+    restored = read_structure_string(
+        write_structure_string(original, file_format), file_format
+    )
+    (bond,) = restored.topology.bonds
+    assert bond.order == effective_order
+    assert bond.source_metadata is not None
+    assert bond.source_metadata.reported_order == effective_order
+    assert original.topology.bonds[0].source_metadata == metadata
+
+
+@pytest.mark.parametrize("reported_order", (None, 1, 2))
+@pytest.mark.parametrize("targeted", (False, True))
+def test_source_order_evidence_survives_heavy_and_hydrogen_completion(
+    reported_order: int | None, targeted: bool
+) -> None:
+    residue_id = ResidueId("A", 1)
+    residue = residue_payload(
+        component_id="ALA",
+        residue_id=residue_id,
+        atoms=(
+            atom_payload("N", "N", Vec3(-1.2, 0.8, 0)),
+            atom_payload("CA", "C", Vec3(0, 0, 0)),
+            atom_payload("C", "C", Vec3(1.3, 0.5, 0)),
+            atom_payload("O", "O", Vec3(2.2, -0.3, 0)),
+        ),
+    )
+    original = _with_bond(
+        build_structure(
+            chains=(chain_payload("A", (residue,)),), source_format=FileFormat.MMCIF
+        ),
+        TopologyBond(AtomIndex(2), AtomIndex(3), order=reported_order),
+    )
+    original = read_structure_string(
+        write_structure_string(original, FileFormat.MMCIF), FileFormat.MMCIF
+    )
+    source_bond = original.topology.bond_between(AtomIndex(2), AtomIndex(3))
+    assert source_bond is not None and source_bond.source_metadata is not None
+    assert source_bond.source_metadata.reported_order == reported_order
+    target_residue_ids = frozenset((residue_id,)) if targeted else None
+    repaired = repair_heavy_atoms_core(
+        original, target_residue_ids=target_residue_ids
+    ).structure
+    assert (
+        repaired.constitution.resolve_atom_index(AtomRef(residue_id, "CB")) is not None
+    )
+    hydrogenated = materialize_hydrogens_core(
+        repaired, target_residue_ids=target_residue_ids
+    ).structure
+    assert any(
+        atom_site.is_hydrogen for atom_site in hydrogenated.constitution.atom_slots
+    )
+
+    for structure in (repaired, hydrogenated, hydrogenated.without_hydrogens()):
+        carbon_index = structure.constitution.resolve_atom_index(
+            AtomRef(residue_id, "C")
+        )
+        oxygen_index = structure.constitution.resolve_atom_index(
+            AtomRef(residue_id, "O")
+        )
+        assert carbon_index is not None and oxygen_index is not None
+        bond = structure.topology.bond_between(carbon_index, oxygen_index)
+        assert bond is not None
+        assert bond.order == source_bond.order
+        assert bond.provenance is BondProvenance.SOURCE_EXPLICIT
+        assert bond.source_metadata == source_bond.source_metadata
 
 
 def test_mmcif_shared_source_id_does_not_mix_orders_between_connections() -> None:

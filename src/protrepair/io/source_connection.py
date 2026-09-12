@@ -19,7 +19,7 @@ from protrepair.structure.topology import (
 class SourceConnection:
     """One source-declared connection before canonical topology lowering.
 
-    ``order=None`` means the record supplies connectivity without an order.
+    ``source_metadata.reported_order=None`` supplies connectivity without an order.
     In particular, a single CONECT neighbor occurrence is not an assertion
     that the chemical bond is single.
 
@@ -30,23 +30,20 @@ class SourceConnection:
     relationship_type : BondRelationshipType
         Source-declared type, before component or sequence resolution.
     source_metadata : SourceBondMetadata
-        Record type, identifier, and reported distance from the source.
-    order : int or None, default=None
-        Explicit positive integral order; None supplies no order evidence.
+        Preferred connectivity declaration and any explicit source order evidence.
 
     Raises
     ------
     TypeError
         A field has a noncanonical type.
     ValueError
-        Endpoints identify the same atom or order is nonpositive.
+        Endpoints identify the same atom.
     """
 
     endpoint_1: SourceAtomIdentity
     endpoint_2: SourceAtomIdentity
     relationship_type: BondRelationshipType
     source_metadata: SourceBondMetadata
-    order: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint_1, SourceAtomIdentity) or not isinstance(
@@ -64,11 +61,6 @@ class SourceConnection:
             )
         if not isinstance(self.source_metadata, SourceBondMetadata):
             raise TypeError("source connection metadata must be SourceBondMetadata")
-        if self.order is not None:
-            if isinstance(self.order, bool) or not isinstance(self.order, int):
-                raise TypeError("source connection order must be an integer or None")
-            if self.order <= 0:
-                raise ValueError("source connection order must be positive")
 
         endpoint_1 = self.endpoint_1
         endpoint_2 = self.endpoint_2
@@ -139,23 +131,31 @@ class SourceConnection:
             raise ModelInvariantError(
                 "cannot merge source connections for different atoms"
             )
-        if (
-            self.order is not None
-            and other.order is not None
-            and self.order != other.order
-        ):
+        order = self.source_metadata.reported_order
+        other_order = other.source_metadata.reported_order
+        if order is not None and other_order is not None and order != other_order:
             raise ModelInvariantError(
                 "conflicting source bond orders for one atom pair"
             )
 
         if not self.is_fallback_record() and not other.is_fallback_record():
-            if replace(self, order=None) != replace(other, order=None):
+            if replace(
+                self,
+                source_metadata=replace(self.source_metadata, reported_order=None),
+            ) != replace(
+                other,
+                source_metadata=replace(other.source_metadata, reported_order=None),
+            ):
                 raise ModelInvariantError(
                     "conflicting bonds in typed source connections"
                 )
         preferred = other if self.is_fallback_record() else self
         return replace(
-            preferred, order=self.order if self.order is not None else other.order
+            preferred,
+            source_metadata=replace(
+                preferred.source_metadata,
+                reported_order=order if order is not None else other_order,
+            ),
         )
 
     def to_topology_bond(
@@ -192,7 +192,8 @@ class SourceConnection:
                 "expected chemistry refers to a different atom pair"
             )
         relationship = self.relationship_type
-        order = self.order
+        reported_order = self.source_metadata.reported_order
+        order = reported_order
         aromatic = False
         compatible = (
             expected_bond is not None
@@ -211,7 +212,7 @@ class SourceConnection:
                 order = expected_bond.order
             aromatic = expected_bond.aromatic and order in {1, 2}
         if relationship is BondRelationshipType.DISULFIDE:
-            if self.order not in {None, 1}:
+            if reported_order not in {None, 1}:
                 raise ModelInvariantError(
                     "disulfide connectivity conflicts with a multiple bond order"
                 )

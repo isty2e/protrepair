@@ -40,6 +40,18 @@ pair retains the component's double bond. Source charges, hydrogen atoms,
 and coordinates are unchanged by this resolution. It does not establish
 that an explicitly supplied microstate is chemically valid.
 
+Canonical topology keeps the source-reported order separately from the effective
+order. `SourceBondMetadata.reported_order` remains `None` when a template fills
+an order that the source did not supply. If a typed connection is supplemented
+by CONECT multiplicity, the metadata retains the typed record's identity and
+distance together with the supplementary order evidence. The typed record
+itself need not contain an order.
+
+Remapping atoms preserves this evidence. Writers and force-field binding use
+`TopologyBond.order`, the current graph, rather than replaying the reported
+order. Reading an exported file treats its orders as declarations in that new
+source; it does not recover the original processing history.
+
 PDB `LINK` records supply no order; `SSBOND` identifies a single disulfide
 bond. For `CONECT`, ProtRepair accepts the repeated-neighbor convention used
 by [RDKit's PDB parser](https://github.com/rdkit/rdkit/blob/Release_2026_03_2/Code/GraphMol/FileParsers/PDBParser.cpp).

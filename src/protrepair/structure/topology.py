@@ -72,17 +72,47 @@ class SourceBondRecordType(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class SourceBondMetadata:
-    """Source-origin metadata for one SOURCE_EXPLICIT topology bond."""
+    """Source declarations retained independently of effective bond chemistry.
+
+    Parameters
+    ----------
+    record_type : SourceBondRecordType
+        Format of the preferred connectivity declaration.
+    source_id : str or None, default=None
+        Identifier of that declaration; whitespace-only identifiers become None.
+    reported_distance_angstrom : float or None, default=None
+        Positive finite distance in that declaration, if present.
+    reported_order : int or None, default=None
+        Positive integral order explicitly supplied by source records. It may
+        come from a supplementary CONECT record rather than the preferred typed
+        declaration. None means no explicit order, even if topology resolves one.
+
+    Raises
+    ------
+    TypeError
+        The record type or reported order has a noncanonical type.
+    ValueError
+        The reported order is nonpositive or the distance is not finite and positive.
+    """
 
     record_type: SourceBondRecordType
     source_id: str | None = None
     reported_distance_angstrom: float | None = None
+    reported_order: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.record_type, SourceBondRecordType):
             raise TypeError(
                 "source bond metadata record_type must be a SourceBondRecordType"
             )
+
+        if self.reported_order is not None:
+            if isinstance(self.reported_order, bool) or not isinstance(
+                self.reported_order, int
+            ):
+                raise TypeError("source bond reported_order must be an integer or None")
+            if self.reported_order <= 0:
+                raise ValueError("source bond reported_order must be positive")
 
         source_id = None if self.source_id is None else self.source_id.strip() or None
         reported_distance = self.reported_distance_angstrom
@@ -111,7 +141,8 @@ class TopologyBond:
 
     ``order=None`` means unresolved, not single. Endpoint provenance does not
     imply that the source supplied an order; ingress may resolve it from
-    component or sequence chemistry while retaining source metadata.
+    component or sequence chemistry while retaining the original reported order
+    in source metadata. Execution and serialization use ``order``, not that evidence.
 
     Parameters
     ----------
