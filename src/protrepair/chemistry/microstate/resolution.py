@@ -314,7 +314,7 @@ class MicrostateSite:
         source: MicrostateConstraints,
         *,
         override: MicrostateConstraints | None = None,
-        default: MicrostateConstraints | None = None,
+        preferences: tuple[MicrostateConstraints, ...] = (),
     ) -> MicrostateResolution:
         """Intersect evidence before choosing a resonance representation.
 
@@ -324,8 +324,11 @@ class MicrostateSite:
             Original declarations; unobserved hydrogen counts are not exact zero.
         override : MicrostateConstraints or None
             Explicit replacement authority over this whole site, not the residue.
-        default : MicrostateConstraints or None
-            Caller-selected preference, applied only within source-compatible states.
+        preferences : tuple[MicrostateConstraints, ...]
+            Highest-priority first. Each preference narrows the remaining
+            source-compatible candidates only if the intersection is nonempty.
+            Preferences never restore eliminated candidates or override evidence;
+            an explicit override bypasses them.
 
         Returns
         -------
@@ -357,13 +360,16 @@ class MicrostateSite:
                 or requested
             )
             basis = MicrostateSelectionBasis.OVERRIDE
-        elif default is not None:
-            preferred = tuple(
-                graph for graph in candidates if default.violations(graph).is_empty()
-            )
-            if preferred and preferred != candidates:
-                candidates = preferred
-                basis = MicrostateSelectionBasis.DEFAULT
+        else:
+            for preference in preferences:
+                preferred = tuple(
+                    graph
+                    for graph in candidates
+                    if preference.violations(graph).is_empty()
+                )
+                if preferred and preferred != candidates:
+                    candidates = preferred
+                    basis = MicrostateSelectionBasis.DEFAULT
 
         if not candidates:
             return MicrostateResolution(

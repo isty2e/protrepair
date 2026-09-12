@@ -75,7 +75,7 @@ class PolymerMicrostateSite:
         observation: StructureObservation | None,
         *,
         override: MicrostateConstraints | None = None,
-        default: MicrostateConstraints | None = None,
+        preferences: tuple[MicrostateConstraints, ...] = (),
     ) -> MicrostateResolution:
         """Resolve chemistry without treating generated atoms as source evidence.
 
@@ -87,8 +87,8 @@ class PolymerMicrostateSite:
             Original selected input. None is unavailable, not neutral chemistry.
         override : MicrostateConstraints or None
             Explicit site-scoped authority to supersede interpretable source facts.
-        default : MicrostateConstraints or None
-            Preference among source-compatible candidates only.
+        preferences : tuple[MicrostateConstraints, ...]
+            Ordered preferences among source-compatible candidates only.
 
         Returns
         -------
@@ -169,7 +169,7 @@ class PolymerMicrostateSite:
             return evidence
         constraints, attachments, details = evidence
         return replace(
-            site.resolve(constraints, override=override, default=default),
+            site.resolve(constraints, override=override, preferences=preferences),
             details=details,
             observed_hydrogens=attachments,
         )

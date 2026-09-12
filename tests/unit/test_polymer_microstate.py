@@ -268,18 +268,18 @@ def test_default_never_replaces_source_but_override_records_replacement() -> Non
     site = _site("LYS")
     source = MicrostateConstraints(charges=(("NZ", 0),))
     cation = MicrostateConstraints(hydrogens=(("NZ", 3),))
-    result = site.resolve(source, default=cation)
+    result = site.resolve(source, preferences=(cation,))
     assert result.graph is not None and result.graph.atom("NZ").charge == 0
     result = site.resolve(source, override=cation)
     assert result.graph is not None and result.graph.atom("NZ").charge == 1
     assert result.basis is MicrostateSelectionBasis.OVERRIDE
     assert result.superseded_source == source
-    result = site.resolve(MicrostateConstraints(), default=cation)
+    result = site.resolve(MicrostateConstraints(), preferences=(cation,))
     assert result.basis is MicrostateSelectionBasis.DEFAULT
     assert result.graph is not None and result.graph.atom("NZ").hydrogens == 3
     conflict = MicrostateConstraints(charges=(("NZ", -1),))
     assert (
-        site.resolve(conflict, default=cation).status
+        site.resolve(conflict, preferences=(cation,)).status
         is MicrostateResolutionStatus.CONFLICT
     )
     with pytest.raises(ValueError, match="override"):

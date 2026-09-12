@@ -5,20 +5,11 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TypeAlias, TypeGuard
 
+from protrepair.chemistry.microstate.resolution import MicrostateConstraints
 from protrepair.structure.constitution import ChainSite
 from protrepair.structure.slots import ResidueIndex
 
 DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO = 0.2
-
-__all__ = [
-    "DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO",
-    "DisabledHistidineProtonationRequest",
-    "HistidineDeltaProtonationAssignment",
-    "HistidineProtonationRequest",
-    "PrasRatioHistidineProtonationRequest",
-    "normalize_histidine_protonation_request",
-    "resolve_histidine_protonation_assignments",
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +48,18 @@ _HISTIDINE_PROTONATION_REQUEST_TYPES = (
 
 @dataclass(frozen=True, slots=True)
 class HistidineDeltaProtonationAssignment:
-    """Resolver-independent assignment to append one histidine delta HD1 atom."""
+    """Identify a chain-local PRAS target for protonating both ring nitrogens.
+
+    Parameters
+    ----------
+    residue_index : ResidueIndex
+        Histidine slot in the chain used to resolve the ratio request.
+
+    Raises
+    ------
+    TypeError
+        The index is not a canonical residue slot.
+    """
 
     residue_index: ResidueIndex
 
@@ -66,6 +68,17 @@ class HistidineDeltaProtonationAssignment:
             raise TypeError(
                 "histidine protonation assignment residue_index must be a ResidueIndex"
             )
+
+    def microstate_constraints(self) -> MicrostateConstraints:
+        """Request the complete cationic imidazole protonation state.
+
+        Returns
+        -------
+        MicrostateConstraints
+            One H on each ring nitrogen. The resolver chooses compatible charge
+            localization and Kekule bonds rather than independently appending HD1.
+        """
+        return MicrostateConstraints(hydrogens=(("ND1", 1), ("NE2", 1)))
 
 
 def normalize_histidine_protonation_request(
@@ -127,3 +140,14 @@ def _is_histidine_protonation_request(
     """Return whether value belongs to the closed request variant set."""
 
     return type(value) in _HISTIDINE_PROTONATION_REQUEST_TYPES
+
+
+__all__ = [
+    "DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO",
+    "DisabledHistidineProtonationRequest",
+    "HistidineDeltaProtonationAssignment",
+    "HistidineProtonationRequest",
+    "PrasRatioHistidineProtonationRequest",
+    "normalize_histidine_protonation_request",
+    "resolve_histidine_protonation_assignments",
+]
