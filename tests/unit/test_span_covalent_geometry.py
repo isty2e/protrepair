@@ -896,7 +896,9 @@ def _source(
             line
             for line in lines
             if not line.startswith("CONECT")
-            and not (line.startswith("ATOM  ") and int(line[22:26]) in numbers)
+            and not (
+                line.startswith(("ATOM  ", "HETATM")) and int(line[22:26]) in numbers
+            )
             and not (
                 line.startswith("SSBOND")
                 and (int(line[17:21]) in numbers or int(line[31:35]) in numbers)

@@ -23,11 +23,20 @@ Every C-N junction within the selected donor window, including its flanks, must
 have a resolved single, non-aromatic covalent bond in the donor topology. Chain
 order or nearby coordinates alone do not establish that connection.
 
-An internal source span is rejected if the preceding anchor's C is already
-covalently bonded to the following anchor's N. Insertion would leave a second
-path between them; this operation does not delete or replace existing source
-bonds. A reverse-direction cyclic connection or an unrelated side-chain link is
-not that shortcut.
+The declared span must also occupy consecutive source chain slots after
+insertion. An existing insertion-coded residue cannot sit between a missing
+residue and its declared anchor. A one-anchor request must not omit a present
+flank that would acquire a peptide bond during insertion; include that flank as
+the second anchor. Insertion also cannot reorder existing source chain slots;
+requests requiring that change are rejected before fitting.
+
+The preceding source anchor's carbonyl C must have room for the new peptide
+bond. A cap, crosslink, terminal OXT, or other covalent attachment beyond its
+CA/O scaffold blocks insertion, including one-anchor suffix reconstruction.
+This also rejects an existing C-N shortcut between the two anchors. The
+operation does not remove source atoms or replace source bonds to make room.
+Reverse-direction cyclic links, unrelated side-chain links, and noncovalent
+connections do not occupy this attachment site.
 
 You may submit more than one donor for exactly the same source span. The
 workflow keeps those requests as separate candidates. Different source spans

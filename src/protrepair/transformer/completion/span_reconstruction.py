@@ -746,8 +746,8 @@ def reconstruct_donor_span(
     -------
     ReconstructedSpanCandidate | SpanReconstructionFailure
         A screened heavy-atom candidate, or failure evidence without a partial
-        mutation. Disconnected donor windows and existing source C-N shortcuts
-        between the anchors are rejected before fitting.
+        mutation. Disconnected donor windows, mismatched source span boundaries,
+        and occupied source carbonyl attachment sites are rejected before fitting.
 
     Raises
     ------
@@ -803,7 +803,13 @@ def reconstruct_donor_span(
             "span reconstruction component_library must be ComponentLibrary"
         )
 
-    source_topology_failure = _source_anchor_topology_failure(source_structure, scope)
+    source_boundary_failure = _source_span_boundary_failure(source_structure, scope)
+    if source_boundary_failure is not None:
+        return source_boundary_failure
+
+    source_topology_failure = _source_carbonyl_attachment_failure(
+        source_structure, scope
+    )
     if source_topology_failure is not None:
         return source_topology_failure
 
@@ -945,28 +951,108 @@ def reconstruct_donor_span(
     )
 
 
-def _source_anchor_topology_failure(
+def _source_span_boundary_failure(
     structure: ProteinStructure, scope: AbsentResidueSpanScope
 ) -> SpanReconstructionFailure | None:
-    if scope.preceding_residue_id is None or scope.following_residue_id is None:
-        return None
-
-    preceding_carbon = structure.constitution.resolve_atom_index(
-        AtomRef(scope.preceding_residue_id, "C")
+    path = tuple(
+        residue_id
+        for residue_id in (
+            scope.preceding_residue_id,
+            *scope.absent_residue_ids,
+            scope.following_residue_id,
+        )
+        if residue_id is not None
     )
-    following_nitrogen = structure.constitution.resolve_atom_index(
-        AtomRef(scope.following_residue_id, "N")
-    )
-    if preceding_carbon is None or following_nitrogen is None:
-        return None
-
-    bond = structure.topology.bond_between(preceding_carbon, following_nitrogen)
-    if bond is not None and is_covalent_like_relationship(bond):
+    if not scope.absent_residue_ids or any(
+        not left.immediately_precedes(right)
+        for left, right in zip(path, path[1:], strict=False)
+    ):
         return SpanReconstructionFailure(
             SpanReconstructionFailureKind.INVALID_TARGET_STATE,
-            f"source anchors {scope.preceding_residue_id.display_token()}.C and "
-            f"{scope.following_residue_id.display_token()}.N are already "
-            "covalently linked; span insertion cannot replace that bond",
+            "source span must describe a nonempty, consecutive residue path",
+        )
+    for anchor_id in scope.anchor_residue_ids():
+        anchor = structure.constitution.residue_or_ligand(anchor_id)
+        if anchor is None or anchor.is_hetero:
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.MISSING_BACKBONE_CONTEXT,
+                f"source anchor {anchor_id.display_token()} is not a present "
+                "polymer residue",
+            )
+
+    chain = structure.constitution.chain(path[0].chain_id)
+    existing_ids = frozenset(chain.residue_ids())
+    if existing_ids.intersection(scope.absent_residue_ids):
+        return SpanReconstructionFailure(
+            SpanReconstructionFailureKind.INVALID_TARGET_STATE,
+            "source span contains residues that are already present",
+        )
+
+    # Insertion merges by residue ID; numbering alone cannot exclude an
+    # intervening insertion code or an undeclared flank on a terminal request.
+    merged_ids = sorted((*existing_ids, *scope.absent_residue_ids))
+    if tuple(rid for rid in merged_ids if rid in existing_ids) != chain.residue_ids():
+        return SpanReconstructionFailure(
+            SpanReconstructionFailureKind.INVALID_TARGET_STATE,
+            "span insertion would reorder existing source chain slots",
+        )
+    start = merged_ids.index(path[0])
+    stop = start + len(path)
+    if tuple(merged_ids[start:stop]) != path:
+        return SpanReconstructionFailure(
+            SpanReconstructionFailureKind.INVALID_TARGET_STATE,
+            "declared span boundaries do not occupy consecutive source chain slots",
+        )
+    if (
+        scope.preceding_residue_id is None
+        and start > 0
+        and merged_ids[start - 1].immediately_precedes(path[0])
+    ) or (
+        scope.following_residue_id is None
+        and stop < len(merged_ids)
+        and path[-1].immediately_precedes(merged_ids[stop])
+    ):
+        return SpanReconstructionFailure(
+            SpanReconstructionFailureKind.INVALID_TARGET_STATE,
+            "terminal span insertion would create an undeclared peptide junction; "
+            "include the available source flank as an anchor",
+        )
+    return None
+
+
+def _source_carbonyl_attachment_failure(
+    structure: ProteinStructure, scope: AbsentResidueSpanScope
+) -> SpanReconstructionFailure | None:
+    if scope.preceding_residue_id is None:
+        return None
+
+    carbon_ref = AtomRef(scope.preceding_residue_id, "C")
+    carbon = structure.constitution.resolve_atom_index(carbon_ref)
+    if carbon is None:
+        return None
+    terminal_oxygen = structure.constitution.resolve_atom_index(
+        AtomRef(scope.preceding_residue_id, "OXT")
+    )
+    if terminal_oxygen is not None:
+        return SpanReconstructionFailure(
+            SpanReconstructionFailureKind.INVALID_TARGET_STATE,
+            f"source carbonyl {carbon_ref.display_token()} already has terminal "
+            "OXT; span insertion cannot remove terminal atoms",
+        )
+
+    scaffold = {AtomRef(scope.preceding_residue_id, name) for name in ("CA", "O")}
+    for bond in structure.topology.bonds:
+        if not is_covalent_like_relationship(bond) or not bond.involves(carbon):
+            continue
+        other = bond.atom_index_2 if bond.atom_index_1 == carbon else bond.atom_index_1
+        other_ref = structure.constitution.atom_ref_at(other)
+        if other_ref in scaffold:
+            continue
+        return SpanReconstructionFailure(
+            SpanReconstructionFailureKind.INVALID_TARGET_STATE,
+            f"source carbonyl {carbon_ref.display_token()} is already covalently "
+            f"bonded to {other_ref.display_token()} beyond its CA/O scaffold; "
+            "span insertion cannot replace that bond",
         )
     return None
 

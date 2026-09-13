@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- reject donor-span requests whose declared anchors disagree with post-insertion
+  chain neighbors, or whose source carbonyl already has an additional covalent
+  attachment or terminal OXT. Internal and one-anchor spans fail without changing
+  the source rather than adding unvalidated peptide bonds
 - reject donor spans with missing or unresolved peptide connections, and reject
   insertion across an existing source anchor-to-anchor C-N bond without deleting
   that bond. Both paths report an atomic span failure
