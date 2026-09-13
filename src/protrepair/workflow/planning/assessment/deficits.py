@@ -98,6 +98,7 @@ class StructureChemistryReadinessDeficit:
     hydrogen_missing_residue_ids: tuple[ResidueId, ...] = ()
     hydrogen_prerequisite_residue_ids: tuple[ResidueId, ...] = ()
     hydrogen_blocked_residue_ids: tuple[ResidueId, ...] = ()
+    unrealized_polymer_residue_ids: tuple[ResidueId, ...] = ()
     disposition: WorkflowDeficitDisposition = WorkflowDeficitDisposition.OPTIONAL
 
     def __post_init__(self) -> None:
@@ -110,6 +111,7 @@ class StructureChemistryReadinessDeficit:
             "hydrogen_missing_residue_ids",
             "hydrogen_prerequisite_residue_ids",
             "hydrogen_blocked_residue_ids",
+            "unrealized_polymer_residue_ids",
         ):
             object.__setattr__(self, field_name, tuple(getattr(self, field_name)))
 
@@ -126,6 +128,7 @@ class StructureChemistryReadinessDeficit:
                 self.hydrogen_missing_residue_ids,
                 self.hydrogen_prerequisite_residue_ids,
                 self.hydrogen_blocked_residue_ids,
+                self.unrealized_polymer_residue_ids,
             )
         )
 
@@ -139,9 +142,7 @@ class StructureTopologyResolutionDeficit:
 
     def __post_init__(self) -> None:
         if self.promotable_disulfide_count <= 0:
-            raise ValueError(
-                "topology resolution deficits require promotable evidence"
-            )
+            raise ValueError("topology resolution deficits require promotable evidence")
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,9 +159,7 @@ class StructureDisulfideHydrogenDeficit:
                 "disulfide hydrogen deficits require forbidden hydrogen atoms"
             )
         if self.affected_residue_count <= 0:
-            raise ValueError(
-                "disulfide hydrogen deficits require affected residues"
-            )
+            raise ValueError("disulfide hydrogen deficits require affected residues")
         if self.affected_residue_count > self.forbidden_hydrogen_count:
             raise ValueError(
                 "affected disulfide residues cannot exceed forbidden atoms"
@@ -350,12 +349,8 @@ class WorkflowStateDeficit:
             requested_goals=requested_goals,
             planning_context=planning_context,
         )
-        topology_resolution = _topology_resolution_deficit(
-            disulfide_topology_facts
-        )
-        disulfide_hydrogen = _disulfide_hydrogen_deficit(
-            disulfide_hydrogen_facts
-        )
+        topology_resolution = _topology_resolution_deficit(disulfide_topology_facts)
+        disulfide_hydrogen = _disulfide_hydrogen_deficit(disulfide_hydrogen_facts)
         intrinsic_geometry = _intrinsic_geometry_deficit(
             intrinsic_geometry_facts=intrinsic_geometry_facts,
             requested_goals=requested_goals,
@@ -519,9 +514,7 @@ def _chemistry_readiness_deficit(
             residue_fact.heavy_atom_topology_availability_state
             is TopologyAvailabilityState.UNSUPPORTED
         ):
-            heavy_atom_topology_unsupported_residue_ids.append(
-                residue_fact.residue_id
-            )
+            heavy_atom_topology_unsupported_residue_ids.append(residue_fact.residue_id)
         if (
             residue_fact.hydrogen_topology_availability_state
             is TopologyAvailabilityState.ABSENT
@@ -573,13 +566,15 @@ def _chemistry_readiness_deficit(
             hydrogen_topology_unsupported_residue_ids
         ),
         hydrogen_missing_residue_ids=tuple(hydrogen_missing_residue_ids),
-        hydrogen_prerequisite_residue_ids=tuple(
-            hydrogen_prerequisite_residue_ids
-        ),
+        hydrogen_prerequisite_residue_ids=tuple(hydrogen_prerequisite_residue_ids),
         hydrogen_blocked_residue_ids=tuple(hydrogen_blocked_residue_ids),
+        unrealized_polymer_residue_ids=tuple(
+            fact.residue_id
+            for fact in chemistry_readiness_facts.residue_facts
+            if fact.has_unrealized_microstates()
+        ),
         disposition=disposition,
     )
-
 
 
 def _intrinsic_geometry_deficit(

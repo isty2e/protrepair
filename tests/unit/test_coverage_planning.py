@@ -2,9 +2,11 @@
 
 from tests.support.canonical_builders import (
     atom_payload,
-    build_structure,
     chain_payload,
     residue_payload,
+)
+from tests.support.canonical_builders import (
+    build_bonded_structure as build_structure,
 )
 from tests.support.request_builders import (
     transform_requests,
@@ -21,6 +23,9 @@ from protrepair.structure.polymer_blueprint import (
     PolymerResidueSlot,
 )
 from protrepair.structure.provenance import FileFormat
+from protrepair.transformer.completion.terminal.augmentation import (
+    augment_c_terminal_oxt,
+)
 from protrepair.workflow.actions.external_span_reconstruction import (
     ExternalSpanReconstructionTransformer,
 )
@@ -174,8 +179,9 @@ def test_plan_workflow_actions_reaches_hydrogen_after_coverage_phases() -> None:
     assert len(first_outcome.transformers) == 1
     assert isinstance(first_outcome.transformers[0], HeavyAtomCompletionTransformer)
 
+    terminal = augment_c_terminal_oxt(_heavy_complete_structure()).structure
     second_outcome = plan_workflow_actions(
-        _heavy_complete_structure(),
+        terminal,
         requested_goals=RequestedGoalSet(
             whole_structure_requested_goals(HydrogenCoverageState.COMPLETE)
         ),

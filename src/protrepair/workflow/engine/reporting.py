@@ -158,9 +158,7 @@ def evaluate_workflow_phase_outcomes(
         structure,
         component_library=component_library,
     )
-    disulfide_hydrogen_facts = StructureDisulfideHydrogenFacts.from_structure(
-        structure
-    )
+    disulfide_hydrogen_facts = StructureDisulfideHydrogenFacts.from_structure(structure)
     intrinsic_geometry_facts = derive_structure_intrinsic_geometry_facts(
         structure,
         component_library=component_library,
@@ -270,7 +268,8 @@ def evaluate_requested_goal_report(
             goal=goal,
             component_library=component_library,
         )
-        if goal in already_satisfied_goal_set:
+        satisfied = requested_goal_is_satisfied(goal, observed_state=observed_state)
+        if satisfied and goal in already_satisfied_goal_set:
             outcomes.append(
                 RequestedGoalOutcome(
                     requested_goal=goal,
@@ -285,10 +284,7 @@ def evaluate_requested_goal_report(
                 requested_goal=goal,
                 status=(
                     RequestedGoalStatus.SATISFIED
-                    if requested_goal_is_satisfied(
-                        goal,
-                        observed_state=observed_state,
-                    )
+                    if satisfied
                     else RequestedGoalStatus.UNMET
                 ),
                 observed_state=observed_state,
@@ -350,15 +346,10 @@ def evaluate_workflow_branch_quality_score(
         component_library=active_component_library,
         chemistry_readiness_facts=chemistry_readiness_facts,
     )
-    parser_facts = None
-    if (
-        chemistry_readiness_facts.hydrogen_coverage_state
-        is HydrogenCoverageState.COMPLETE
-    ):
-        parser_facts = StructureParserCompatibilityFacts.from_structure(
-            result.structure,
-            component_library=active_component_library,
-        )
+    parser_facts = StructureParserCompatibilityFacts.from_structure(
+        result.structure,
+        component_library=active_component_library,
+    )
     interaction_facts = None
     if planning_context_is_holo_for_structure(
         planning_context,
@@ -382,17 +373,10 @@ def evaluate_workflow_branch_quality_score(
         warning_count=result.warning_count(),
         issue_count=result.issue_count(),
         parser_incompatible=(
-            0
-            if parser_facts is None
-            or not parser_facts.compatibility_state.is_incompatible()
-            else 1
+            0 if not parser_facts.compatibility_state.is_incompatible() else 1
         ),
-        parser_extra_heavy_bond_count=(
-            0 if parser_facts is None else parser_facts.extra_heavy_proximity_bond_count
-        ),
-        parser_extra_bond_count=(
-            0 if parser_facts is None else parser_facts.extra_proximity_bond_count
-        ),
+        parser_extra_heavy_bond_count=(parser_facts.extra_heavy_proximity_bond_count),
+        parser_extra_bond_count=(parser_facts.extra_proximity_bond_count),
         protein_self_clash_count=intrinsic_facts.protein_self_clash_count,
         ligand_aware_clash_count=(
             0
@@ -428,9 +412,7 @@ def _blocking_scopes_for_phase(
     """Return blocking scopes for one workflow phase in first-seen order."""
 
     return tuple(
-        dict.fromkeys(
-            blocker.scope for blocker in blockers if blocker.phase is phase
-        )
+        dict.fromkeys(blocker.scope for blocker in blockers if blocker.phase is phase)
     )
 
 
@@ -540,8 +522,7 @@ def _intrinsic_geometry_phase_outcome(
             details="intrinsic geometry correction is blocked",
         )
     if (
-        intrinsic_geometry_facts.protein_self_clash_state
-        is ClashPresenceState.PRESENT
+        intrinsic_geometry_facts.protein_self_clash_state is ClashPresenceState.PRESENT
         or intrinsic_geometry_facts.orientation_correction_eligibility_state
         is not OrientationCorrectionEligibilityState.NOT_ELIGIBLE
         or intrinsic_geometry_facts.stereochemistry_state
@@ -564,17 +545,14 @@ def _intrinsic_geometry_phase_outcome(
                 status=WorkflowPhaseStatus.BLOCKED,
                 blocking_scopes=parser_compatibility_blocking_scopes,
                 details=(
-                    "parser-visible proximity defects are blocked by topology "
-                    "ambiguity"
+                    "parser-visible proximity defects are blocked by topology ambiguity"
                 ),
             )
 
         return WorkflowPhaseOutcome(
             phase=WorkflowPlanningPhase.INTRINSIC_GEOMETRY_CORRECTION,
             status=WorkflowPhaseStatus.UNRESOLVED,
-            details=(
-                "parser-visible proximity defects remain after terminal planning"
-            ),
+            details=("parser-visible proximity defects remain after terminal planning"),
         )
 
     return WorkflowPhaseOutcome(

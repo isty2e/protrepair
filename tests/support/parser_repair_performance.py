@@ -18,6 +18,9 @@ from protrepair.diagnostics.parser_readability import (
     RDKitParserProblemWitness,
     probe_rdkit_no_conect_parser_readability,
 )
+from protrepair.diagnostics.source_microstate import (
+    diagnose_source_microstate_contradictions,
+)
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
@@ -55,9 +58,6 @@ from protrepair.transformer.refinement.local_pipeline.construction import (
 from protrepair.transformer.refinement.local_pipeline.request import (
     LocalRefinementRequest,
     normalize_local_refinement_request,
-)
-from protrepair.transformer.source_microstate_adjudication import (
-    adjudicate_source_microstate_contradictions,
 )
 from protrepair.workflow.contracts.policies import LigandPolicy
 from protrepair.workflow.contracts.request import StructureIngressOptions
@@ -217,7 +217,9 @@ class ParserRepairPerformanceResult:
 
         return classify_parser_repair_performance(self)
 
-    def as_serializable_dict(self) -> dict[
+    def as_serializable_dict(
+        self,
+    ) -> dict[
         str,
         str
         | bool
@@ -473,9 +475,7 @@ def run_first_parser_cluster_repair_probe(
             for index, candidate in enumerate(assessed_batch.evaluated_proposals)
         ),
         before_witness_count=_extra_proximity_bond_count(before_witnesses),
-        before_heavy_witness_count=_extra_heavy_proximity_bond_count(
-            before_witnesses
-        ),
+        before_heavy_witness_count=_extra_heavy_proximity_bond_count(before_witnesses),
         after_witness_count=_extra_proximity_bond_count(after_witnesses),
         after_heavy_witness_count=_extra_heavy_proximity_bond_count(after_witnesses),
         before_focus=before_focus,
@@ -521,13 +521,9 @@ def build_refinement_execution_batch_profiled(
         parser_pre_untangle._ranked_parser_witness_pre_untangle_candidates
     )
     original_payload_builder = parser_pre_untangle._build_rotated_sidechain_payload
-    original_materializer = (
-        parser_pre_untangle._materialize_rotated_sidechain_candidate
-    )
+    original_materializer = parser_pre_untangle._materialize_rotated_sidechain_candidate
     original_parser_count = parser_pre_untangle._parser_extra_heavy_proximity_bond_count
-    original_full_rank = (
-        parser_pre_untangle._parser_witness_pre_untangle_candidate_rank
-    )
+    original_full_rank = parser_pre_untangle._parser_witness_pre_untangle_candidate_rank
 
     parser_pre_untangle.rdkit_no_conect_extra_proximity_bond_clusters = (
         _profiled_callable(
@@ -584,9 +580,7 @@ def build_refinement_execution_batch_profiled(
         parser_pre_untangle._ranked_parser_witness_pre_untangle_candidates = (
             original_rank_candidates
         )
-        parser_pre_untangle._build_rotated_sidechain_payload = (
-            original_payload_builder
-        )
+        parser_pre_untangle._build_rotated_sidechain_payload = original_payload_builder
         parser_pre_untangle._materialize_rotated_sidechain_candidate = (
             original_materializer
         )
@@ -635,18 +629,18 @@ def _load_or_prepare_hydrogenated_structure(
         ),
         timings,
     )
-    adjudicated_structure = _timed(
-        "microstate_adjudication",
-        lambda: adjudicate_source_microstate_contradictions(
+    _timed(
+        "source_microstate_diagnostics",
+        lambda: diagnose_source_microstate_contradictions(
             normalized,
             component_library=component_library,
-        )[0],
+        ),
         timings,
     )
     polymer_result = _timed(
         "hydrogenate_polymer",
         lambda: add_hydrogens(
-            adjudicated_structure,
+            normalized,
             component_library=component_library,
             local_refinement=None,
         ),

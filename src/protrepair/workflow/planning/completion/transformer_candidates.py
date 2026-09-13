@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.scope import ResidueSetScope
 from protrepair.state import (
     StructureChemistryReadinessFacts,
@@ -11,6 +13,11 @@ from protrepair.state import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
+from protrepair.transformer.completion.hydrogen.protonation import (
+    HistidineProtonationRequest,
+    histidine_microstate_requests,
+    normalize_histidine_protonation_request,
+)
 from protrepair.workflow.actions.heavy_completion import (
     HeavyAtomCompletionTransformer,
 )
@@ -152,8 +159,33 @@ def plan_hydrogen_completion_transformers(
     required_residue_ids: tuple[ResidueId, ...] = (),
     coverage_facts: StructureCoverageFacts | None = None,
     chemistry_readiness_facts: StructureChemistryReadinessFacts | None = None,
+    histidine_protonation: HistidineProtonationRequest | None = None,
 ) -> CompletionTransformerPlanningOutcome:
-    """Return hydrogen-completion transformer candidates and blocker facts."""
+    """Propose H or coupled-chemistry completion from current state.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Snapshot to assess.
+    requested_goals : RequestedGoalSet
+        Whole-structure H goals; local prerequisites use required_residue_ids.
+    component_library : ComponentLibrary
+        Active component definitions.
+    required_residue_ids : tuple[ResidueId, ...]
+        Residues required by another planned action.
+    coverage_facts : StructureCoverageFacts or None
+        Current-snapshot coverage, or None to derive it.
+    chemistry_readiness_facts : StructureChemistryReadinessFacts or None
+        Current-snapshot chemistry facts, or None to derive them.
+    histidine_protonation : HistidineProtonationRequest or None
+        New HIS selection. None retains applicable prior choices.
+
+    Returns
+    -------
+    CompletionTransformerPlanningOutcome
+        Candidates for missing H or unrealized selected chemistry. Missing OXT
+        remains a terminal-completion prerequisite, not an H-placement action.
+    """
 
     if (
         not requested_goals.requests_whole_structure_hydrogen_population()
@@ -190,11 +222,39 @@ def plan_hydrogen_completion_transformers(
         ),
         required_residue_id_set=set(required_residue_ids),
     )
+    request = normalize_histidine_protonation_request(histidine_protonation)
+    preparation = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(structure),
+        component_library,
+        requests=histidine_microstate_requests(structure, request),
+    )
+    selected = set(hydrogen_target_residue_ids)
+    for fact in active_chemistry_readiness_facts.residue_facts:
+        if (
+            not fact.is_supported()
+            or fact.heavy_atom_topology_availability_state.is_unavailable()
+        ):
+            selected.discard(fact.residue_id)
+            continue
+        if (
+            not requested_goals.requests_whole_structure_hydrogen_population()
+            and fact.residue_id not in required_residue_ids
+        ):
+            continue
+        targets = preparation.targets_for(fact.residue_id)
+        if any(target.requires_terminal_oxygen() for target in targets):
+            selected.discard(fact.residue_id)
+            continue
+        if any(
+            target.resolution.graph is not None and not target.is_realized()
+            for target in targets
+        ):
+            selected.add(fact.residue_id)
     return CompletionTransformerPlanningOutcome(
         transformers=tuple(
             transformer
             for transformer in (
-                _hydrogen_completion_transformer(hydrogen_target_residue_ids),
+                _hydrogen_completion_transformer(tuple(sorted(selected))),
             )
             if transformer is not None
         ),
@@ -240,6 +300,7 @@ def plan_retained_non_polymer_hydrogen_completion_transformers(
             if transformer is not None
         ),
     )
+
 
 def _residue_completion_planning_facts(
     *,

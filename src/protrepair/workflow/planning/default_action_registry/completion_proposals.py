@@ -20,15 +20,6 @@ from protrepair.workflow.planning.default_action_registry.capabilities import (
     RETAINED_NON_POLYMER_HYDROGEN_COMPLETION_CAPABILITY,
 )
 
-__all__ = [
-    "heavy_atom_completion_is_admissible",
-    "heavy_atom_completion_proposals",
-    "hydrogen_completion_is_admissible",
-    "hydrogen_completion_proposals",
-    "retained_non_polymer_hydrogen_completion_is_admissible",
-    "retained_non_polymer_hydrogen_completion_proposals",
-]
-
 
 def heavy_atom_completion_is_admissible(domain: WorkflowActionDomain) -> bool:
     """Return whether heavy completion is admissible in the active domain."""
@@ -62,7 +53,7 @@ def heavy_atom_completion_proposals(
 def hydrogen_completion_is_admissible(domain: WorkflowActionDomain) -> bool:
     """Return whether hydrogen completion is admissible in the active domain."""
 
-    return domain.completion.requires_hydrogen_completion()
+    return bool(hydrogen_completion_proposals(domain))
 
 
 def hydrogen_completion_proposals(
@@ -77,6 +68,7 @@ def hydrogen_completion_proposals(
         required_residue_ids=domain.explicit_repair.prerequisite_residue_ids(),
         coverage_facts=domain.coverage_facts,
         chemistry_readiness_facts=domain.chemistry_readiness_facts,
+        histidine_protonation=domain.transform_requests.histidine_protonation_request(),
     )
     return tuple(
         WorkflowActionProposal(
@@ -115,3 +107,13 @@ def retained_non_polymer_hydrogen_completion_proposals(
         for transformer in planning_outcome.transformers
         if isinstance(transformer, RetainedNonPolymerHydrogenCompletionTransformer)
     )
+
+
+__all__ = [
+    "heavy_atom_completion_is_admissible",
+    "heavy_atom_completion_proposals",
+    "hydrogen_completion_is_admissible",
+    "hydrogen_completion_proposals",
+    "retained_non_polymer_hydrogen_completion_is_admissible",
+    "retained_non_polymer_hydrogen_completion_proposals",
+]

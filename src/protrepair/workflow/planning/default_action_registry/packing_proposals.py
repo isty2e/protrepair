@@ -8,6 +8,7 @@ from protrepair.diagnostics.parser_topology import (
 )
 from protrepair.state import HydrogenCoverageState
 from protrepair.structure.labels import ResidueId
+from protrepair.transformer.packing.faspr.backend import FASPR_ALPHABET
 from protrepair.transformer.packing.spec import PackingMode, PackingScope, PackingSpec
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.actions.packing import CommittedPackingTransformer
@@ -16,11 +17,6 @@ from protrepair.workflow.planning.action.proposals import WorkflowActionProposal
 from protrepair.workflow.planning.default_action_registry.capabilities import (
     COMMITTED_PACKING_CAPABILITY,
 )
-
-__all__ = [
-    "committed_packing_is_admissible",
-    "committed_packing_proposals",
-]
 
 
 def committed_packing_is_admissible(domain: WorkflowActionDomain) -> bool:
@@ -60,9 +56,7 @@ def committed_packing_proposals(
 
     return tuple(
         WorkflowActionProposal(
-            transformer=CommittedPackingTransformer.from_planned_spec(
-                packing_spec
-            ),
+            transformer=CommittedPackingTransformer.from_planned_spec(packing_spec),
             capability=COMMITTED_PACKING_CAPABILITY,
             explicitly_requested=False,
         )
@@ -76,6 +70,15 @@ def _automatic_committed_packing_specs(
     """Return automatic side-chain packing proposals after local FF stalls."""
 
     if domain.explicit_repair.is_requested():
+        return ()
+
+    # FASPR serializes the whole polymer, even for a local mutable scope.
+    # Automatic fallback cannot offer an input its backend alphabet rejects.
+    if any(
+        not FASPR_ALPHABET.supports_component(residue.component_id)
+        for chain in domain.structure.constitution.chains
+        for residue in chain.residues
+    ):
         return ()
 
     parser_compatibility_facts = domain.parser_compatibility_facts
@@ -151,3 +154,9 @@ def _automatic_packing_parser_burden_residue_ids(
             seen_residue_ids.add(partner_residue_id)
 
     return tuple(residue_ids)
+
+
+__all__ = [
+    "committed_packing_is_admissible",
+    "committed_packing_proposals",
+]

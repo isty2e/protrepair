@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.scope import ResidueBoundaryScope, ResidueBoundarySide, ResidueSetScope
 from protrepair.state import (
     BoundaryAuthenticityState,
@@ -28,9 +30,7 @@ from protrepair.workflow.contracts.request import (
 
 
 @dataclass(frozen=True, slots=True)
-class TerminalAugmentationTransformer(
-    ResidueSetWorkflowStructureTransformer
-):
+class TerminalAugmentationTransformer(ResidueSetWorkflowStructureTransformer):
     """Workflow-visible terminal OXT augmentation transformer."""
 
     scope: ResidueSetScope
@@ -49,17 +49,51 @@ class TerminalAugmentationTransformer(
         boundary_facts: StructureBoundaryStateFacts,
         requested_goals: RequestedGoalSet,
         component_library: ComponentLibrary,
+        required_residue_ids: tuple[ResidueId, ...] = (),
     ) -> "TerminalAugmentationTransformer | None":
-        """Return one terminal-augmentation candidate when one is warranted."""
+        """Select OXT prerequisites without assuming free internal chain breaks.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Current snapshot.
+        boundary_facts : StructureBoundaryStateFacts
+            Current boundary observations for explicit OXT goals.
+        requested_goals : RequestedGoalSet
+            Explicit boundary goals or whole-structure H preparation goals.
+        component_library : ComponentLibrary
+            Definitions used to bind coupled terminal chemistry.
+        required_residue_ids : tuple[ResidueId, ...]
+            Local preparation prerequisites requested by another action.
+
+        Returns
+        -------
+        TerminalAugmentationTransformer or None
+            One combined residue-set action, or None when no OXT is requested/required.
+        """
 
         boundary_goals = requested_goals.boundary_goals(
             OxtPresenceState,
             side=ResidueBoundarySide.C_TERMINUS,
         )
-        if not boundary_goals:
-            return None
-
         target_residue_ids: list[ResidueId] = []
+        if (
+            requested_goals.requests_whole_structure_hydrogen_population()
+            or required_residue_ids
+        ):
+            preparation = PolymerMicrostatePreparation(
+                PolymerMicrostateContext(structure), component_library
+            )
+            for chain in structure.constitution.chains:
+                for residue in chain.residues:
+                    if (
+                        requested_goals.requests_whole_structure_hydrogen_population()
+                        or residue.residue_id in required_residue_ids
+                    ) and any(
+                        target.requires_terminal_oxygen()
+                        for target in preparation.targets_for(residue.residue_id)
+                    ):
+                        target_residue_ids.append(residue.residue_id)
         for goal in boundary_goals:
             requested_scope = goal.scope
             if not isinstance(requested_scope, ResidueBoundaryScope):
@@ -89,11 +123,8 @@ class TerminalAugmentationTransformer(
             return None
 
         return cls(
-            scope=ResidueSetScope(
-                residue_ids=tuple(dict.fromkeys(target_residue_ids))
-            )
+            scope=ResidueSetScope(residue_ids=tuple(dict.fromkeys(target_residue_ids)))
         )
-
 
     def transform_projected_domain(
         self,

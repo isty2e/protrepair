@@ -8,6 +8,7 @@ from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     CanonicalResiduePayload,
     atom_payload,
+    build_bonded_structure,
     build_structure,
     chain_payload,
     residue_payload,
@@ -75,7 +76,7 @@ from protrepair.state.domain import (
     HydrogenAttachmentResolutionObservation,
     HydrogenAttachmentResolutionState,
 )
-from protrepair.state.structure_readiness import _aggregate_topology_availability_state
+from protrepair.state.structure_readiness import aggregate_topology_availability_state
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.polymer_blueprint import (
@@ -94,6 +95,7 @@ from protrepair.structure.topology import (
     TopologyBond,
 )
 from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
+from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
 from protrepair.transformer.continuous.readiness import (
     atom_scope_facts_continuous_relaxation_error,
     atom_scope_facts_supports_continuous_relaxation,
@@ -386,14 +388,20 @@ def test_template_less_polymer_topology_is_unsupported_not_absent() -> None:
     )
     observation = TopologyAvailabilityObservation.from_facts(facts)
 
-    assert observation.state_for(
-        residue_id,
-        aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
-    ) is TopologyAvailabilityState.UNSUPPORTED
-    assert observation.state_for(
-        residue_id,
-        aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
-    ) is TopologyAvailabilityState.UNSUPPORTED
+    assert (
+        observation.state_for(
+            residue_id,
+            aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
+        )
+        is TopologyAvailabilityState.UNSUPPORTED
+    )
+    assert (
+        observation.state_for(
+            residue_id,
+            aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
+        )
+        is TopologyAvailabilityState.UNSUPPORTED
+    )
     assert not topology_availability_facts_supports_continuous_relaxation(facts)
 
 
@@ -419,14 +427,20 @@ def test_template_backed_missing_atoms_keep_topology_absent() -> None:
     )
     observation = TopologyAvailabilityObservation.from_facts(facts)
 
-    assert observation.state_for(
-        residue_id,
-        aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
-    ) is TopologyAvailabilityState.ABSENT
-    assert observation.state_for(
-        residue_id,
-        aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
-    ) is TopologyAvailabilityState.ABSENT
+    assert (
+        observation.state_for(
+            residue_id,
+            aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
+        )
+        is TopologyAvailabilityState.ABSENT
+    )
+    assert (
+        observation.state_for(
+            residue_id,
+            aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
+        )
+        is TopologyAvailabilityState.ABSENT
+    )
 
 
 def test_template_less_hetero_topology_projection_stays_absent() -> None:
@@ -453,14 +467,20 @@ def test_template_less_hetero_topology_projection_stays_absent() -> None:
     )
     observation = TopologyAvailabilityObservation.from_facts(facts)
 
-    assert observation.state_for(
-        ligand_id,
-        aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
-    ) is TopologyAvailabilityState.ABSENT
-    assert observation.state_for(
-        ligand_id,
-        aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
-    ) is TopologyAvailabilityState.ABSENT
+    assert (
+        observation.state_for(
+            ligand_id,
+            aspect=TopologyAvailabilityAspect.HEAVY_ATOM_CONNECTIVITY,
+        )
+        is TopologyAvailabilityState.ABSENT
+    )
+    assert (
+        observation.state_for(
+            ligand_id,
+            aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
+        )
+        is TopologyAvailabilityState.ABSENT
+    )
 
 
 def test_structure_readiness_preserves_unsupported_polymer_topology() -> None:
@@ -513,7 +533,7 @@ def test_topology_availability_aggregate_preserves_all_not_applicable() -> None:
     """All non-applicable topology inputs should aggregate to NOT_APPLICABLE."""
 
     assert (
-        _aggregate_topology_availability_state(
+        aggregate_topology_availability_state(
             (
                 TopologyAvailabilityState.NOT_APPLICABLE,
                 TopologyAvailabilityState.NOT_APPLICABLE,
@@ -659,8 +679,7 @@ def test_split_structure_fact_derivation_reuses_orthogonal_fact_owners() -> None
     )
 
 
-def test_structure_chemistry_readiness_tracks_supported_retained_non_polymer(
-) -> None:
+def test_structure_chemistry_readiness_tracks_supported_retained_non_polymer() -> None:
     """Chemistry readiness should expose retained non-polymer support separately."""
 
     structure = build_structure(
@@ -719,8 +738,9 @@ def test_structure_chemistry_readiness_tracks_supported_retained_non_polymer(
     assert retained_fact.hydrogen_coverage_state is HydrogenCoverageState.NONE
 
 
-def test_structure_chemistry_readiness_distinguishes_retained_non_polymer_modes(
-) -> None:
+def test_structure_chemistry_readiness_distinguishes_retained_non_polymer_modes() -> (
+    None
+):
     """Retained non-polymer facts should separate unsupported from not-applicable."""
 
     structure = build_structure(
@@ -808,8 +828,7 @@ def test_structure_chemistry_readiness_distinguishes_retained_non_polymer_modes(
         assert not retained_facts_by_component["UNK"].is_supported()
 
 
-def test_structure_chemistry_readiness_splits_template_heavy_from_fallback_hydrogen(
-) -> None:
+def test_readiness_splits_template_heavy_from_fallback_hydrogen() -> None:
     """Template heavy topology and fallback hydrogen expectation should split."""
 
     residue_id = ResidueId("L", 1)
@@ -865,8 +884,7 @@ def test_structure_chemistry_readiness_splits_template_heavy_from_fallback_hydro
     assert retained_fact.hydrogen_coverage_state is HydrogenCoverageState.NONE
 
 
-def test_structure_chemistry_readiness_supports_override_backed_retained_non_polymer(
-) -> None:
+def test_readiness_supports_override_backed_retained_non_polymer() -> None:
     """Override-backed retained non-polymers should become hydrogenatable."""
 
     ligand_residue_id = ResidueId("L", 1)
@@ -988,8 +1006,7 @@ def test_structure_chemistry_readiness_rejects_override_atoms_without_bonds() ->
     )
 
 
-def test_structure_chemistry_readiness_respects_complete_retained_non_polymer_hydrogens(
-) -> None:
+def test_readiness_respects_complete_retained_non_polymer_hydrogens() -> None:
     """Complete retained non-polymer hydrogens should suppress fallback completion."""
 
     structure = build_structure(
@@ -1034,8 +1051,9 @@ def test_structure_chemistry_readiness_respects_complete_retained_non_polymer_hy
     )
 
 
-def test_structure_chemistry_readiness_accepts_complete_retained_hydrogen_bonds(
-) -> None:
+def test_structure_chemistry_readiness_accepts_complete_retained_hydrogen_bonds() -> (
+    None
+):
     """Complete retained H coverage is topology-ready only with H-heavy bonds."""
 
     ligand_residue_id = ResidueId("L", 1)
@@ -1250,7 +1268,8 @@ def test_protein_structure_state_tracks_residue_level_hydrogen_realization() -> 
     assert not structure_facts_supports_continuous_relaxation(
         StructureProjectionStateFacts.from_structure(partial_structure)
     )
-    assert structure_facts_supports_continuous_relaxation(
+    # H coverage is complete, but the free-terminal chemical graph is not.
+    assert not structure_facts_supports_continuous_relaxation(
         StructureProjectionStateFacts.from_structure(populated_structure)
     )
 
@@ -1350,7 +1369,9 @@ def test_projection_stereochemistry_ignores_remote_violation() -> None:
     )
 
     assert (
-        ProteinStructureObservation.from_structure(mixed_structure).stereochemistry_state
+        ProteinStructureObservation.from_structure(
+            mixed_structure
+        ).stereochemistry_state
         is StereochemistryState.VIOLATED
     )
     assert (
@@ -1934,7 +1955,11 @@ def test_atom_domain_state_marks_hydrogen_topology_available_without_clashes() -
         aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
         state=TopologyAvailabilityState.PRESENT,
     )
-    assert atom_scope_facts_supports_continuous_relaxation(domain_facts)
+    # Available H attachment evidence alone does not certify coupled chemistry.
+    assert not atom_scope_facts_supports_continuous_relaxation(domain_facts)
+    blocker = atom_scope_facts_continuous_relaxation_error(domain_facts)
+    assert blocker is not None
+    assert "realized polymer microstates" in blocker
 
 
 def test_atom_domain_state_surfaces_template_resolved_hydrogen_attachments() -> None:
@@ -2122,7 +2147,11 @@ def test_atom_domain_state_surfaces_coordinate_inferred_hydrogen_attachments() -
         state=HydrogenAttachmentResolutionState.COORDINATE_INFERRED,
     )
     assert domain_state.hydrogen_attachment_resolution.any_coordinate_inferred()
-    assert atom_scope_facts_supports_continuous_relaxation(domain_facts)
+    # Available H attachment evidence alone does not certify coupled chemistry.
+    assert not atom_scope_facts_supports_continuous_relaxation(domain_facts)
+    blocker = atom_scope_facts_continuous_relaxation_error(domain_facts)
+    assert blocker is not None
+    assert "realized polymer microstates" in blocker
     assert (
         domain_state.continuous_bond_realizability.state
         is ContinuousBondRealizabilityState.REALIZABLE
@@ -2270,7 +2299,11 @@ def test_atom_domain_state_preserves_hydrogen_topology_on_clashes() -> None:
         aspect=TopologyAvailabilityAspect.HYDROGEN_ATTACHMENTS,
         state=TopologyAvailabilityState.PRESENT,
     )
-    assert atom_scope_facts_supports_continuous_relaxation(domain_facts)
+    # Available H attachment evidence alone does not certify coupled chemistry.
+    assert not atom_scope_facts_supports_continuous_relaxation(domain_facts)
+    blocker = atom_scope_facts_continuous_relaxation_error(domain_facts)
+    assert blocker is not None
+    assert "realized polymer microstates" in blocker
     assert (
         domain_state.continuous_bond_realizability.state
         is ContinuousBondRealizabilityState.REALIZABLE
@@ -2278,8 +2311,7 @@ def test_atom_domain_state_preserves_hydrogen_topology_on_clashes() -> None:
     assert domain_facts.continuous_bond_realizability_facts.is_realizable()
 
 
-def test_atom_scope_relaxation_blocks_included_retained_non_polymer_without_hydrogens(
-) -> None:
+def test_relaxation_blocks_included_retained_non_polymer_without_hydrogens() -> None:
     """Included retained non-polymers must be hydrogen-complete before FF binding."""
 
     structure = build_structure(
@@ -2337,18 +2369,16 @@ def test_atom_scope_relaxation_blocks_included_retained_non_polymer_without_hydr
     )
 
     assert atom_scope_facts_supports_continuous_relaxation(domain_facts) is False
-    assert (
-        domain_facts.continuous_region_chemistry_readiness_facts
-        .retained_non_polymer_facts[0]
-        .needs_hydrogenation()
-    )
+    readiness = domain_facts.continuous_region_chemistry_readiness_facts
+    assert readiness.retained_non_polymer_facts[0].needs_hydrogenation()
 
 
-def test_atom_scope_relaxation_allows_hydrogenated_retained_non_polymer_context(
-) -> None:
+def test_atom_scope_relaxation_allows_hydrogenated_retained_non_polymer_context() -> (
+    None
+):
     """Hydrogen-complete retained non-polymers in context should admit FF binding."""
 
-    structure = build_structure(
+    structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "A",
@@ -2357,7 +2387,12 @@ def test_atom_scope_relaxation_allows_hydrogenated_retained_non_polymer_context(
                         component_id="SER",
                         residue_id=ResidueId("A", 1),
                         atoms=(
-                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload(
+                                "N", "N", Vec3(0.0, 0.0, 0.0), formal_charge=1
+                            ),
+                            atom_payload(
+                                "OXT", "O", Vec3(2.8, -1.25, 0.0), formal_charge=-1
+                            ),
                             atom_payload("CA", "C", Vec3(1.4, 0.0, 0.0)),
                             atom_payload("C", "C", Vec3(2.8, 0.0, 0.0)),
                             atom_payload("O", "O", Vec3(3.8, 0.0, 0.0)),
@@ -2399,6 +2434,7 @@ def test_atom_scope_relaxation_allows_hydrogenated_retained_non_polymer_context(
             provenance=BondProvenance.REPAIR_INFERRED,
         ),
     )
+    structure = materialize_hydrogens_core(structure).structure
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     atom_scope = OBSERVED_ATOM_SCOPE_LOWERING.lower(
         ResidueSetScope(residue_ids=(ResidueId("A", 1),)),
@@ -2413,18 +2449,19 @@ def test_atom_scope_relaxation_allows_hydrogenated_retained_non_polymer_context(
 
     assert atom_scope_facts_supports_continuous_relaxation(domain_facts)
     assert (
-        domain_facts.continuous_region_chemistry_readiness_facts
-        .retained_non_polymer_facts[0]
-        .hydrogen_coverage_state
+        domain_facts.continuous_region_chemistry_readiness_facts.retained_non_polymer_facts[
+            0
+        ].hydrogen_coverage_state
         is HydrogenCoverageState.COMPLETE
     )
 
 
-def test_atom_scope_relaxation_allows_single_center_template_less_metal_context(
-) -> None:
+def test_atom_scope_relaxation_allows_single_center_template_less_metal_context() -> (
+    None
+):
     """Single-center metal context should not block continuous realizability."""
 
-    structure = build_structure(
+    structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "A",
@@ -2433,7 +2470,12 @@ def test_atom_scope_relaxation_allows_single_center_template_less_metal_context(
                         component_id="SER",
                         residue_id=ResidueId("A", 1),
                         atoms=(
-                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload(
+                                "N", "N", Vec3(0.0, 0.0, 0.0), formal_charge=1
+                            ),
+                            atom_payload(
+                                "OXT", "O", Vec3(2.8, -1.25, 0.0), formal_charge=-1
+                            ),
                             atom_payload("CA", "C", Vec3(1.4, 0.0, 0.0)),
                             atom_payload("C", "C", Vec3(2.8, 0.0, 0.0)),
                             atom_payload("O", "O", Vec3(3.8, 0.0, 0.0)),
@@ -2462,6 +2504,7 @@ def test_atom_scope_relaxation_allows_single_center_template_less_metal_context(
         source_format=FileFormat.PDB,
         source_name="single-center-metal-template-less-passive-context",
     )
+    structure = materialize_hydrogens_core(structure).structure
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     atom_scope = OBSERVED_ATOM_SCOPE_LOWERING.lower(
         ResidueSetScope(residue_ids=(ResidueId("A", 1),)),
@@ -2481,8 +2524,7 @@ def test_atom_scope_relaxation_allows_single_center_template_less_metal_context(
     )
 
 
-def test_atom_scope_relaxation_keeps_single_center_template_less_context_passive_only(
-) -> None:
+def test_relaxation_keeps_single_center_template_less_context_passive_only() -> None:
     """Single-heavy fallback context is admissible only when non-movable."""
 
     structure = build_ser_with_template_less_ligand_structure(
@@ -2519,10 +2561,8 @@ def test_atom_scope_relaxation_keeps_single_center_template_less_context_passive
         passive_scope,
         component_library=build_default_component_library(),
     )
-    retained_fact = (
-        passive_facts.continuous_region_chemistry_readiness_facts
-        .retained_non_polymer_facts[0]
-    )
+    readiness = passive_facts.continuous_region_chemistry_readiness_facts
+    retained_fact = readiness.retained_non_polymer_facts[0]
 
     assert retained_fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
     assert atom_scope_facts_supports_continuous_relaxation(passive_facts)
@@ -2550,8 +2590,7 @@ def test_atom_scope_relaxation_keeps_single_center_template_less_context_passive
     )
 
 
-def test_atom_scope_relaxation_allows_connected_template_less_passive_context(
-) -> None:
+def test_atom_scope_relaxation_allows_connected_template_less_passive_context() -> None:
     """Connected retained context may use RDKit fallback topology passively."""
 
     structure = build_ser_with_template_less_ligand_structure(
@@ -2600,10 +2639,8 @@ def test_atom_scope_relaxation_allows_connected_template_less_passive_context(
         atom_scope,
         component_library=build_default_component_library(),
     )
-    retained_fact = (
-        domain_facts.continuous_region_chemistry_readiness_facts
-        .retained_non_polymer_facts[0]
-    )
+    readiness = domain_facts.continuous_region_chemistry_readiness_facts
+    retained_fact = readiness.retained_non_polymer_facts[0]
 
     assert retained_fact.heavy_topology_source is (
         RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
@@ -2665,8 +2702,7 @@ def test_atom_scope_relaxation_blocks_selected_template_less_ligand() -> None:
     )
 
     assert (
-        domain_facts.continuous_region_chemistry_readiness_facts
-        .component_support_state
+        domain_facts.continuous_region_chemistry_readiness_facts.component_support_state
         is ComponentSupportState.ALL_SUPPORTED
     )
     assert (
@@ -3179,8 +3215,7 @@ def test_transformation_signatures_derive_from_canonical_state() -> None:
     assert planning_signature.structure == structure_planning_signature
     assert planning_signature.selected_scope == domain_planning_signature
     assert (
-        family_signature.family
-        is LocalTransformationFamily.CONTINUOUS_LOCAL_RELAXATION
+        family_signature.family is LocalTransformationFamily.CONTINUOUS_LOCAL_RELAXATION
     )
     assert family_signature.planning_signature == planning_signature
 
@@ -3265,6 +3300,7 @@ def _topology_bond_from_spec(
         ),
         relationship_type=BondRelationshipType.COVALENT,
         provenance=provenance,
+        order=2 if {atom_name_1, atom_name_2} == {"C", "O"} else 1,
     )
 
 
@@ -3427,7 +3463,7 @@ def build_ser_with_template_less_ligand_structure(
 ) -> ProteinStructure:
     """Build one SER local-domain fixture with an unknown retained ligand."""
 
-    return build_structure(
+    structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "A",
@@ -3436,7 +3472,12 @@ def build_ser_with_template_less_ligand_structure(
                         component_id="SER",
                         residue_id=ResidueId("A", 1),
                         atoms=(
-                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload(
+                                "N", "N", Vec3(0.0, 0.0, 0.0), formal_charge=1
+                            ),
+                            atom_payload(
+                                "OXT", "O", Vec3(2.8, -1.25, 0.0), formal_charge=-1
+                            ),
                             atom_payload("CA", "C", Vec3(1.4, 0.0, 0.0)),
                             atom_payload("C", "C", Vec3(2.8, 0.0, 0.0)),
                             atom_payload("O", "O", Vec3(3.8, 0.0, 0.0)),
@@ -3465,6 +3506,9 @@ def build_ser_with_template_less_ligand_structure(
         source_format=FileFormat.PDB,
         source_name=source_name,
     )
+    result = materialize_hydrogens_core(structure)
+    assert not result.issues
+    return result.structure
 
 
 def build_local_retained_non_polymer_component_library():

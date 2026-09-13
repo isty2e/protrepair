@@ -60,6 +60,7 @@ def test_heterogeneous_workflow_route_benchmark_reports_unsupported_stop() -> No
         WORKFLOW_ROUTE_BENCHMARK_CASES["heterogeneous-workflow-partition"]
     )
 
-    assert result.route_quality.hydrogen_gap_cleared is False
+    # Supported H inventory can now be completed despite the unsupported sibling.
+    assert result.route_quality.hydrogen_gap_cleared is True
     assert result.route_quality.unsupported_stop_reported is True
     assert "missing_component_definition" in result.issue_kind_values

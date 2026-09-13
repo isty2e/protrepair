@@ -29,13 +29,6 @@ from protrepair.state.topology import TopologyAvailabilityState
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 
-__all__ = [
-    "StructureChemistryReadinessFacts",
-    "StructureCoverageFacts",
-    "derive_projection_coverage_and_chemistry_readiness_facts",
-    "derive_structure_coverage_and_chemistry_readiness_facts",
-]
-
 
 @dataclass(frozen=True, slots=True)
 class StructureCoverageFacts:
@@ -236,12 +229,11 @@ def _derive_projection_coverage_and_chemistry_readiness_facts(
     component_support = (
         ComponentSupportState.UNSUPPORTED_COMPONENTS_PRESENT
         if any(
-            not residue_fact.is_supported()
-            for residue_fact in chemistry_residue_facts
+            not residue_fact.is_supported() for residue_fact in chemistry_residue_facts
         )
         else ComponentSupportState.ALL_SUPPORTED
     )
-    heavy_atom_topology_availability_state = _aggregate_topology_availability_state(
+    heavy_atom_topology_availability_state = aggregate_topology_availability_state(
         residue_fact.heavy_atom_topology_availability_state
         for residue_fact in chemistry_residue_facts
     )
@@ -277,7 +269,7 @@ def _derive_projection_coverage_and_chemistry_readiness_facts(
         else:
             h_coverage_state = HydrogenCoverageState.PARTIAL
 
-        hydrogen_topology_availability_state = _aggregate_topology_availability_state(
+        hydrogen_topology_availability_state = aggregate_topology_availability_state(
             residue_fact.hydrogen_topology_availability_state
             for residue_fact in applicable_residue_facts
         )
@@ -289,22 +281,29 @@ def _derive_projection_coverage_and_chemistry_readiness_facts(
             retained_non_polymer_chemistry_readiness_facts
         ),
         component_support_state=component_support,
-        heavy_atom_topology_availability_state=(
-            heavy_atom_topology_availability_state
-        ),
-        hydrogen_topology_availability_state=(
-            hydrogen_topology_availability_state
-        ),
+        heavy_atom_topology_availability_state=(heavy_atom_topology_availability_state),
+        hydrogen_topology_availability_state=(hydrogen_topology_availability_state),
         hydrogen_applicability_state=h_applicability_state,
         hydrogen_coverage_state=h_coverage_state,
     )
     return coverage_facts, chemistry_readiness_facts
 
 
-def _aggregate_topology_availability_state(
+def aggregate_topology_availability_state(
     states: Iterable[TopologyAvailabilityState],
 ) -> TopologyAvailabilityState:
-    """Aggregate residue-local topology availability without hiding unsupported."""
+    """Reduce topology availability with unsupported and incomplete precedence.
+
+    Parameters
+    ----------
+    states : Iterable[TopologyAvailabilityState]
+        Availability values for one projection.
+
+    Returns
+    -------
+    TopologyAvailabilityState
+        Aggregate availability, retaining unsupported, absent and partial evidence.
+    """
 
     topology_states = tuple(states)
     if any(state is TopologyAvailabilityState.UNSUPPORTED for state in topology_states):
@@ -342,3 +341,11 @@ def _structure_blueprint_coverages(
             continue
 
     return tuple(coverages)
+
+
+__all__ = [
+    "StructureChemistryReadinessFacts",
+    "StructureCoverageFacts",
+    "derive_projection_coverage_and_chemistry_readiness_facts",
+    "derive_structure_coverage_and_chemistry_readiness_facts",
+]

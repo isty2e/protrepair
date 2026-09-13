@@ -28,8 +28,28 @@ def generate_component_hydrogen_patch(
     patch: OrderedAtomPatch,
     semantics: IdealGeometryHydrogenSemantics,
     skip_hydrogens_with_absent_anchors: bool = False,
+    selected_hydrogen_names: frozenset[str] | None = None,
 ) -> OrderedAtomPatch | None:
-    """Return one residue-local hydrogen patch for one idealized component."""
+    """Place selected H using ideal-component anchor frames.
+
+    Parameters
+    ----------
+    residue : CompletionResiduePayload
+        Current residue supplying available heavy anchors.
+    patch : OrderedAtomPatch
+        Ordered coordinates to extend without changing existing atoms.
+    semantics : IdealGeometryHydrogenSemantics
+        Ideal component and its H attachment definitions.
+    skip_hydrogens_with_absent_anchors : bool
+        Skip unavailable placements instead of abandoning the patch.
+    selected_hydrogen_names : frozenset[str] or None
+        H names to evaluate; None selects all. Unselected H need no anchor frame.
+
+    Returns
+    -------
+    OrderedAtomPatch or None
+        Extended patch, or None when required anchor geometry is unavailable.
+    """
 
     idealized_component = semantics.component
     hydrogen_atoms = supported_component_hydrogen_atoms(idealized_component)
@@ -43,6 +63,11 @@ def generate_component_hydrogen_patch(
     transform_by_anchor_atom_names: dict[tuple[str, ...], RigidTransform] = {}
     global_transform: RigidTransform | None = None
     for template_atom in hydrogen_atoms:
+        if (
+            selected_hydrogen_names is not None
+            and template_atom.atom_name not in selected_hydrogen_names
+        ):
+            continue
         anchor_atom_name = idealized_component.hydrogen_anchor_atom_name(
             template_atom.atom_name
         )

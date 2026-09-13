@@ -3,6 +3,7 @@
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
+    build_bonded_structure,
     build_structure,
     chain_payload,
     residue_payload,
@@ -51,7 +52,7 @@ RDKIT_AVAILABLE = Chem is not None
 def test_hydrogen_expectation_model_adds_polymer_backbone_hydrogens() -> None:
     """Polymer expectation policy should include chain-aware backbone hydrogens."""
 
-    structure = build_structure(
+    structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "A",

@@ -156,9 +156,11 @@ def test_source_charged_n_terminus_keeps_neutral_generated_hydrogens(
     restored = read_structure_string(
         write_structure_string(result, file_format), file_format
     )
-    assert dict(restored.residue_formal_charge_by_atom_name(ResidueIndex(0))) == {
-        "N": 1
-    }
+    charges = dict(restored.residue_formal_charge_by_atom_name(ResidueIndex(0)))
+    assert charges["N"] == 1
+    assert all(charges.get(name) == 0 for name in ("H1", "H2", "H3"))
+    if prepare_heavy_atoms:
+        assert charges["OXT"] == -1
 
 
 @pytest.mark.parametrize("use_override", (False, True))

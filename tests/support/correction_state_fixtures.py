@@ -31,6 +31,7 @@ from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair impo
     add_retained_non_polymer_hydrogens,
 )
 from protrepair.workflow.contracts import LigandPolicy
+from tests.support.canonical_builders import build_bonded_structure
 from tests.support.request_builders import ingress_options
 
 REFINEMENT_FIXTURE_ROOT = Path("tests/fixtures/pdb/refinement")
@@ -53,8 +54,17 @@ def build_structure(
     chains: tuple[SyntheticChainPayload, ...],
     *,
     ligands: tuple[SyntheticResiduePayload, ...] = (),
+    bonded: bool = False,
 ) -> ProteinStructure:
     """Return one canonical synthetic structure for correction-state fixtures."""
+
+    if bonded:
+        return build_bonded_structure(
+            chains=chains,
+            ligands=ligands,
+            source_format=FileFormat.PDB,
+            source_name=source_name,
+        )
 
     ligand_sites = tuple(ligand_site for ligand_site, _, _ in ligands)
     constitution = StructureConstitution(
@@ -184,6 +194,7 @@ def _topology_bond_from_spec(
             AtomRef(residue_id, atom_name_2)
         ),
         relationship_type=BondRelationshipType.COVALENT,
+        order=2 if {atom_name_1, atom_name_2} == {"C", "O"} else 1,
         provenance=provenance,
     )
 

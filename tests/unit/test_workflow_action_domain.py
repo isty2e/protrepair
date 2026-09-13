@@ -3,9 +3,11 @@
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
-    build_structure,
     chain_payload,
     residue_payload,
+)
+from tests.support.canonical_builders import (
+    build_bonded_structure as build_structure,
 )
 from tests.support.refinement_benchmarks import resolve_fixture_path
 from tests.support.refinement_cases import EXPLORATORY_REFINEMENT_FIXTURE_SOURCES
@@ -39,6 +41,9 @@ from protrepair.structure.polymer_blueprint import (
 )
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.snapshot import ProteinStructureSnapshot
+from protrepair.transformer.completion.terminal.augmentation import (
+    augment_c_terminal_oxt,
+)
 from protrepair.transformer.continuous.binding_policy import (
     ManualContinuousRelaxationBinding,
 )
@@ -112,7 +117,7 @@ def test_hydrogen_completion_domain_waits_for_atom_coverage_prerequisites() -> N
         ),
     )
     heavy_complete_domain = _workflow_action_domain(
-        _heavy_complete_structure(),
+        augment_c_terminal_oxt(_heavy_complete_structure()).structure,
         requested_goals=RequestedGoalSet(
             (
                 requested_process_goal(
@@ -127,8 +132,8 @@ def test_hydrogen_completion_domain_waits_for_atom_coverage_prerequisites() -> N
     assert _is_admissible(HydrogenCompletionTransformer, heavy_complete_domain)
 
 
-def test_hydrogen_completion_domain_allows_prior_atom_coverage_adoption() -> None:
-    """Hydrogen completion may rely on prior atom-coverage adoption memory."""
+def test_hydrogen_completion_domain_does_not_treat_adoption_as_coverage() -> None:
+    """A prior action does not establish its intended result on the current state."""
 
     domain = _workflow_action_domain(
         _sidechain_incomplete_structure(),
@@ -147,7 +152,7 @@ def test_hydrogen_completion_domain_allows_prior_atom_coverage_adoption() -> Non
         ),
     )
 
-    assert _is_admissible(HydrogenCompletionTransformer, domain)
+    assert not _is_admissible(HydrogenCompletionTransformer, domain)
 
 
 def test_retained_non_polymer_hydrogen_completion_domain_is_admissible() -> None:
@@ -405,7 +410,7 @@ def test_explicit_repair_refinement_requires_local_hydrogen_completion() -> None
 
     residue_id = ResidueId("A", 1)
     domain = _workflow_action_domain(
-        _heavy_complete_structure(),
+        augment_c_terminal_oxt(_heavy_complete_structure()).structure,
         transform_requests=WorkflowTransformRequests(
             repair_refinement=RepairRefinementSpec(
                 scope_spec=LocalScopeSpec.from_residues((residue_id,)),

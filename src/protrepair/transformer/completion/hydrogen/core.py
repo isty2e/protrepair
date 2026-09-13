@@ -1,32 +1,40 @@
-"""Primitive hydrogen materialization over prepared heavy-atom structures."""
+"""Hydrogen materialization with one authority for coupled polymer chemistry."""
 
-from dataclasses import dataclass
+from collections import Counter
 
 from protrepair.chemistry import (
     ComponentLibrary,
-    ResidueTemplate,
+    IdealGeometryHydrogenSemantics,
     build_default_component_library,
 )
-from protrepair.chemistry.component.topology import (
-    polymer_context_hydrogen_anchor_definitions,
-    template_resolved_hydrogen_topology_bonds_for_new_atoms,
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
+from protrepair.chemistry.microstate.preparation import (
+    PolymerMicrostatePreparation,
+    PolymerSitePreparation,
+    pras_microstate_preferences,
 )
+from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.diagnostics.component_support import (
     diagnose_component_support,
     missing_component_definition_issue,
     unsupported_hydrogenation_issue,
 )
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
-from protrepair.diagnostics.kinds import RepairEventKind
+from protrepair.diagnostics.kinds import (
+    IssueSeverity,
+    RepairEventKind,
+    ValidationIssueKind,
+)
 from protrepair.geometry import GeometryPlacementError
+from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import AtomSite, ChainSite, StructureConstitution
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
-from protrepair.structure.geometry import StructureGeometry
-from protrepair.structure.labels import ResidueId
-from protrepair.structure.slots import ChainIndex, ResidueIndex
+from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.slots import ResidueIndex
 from protrepair.structure.topology import (
-    AtomTopology,
+    BondProvenance,
     BondRelationshipType,
     StructureTopology,
     TopologyBond,
@@ -37,97 +45,28 @@ from protrepair.transformer.completion.diagnostics import (
 from protrepair.transformer.completion.hydrogen.component_patch import (
     generate_component_hydrogen_patch,
 )
-from protrepair.transformer.completion.hydrogen.directives import (
-    BackboneHydrogenPropagationDirective,
-    HistidineDeltaProtonationDirective,
-    HydrogenCompletionDirective,
-    NTerminalHydrogenPlacementDirective,
-    RigidHydrogenPlacementDirective,
-    StaticHydrogenPlacementDirective,
-    derive_hydrogen_directives,
-    hydrogen_placement_directive,
-)
 from protrepair.transformer.completion.hydrogen.domain import (
     HydrogenCompletionEnvironment,
     HydrogenResidueSite,
 )
-from protrepair.transformer.completion.hydrogen.geometry import backbone_hydrogen
+from protrepair.transformer.completion.hydrogen.microstate import (
+    place_polymer_microstate_hydrogens,
+)
 from protrepair.transformer.completion.hydrogen.protonation import (
     DisabledHistidineProtonationRequest,
     HistidineProtonationRequest,
+    histidine_microstate_requests,
     normalize_histidine_protonation_request,
-    resolve_histidine_protonation_assignments,
 )
 from protrepair.transformer.completion.hydrogen.static_patch import (
     generate_hydrogen_patch,
-    histidine_delta_hydrogen,
-    n_terminal_hydrogen_coordinates,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
+from protrepair.transformer.polymer_microstate import apply_polymer_microstate_patches
 from protrepair.transformer.result import TransformationResult
 
-_DISABLED_HISTIDINE_PROTONATION_REQUEST = DisabledHistidineProtonationRequest()
-
-
-@dataclass(frozen=True, slots=True)
-class _HydrogenChainStageResult:
-    """One chain-local hydrogen-completion stage result."""
-
-    chain_id: str
-    residues: tuple[CompletionResiduePayload, ...]
-    repairs: tuple[RepairEvent, ...]
-    issues: tuple[ValidationIssue, ...]
-
-
-def _with_matching_source_isotope_elements(
-    chain_result: _HydrogenChainStageResult,
-    source_structure: ProteinStructure,
-) -> _HydrogenChainStageResult:
-    """Restore source D/T labels when hydrogen atom identity survives rebuilding."""
-
-    restored_residues: list[CompletionResiduePayload] = []
-    for residue in chain_result.residues:
-        source_residue = source_structure.constitution.residue_or_ligand(
-            residue.residue_id
-        )
-        if source_residue is None:
-            restored_residues.append(residue)
-            continue
-
-        restored_residue_site = residue.residue_site
-        for source_atom_site in source_residue.atom_sites:
-            if not source_atom_site.element_identity.is_isotope_alias():
-                continue
-            if not restored_residue_site.has_atom_site(source_atom_site.name):
-                continue
-
-            target_atom_site = restored_residue_site.atom_site(source_atom_site.name)
-            if not target_atom_site.is_hydrogen():
-                continue
-            restored_residue_site = restored_residue_site.with_atom_site(
-                AtomSite(
-                    name=target_atom_site.name,
-                    element=source_atom_site.element,
-                )
-            )
-
-        restored_residues.append(
-            residue
-            if restored_residue_site is residue.residue_site
-            else CompletionResiduePayload(
-                residue_site=restored_residue_site,
-                residue_geometry=residue.residue_geometry,
-                formal_charge_by_atom_name=residue.formal_charge_by_atom_name,
-            )
-        )
-
-    return type(chain_result)(
-        chain_id=chain_result.chain_id,
-        residues=tuple(restored_residues),
-        repairs=chain_result.repairs,
-        issues=chain_result.issues,
-    )
+_NO_NEW_HISTIDINE_REQUEST = DisabledHistidineProtonationRequest()
 
 
 def materialize_hydrogens_core(
@@ -136,864 +75,535 @@ def materialize_hydrogens_core(
     *,
     source_isotope_structure: ProteinStructure | None = None,
     target_residue_ids: frozenset[ResidueId] | None = None,
-    histidine_protonation: HistidineProtonationRequest = (
-        _DISABLED_HISTIDINE_PROTONATION_REQUEST
-    ),
+    histidine_protonation: HistidineProtonationRequest = _NO_NEW_HISTIDINE_REQUEST,
+    rebuild_existing: bool = False,
 ) -> TransformationResult:
-    """Materialize hydrogens on the current heavy-atom structure."""
+    """Place fixed-template H and atomically realize resolved polymer sites.
 
-    library = (
-        build_default_component_library()
-        if component_library is None
-        else component_library
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Current heavy scaffold. Missing heavy atoms, including OXT, are diagnosed
+        rather than manufactured by this hydrogen-only operation.
+    component_library : ComponentLibrary or None
+        Active component definitions; None selects the default library.
+    source_isotope_structure : ProteinStructure or None
+        Pre-repair geometry used to detect moved H anchors. Original chemical
+        evidence comes from provenance, not this argument.
+    target_residue_ids : frozenset[ResidueId] or None
+        Polymer residues to change. None selects all polymer residues.
+    histidine_protonation : HistidineProtonationRequest
+        New ratio selection or no-new-request, normalized at this boundary.
+    rebuild_existing : bool
+        Regenerate H coordinates while preserving identities and scalars.
+        Moved pre-repair anchors also trigger residue-local rebuilding.
+
+    Returns
+    -------
+    TransformationResult
+        Complete site graph edits and local diagnostics. Unresolved sites remain
+        unchanged; unrelated successful sites are retained. No FF runs here.
+
+    Raises
+    ------
+    TypeError
+        A request or rebuilding flag is not a supported value.
+    RdkitUnavailableError
+        Required native H placement is unavailable.
+    """
+    if type(rebuild_existing) is not bool:
+        raise TypeError("hydrogen rebuilding must be a bool")
+    library = component_library or build_default_component_library()
+    request = normalize_histidine_protonation_request(histidine_protonation)
+    targets = frozenset(
+        residue.residue_id
+        for chain in structure.constitution.chains
+        for residue in chain.residues
+        if target_residue_ids is None or residue.residue_id in target_residue_ids
     )
-    histidine_protonation_request = normalize_histidine_protonation_request(
-        histidine_protonation
+    rebuilding = frozenset(
+        residue_id
+        for residue_id in targets
+        if rebuild_existing
+        or _heavy_anchors_changed(structure, source_isotope_structure, residue_id)
     )
-    return _execute_hydrogen_placement_stage(
-        TransformationResult(
-            structure=structure,
-            repairs=(),
-            issues=(),
-        ),
-        histidine_protonation=histidine_protonation_request,
-        component_library=library,
-        target_residue_ids=target_residue_ids,
-        original_structure=structure,
-        source_isotope_structure=(
+    # Heavy completion may strip H. Restore identity/scalars first; the explicit
+    # rebuilding set controls coordinate replacement before any FF can run.
+    structure = _restore_preparation_hydrogens(
+        structure, source_isotope_structure, targets
+    )
+    forbidden = tuple(
+        atom_ref
+        for atom_ref in StructureDisulfideHydrogenFacts.from_structure(
             structure
-            if source_isotope_structure is None
-            else source_isotope_structure
-        ),
+        ).forbidden_hydrogen_atom_refs()
+        if atom_ref.residue_id in targets
     )
-
-
-def _hydrogenate_chain_stage(
-    *,
-    chain_id: str,
-    chain_residues: tuple[CompletionResiduePayload, ...],
-    histidine_protonation: HistidineProtonationRequest,
-    component_library: ComponentLibrary,
-    source_structure: ProteinStructure,
-    disulfide_bonded_residue_ids: frozenset[ResidueId],
-    target_residue_ids: frozenset[ResidueId] | None = None,
-) -> _HydrogenChainStageResult:
-    """Hydrogenate one chain and return chain-local repairs and issues."""
-
-    if not chain_residues:
-        return _HydrogenChainStageResult(
-            chain_id=chain_id,
-            residues=(),
-            repairs=(),
-            issues=(),
-        )
-
-    templates = [
-        component_library.get(residue.component_id) for residue in chain_residues
-    ]
-    issues: list[ValidationIssue] = []
-
-    environment = HydrogenCompletionEnvironment.from_payloads(
-        chain_residues,
-        templates=tuple(templates),
-        disulfide_bonded_residue_ids=frozenset(
-            residue.residue_id
-            for residue in chain_residues
-            if residue.residue_id in disulfide_bonded_residue_ids
-        ),
+    normalized = structure.without_atom_refs(forbidden) if forbidden else structure
+    prepared = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(normalized),
+        library,
+        requests=histidine_microstate_requests(structure, request),
     )
-    working_residues = list(chain_residues)
-
-    for residue_index, residue in enumerate(chain_residues):
-        if not _is_targeted_residue(
-            residue.residue_id,
-            target_residue_ids=target_residue_ids,
-        ):
-            continue
-        template = templates[residue_index]
-        placement_directive = hydrogen_placement_directive(
-            residue_index=ResidueIndex(residue_index),
-            template=template,
-        )
-        if template is None:
-            diagnosis = diagnose_component_support(
-                residue.component_id,
-                component_library,
-            )
-            issues.append(
-                missing_component_definition_issue(
-                    residue.residue_site,
-                    diagnosis=diagnosis,
-                    action="leaving residue unchanged during hydrogenation",
-                )
-            )
-            continue
-
-        if placement_directive is None:
-            diagnosis = diagnose_component_support(
-                residue.component_id,
-                component_library,
-            )
-            issues.append(
-                unsupported_hydrogenation_issue(
-                    residue.residue_site,
-                    diagnosis=diagnosis,
-                )
-            )
-    chain = source_structure.constitution.chain(chain_id)
-    directives = derive_hydrogen_directives(
-        chain,
-        templates=tuple(templates),
-        histidine_protonation_assignments=(
-            resolve_histidine_protonation_assignments(
-                chain,
-                histidine_protonation,
-            )
-        ),
+    result = _fixed_hydrogens(
+        normalized, library, prepared, targets=targets, rebuilding=rebuilding
     )
-    protonated_histidines = {
-        _directive_residue_index(directive)
-        for directive in directives
-        if _is_targeted_residue(
-            chain_residues[_directive_residue_index(directive).value].residue_id,
-            target_residue_ids=target_residue_ids,
-        )
-        if isinstance(directive, HistidineDeltaProtonationDirective)
-    }
-    for directive in directives:
-        if not _is_targeted_residue(
-            chain_residues[_directive_residue_index(directive).value].residue_id,
-            target_residue_ids=target_residue_ids,
-        ):
-            continue
-        placement_issue = _apply_hydrogen_directive(
-            directive,
-            chain_residues_by_index=working_residues,
-            environment=environment,
-        )
-        if placement_issue is not None:
-            issues.append(placement_issue)
-
-    hydrogenated_residues = tuple(working_residues)
-    ordered_residues = tuple(
-        hydrogenated_residue.reordered(
-            _ordered_hydrogenated_atom_names(
-                residue_index,
-                chain_residues=hydrogenated_residues,
-                templates=tuple(templates),
-            )
-        )
-        if template is not None
-        else hydrogenated_residue
-        for residue_index, (hydrogenated_residue, template) in enumerate(
-            zip(
-                hydrogenated_residues,
-                templates,
-                strict=True,
-            )
-        )
-    )
-    repairs: list[RepairEvent] = []
-    for residue_index, (residue, hydrogenated_residue) in enumerate(
-        zip(
-            chain_residues,
-            ordered_residues,
-            strict=True,
-        )
-    ):
-        if not _is_targeted_residue(
-            residue.residue_id,
-            target_residue_ids=target_residue_ids,
-        ):
-            continue
-        added_atoms = tuple(
-            atom_name
-            for atom_name in hydrogenated_residue.atom_names()
-            if atom_name not in residue.atom_names()
-        )
-        if added_atoms:
-            details = None
-            if ResidueIndex(residue_index) in protonated_histidines:
-                details = "histidine protonation (+1 charge) applied"
-            repairs.append(
-                RepairEvent.for_residue(
-                    kind=RepairEventKind.HYDROGENS_ADDED,
-                    residue_id=residue.residue_id,
-                    component_id=residue.component_id,
-                    atom_names=added_atoms,
-                    details=details,
-                )
-            )
-
-    return _HydrogenChainStageResult(
-        chain_id=chain_id,
-        residues=ordered_residues,
-        repairs=tuple(repairs),
-        issues=tuple(issues),
-    )
-
-
-def _execute_hydrogen_placement_stage(
-    prepared_result: TransformationResult,
-    *,
-    histidine_protonation: HistidineProtonationRequest,
-    component_library: ComponentLibrary,
-    target_residue_ids: frozenset[ResidueId] | None,
-    original_structure: ProteinStructure,
-    source_isotope_structure: ProteinStructure,
-) -> TransformationResult:
-    """Execute the chain-local hydrogen placement stage over one structure."""
-
-    if target_residue_ids is not None:
-        return _execute_targeted_polymer_hydrogen_placement_stage(
-            prepared_result,
-            histidine_protonation=histidine_protonation,
-            component_library=component_library,
-            target_residue_ids=target_residue_ids,
-            source_isotope_structure=source_isotope_structure,
-        )
-
-    placement_input = prepared_result.structure.without_hydrogens()
-    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(placement_input)
-    repaired_chain_results: list[_HydrogenChainStageResult] = []
-    repairs = list(prepared_result.repairs)
-    issues = list(prepared_result.issues)
-
-    for chain_offset, chain_site in enumerate(placement_input.constitution.chains):
-        chain_result = _hydrogenate_chain_stage(
-            chain_id=chain_site.chain_id,
-            chain_residues=_chain_residue_payloads(
-                placement_input,
-                chain_index=ChainIndex(chain_offset),
-            ),
-            histidine_protonation=histidine_protonation,
-            component_library=component_library,
-            source_structure=placement_input,
-            disulfide_bonded_residue_ids=disulfide_residue_ids,
-            target_residue_ids=target_residue_ids,
-        )
-        chain_result = _with_matching_source_isotope_elements(
-            chain_result,
-            source_isotope_structure,
-        )
-        repaired_chain_results.append(chain_result)
-        repairs.extend(chain_result.repairs)
-        issues.extend(chain_result.issues)
-
-    repaired_structure = _structure_from_hydrogen_chain_results(
-        source_structure=placement_input,
-        topology_source_structure=prepared_result.structure,
-        original_structure=original_structure,
-        chain_results=tuple(repaired_chain_results),
-        component_library=component_library,
-    )
-    return TransformationResult(
-        structure=repaired_structure,
-        repairs=tuple(repairs),
-        issues=tuple(issues),
-    )
-
-
-def _execute_targeted_polymer_hydrogen_placement_stage(
-    prepared_result: TransformationResult,
-    *,
-    histidine_protonation: HistidineProtonationRequest,
-    component_library: ComponentLibrary,
-    target_residue_ids: frozenset[ResidueId],
-    source_isotope_structure: ProteinStructure,
-) -> TransformationResult:
-    """Execute hydrogen placement only on polymer chains containing target residues."""
-
-    source_structure = prepared_result.structure
-    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(source_structure)
-    target_chain_ids = _target_polymer_chain_ids(
-        source_structure,
-        target_residue_ids=target_residue_ids,
-    )
-    if not target_chain_ids:
-        return prepared_result
-
-    repaired_structure = prepared_result.structure
-    repairs = list(prepared_result.repairs)
-    issues = list(prepared_result.issues)
-    repaired_target_residues: list[CompletionResiduePayload] = []
-    for chain_offset, chain_site in enumerate(source_structure.constitution.chains):
-        if chain_site.chain_id not in target_chain_ids:
-            continue
-
-        chain_result = _hydrogenate_chain_stage(
-            chain_id=chain_site.chain_id,
-            chain_residues=_chain_residue_payloads(
-                source_structure,
-                chain_index=ChainIndex(chain_offset),
-                hydrogen_stripped_residue_ids=target_residue_ids,
-            ),
-            histidine_protonation=histidine_protonation,
-            component_library=component_library,
-            source_structure=source_structure,
-            disulfide_bonded_residue_ids=disulfide_residue_ids,
-            target_residue_ids=target_residue_ids,
-        )
-        chain_result = _with_matching_source_isotope_elements(
-            chain_result,
-            source_isotope_structure,
-        )
-        repairs.extend(chain_result.repairs)
-        issues.extend(chain_result.issues)
-        for residue in chain_result.residues:
-            if not _is_targeted_residue(
-                residue.residue_id,
-                target_residue_ids=target_residue_ids,
-            ):
-                continue
-
-            repaired_target_residues.append(residue)
-
-    if repaired_target_residues:
-        repaired_structure = repaired_structure.with_updated_residue_facets_batch(
+    if forbidden:
+        result = TransformationResult(
+            result.structure,
             (
-                residue.residue_site,
-                residue.residue_geometry,
-                residue.formal_charge_by_atom_name,
-            )
-            for residue in repaired_target_residues
-        )
-        repaired_structure = _with_polymer_hydrogen_topology_bonds(
-            source_structure=source_structure,
-            target_structure=repaired_structure,
-            component_library=component_library,
-        )
-
-    return TransformationResult(
-        structure=repaired_structure,
-        repairs=tuple(repairs),
-        issues=tuple(issues),
-    )
-
-
-def _target_polymer_chain_ids(
-    structure: ProteinStructure,
-    *,
-    target_residue_ids: frozenset[ResidueId],
-) -> frozenset[str]:
-    """Return polymer chain ids that contain at least one target residue."""
-
-    chain_ids: set[str] = set()
-    for chain_site in structure.constitution.chains:
-        if any(
-            residue.residue_id in target_residue_ids for residue in chain_site.residues
-        ):
-            chain_ids.add(chain_site.chain_id)
-
-    return frozenset(chain_ids)
-
-
-def _chain_residue_payloads(
-    structure: ProteinStructure,
-    *,
-    chain_index: ChainIndex,
-    hydrogen_stripped_residue_ids: frozenset[ResidueId] = frozenset(),
-) -> tuple[CompletionResiduePayload, ...]:
-    """Return completion payloads for one polymer chain."""
-
-    payloads: list[CompletionResiduePayload] = []
-    for residue_index in structure.constitution.residue_indices_for_chain_index(
-        chain_index
-    ):
-        residue_site = structure.constitution.residue_site_at(residue_index)
-        residue_geometry = structure.residue_geometry(residue_index)
-        formal_charge_by_atom_name = structure.residue_formal_charge_by_atom_name(
-            residue_index
-        )
-        if residue_site.residue_id in hydrogen_stripped_residue_ids:
-            hydrogen_atom_names = {
-                atom_site.name
-                for atom_site in residue_site.atom_sites
-                if atom_site.is_hydrogen()
-            }
-            residue_site = residue_site.without_atom_sites(hydrogen_atom_names)
-            residue_geometry = residue_geometry.without_atoms(hydrogen_atom_names)
-            formal_charge_by_atom_name = tuple(
-                (atom_name, formal_charge)
-                for atom_name, formal_charge in formal_charge_by_atom_name
-                if atom_name not in hydrogen_atom_names
-            )
-
-        payloads.append(
-            CompletionResiduePayload(
-                residue_site=residue_site,
-                residue_geometry=residue_geometry,
-                formal_charge_by_atom_name=formal_charge_by_atom_name,
-            )
-        )
-
-    return tuple(payloads)
-
-
-def _is_targeted_residue(
-    residue_id: ResidueId,
-    *,
-    target_residue_ids: frozenset[ResidueId] | None,
-) -> bool:
-    """Return whether one residue is in the active workflow-stage scope."""
-
-    return target_residue_ids is None or residue_id in target_residue_ids
-
-
-def _directive_residue_index(
-    directive: HydrogenCompletionDirective,
-) -> ResidueIndex:
-    """Return the receiving residue slot for one hydrogen directive."""
-
-    if isinstance(directive, StaticHydrogenPlacementDirective):
-        return directive.residue_index
-    if isinstance(directive, RigidHydrogenPlacementDirective):
-        return directive.residue_index
-    if isinstance(directive, HistidineDeltaProtonationDirective):
-        return directive.residue_index
-    if isinstance(directive, BackboneHydrogenPropagationDirective):
-        return directive.next_residue_index
-    if isinstance(directive, NTerminalHydrogenPlacementDirective):
-        return directive.residue_index
-
-    raise TypeError(f"unsupported hydrogen directive type {type(directive)!r}")
-
-
-def _ordered_hydrogenated_atom_names(
-    residue_index: int,
-    *,
-    chain_residues: tuple[CompletionResiduePayload, ...],
-    templates: tuple[ResidueTemplate | None, ...],
-) -> tuple[str, ...]:
-    """Return canonical heavy-plus-hydrogen atom order for one chain residue."""
-
-    template = templates[residue_index]
-    if template is None:
-        return ()
-
-    ordered_atom_names = list(template.ordered_atom_names())
-    ordered_atom_names.extend(template.expected_hydrogen_atom_names())
-
-    residue = chain_residues[residue_index]
-    if (
-        residue_index == 0
-        and template.can_add_hydrogens()
-        and _supports_peptide_backbone_hydrogens(residue)
-    ):
-        backbone_family_component_id = template.backbone_family_component_id
-        ordered_atom_names.extend(
-            ("H1", "H2")
-            if backbone_family_component_id == "PRO"
-            else ("H1", "H2", "H3")
-        )
-
-    if residue_index > 0:
-        previous_template = templates[residue_index - 1]
-        if (
-            previous_template is not None
-            and previous_template.can_add_hydrogens()
-            and template.can_add_hydrogens()
-            and _supports_peptide_backbone_hydrogens(chain_residues[residue_index - 1])
-            and _supports_peptide_backbone_hydrogens(residue)
-        ):
-            backbone_family_component_id = template.backbone_family_component_id
-            if backbone_family_component_id != "PRO":
-                ordered_atom_names.append("H")
-
-    return tuple(ordered_atom_names)
-
-
-def _supports_peptide_backbone_hydrogens(
-    residue: CompletionResiduePayload,
-) -> bool:
-    """Return whether one residue can participate in peptide-H ordering."""
-
-    return all(residue.has_atom(atom_name) for atom_name in ("N", "CA", "C"))
-
-
-def _structure_from_hydrogen_chain_results(
-    *,
-    source_structure: ProteinStructure,
-    topology_source_structure: ProteinStructure,
-    original_structure: ProteinStructure,
-    chain_results: tuple[_HydrogenChainStageResult, ...],
-    component_library: ComponentLibrary,
-) -> ProteinStructure:
-    """Return one structure rebuilt from hydrogenated chain residue payload."""
-
-    chain_result_by_id = {
-        chain_result.chain_id: chain_result for chain_result in chain_results
-    }
-    repaired_chain_sites: list[ChainSite] = []
-    updated_residue_entries_by_index: list[
-        tuple[CompletionResiduePayload, tuple[tuple[str, int | None], ...]]
-    ] = []
-
-    for source_chain_site in source_structure.constitution.chains:
-        chain_result = chain_result_by_id[source_chain_site.chain_id]
-        repaired_chain_sites.append(
-            ChainSite(
-                chain_id=source_chain_site.chain_id,
-                residues=tuple(
-                    residue.residue_site for residue in chain_result.residues
-                ),
-            )
-        )
-        updated_residue_entries_by_index.extend(
-            (residue, residue.formal_charge_by_atom_name)
-            for residue in chain_result.residues
-        )
-
-    updated_constitution = source_structure.constitution.with_chains(
-        tuple(repaired_chain_sites)
-    ).with_ligands(tuple(original_structure.constitution.ligands))
-    updated_residue_entries_by_index.extend(
-        (
-            CompletionResiduePayload(
-                residue_site=ligand,
-                residue_geometry=original_structure.residue_geometry(
-                    original_structure.constitution.residue_index(ligand.residue_id)
-                ),
-                formal_charge_by_atom_name=(
-                    original_structure.residue_formal_charge_by_atom_name(
-                        original_structure.constitution.residue_index(ligand.residue_id)
+                *result.repairs,
+                *(
+                    RepairEvent.for_residue(
+                        kind=RepairEventKind.HYDROGENS_REMOVED,
+                        residue_id=residue_id,
+                        component_id="CYS",
+                        atom_names=tuple(
+                            ref.atom_name
+                            for ref in forbidden
+                            if ref.residue_id == residue_id
+                        ),
+                        details=(
+                            "removed thiol H incompatible with canonical "
+                            "disulfide topology"
+                        ),
                     )
+                    for residue_id in sorted({ref.residue_id for ref in forbidden})
                 ),
             ),
-            original_structure.residue_formal_charge_by_atom_name(
-                original_structure.constitution.residue_index(ligand.residue_id)
-            ),
+            result.issues,
         )
-        for ligand in original_structure.constitution.ligands
-    )
-    return ProteinStructure.from_payload(
-        constitution=updated_constitution,
-        geometry=StructureGeometry(
-            constitution=updated_constitution,
-            atom_geometries=tuple(
-                residue.residue_geometry.atom_geometry(atom_site.name)
-                for residue, _formal_charge_payload in updated_residue_entries_by_index
-                for atom_site in residue.residue_site.atom_sites
-            ),
-        ),
-        topology=StructureTopology(
-            constitution=updated_constitution,
-            atom_topologies=tuple(
-                (
-                    None
-                    if formal_charge is None
-                    else AtomTopology(formal_charge=formal_charge)
+
+    # Carbonyl orders are prerequisites for neighboring amide-H geometry.
+    # These immutable staging snapshots never escape to FF or the workflow.
+    for carbonyls in (True, False):
+        prepared = PolymerMicrostatePreparation(
+            PolymerMicrostateContext(result.structure),
+            library,
+            requests=histidine_microstate_requests(result.structure, request),
+        )
+        patches = []
+        repairs = list(result.repairs)
+        issues = list(result.issues)
+        for residue_id in sorted(targets):
+            for target in prepared.targets_for(residue_id):
+                if (target.site.kind is PolymerChemicalSite.BACKBONE_C) != carbonyls:
+                    continue
+                try:
+                    patch = place_polymer_microstate_hydrogens(
+                        target.context,
+                        residue_id,
+                        target.site,
+                        override=target.override,
+                        preferences=pras_microstate_preferences(target.site),
+                        retain_applied_override=target.retain_applied_override,
+                        rebuild_existing=residue_id in rebuilding,
+                    )
+                except GeometryPlacementError as error:
+                    issues.append(
+                        skipped_geometry_placement_issue(
+                            _payload(result.structure, residue_id),
+                            atom_names=tuple(
+                                atom.name for atom, _ in target.hydrogen_atom_sites()
+                            ),
+                            reason=str(error),
+                        )
+                    )
+                    continue
+                except ValueError as error:
+                    issues.append(_site_failure(target, str(error)))
+                    continue
+
+                patches.append(patch)
+                added = tuple(
+                    entry.atom.name
+                    for entry in patch.hydrogens
+                    if not result.structure.constitution.residue_site_at(
+                        result.structure.constitution.residue_index(residue_id)
+                    ).has_atom_site(entry.atom.name)
                 )
-                for residue, formal_charge_payload in updated_residue_entries_by_index
-                for atom_site in residue.residue_site.atom_sites
-                for formal_charge in (dict(formal_charge_payload).get(atom_site.name),)
+                if added:
+                    repairs.append(
+                        RepairEvent.for_residue(
+                            kind=RepairEventKind.HYDROGENS_ADDED,
+                            residue_id=residue_id,
+                            component_id=target.site.template.component_id,
+                            atom_names=added,
+                        )
+                    )
+                if not target.is_realized():
+                    graph = patch.resolution.graph
+                    assert graph is not None and patch.resolution.basis is not None
+                    repairs.append(
+                        RepairEvent.for_residue(
+                            kind=RepairEventKind.POLYMER_MICROSTATE_APPLIED,
+                            residue_id=residue_id,
+                            component_id=target.site.template.component_id,
+                            atom_names=tuple(atom.name for atom in graph.atoms),
+                            details=(
+                                f"{target.site.kind.value}: "
+                                f"{patch.resolution.basis.value}; "
+                                + "; ".join(patch.resolution.details)
+                            ),
+                        )
+                    )
+        result = TransformationResult(
+            structure=apply_polymer_microstate_patches(
+                result.structure, tuple(patches)
             ),
-            bonds=_topology_bonds_with_polymer_hydrogen_anchors(
-                topology_source_structure=topology_source_structure,
-                hydrogen_source_constitution=source_structure.constitution,
-                target_constitution=updated_constitution,
-                component_library=component_library,
-            ),
-        ),
-        polymer_blueprint=source_structure.polymer_blueprint,
-        provenance=original_structure.provenance,
-    )
+            repairs=tuple(repairs),
+            issues=tuple(issues),
+        )
+    return result
 
 
-def _with_polymer_hydrogen_topology_bonds(
+def _fixed_hydrogens(
+    structure: ProteinStructure,
+    library: ComponentLibrary,
+    prepared: PolymerMicrostatePreparation,
     *,
-    source_structure: ProteinStructure,
-    target_structure: ProteinStructure,
-    component_library: ComponentLibrary,
-) -> ProteinStructure:
-    """Return target structure with H topology introduced by polymer H completion."""
-
-    return ProteinStructure.from_payload(
-        constitution=target_structure.constitution,
-        geometry=target_structure.geometry,
-        topology=StructureTopology(
-            constitution=target_structure.constitution,
-            atom_topologies=target_structure.topology.atom_topologies,
-            bonds=_topology_bonds_with_polymer_hydrogen_anchors(
-                topology_source_structure=source_structure,
-                hydrogen_source_constitution=source_structure.constitution,
-                target_constitution=target_structure.constitution,
-                component_library=component_library,
-            ),
-        ),
-        polymer_blueprint=target_structure.polymer_blueprint,
-        provenance=target_structure.provenance,
-    )
-
-
-def _topology_bonds_with_polymer_hydrogen_anchors(
-    *,
-    topology_source_structure: ProteinStructure,
-    hydrogen_source_constitution: StructureConstitution,
-    target_constitution: StructureConstitution,
-    component_library: ComponentLibrary,
-) -> tuple[TopologyBond, ...]:
-    """Return remapped topology plus bonds for newly materialized polymer H atoms."""
-
-    remapped_bonds = topology_source_structure.topology.bonds_for_constitution(
-        source_constitution=topology_source_structure.constitution,
-        target_constitution=target_constitution,
-    )
-    added_bonds = (
-        *template_resolved_hydrogen_topology_bonds_for_new_atoms(
-            source_constitution=hydrogen_source_constitution,
-            target_constitution=target_constitution,
-            component_library=component_library,
-        ),
-        *_polymer_context_hydrogen_topology_bonds_for_new_atoms(
-            source_constitution=hydrogen_source_constitution,
-            target_constitution=target_constitution,
-        ),
-    )
-    occupied_endpoint_pairs = {bond.endpoint_pair() for bond in remapped_bonds}
-    return (
-        *remapped_bonds,
-        *(
-            bond
-            for bond in added_bonds
-            if bond.endpoint_pair() not in occupied_endpoint_pairs
-        ),
-    )
-
-
-def _polymer_context_hydrogen_topology_bonds_for_new_atoms(
-    *,
-    source_constitution: StructureConstitution,
-    target_constitution: StructureConstitution,
-) -> tuple[TopologyBond, ...]:
-    """Return non-template polymer H topology bonds introduced by H completion."""
-
-    bonds: list[TopologyBond] = []
-    for target_residue_index, target_residue_site in enumerate(
-        target_constitution.residue_slots
-    ):
-        if target_residue_site.is_hetero:
+    targets: frozenset[ResidueId],
+    rebuilding: frozenset[ResidueId],
+) -> TransformationResult:
+    updates = []
+    repairs = []
+    issues = []
+    fixed_bond_refs = []
+    disulfides = disulfide_bonded_cysteine_residue_ids(structure)
+    for chain in structure.constitution.chains:
+        if not any(residue.residue_id in targets for residue in chain.residues):
             continue
-
-        source_residue_site = source_constitution.residue_or_ligand(
-            target_residue_site.residue_id
+        payloads = tuple(
+            _payload(structure, residue.residue_id) for residue in chain.residues
         )
-        source_atom_names = (
-            frozenset()
-            if source_residue_site is None
-            else frozenset(source_residue_site.atom_site_names())
+        heavy = tuple(
+            payload.without_atom_sites(
+                {atom.name for atom in payload.atom_sites if atom.is_hydrogen()}
+            )
+            for payload in payloads
         )
-        present_atom_names = frozenset(target_residue_site.atom_site_names())
-        new_hydrogen_atom_names = frozenset(
-            atom_site.name
-            for atom_site in target_residue_site.atom_sites
-            if atom_site.is_hydrogen() and atom_site.name not in source_atom_names
+        templates = tuple(library.get(payload.component_id) for payload in payloads)
+        environment = HydrogenCompletionEnvironment.from_payloads(
+            heavy,
+            templates=templates,
+            disulfide_bonded_residue_ids=disulfides.intersection(
+                payload.residue_id for payload in payloads
+            ),
         )
-        if not new_hydrogen_atom_names:
-            continue
-
-        residue_index = ResidueIndex(target_residue_index)
-        for anchor in polymer_context_hydrogen_anchor_definitions(
-            component_id=target_residue_site.component_id,
-            hydrogen_atom_names=new_hydrogen_atom_names,
+        for offset, (payload, template) in enumerate(
+            zip(payloads, templates, strict=True)
         ):
-            bond_definition = anchor.bond_definition
-            hydrogen_atom_name = bond_definition.atom_name_2
-            anchor_atom_name = bond_definition.atom_name_1
-            if anchor_atom_name not in present_atom_names:
+            if payload.residue_id not in targets:
+                continue
+            diagnosis = diagnose_component_support(payload.component_id, library)
+            if template is None:
+                issues.append(
+                    missing_component_definition_issue(
+                        payload.residue_site,
+                        diagnosis=diagnosis,
+                        action="leaving residue unchanged during hydrogenation",
+                    )
+                )
+                continue
+            if not template.can_add_hydrogens():
+                issues.append(
+                    unsupported_hydrogenation_issue(
+                        payload.residue_site, diagnosis=diagnosis
+                    )
+                )
+                continue
+            site_targets = prepared.targets_for(payload.residue_id)
+            controlled = frozenset(
+                name
+                for target in site_targets
+                for name in target.controlled_parent_names()
+            )
+            fixed_template_names = frozenset(
+                name
+                for name, parent in template.template_hydrogen_anchor_by_name(
+                    template.expected_hydrogen_atom_names()
+                ).items()
+                if parent not in controlled
+            )
+            patch = OrderedAtomPatch.from_residue_payload(
+                heavy[offset].residue_site,
+                residue_geometry=heavy[offset].residue_geometry,
+            )
+            semantics = template.hydrogen_semantics
+            assert semantics is not None
+            try:
+                fixed_identities = prepared.fixed_hydrogen_atom_sites(
+                    payload.residue_id
+                )
+                named = prepared.context.hydrogen_parents(
+                    payload.residue_id,
+                    PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN),
+                )
+                if isinstance(semantics, IdealGeometryHydrogenSemantics):
+                    generated = generate_component_hydrogen_patch(
+                        residue=heavy[offset],
+                        patch=patch,
+                        semantics=semantics,
+                        selected_hydrogen_names=fixed_template_names,
+                    )
+                    if generated is None:
+                        raise GeometryPlacementError("insufficient heavy-atom anchors")
+                else:
+                    generated = generate_hydrogen_patch(
+                        site=HydrogenResidueSite(
+                            ResidueIndex(offset),
+                            template,
+                            environment,
+                        ),
+                        patch=patch,
+                        semantics=semantics,
+                        selected_hydrogen_names=fixed_template_names,
+                    )
+            except (GeometryPlacementError, KeyError, ValueError) as error:
+                issues.append(
+                    skipped_geometry_placement_issue(
+                        payload,
+                        atom_names=tuple(sorted(fixed_template_names)),
+                        reason=str(error),
+                    )
+                )
                 continue
 
-            bonds.append(
-                TopologyBond(
-                    atom_index_1=target_constitution.atom_index_in_residue(
-                        residue_index,
-                        anchor_atom_name,
-                    ),
-                    atom_index_2=target_constitution.atom_index_in_residue(
-                        residue_index,
-                        hydrogen_atom_name,
-                    ),
-                    relationship_type=BondRelationshipType.COVALENT,
-                    provenance=anchor.provenance,
+            candidate = heavy[offset].apply_patch(generated)
+            anchors = template.template_hydrogen_anchor_by_name(candidate.atom_names())
+            unknown = tuple(
+                atom.name
+                for atom in candidate.atom_sites
+                if atom.is_hydrogen() and atom.name not in anchors
+            )
+            if unknown:
+                issues.append(
+                    skipped_geometry_placement_issue(
+                        payload,
+                        atom_names=unknown,
+                        reason="template H placement lacks canonical parent bonds",
+                    )
                 )
-            )
-
-    return tuple(bonds)
-
-
-def _apply_hydrogen_directive(
-    directive: HydrogenCompletionDirective,
-    *,
-    chain_residues_by_index: list[CompletionResiduePayload],
-    environment: HydrogenCompletionEnvironment,
-) -> ValidationIssue | None:
-    """Apply one hydrogen directive and return recoverable skip evidence."""
-
-    if isinstance(directive, StaticHydrogenPlacementDirective):
-        current_residue = chain_residues_by_index[directive.residue_index.value]
-        site = HydrogenResidueSite(
-            residue_index=directive.residue_index,
-            template=directive.template,
-            environment=environment,
-            next_residue_index=directive.next_residue_index,
-        )
-        patch = OrderedAtomPatch.from_residue_payload(
-            current_residue.residue_site,
-            residue_geometry=current_residue.residue_geometry,
-        )
-        try:
-            hydrogen_patch = generate_hydrogen_patch(
-                site=site,
-                patch=patch,
-                semantics=directive.semantics,
-            )
-        except GeometryPlacementError as error:
-            return skipped_geometry_placement_issue(
-                current_residue,
-                atom_names=_missing_template_hydrogen_atom_names(
-                    directive,
-                    current_residue,
-                ),
-                reason=str(error),
-            )
-
-        chain_residues_by_index[directive.residue_index.value] = (
-            current_residue.apply_patch(hydrogen_patch)
-        )
-        return None
-
-    if isinstance(directive, RigidHydrogenPlacementDirective):
-        current_residue = chain_residues_by_index[directive.residue_index.value]
-        patch = generate_component_hydrogen_patch(
-            residue=current_residue,
-            patch=OrderedAtomPatch.from_residue_payload(
-                current_residue.residue_site,
-                residue_geometry=current_residue.residue_geometry,
-            ),
-            semantics=directive.semantics,
-        )
-        if patch is None:
-            return skipped_geometry_placement_issue(
-                current_residue,
-                atom_names=_missing_template_hydrogen_atom_names(
-                    directive,
-                    current_residue,
-                ),
-                reason="insufficient heavy-atom anchors for rigid placement",
-            )
-
-        chain_residues_by_index[directive.residue_index.value] = (
-            current_residue.apply_patch(patch)
-        )
-        return None
-
-    if isinstance(directive, HistidineDeltaProtonationDirective):
-        current_residue = chain_residues_by_index[directive.residue_index.value]
-        if current_residue.component_id != "HIS" or current_residue.has_atom("HD1"):
-            return None
-
-        current_patch = OrderedAtomPatch.from_residue_payload(
-            current_residue.residue_site,
-            residue_geometry=current_residue.residue_geometry,
-        )
-        try:
-            hydrogen_patch = current_patch.append_atoms(
-                ("HD1",),
-                (histidine_delta_hydrogen(current_patch),),
-            )
-        except GeometryPlacementError as error:
-            return skipped_geometry_placement_issue(
-                current_residue,
-                atom_names=("HD1",),
-                reason=str(error),
-            )
-
-        chain_residues_by_index[directive.residue_index.value] = (
-            current_residue.apply_patch(hydrogen_patch)
-        )
-        return None
-
-    if isinstance(directive, BackboneHydrogenPropagationDirective):
-        current_residue = chain_residues_by_index[directive.residue_index.value]
-        next_residue = chain_residues_by_index[directive.next_residue_index.value]
-        if next_residue.has_atom("H"):
-            return None
-
-        if not current_residue.has_atom("C") or not all(
-            next_residue.has_atom(atom_name) for atom_name in ("CA", "N")
-        ):
-            return None
-
-        try:
-            position = backbone_hydrogen(
-                next_residue.residue_geometry.position("CA"),
-                next_residue.residue_geometry.position("N"),
-                current_residue.residue_geometry.position("C"),
-            )
-        except GeometryPlacementError as error:
-            return skipped_geometry_placement_issue(
-                next_residue,
-                atom_names=("H",),
-                reason=str(error),
-            )
-
-        next_patch = OrderedAtomPatch.from_residue_payload(
-            next_residue.residue_site,
-            residue_geometry=next_residue.residue_geometry,
-        )
-        chain_residues_by_index[directive.next_residue_index.value] = (
-            next_residue.apply_patch(next_patch.append_atoms(("H",), (position,)))
-        )
-        return None
-
-    if isinstance(directive, NTerminalHydrogenPlacementDirective):
-        current_residue = chain_residues_by_index[directive.residue_index.value]
-        current_patch = OrderedAtomPatch.from_residue_payload(
-            current_residue.residue_site,
-            residue_geometry=current_residue.residue_geometry,
-        )
-        try:
-            atom_coordinates = tuple(
-                n_terminal_hydrogen_coordinates(
-                    current_patch,
-                    directive.backbone_family_component_id,
+                continue
+            generated_by_parent = {}
+            for atom in candidate.atom_sites:
+                if atom.is_hydrogen() and anchors[atom.name] not in controlled:
+                    generated_by_parent.setdefault(anchors[atom.name], []).append(
+                        atom.name
+                    )
+            selected_names = {atom.name for atom, _ in fixed_identities}
+            fixed_parents = {parent for _, parent in fixed_identities}
+            required_counts = Counter(parent for _, parent in fixed_identities)
+            if any(
+                len(generated_by_parent.get(parent, ())) < count
+                for parent, count in required_counts.items()
+            ):
+                issues.append(
+                    skipped_geometry_placement_issue(
+                        payload,
+                        atom_names=tuple(sorted(selected_names)),
+                        reason="fixed H placement omitted a selected parent inventory",
+                    )
                 )
+                continue
+            updated = payload.without_atom_sites(
+                {
+                    name
+                    for name, parent in named.items()
+                    if parent in fixed_parents and name not in selected_names
+                }
             )
-        except GeometryPlacementError as error:
-            atom_names = (
-                ("H1", "H2")
-                if directive.backbone_family_component_id == "PRO"
-                else ("H1", "H2", "H3")
-            )
-            return skipped_geometry_placement_issue(
-                current_residue,
-                atom_names=atom_names,
-                reason=str(error),
-            )
-
-        atom_names = (
-            ("H1", "H2")
-            if directive.backbone_family_component_id == "PRO"
-            else ("H1", "H2", "H3")
-        )
-        chain_residues_by_index[directive.residue_index.value] = (
-            current_residue.apply_patch(
-                current_patch.append_atoms(atom_names, atom_coordinates)
-            )
-        )
-        return None
-
-    raise TypeError(f"unsupported hydrogen directive type {type(directive)!r}")
-
-
-def _missing_template_hydrogen_atom_names(
-    directive: StaticHydrogenPlacementDirective | RigidHydrogenPlacementDirective,
-    residue: CompletionResiduePayload,
-) -> tuple[str, ...]:
-    """Return template hydrogen targets absent from the current residue."""
-
-    return tuple(
-        atom_name
-        for atom_name in directive.template.expected_hydrogen_atom_names()
-        if not residue.has_atom(atom_name)
+            added = []
+            for atom, parent in fixed_identities:
+                generated_names = generated_by_parent.get(parent, [])
+                generated_name = (
+                    atom.name if atom.name in generated_names else generated_names[0]
+                )
+                generated_names.remove(generated_name)
+                fixed_bond_refs.append(
+                    (
+                        AtomRef(payload.residue_id, parent),
+                        AtomRef(payload.residue_id, atom.name),
+                    )
+                )
+                if payload.has_atom_site(atom.name):
+                    if payload.residue_id not in rebuilding:
+                        continue
+                    original_atom = payload.atom_site(atom.name)
+                    if not original_atom.is_hydrogen():
+                        continue
+                    atom = original_atom
+                    geometry = payload.atom_geometry(atom.name).with_position(
+                        candidate.position(generated_name)
+                    )
+                else:
+                    geometry = candidate.atom_geometry(generated_name)
+                    observation = structure.provenance.ingress.observation
+                    if observation is not None:
+                        source_index = observation.constitution.resolve_atom_index(
+                            AtomRef(payload.residue_id, atom.name)
+                        )
+                        if source_index is not None:
+                            geometry = observation.geometry.atom_geometry(
+                                source_index
+                            ).with_position(geometry.position)
+                    added.append(atom.name)
+                updated = updated.with_atom_payload(
+                    atom,
+                    atom_geometry=geometry,
+                    formal_charge=payload.formal_charge(atom.name),
+                )
+            if updated != payload:
+                updates.append(
+                    (
+                        updated.residue_site,
+                        updated.residue_geometry,
+                        updated.formal_charge_by_atom_name,
+                    )
+                )
+            if added:
+                repairs.append(
+                    RepairEvent.for_residue(
+                        kind=RepairEventKind.HYDROGENS_ADDED,
+                        residue_id=payload.residue_id,
+                        component_id=payload.component_id,
+                        atom_names=tuple(added),
+                    )
+                )
+    result = (
+        structure.with_updated_residue_facets_batch(updates) if updates else structure
     )
+    added_bonds = tuple(
+        TopologyBond(
+            result.constitution.atom_index(parent),
+            result.constitution.atom_index(hydrogen),
+            relationship_type=BondRelationshipType.COVALENT,
+            provenance=BondProvenance.TEMPLATE_RESOLVED,
+        )
+        for parent, hydrogen in fixed_bond_refs
+        if result.topology.bond_between(
+            result.constitution.atom_index(parent),
+            result.constitution.atom_index(hydrogen),
+        )
+        is None
+    )
+    if added_bonds:
+        result = ProteinStructure.from_payload(
+            constitution=result.constitution,
+            geometry=result.geometry,
+            topology=StructureTopology(
+                constitution=result.constitution,
+                atom_topologies=result.topology.atom_topologies,
+                bonds=(*result.topology.bonds, *added_bonds),
+            ),
+            polymer_blueprint=result.polymer_blueprint,
+            provenance=result.provenance,
+        )
+    return TransformationResult(result, tuple(repairs), tuple(issues))
+
+
+def _payload(
+    structure: ProteinStructure, residue_id: ResidueId
+) -> CompletionResiduePayload:
+    index = structure.constitution.residue_index(residue_id)
+    return CompletionResiduePayload(
+        structure.constitution.residue_site_at(index),
+        structure.residue_geometry(index),
+        structure.residue_formal_charge_by_atom_name(index),
+    )
+
+
+def _restore_preparation_hydrogens(
+    structure: ProteinStructure,
+    before: ProteinStructure | None,
+    residue_ids: frozenset[ResidueId],
+) -> ProteinStructure:
+    if before is None or before is structure:
+        return structure
+    updates = []
+    restored_refs = set()
+    for residue_id in sorted(residue_ids):
+        source = before.constitution.residue_or_ligand(residue_id)
+        if source is None:
+            continue
+        source_payload = _payload(before, residue_id)
+        payload = _payload(structure, residue_id)
+        for atom in source.atom_sites:
+            if not atom.is_hydrogen() or payload.has_atom_site(atom.name):
+                continue
+            payload = payload.with_atom_payload(
+                atom,
+                atom_geometry=source_payload.atom_geometry(atom.name),
+                formal_charge=source_payload.formal_charge(atom.name),
+            )
+            restored_refs.add(AtomRef(residue_id, atom.name))
+        updates.append(
+            (
+                payload.residue_site,
+                payload.residue_geometry,
+                payload.formal_charge_by_atom_name,
+            )
+        )
+    if not restored_refs:
+        return structure
+    result = structure.with_updated_residue_facets_batch(updates)
+    bonds = tuple(
+        bond
+        for bond in before.topology.bonds_for_constitution(
+            source_constitution=before.constitution,
+            target_constitution=result.constitution,
+        )
+        if any(
+            result.constitution.atom_ref_at(index) in restored_refs
+            for index in bond.endpoint_pair()
+        )
+    )
+    return ProteinStructure.from_payload(
+        constitution=result.constitution,
+        geometry=result.geometry,
+        topology=StructureTopology(
+            constitution=result.constitution,
+            atom_topologies=result.topology.atom_topologies,
+            bonds=(*result.topology.bonds, *bonds),
+        ),
+        provenance=result.provenance,
+        polymer_blueprint=result.polymer_blueprint,
+    )
+
+
+def _heavy_anchors_changed(
+    structure: ProteinStructure,
+    before: ProteinStructure | None,
+    residue_id: ResidueId,
+) -> bool:
+    if before is None or before is structure:
+        return False
+    current = _payload(structure, residue_id)
+    original = before.constitution.residue_or_ligand(residue_id)
+    if original is None:
+        return True
+    geometry = before.residue_geometry(before.constitution.residue_index(residue_id))
+    return any(
+        not original.has_atom_site(atom.name)
+        or current.position(atom.name) != geometry.position(atom.name)
+        for atom in current.atom_sites
+        if not atom.is_hydrogen()
+    )
+
+
+def _site_failure(target: PolymerSitePreparation, reason: str) -> ValidationIssue:
+    return ValidationIssue.for_residue(
+        kind=(
+            ValidationIssueKind.CHEMISTRY_CONTRADICTION
+            if target.resolution.status is MicrostateResolutionStatus.CONFLICT
+            else ValidationIssueKind.UNSUPPORTED_HYDROGENATION
+        ),
+        severity=IssueSeverity.WARNING,
+        residue_id=target.residue_id,
+        component_id=target.site.template.component_id,
+        atom_names=tuple(sorted(target.controlled_parent_names())),
+        message=f"polymer {target.site.kind.value} left unchanged: {reason}",
+    )
+
+
+__all__ = ["materialize_hydrogens_core"]

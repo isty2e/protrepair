@@ -63,9 +63,7 @@ class WorkflowPlanningPolicy:
             key=lambda group: self._group_sort_key(group, domain=domain),
         )
         return tuple(
-            proposal
-            for group in ranked_groups
-            for proposal in group.proposals
+            proposal for group in ranked_groups for proposal in group.proposals
         )
 
     def _group_candidates(
@@ -76,9 +74,9 @@ class WorkflowPlanningPolicy:
     ) -> tuple[_WorkflowCandidateGroup, ...]:
         """Return proposal-family groups over candidate workflow proposals."""
 
-        grouped: OrderedDict[
-            WorkflowStateActionType, list[WorkflowActionProposal]
-        ] = OrderedDict()
+        grouped: OrderedDict[WorkflowStateActionType, list[WorkflowActionProposal]] = (
+            OrderedDict()
+        )
         for candidate in candidates:
             grouped.setdefault(candidate.transformer.proposal_family(), []).append(
                 candidate
@@ -153,13 +151,15 @@ class WorkflowPlanningPolicy:
         if capability.can_reduce_deficit_family(
             WorkflowCapabilityDeficitFamily.INTERACTION
         ) and (
-            domain.burden.is_holo_context()
-            and domain.burden.has_interaction_burden()
+            domain.burden.is_holo_context() and domain.burden.has_interaction_burden()
         ):
             return WorkflowPolicyFamily.INTERACTION
-        if capability.can_reduce_deficit_family(
-            WorkflowCapabilityDeficitFamily.PARSER_COMPATIBILITY
-        ) and domain.burden.has_parser_compatibility_burden():
+        if (
+            capability.can_reduce_deficit_family(
+                WorkflowCapabilityDeficitFamily.PARSER_COMPATIBILITY
+            )
+            and domain.burden.has_parser_compatibility_burden()
+        ):
             return WorkflowPolicyFamily.PARSER_COMPATIBILITY
         if capability.can_reduce_deficit_family(
             WorkflowCapabilityDeficitFamily.INTRINSIC_GEOMETRY
@@ -305,9 +305,11 @@ class WorkflowPlanningPolicy:
     ) -> int:
         """Return same-family explicit-request preference rank."""
 
-        return 0 if any(
-            proposal.explicitly_requested for proposal in group.proposals
-        ) else 1
+        return (
+            0
+            if any(proposal.explicitly_requested for proposal in group.proposals)
+            else 1
+        )
 
     def _exact_goal_support_priority(
         self,
@@ -336,7 +338,8 @@ class WorkflowPlanningPolicy:
         effect_class_order = {
             WorkflowActionEffectClass.AUGMENTS_ABSENCE: 0,
             WorkflowActionEffectClass.REMOVES_PRESENT: 1,
-            WorkflowActionEffectClass.REVISES_PRESENT_GEOMETRY: 2,
+            WorkflowActionEffectClass.REVISES_CHEMISTRY: 2,
+            WorkflowActionEffectClass.REVISES_PRESENT_GEOMETRY: 3,
         }
         return effect_class_order[capability.effect_class]
 
@@ -353,8 +356,7 @@ class WorkflowPlanningPolicy:
             WorkflowActionLocality.WHOLE_STRUCTURE: 3,
         }
         return min(
-            locality_order[locality]
-            for locality in capability.supported_localities
+            locality_order[locality] for locality in capability.supported_localities
         )
 
     def _donor_priority(
@@ -370,7 +372,6 @@ class WorkflowPlanningPolicy:
         return donor_order[capability.donor_requirement]
 
 
-
 def _strongest_disposition(
     dispositions: Iterable[WorkflowDeficitDisposition],
 ) -> WorkflowDeficitDisposition | None:
@@ -383,8 +384,9 @@ def _strongest_disposition(
         WorkflowDeficitDisposition.BLOCKED: 2,
     }
     for disposition in dispositions:
-        if strongest is None or disposition_order[disposition] < disposition_order[
-            strongest
-        ]:
+        if (
+            strongest is None
+            or disposition_order[disposition] < disposition_order[strongest]
+        ):
             strongest = disposition
     return strongest

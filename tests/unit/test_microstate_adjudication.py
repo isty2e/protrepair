@@ -21,6 +21,7 @@ from protrepair.diagnostics.source_microstate import (
     MicrostateStructuralRole,
     adjudicate_microstate_evidence,
     collect_microstate_evidence,
+    diagnose_source_microstate_contradictions,
     validation_issue_from_microstate_decision,
 )
 from protrepair.errors import RdkitUnavailableError
@@ -29,16 +30,12 @@ from protrepair.io import read_structure, write_structure_string
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import ResidueIndex
-from protrepair.transformer.source_microstate_adjudication import (
-    adjudicate_source_microstate_contradictions,
-)
 from protrepair.workflow import process_canonical_structure
 from protrepair.workflow.contracts import LigandPolicy
 
 
-def test_adjudicate_source_microstate_contradictions_demotes_double_negative_aspartate(
-) -> None:
-    """Double-negative ASP source charges should be demoted when geometry agrees."""
+def test_legacy_adjudication_preserves_standard_aspartate_charges() -> None:
+    """Standard charge evidence belongs to the coupled site resolver, not demotion."""
 
     structure = build_structure(
         chains=(
@@ -75,20 +72,12 @@ def test_adjudicate_source_microstate_contradictions_demotes_double_negative_asp
         source_format=FileFormat.PDB,
     )
 
-    adjudicated_structure, issues = adjudicate_source_microstate_contradictions(
-        structure
-    )
+    issues = diagnose_source_microstate_contradictions(structure)
 
-    assert (
-        adjudicated_structure.residue_formal_charge_by_atom_name(ResidueIndex(0)) == ()
-    )
-    assert len(issues) == 1
-    assert issues[0].kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
-    assert "OD1/OD2 were both annotated as -1" in issues[0].message
+    assert issues == ()
 
 
-def test_adjudicate_source_microstate_contradictions_keeps_explicit_hydrogen_evidence(
-) -> None:
+def test_source_diagnostics_preserve_explicit_hydrogen_evidence() -> None:
     """Explicit hydrogen evidence should block this narrow acidic adjudication."""
 
     structure = build_structure(
@@ -128,19 +117,15 @@ def test_adjudicate_source_microstate_contradictions_keeps_explicit_hydrogen_evi
         source_format=FileFormat.PDB,
     )
 
-    adjudicated_structure, issues = adjudicate_source_microstate_contradictions(
-        structure
-    )
+    issues = diagnose_source_microstate_contradictions(structure)
 
-    assert adjudicated_structure.residue_formal_charge_by_atom_name(
+    assert structure.residue_formal_charge_by_atom_name(
         ResidueIndex(0)
     ) == structure.residue_formal_charge_by_atom_name(ResidueIndex(0))
     assert issues == ()
 
 
-def test_adjudicate_source_microstate_contradictions_requires_geometry_support() -> (
-    None
-):
+def test_diagnose_source_microstate_contradictions_requires_geometry_support() -> None:
     """Asymmetric acidic geometry should not be auto-adjudicated."""
 
     structure = build_structure(
@@ -178,19 +163,16 @@ def test_adjudicate_source_microstate_contradictions_requires_geometry_support()
         source_format=FileFormat.PDB,
     )
 
-    adjudicated_structure, issues = adjudicate_source_microstate_contradictions(
-        structure
-    )
+    issues = diagnose_source_microstate_contradictions(structure)
 
-    assert adjudicated_structure.residue_formal_charge_by_atom_name(
+    assert structure.residue_formal_charge_by_atom_name(
         ResidueIndex(0)
     ) == structure.residue_formal_charge_by_atom_name(ResidueIndex(0))
     assert issues == ()
 
 
-def test_adjudicate_source_microstate_contradictions_demotes_terminal_double_negative(
-) -> None:
-    """Terminal carboxylate-like motifs should use the same adjudication rule."""
+def test_legacy_adjudication_preserves_terminal_charges() -> None:
+    """Terminal source charges must not be silently demoted before H selection."""
 
     structure = build_structure(
         chains=(
@@ -225,21 +207,13 @@ def test_adjudicate_source_microstate_contradictions_demotes_terminal_double_neg
         source_format=FileFormat.PDB,
     )
 
-    adjudicated_structure, issues = adjudicate_source_microstate_contradictions(
-        structure
-    )
+    issues = diagnose_source_microstate_contradictions(structure)
 
-    assert (
-        adjudicated_structure.residue_formal_charge_by_atom_name(ResidueIndex(0)) == ()
-    )
-    assert len(issues) == 1
-    assert "O/OXT were both annotated as -1" in issues[0].message
+    assert issues == ()
 
 
-def test_adjudicate_source_microstate_contradictions_batches_multiple_demotions() -> (
-    None
-):
-    """Independent source-charge demotions should be applied in one structure pass."""
+def test_legacy_adjudication_preserves_multiple_standard_sites() -> None:
+    """All standard sites delegate to coupled resolution without charge-only edits."""
 
     def acidic_residue(seq_num: int, x_offset: float):
         return residue_payload(
@@ -280,21 +254,13 @@ def test_adjudicate_source_microstate_contradictions_batches_multiple_demotions(
         source_format=FileFormat.PDB,
     )
 
-    adjudicated_structure, issues = adjudicate_source_microstate_contradictions(
-        structure
-    )
+    issues = diagnose_source_microstate_contradictions(structure)
 
-    assert (
-        adjudicated_structure.residue_formal_charge_by_atom_name(ResidueIndex(0)) == ()
-    )
-    assert (
-        adjudicated_structure.residue_formal_charge_by_atom_name(ResidueIndex(1)) == ()
-    )
-    assert len(issues) == 2
+    assert issues == ()
 
 
-def test_adjudicate_source_microstate_contradictions_on_3ja8_demotes_asp220() -> None:
-    """3JA8 ASP 2:220 should trigger one explicit contradiction adjudication."""
+def test_legacy_adjudication_keeps_3ja8_asp220_source_charges() -> None:
+    """Egress must retain the source charge until a coupled decision changes it."""
 
     source = WHOLE_STRUCTURE_CORPUS_SOURCES["3ja8-whole-structure"]
     structure = read_structure(
@@ -304,9 +270,7 @@ def test_adjudicate_source_microstate_contradictions_on_3ja8_demotes_asp220() ->
         ).structure_normalization_policy(),
     )
 
-    adjudicated_structure, issues = adjudicate_source_microstate_contradictions(
-        structure
-    )
+    issues = diagnose_source_microstate_contradictions(structure)
     contradiction_issues = tuple(
         issue
         for issue in issues
@@ -316,16 +280,16 @@ def test_adjudicate_source_microstate_contradictions_on_3ja8_demotes_asp220() ->
         )
     )
 
-    assert len(contradiction_issues) == 1
-    pdb_text = write_structure_string(adjudicated_structure, FileFormat.PDB)
+    assert contradiction_issues == ()
+    pdb_text = write_structure_string(structure, FileFormat.PDB)
     od1_line = next(line for line in pdb_text.splitlines() if " OD1 ASP 2 220" in line)
     od2_line = next(line for line in pdb_text.splitlines() if " OD2 ASP 2 220" in line)
-    assert "O1-" not in od1_line
-    assert "O1-" not in od2_line
+    assert "O1-" in od1_line
+    assert "O1-" in od2_line
 
 
-def test_process_canonical_structure_propagates_initial_microstate_issues() -> None:
-    """Canonical workflow results should retain adjudication issues from ingress."""
+def test_workflow_without_chemistry_request_does_not_demote_standard_charges() -> None:
+    """No-H processing must not execute the retired charge-only correction."""
 
     structure = build_structure(
         chains=(
@@ -369,8 +333,8 @@ def test_process_canonical_structure_propagates_initial_microstate_issues() -> N
         if issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
     )
 
-    assert len(contradiction_issues) == 1
-    assert result.structure.residue_formal_charge_by_atom_name(ResidueIndex(0)) == ()
+    assert contradiction_issues == ()
+    assert result.structure.topology == structure.topology
 
 
 def test_collect_microstate_evidence_classifies_curated_heme_family() -> None:
@@ -598,8 +562,7 @@ def test_collect_microstate_evidence_classifies_single_atom_iron_as_metal_or_ion
         is MicrostateChemistrySupportMode.NONE
     )
     assert (
-        evidence.classification.applicability
-        is MicrostateApplicability.NOT_APPLICABLE
+        evidence.classification.applicability is MicrostateApplicability.NOT_APPLICABLE
     )
     assert decision.decision is MicrostateDecision.PRESERVE_SOURCE
     assert decision.reasons == (MicrostateDecisionReason.NO_CONTRADICTION_DETECTED,)

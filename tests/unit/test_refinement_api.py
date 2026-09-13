@@ -505,9 +505,7 @@ def test_refine_local_region_rejects_unresolved_full_structure_sanitize_failure(
     assert result.delta.moved_atoms == ()
     assert len(prepared_projectors) == 1
     assert len(observed_projectors) >= 2
-    assert all(
-        projector is prepared_projectors[0] for projector in observed_projectors
-    )
+    assert all(projector is prepared_projectors[0] for projector in observed_projectors)
     assert any(
         issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
     )
@@ -788,7 +786,9 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
         *,
         target_residue_ids: frozenset[ResidueId] | None = None,
         protonate_histidines: bool = False,
+        rebuild_existing: bool = False,
     ) -> ProcessResult:
+        assert rebuild_existing
         del component_library, protonate_histidines
         hydrogenation_calls.append(target_residue_ids)
         return ProcessResult(
@@ -892,7 +892,9 @@ def test_refine_local_region_skips_dependent_h_with_heavy_parser_blockers(
         *,
         target_residue_ids: frozenset[ResidueId] | None = None,
         protonate_histidines: bool = False,
+        rebuild_existing: bool = False,
     ) -> ProcessResult:
+        assert rebuild_existing
         del structure, component_library, target_residue_ids, protonate_histidines
         raise AssertionError(
             "dependent-H materialization should not run while heavy parser "
@@ -993,7 +995,9 @@ def test_refine_local_region_rejects_dependent_hydrogen_revalidation_regression(
         *,
         target_residue_ids: frozenset[ResidueId] | None = None,
         protonate_histidines: bool = False,
+        rebuild_existing: bool = False,
     ) -> ProcessResult:
+        assert rebuild_existing
         del component_library, target_residue_ids, protonate_histidines
         return ProcessResult(
             structure=_structure_with_updated_atom_positions(
@@ -1131,9 +1135,7 @@ def _acceptance_metrics(
             restraint_backed_geometry_outlier_count=(
                 focus_restraint_backed_geometry_outlier_count
             ),
-            fallback_geometry_outlier_count=(
-                focus_fallback_geometry_outlier_count
-            ),
+            fallback_geometry_outlier_count=(focus_fallback_geometry_outlier_count),
             severe_restraint_backed_bond_length_outlier_count=(
                 focus_severe_restraint_backed_bond_length_outlier_count
             ),
@@ -1185,8 +1187,7 @@ def test_refinement_metrics_regressed_accepts_weighted_clash_improvement() -> No
     assert not refinement_metrics_regressed(before_metrics, after_metrics)
 
 
-def test_refinement_metrics_regressed_rejects_stereochemistry_regression(
-) -> None:
+def test_refinement_metrics_regressed_rejects_stereochemistry_regression() -> None:
     """Acceptance gating should reject new stereochemistry violations."""
 
     before_metrics = _acceptance_metrics(
@@ -1205,8 +1206,9 @@ def test_refinement_metrics_regressed_rejects_stereochemistry_regression(
     assert refinement_metrics_regressed(before_metrics, after_metrics)
 
 
-def test_refinement_metrics_regressed_keeps_clash_relief_ahead_of_stereochemistry(
-) -> None:
+def test_refinement_metrics_regressed_keeps_clash_relief_ahead_of_stereochemistry() -> (
+    None
+):
     """Clash relief can still improve ordering before hard-reject checks."""
 
     before_metrics = _acceptance_metrics(
@@ -1225,8 +1227,7 @@ def test_refinement_metrics_regressed_keeps_clash_relief_ahead_of_stereochemistr
     assert not refinement_metrics_regressed(before_metrics, after_metrics)
 
 
-def test_refinement_metrics_rejected_rejects_new_stereochemistry_even_with_clash_relief(
-) -> None:
+def test_refinement_rejects_new_stereochemistry_even_with_clash_relief() -> None:
     """New stereochemistry burden should hard-reject otherwise improved output."""
 
     before_metrics = _acceptance_metrics(
@@ -1263,8 +1264,7 @@ def test_refinement_metrics_regressed_rejects_same_clash_geometry_regression() -
     assert refinement_metrics_regressed(before_metrics, after_metrics)
 
 
-def test_refinement_metrics_regressed_accepts_same_count_lower_overlap_geometry_cost(
-) -> None:
+def test_refinement_accepts_same_count_lower_overlap_geometry_cost() -> None:
     """Lower steric overlap should outrank geometry cost at equal clash count."""
 
     before_metrics = _acceptance_metrics(
@@ -1342,10 +1342,7 @@ def test_refinement_metrics_regressed_rejects_full_structure_sanitize_loss() -> 
     assert refinement_metrics_regressed(before_metrics, after_metrics)
 
 
-def test_refinement_rejects_unresolved_sanitize_without_global_relief(
-) -> (
-    None
-):
+def test_refinement_rejects_unresolved_sanitize_without_global_relief() -> None:
     """Unreadable candidates should still fail when global burden does not improve."""
 
     before_metrics = _acceptance_metrics(
@@ -1370,10 +1367,7 @@ def test_refinement_rejects_unresolved_sanitize_without_global_relief(
     assert refinement_metrics_rejected(before_metrics, after_metrics)
 
 
-def test_refinement_accepts_unresolved_sanitize_with_global_relief(
-) -> (
-    None
-):
+def test_refinement_accepts_unresolved_sanitize_with_global_relief() -> None:
     """Unreadable candidates may pass when global near-covalent burden drops."""
 
     before_metrics = _acceptance_metrics(
@@ -1766,6 +1760,7 @@ def build_hydrogenless_angle_structure() -> ProteinStructure:
         ),
         source_format=FileFormat.PDB,
     )
+
 
 def test_rejected_candidate_discards_pre_backend_moves() -> None:
     """Rejected candidates should discard pre-backend discrete movement too."""

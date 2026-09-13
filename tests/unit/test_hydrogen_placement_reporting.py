@@ -1,55 +1,32 @@
-"""Directive-level reporting tests for polymer hydrogen placement."""
+"""Site-local failure reporting through the real hydrogen materializer."""
+
+from pathlib import Path
 
 import pytest
-from tests.support.canonical_builders import atom_payload, completion_payload
 
-from protrepair.chemistry import HydrogenSemantics
-from protrepair.chemistry.standard.components import build_standard_component_library
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.diagnostics import ValidationIssueKind
 from protrepair.geometry import GeometryPlacementError, Vec3
+from protrepair.io import read_structure_string
+from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import ResidueId
-from protrepair.structure.slots import ResidueIndex
+from protrepair.structure.provenance import FileFormat
+from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.completion.hydrogen import core as hydrogen_core
-from protrepair.transformer.completion.hydrogen.directives import (
-    BackboneHydrogenPropagationDirective,
-    HistidineDeltaProtonationDirective,
-    NTerminalHydrogenPlacementDirective,
-    StaticHydrogenPlacementDirective,
-)
-from protrepair.transformer.completion.hydrogen.domain import (
-    HydrogenCompletionEnvironment,
-)
-from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 
 
-def _payload(
-    component_id: str,
-    residue_id: ResidueId,
-    *,
-    x_offset: float = 0.0,
-) -> CompletionResiduePayload:
-    return completion_payload(
-        component_id=component_id,
-        residue_id=residue_id,
-        atoms=(
-            atom_payload("N", "N", Vec3(x_offset, 0.0, 0.0)),
-            atom_payload("CA", "C", Vec3(x_offset + 1.4, 0.0, 0.0)),
-            atom_payload("C", "C", Vec3(x_offset + 2.2, 1.2, 0.0)),
-            atom_payload("O", "O", Vec3(x_offset + 2.2, 2.3, 0.0)),
-            atom_payload("CB", "C", Vec3(x_offset + 1.4, -0.8, 1.1)),
+def _structure(*numbers: int) -> ProteinStructure:
+    lines = Path("tests/fixtures/corpus/pdb1afc.ent").read_text().splitlines()
+    return read_structure_string(
+        "\n".join(
+            line
+            for line in lines
+            if line.startswith("ATOM")
+            and line[21] == "A"
+            and int(line[22:26]) in numbers
         ),
-    )
-
-
-def _environment(
-    residues: tuple[CompletionResiduePayload, ...],
-) -> HydrogenCompletionEnvironment:
-    library = build_standard_component_library()
-    return HydrogenCompletionEnvironment.from_payloads(
-        residues,
-        templates=tuple(library.require(residue.component_id) for residue in residues),
-        disulfide_bonded_residue_ids=frozenset(),
+        FileFormat.PDB,
     )
 
 
@@ -61,157 +38,77 @@ def _raise_geometry_error(*args: object, **kwargs: object) -> OrderedAtomPatch:
 def test_static_hydrogen_failure_reports_template_targets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Static-plan failure should identify the template H atoms left absent."""
-
-    residue = _payload("ALA", ResidueId("A", 1))
-    template = build_standard_component_library().require("ALA")
-    semantics = template.hydrogen_semantics
-    assert isinstance(semantics, HydrogenSemantics)
-    directive = StaticHydrogenPlacementDirective(
-        residue_index=ResidueIndex(0),
-        template=template,
-        semantics=semantics,
-    )
+    source = _structure(47)
     monkeypatch.setattr(hydrogen_core, "generate_hydrogen_patch", _raise_geometry_error)
-    working_residues = [residue]
-
-    issue = hydrogen_core._apply_hydrogen_directive(
-        directive,
-        chain_residues_by_index=working_residues,
-        environment=_environment((residue,)),
+    result = add_hydrogens(source)
+    issue = next(
+        i
+        for i in result.issues
+        if i.kind is ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED
     )
-
-    assert issue is not None
-    assert issue.kind is ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED
-    assert issue.residue_id == residue.residue_id
-    assert issue.atom_names == template.expected_hydrogen_atom_names()
-    assert working_residues == [residue]
-
-
-def test_histidine_delta_failure_reports_only_hd1(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """HIS protonation failure should not implicate unrelated hydrogens."""
-
-    residue = _payload("HIS", ResidueId("A", 2))
-    template = build_standard_component_library().require("HIS")
-    directive = HistidineDeltaProtonationDirective(
-        residue_index=ResidueIndex(0),
-        template=template,
-    )
-    monkeypatch.setattr(
-        hydrogen_core,
-        "histidine_delta_hydrogen",
-        _raise_geometry_error,
-    )
-
-    issue = hydrogen_core._apply_hydrogen_directive(
-        directive,
-        chain_residues_by_index=[residue],
-        environment=_environment((residue,)),
-    )
-
-    assert issue is not None
-    assert issue.residue_id == residue.residue_id
-    assert issue.atom_names == ("HD1",)
-
-
-def test_backbone_failure_is_scoped_to_the_hydrogen_recipient(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Backbone-H failure belongs to the next residue receiving the atom."""
-
-    first = _payload("ALA", ResidueId("A", 3))
-    second = _payload("GLY", ResidueId("A", 4), x_offset=3.0)
-    template = build_standard_component_library().require("ALA")
-    directive = BackboneHydrogenPropagationDirective(
-        residue_index=ResidueIndex(0),
-        template=template,
-        next_residue_index=ResidueIndex(1),
-    )
-    monkeypatch.setattr(hydrogen_core, "backbone_hydrogen", _raise_geometry_error)
-
-    issue = hydrogen_core._apply_hydrogen_directive(
-        directive,
-        chain_residues_by_index=[first, second],
-        environment=_environment((first, second)),
-    )
-
-    assert issue is not None
-    assert issue.residue_id == second.residue_id
-    assert issue.component_id == "GLY"
-    assert issue.atom_names == ("H",)
+    assert issue.residue_id == ResidueId("A", 47)
+    assert set(issue.atom_names) == {"HA", "HB1", "HB2", "HB3"}
+    residue = result.structure.chain_site("A").residues[0]
+    assert all(not residue.has_atom_site(name) for name in issue.atom_names)
+    assert residue.has_atom_site("H1")
 
 
 @pytest.mark.parametrize(
-    ("component_id", "expected_atom_names"),
+    ("numbers", "recipient", "kind", "expected_names"),
     (
-        pytest.param("ALA", ("H1", "H2", "H3"), id="non-proline"),
-        pytest.param("PRO", ("H1", "H2"), id="proline"),
+        ((41,), 41, PolymerChemicalSite.SIDECHAIN, {"HE2", "HD2", "HE1"}),
+        ((19, 20), 20, PolymerChemicalSite.BACKBONE_N, {"H"}),
+        ((47,), 47, PolymerChemicalSite.BACKBONE_N, {"H1", "H2", "H3"}),
+        ((11,), 11, PolymerChemicalSite.BACKBONE_N, {"H1", "H2"}),
     ),
 )
-def test_n_terminal_failure_reports_backbone_family_targets(
+def test_site_failure_is_scoped_and_does_not_apply_partial_graph(
     monkeypatch: pytest.MonkeyPatch,
-    component_id: str,
-    expected_atom_names: tuple[str, ...],
+    numbers: tuple[int, ...],
+    recipient: int,
+    kind: PolymerChemicalSite,
+    expected_names: set[str],
 ) -> None:
-    """N-terminal failure should preserve the PRO/non-PRO target distinction."""
+    source = _structure(*numbers)
+    original = hydrogen_core.place_polymer_microstate_hydrogens
 
-    residue = _payload(component_id, ResidueId("A", 5))
-    template = build_standard_component_library().require(component_id)
-    directive = NTerminalHydrogenPlacementDirective(
-        residue_index=ResidueIndex(0),
-        template=template,
-        backbone_family_component_id=component_id,
-    )
+    def fail_selected(context, residue_id, site, **kwargs):
+        if residue_id == ResidueId("A", recipient) and site.kind is kind:
+            raise GeometryPlacementError("synthetic degenerate frame")
+        return original(context, residue_id, site, **kwargs)
+
     monkeypatch.setattr(
-        hydrogen_core,
-        "n_terminal_hydrogen_coordinates",
-        _raise_geometry_error,
+        hydrogen_core, "place_polymer_microstate_hydrogens", fail_selected
     )
+    result = add_hydrogens(source)
+    failures = [
+        i
+        for i in result.issues
+        if i.kind is ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED
+    ]
+    assert len(failures) == 1
+    assert failures[0].residue_id == ResidueId("A", recipient)
+    assert set(failures[0].atom_names) == expected_names
+    residue = result.structure.constitution.residue_or_ligand(ResidueId("A", recipient))
+    assert residue is not None
+    assert all(not residue.has_atom_site(name) for name in expected_names)
+    assert result.structure.provenance.microstate_overrides == ()
 
-    issue = hydrogen_core._apply_hydrogen_directive(
-        directive,
-        chain_residues_by_index=[residue],
-        environment=_environment((residue,)),
-    )
 
-    assert issue is not None
-    assert issue.atom_names == expected_atom_names
+def test_successful_placement_has_no_false_geometry_warning() -> None:
+    result = add_hydrogens(_structure(47))
+    assert not result.issues
+    assert result.structure.chain_site("A").residues[0].has_atom_site("HB1")
 
 
-def test_successful_static_hydrogen_directive_does_not_emit_false_warning(
+def test_unknown_static_hydrogen_is_not_added_without_a_parent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Successful placement must not create a stale skipped-placement issue."""
-
-    residue = _payload("ALA", ResidueId("A", 6))
-    template = build_standard_component_library().require("ALA")
-    semantics = template.hydrogen_semantics
-    assert isinstance(semantics, HydrogenSemantics)
-    directive = StaticHydrogenPlacementDirective(
-        residue_index=ResidueIndex(0),
-        template=template,
-        semantics=semantics,
-    )
-
-    def successful_patch(
-        *,
-        site: object,
-        patch: OrderedAtomPatch,
-        semantics: object,
-    ) -> OrderedAtomPatch:
-        del site, semantics
+    def unknown_patch(*, site, patch, semantics, selected_hydrogen_names):
+        del site, semantics, selected_hydrogen_names
         return patch.append_atoms(("HX",), (Vec3(0.0, 0.0, 1.0),))
 
-    monkeypatch.setattr(hydrogen_core, "generate_hydrogen_patch", successful_patch)
-    working_residues = [residue]
-
-    issue = hydrogen_core._apply_hydrogen_directive(
-        directive,
-        chain_residues_by_index=working_residues,
-        environment=_environment((residue,)),
-    )
-
-    assert issue is None
-    assert working_residues[0].has_atom("HX")
+    monkeypatch.setattr(hydrogen_core, "generate_hydrogen_patch", unknown_patch)
+    result = add_hydrogens(_structure(47))
+    assert any(i.atom_names == ("HX",) for i in result.issues)
+    assert not result.structure.chain_site("A").residues[0].has_atom_site("HX")

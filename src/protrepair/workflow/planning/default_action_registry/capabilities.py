@@ -25,26 +25,18 @@ HEAVY_ATOM_COMPLETION_CAPABILITY = WorkflowActionCapability(
         WorkflowCapabilityFactFamily.COVERAGE,
         WorkflowCapabilityFactFamily.CHEMISTRY_READINESS,
     ),
-    blocking_deficit_families=(
-        WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,
-    ),
+    blocking_deficit_families=(WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,),
     activation_mode=WorkflowActionActivationMode.AUTOMATIC_OR_GOAL_DRIVEN,
     effect_class=WorkflowActionEffectClass.AUGMENTS_ABSENCE,
     supported_localities=(WorkflowActionLocality.RESIDUE_SET,),
     supported_goals=(
-        whole_structure_goal_descriptor(
-            BackboneHeavyAtomCompletenessState.COMPLETE
-        ),
-        whole_structure_goal_descriptor(
-            SidechainHeavyAtomCompletenessState.COMPLETE
-        ),
+        whole_structure_goal_descriptor(BackboneHeavyAtomCompletenessState.COMPLETE),
+        whole_structure_goal_descriptor(SidechainHeavyAtomCompletenessState.COMPLETE),
     ),
 )
 
 DISULFIDE_TOPOLOGY_RESOLUTION_CAPABILITY = WorkflowActionCapability(
-    reducible_deficit_families=(
-        WorkflowCapabilityDeficitFamily.TOPOLOGY_RESOLUTION,
-    ),
+    reducible_deficit_families=(WorkflowCapabilityDeficitFamily.TOPOLOGY_RESOLUTION,),
     read_fact_families=(WorkflowCapabilityFactFamily.TOPOLOGY_EVIDENCE,),
     activation_mode=WorkflowActionActivationMode.AUTOMATIC_OR_GOAL_DRIVEN,
     effect_class=WorkflowActionEffectClass.AUGMENTS_ABSENCE,
@@ -55,9 +47,7 @@ DISULFIDE_HYDROGEN_NORMALIZATION_CAPABILITY = WorkflowActionCapability(
     reducible_deficit_families=(
         WorkflowCapabilityDeficitFamily.CHEMISTRY_CONTRADICTION,
     ),
-    read_fact_families=(
-        WorkflowCapabilityFactFamily.CHEMISTRY_CONTRADICTION,
-    ),
+    read_fact_families=(WorkflowCapabilityFactFamily.CHEMISTRY_CONTRADICTION,),
     activation_mode=WorkflowActionActivationMode.AUTOMATIC_OR_GOAL_DRIVEN,
     effect_class=WorkflowActionEffectClass.REMOVES_PRESENT,
     supported_localities=(WorkflowActionLocality.RESIDUE_SET,),
@@ -70,11 +60,9 @@ HYDROGEN_COMPLETION_CAPABILITY = WorkflowActionCapability(
         WorkflowCapabilityFactFamily.CHEMISTRY_READINESS,
     ),
     activation_mode=WorkflowActionActivationMode.AUTOMATIC_OR_GOAL_DRIVEN,
-    effect_class=WorkflowActionEffectClass.AUGMENTS_ABSENCE,
+    effect_class=WorkflowActionEffectClass.REVISES_CHEMISTRY,
     supported_localities=(WorkflowActionLocality.RESIDUE_SET,),
-    supported_goals=(
-        whole_structure_goal_descriptor(HydrogenCoverageState.COMPLETE),
-    ),
+    supported_goals=(whole_structure_goal_descriptor(HydrogenCoverageState.COMPLETE),),
 )
 
 RETAINED_NON_POLYMER_HYDROGEN_COMPLETION_CAPABILITY = WorkflowActionCapability(
@@ -83,18 +71,20 @@ RETAINED_NON_POLYMER_HYDROGEN_COMPLETION_CAPABILITY = WorkflowActionCapability(
     activation_mode=WorkflowActionActivationMode.AUTOMATIC_OR_GOAL_DRIVEN,
     effect_class=WorkflowActionEffectClass.AUGMENTS_ABSENCE,
     supported_localities=(WorkflowActionLocality.RESIDUE_SET,),
-    supported_goals=(
-        whole_structure_goal_descriptor(HydrogenCoverageState.COMPLETE),
-    ),
+    supported_goals=(whole_structure_goal_descriptor(HydrogenCoverageState.COMPLETE),),
 )
 
 TERMINAL_AUGMENTATION_CAPABILITY = WorkflowActionCapability(
-    reducible_deficit_families=(),
-    read_fact_families=(WorkflowCapabilityFactFamily.BOUNDARY,),
-    activation_mode=WorkflowActionActivationMode.GOAL_DRIVEN,
+    reducible_deficit_families=(WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,),
+    read_fact_families=(
+        WorkflowCapabilityFactFamily.BOUNDARY,
+        WorkflowCapabilityFactFamily.CHEMISTRY_READINESS,
+    ),
+    activation_mode=WorkflowActionActivationMode.AUTOMATIC_OR_GOAL_DRIVEN,
     effect_class=WorkflowActionEffectClass.AUGMENTS_ABSENCE,
     supported_localities=(WorkflowActionLocality.RESIDUE_SET,),
     supported_goals=(
+        whole_structure_goal_descriptor(HydrogenCoverageState.COMPLETE),
         residue_boundary_goal_descriptor(
             side=ResidueBoundarySide.C_TERMINUS,
             value=OxtPresenceState.PRESENT,

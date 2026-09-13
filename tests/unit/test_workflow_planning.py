@@ -7,9 +7,11 @@ import pytest
 from tests.support.canonical_builders import (
     CanonicalResiduePayload,
     atom_payload,
-    build_structure,
     chain_payload,
     residue_payload,
+)
+from tests.support.canonical_builders import (
+    build_bonded_structure as build_structure,
 )
 from tests.support.correction_state_fixtures import load_refinement_fixture
 from tests.support.refinement_benchmarks import (
@@ -68,9 +70,13 @@ from protrepair.structure.polymer_blueprint import (
     PolymerResidueSlot,
 )
 from protrepair.structure.provenance import FileFormat
+from protrepair.transformer.completion.heavy.core import repair_heavy_atoms_core
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
     add_retained_non_polymer_hydrogens,
+)
+from protrepair.transformer.completion.terminal.augmentation import (
+    augment_c_terminal_oxt,
 )
 from protrepair.transformer.continuous.binding_policy import (
     ManualContinuousRelaxationBinding,
@@ -208,6 +214,7 @@ def test_plan_workflow_actions_emits_hydrogen_after_heavy_adoption() -> None:
         source_name="workflow-planning-hydrogen-after-heavy",
     )
 
+    structure = augment_c_terminal_oxt(structure).structure
     outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(
@@ -463,6 +470,7 @@ def test_plan_workflow_actions_prefers_stereo_correction_before_refinement() -> 
 
     structure = _inverted_threonine_workflow_structure()
 
+    structure = add_hydrogens(structure).structure
     outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(),
@@ -526,6 +534,8 @@ def test_plan_workflow_actions_explicit_repair_requires_local_heavy_then_hydroge
     assert isinstance(initial_outcome.transformers[0], HeavyAtomCompletionTransformer)
     assert initial_outcome.transformers[0].scope.residue_ids == (residue_id,)
 
+    structure = repair_heavy_atoms_core(structure).structure
+    structure = augment_c_terminal_oxt(structure).structure
     hydrogen_outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(),
@@ -904,7 +914,7 @@ def test_plan_workflow_actions_ranks_span_reconstruction_before_atom_completion(
     assert isinstance(outcome.transformers[0], ExternalSpanReconstructionTransformer)
 
 
-def test_plan_workflow_actions_ranks_hydrogen_before_boundary_goal_only() -> None:
+def test_plan_workflow_actions_ranks_terminal_prerequisite_before_hydrogen() -> None:
     """General chemistry readiness should outrank boundary-only augmentation."""
 
     residue_id = ResidueId(chain_id="A", seq_num=1)
@@ -940,7 +950,7 @@ def test_plan_workflow_actions_ranks_hydrogen_before_boundary_goal_only() -> Non
     )
 
     assert len(outcome.transformers) == 1
-    assert isinstance(outcome.transformers[0], HydrogenCompletionTransformer)
+    assert isinstance(outcome.transformers[0], TerminalAugmentationTransformer)
 
 
 def test_plan_workflow_actions_ranks_local_refinement_before_packing() -> None:
@@ -958,6 +968,7 @@ def test_plan_workflow_actions_ranks_local_refinement_before_packing() -> None:
         source_name="workflow-planning-refinement-before-packing",
     )
 
+    structure = add_hydrogens(structure).structure
     outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(),
@@ -1153,7 +1164,7 @@ def test_plan_workflow_actions_emits_atom_set_local_refinement_scope() -> None:
     assert isinstance(outcome.transformers[0].scope, AtomSetScope)
 
 
-def test_plan_workflow_actions_does_not_emit_standalone_local_refinement(
+def test_plan_workflow_actions_can_refine_prepared_clashy_geometry_without_adoption(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Explicit repair stays dormant when no burden or prerequisite remains."""
@@ -1194,6 +1205,7 @@ def test_plan_workflow_actions_does_not_emit_standalone_local_refinement(
         ParserCompatibilityState.COMPATIBLE,
     )
 
+    structure = add_hydrogens(structure).structure
     outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(),
@@ -1207,7 +1219,8 @@ def test_plan_workflow_actions_does_not_emit_standalone_local_refinement(
         ),
     )
 
-    assert outcome.transformers == ()
+    assert len(outcome.transformers) == 1
+    assert isinstance(outcome.transformers[0], LocalRefinementTransformer)
 
 
 def test_plan_workflow_actions_emits_local_refinement_after_coverage_adoption() -> None:
@@ -1225,6 +1238,7 @@ def test_plan_workflow_actions_emits_local_refinement_after_coverage_adoption() 
         source_name="workflow-planning-post-coverage-refinement",
     )
 
+    structure = augment_c_terminal_oxt(structure).structure
     outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(),
@@ -1255,6 +1269,7 @@ def test_plan_workflow_actions_prioritizes_chemistry_before_interactions() -> No
     residue_id = ResidueId(chain_id="A", seq_num=92)
     structure = load_refinement_fixture("1jd0_gln92_local.pdb")
 
+    structure = augment_c_terminal_oxt(structure).structure
     outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(
@@ -1734,6 +1749,7 @@ def test_plan_workflow_actions_promotes_joint_refinement_to_residue_scope() -> N
         source_name="workflow-planning-backbone-joint-refinement",
     )
 
+    structure = augment_c_terminal_oxt(structure).structure
     hydrogen_outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(),
@@ -1750,6 +1766,7 @@ def test_plan_workflow_actions_promotes_joint_refinement_to_residue_scope() -> N
     assert len(hydrogen_outcome.transformers) == 1
     assert isinstance(hydrogen_outcome.transformers[0], HydrogenCompletionTransformer)
 
+    structure = add_hydrogens(structure).structure
     outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(),
@@ -1836,6 +1853,7 @@ def test_plan_workflow_actions_keeps_joint_scope_semantic_but_widens_execution()
         source_name="workflow-planning-backbone-joint-execution-window",
     )
 
+    structure = augment_c_terminal_oxt(structure).structure
     hydrogen_outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(),
@@ -1852,6 +1870,7 @@ def test_plan_workflow_actions_keeps_joint_scope_semantic_but_widens_execution()
     assert len(hydrogen_outcome.transformers) == 1
     assert isinstance(hydrogen_outcome.transformers[0], HydrogenCompletionTransformer)
 
+    structure = add_hydrogens(structure).structure
     outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(),
@@ -1871,7 +1890,7 @@ def test_plan_workflow_actions_keeps_joint_scope_semantic_but_widens_execution()
     assert outcome.transformers
     assert isinstance(outcome.transformers[0], LocalRefinementTransformer)
     assert outcome.transformers[0].scope == ResidueSetScope(
-        residue_ids=(ResidueId("A", 2), ResidueId("A", 4))
+        residue_ids=(ResidueId("A", 2), ResidueId("A", 3), ResidueId("A", 4))
     )
     assert outcome.transformers[
         0

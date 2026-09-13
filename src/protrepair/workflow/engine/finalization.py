@@ -53,7 +53,7 @@ def finalize_workflow_result(
         ),
         terminal_branch_report=terminal_branch_report,
     )
-    parser_readability_issues = _final_parser_readability_issues(
+    parser_readability_issues = final_parser_readability_issues(
         result.structure,
         component_library=component_library,
     )
@@ -78,8 +78,7 @@ def _final_disulfide_topology_issues(
     facts = StructureDisulfideTopologyFacts.from_structure(structure)
     return (
         *tuple(
-            _disulfide_topology_conflict_issue(conflict)
-            for conflict in facts.conflicts
+            _disulfide_topology_conflict_issue(conflict) for conflict in facts.conflicts
         ),
         *tuple(
             _disulfide_endpoint_multiplicity_issue(contradiction)
@@ -118,10 +117,7 @@ def _disulfide_topology_conflict_issue(
     """Project one typed disulfide topology conflict into a validation issue."""
 
     candidate = conflict.candidate
-    if (
-        conflict.reason
-        is DisulfideTopologyConflictReason.EXISTING_PAIR_RELATIONSHIP
-    ):
+    if conflict.reason is DisulfideTopologyConflictReason.EXISTING_PAIR_RELATIONSHIP:
         reason = (
             "the candidate endpoint pair already has a noncovalent or unknown "
             "relationship"
@@ -174,12 +170,25 @@ def _attach_requested_analyses(
     )
 
 
-def _final_parser_readability_issues(
+def final_parser_readability_issues(
     structure: ProteinStructure,
     *,
     component_library: ComponentLibrary,
 ) -> tuple[ValidationIssue, ...]:
-    """Return final parser-readability issues plus topology-specific blockers."""
+    """Diagnose final parser readability from canonical output geometry.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Returned structure, including any partial completion.
+    component_library : ComponentLibrary
+        Definitions used to distinguish canonical and parser-inferred connections.
+
+    Returns
+    -------
+    tuple[ValidationIssue, ...]
+        Parser defects and topology blockers for final reporting.
+    """
 
     pdb_block_projector = prepare_rdkit_no_conect_pdb_block_projector(structure)
     parser_probe = probe_rdkit_no_conect_parser_readability(

@@ -5,17 +5,20 @@ from pathlib import Path
 
 import pytest
 from tests.support.canonical_builders import (
+    CanonicalChainPayload,
     CanonicalResiduePayload,
     atom_payload,
     chain_payload,
     residue_payload,
 )
 from tests.support.canonical_builders import (
-    build_structure as build_canonical_structure,
+    build_structure as build_atom_structure,
 )
 from tests.support.request_builders import ingress_options
 from tests.support.structure_summary import summarize_structure
 
+from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry.component.topology import template_resolved_topology_bonds
 from protrepair.diagnostics import (
     ValidationIssueKind,
 )
@@ -39,6 +42,7 @@ from protrepair.structure.topology import (
     SourceBondRecordType,
     StructureTopology,
     TopologyBond,
+    sequence_inferred_polymer_topology_bonds,
 )
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.completion.hydrogen import core as hydrogen_core
@@ -110,8 +114,7 @@ def test_polymer_hydrogen_geometry_failure_reports_skipped_atoms(
     )
     assert repaired_residue is not None
     assert all(
-        not repaired_residue.has_atom_site(atom_name)
-        for atom_name in issue.atom_names
+        not repaired_residue.has_atom_site(atom_name) for atom_name in issue.atom_names
     )
 
 
@@ -146,16 +149,21 @@ def test_targeted_hydrogen_materialization_processes_only_target_chain(
         source_name="targeted-hydrogen-materialization",
     )
     processed_chain_ids: list[str] = []
-    original_hydrogenate_chain_stage = hydrogen_core._hydrogenate_chain_stage
+    original_generate = hydrogen_core.generate_hydrogen_patch
 
-    def counted_hydrogenate_chain_stage(*args, **kwargs):
-        processed_chain_ids.append(kwargs["chain_id"])
-        return original_hydrogenate_chain_stage(*args, **kwargs)
+    def counted_generate(*args, **kwargs):
+        site = kwargs["site"]
+        processed_chain_ids.append(
+            site.environment.rotatable_environments[
+                site.residue_index.value
+            ].residue_id.chain_id
+        )
+        return original_generate(*args, **kwargs)
 
     monkeypatch.setattr(
         hydrogen_core,
-        "_hydrogenate_chain_stage",
-        counted_hydrogenate_chain_stage,
+        "generate_hydrogen_patch",
+        counted_generate,
     )
 
     result = materialize_hydrogens_core(
@@ -196,7 +204,7 @@ def test_polymer_hydrogen_materialization_adds_expected_topology() -> None:
         first_residue_id,
         "N",
         "H1",
-        provenance=BondProvenance.SEQUENCE_INFERRED,
+        provenance=BondProvenance.TEMPLATE_RESOLVED,
     )
     assert _has_topology_bond(
         result.structure,
@@ -210,7 +218,7 @@ def test_polymer_hydrogen_materialization_adds_expected_topology() -> None:
         second_residue_id,
         "N",
         "H",
-        provenance=BondProvenance.SEQUENCE_INFERRED,
+        provenance=BondProvenance.TEMPLATE_RESOLVED,
     )
 
 
@@ -266,9 +274,12 @@ def test_targeted_polymer_hydrogen_topology_preserves_charge_and_source_bonds() 
         target_residue_ids=frozenset((residue_id,)),
     )
 
-    assert result.structure.topology.formal_charge(
-        result.structure.constitution.atom_index(AtomRef(residue_id, "N"))
-    ) == 1
+    assert (
+        result.structure.topology.formal_charge(
+            result.structure.constitution.atom_index(AtomRef(residue_id, "N"))
+        )
+        == 1
+    )
     source_bond = _topology_bond_between(result.structure, residue_id, "N", "CA")
     assert source_bond is not None
     assert source_bond.provenance is BondProvenance.SOURCE_EXPLICIT
@@ -498,7 +509,7 @@ def test_histidine_delta_protonation_adds_repair_inferred_hd1_topology() -> None
 
     assert bond is not None
     assert bond.relationship_type is BondRelationshipType.COVALENT
-    assert bond.provenance is BondProvenance.REPAIR_INFERRED
+    assert bond.provenance is BondProvenance.TEMPLATE_RESOLVED
 
 
 def test_insertion_code_survives_class6_hydrogen_placement() -> None:
@@ -674,9 +685,7 @@ def test_unsupported_component_skips_only_that_residue() -> None:
         ("A:19", "A:20"),
     )
     first_residue, second_residue = structure.chain_site("A").residues
-    first_payload = residue_payload_from_structure(
-        structure, first_residue.residue_id
-    )
+    first_payload = residue_payload_from_structure(structure, first_residue.residue_id)
     second_site, second_geometry, second_formal_charge_by_atom_name = (
         residue_payload_from_structure(structure, second_residue.residue_id)
     )
@@ -713,10 +722,14 @@ def test_unsupported_component_isolation_is_per_chain_not_global() -> None:
         Path("tests/fixtures/corpus/pdb1afc.ent"),
         ("A:19",),
     )
-    unsupported_source = structure_from_tokens(
-        Path("tests/fixtures/corpus/pdb1afc.ent"),
-        ("A:20",),
-    ).chain_site("A").residues[0]
+    unsupported_source = (
+        structure_from_tokens(
+            Path("tests/fixtures/corpus/pdb1afc.ent"),
+            ("A:20",),
+        )
+        .chain_site("A")
+        .residues[0]
+    )
     supported_payload = residue_payload_from_structure(
         supported_structure,
         supported_structure.chain_site("A").residues[0].residue_id,
@@ -775,9 +788,7 @@ def test_unknown_component_reports_missing_definition_during_hydrogenation() -> 
         ("A:19", "A:20"),
     )
     first_residue, second_residue = structure.chain_site("A").residues
-    first_payload = residue_payload_from_structure(
-        structure, first_residue.residue_id
-    )
+    first_payload = residue_payload_from_structure(structure, first_residue.residue_id)
     second_site, second_geometry, second_formal_charge_by_atom_name = (
         residue_payload_from_structure(structure, second_residue.residue_id)
     )
@@ -1183,9 +1194,7 @@ def test_altloc_selection_survives_hydrogenation_without_duplicate_atoms() -> No
     result = add_hydrogens(structure)
     residue = result.structure.chain_site("A").residues[0]
     cb = result.structure.geometry.atom_geometry(
-        result.structure.constitution.atom_index(
-            AtomRef(residue.residue_id, "CB")
-        )
+        result.structure.constitution.atom_index(AtomRef(residue.residue_id, "CB"))
     )
 
     assert cb.position == Vec3(x=6.0, y=6.0, z=6.0)
@@ -1399,8 +1408,7 @@ def cysteine_pair_structure(
         ("A:12", "A:63"),
     )
     first_residue_id, second_residue_id = tuple(
-        residue_site.residue_id
-        for residue_site in structure.chain_site("A").residues
+        residue_site.residue_id for residue_site in structure.chain_site("A").residues
     )
     first_payload = residue_payload_from_structure(structure, first_residue_id)
     second_payload = residue_payload_from_structure(structure, second_residue_id)
@@ -1550,12 +1558,8 @@ def _topology_bond_between(
 ) -> TopologyBond | None:
     """Return one residue-local topology bond when present."""
 
-    atom_index_1 = structure.constitution.atom_index(
-        AtomRef(residue_id, atom_name_1)
-    )
-    atom_index_2 = structure.constitution.atom_index(
-        AtomRef(residue_id, atom_name_2)
-    )
+    atom_index_1 = structure.constitution.atom_index(AtomRef(residue_id, atom_name_1))
+    atom_index_2 = structure.constitution.atom_index(AtomRef(residue_id, atom_name_2))
     return structure.topology.bond_between(atom_index_1, atom_index_2)
 
 
@@ -1667,6 +1671,37 @@ def residue_payload_from_structure(
             constitution=structure.constitution,
             residue_index=structure.constitution.residue_index(residue_id),
         ),
+    )
+
+
+def build_canonical_structure(
+    *,
+    chains: tuple[CanonicalChainPayload, ...],
+    source_format: FileFormat,
+    source_name: str | None = None,
+) -> ProteinStructure:
+    """Construct the heavy graph required by hydrogen-only repair fixtures."""
+    structure = build_atom_structure(
+        chains=chains,
+        source_format=source_format,
+        source_name=source_name,
+    )
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(
+                *template_resolved_topology_bonds(
+                    structure.constitution,
+                    component_library=build_default_component_library(),
+                ),
+                *sequence_inferred_polymer_topology_bonds(structure.constitution),
+            ),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
     )
 
 

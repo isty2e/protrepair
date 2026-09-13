@@ -4,7 +4,7 @@ import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     atom_payload,
-    build_structure,
+    build_bonded_structure,
     chain_payload,
     residue_payload,
 )
@@ -29,6 +29,7 @@ from protrepair.structure.topology import (
     TopologyBond,
 )
 from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
+from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
 from protrepair.transformer.continuous.bonds import plan_continuous_region_bonds
 from protrepair.transformer.continuous.domain import ContinuousRelaxationRegion
 from protrepair.transformer.continuous.readiness import (
@@ -515,6 +516,7 @@ def test_continuous_readiness_accepts_present_retained_ligand_h_topology() -> No
             constitution=structure.constitution,
             atom_topologies=structure.topology.atom_topologies,
             bonds=(
+                *structure.topology.bonds,
                 TopologyBond(
                     atom_index_1=structure.constitution.atom_index(
                         AtomRef(ligand_residue_id, "C1")
@@ -731,7 +733,7 @@ def build_ser_with_template_less_ligand_structure(
 ) -> ProteinStructure:
     """Build one SER fixture with one template-less retained non-polymer ligand."""
 
-    return build_structure(
+    structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "A",
@@ -740,7 +742,12 @@ def build_ser_with_template_less_ligand_structure(
                         component_id="SER",
                         residue_id=ResidueId("A", 1),
                         atoms=(
-                            atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),
+                            atom_payload(
+                                "N", "N", Vec3(0.0, 0.0, 0.0), formal_charge=1
+                            ),
+                            atom_payload(
+                                "OXT", "O", Vec3(2.8, -1.25, 0.0), formal_charge=-1
+                            ),
                             atom_payload("CA", "C", Vec3(1.4, 0.0, 0.0)),
                             atom_payload("C", "C", Vec3(2.8, 0.0, 0.0)),
                             atom_payload("O", "O", Vec3(3.8, 0.0, 0.0)),
@@ -769,3 +776,6 @@ def build_ser_with_template_less_ligand_structure(
         source_format=FileFormat.PDB,
         source_name=source_name,
     )
+    result = materialize_hydrogens_core(structure)
+    assert not result.issues
+    return result.structure

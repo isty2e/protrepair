@@ -10,11 +10,14 @@ from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     retained_non_polymer_rdkit_fallback_heavy_bond_definitions,
 )
 from protrepair.chemistry.single_atom_inorganic import is_single_atom_inorganic_residue
+from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.errors import RdkitUnavailableError
+from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
+from protrepair.structure.slots import ResidueIndex
 
 
 class MicrostateStructuralRole(str, Enum):
@@ -46,7 +49,6 @@ class MicrostateDecision(str, Enum):
     """Closed decision outcomes for one adjudicated residue."""
 
     PRESERVE_SOURCE = "preserve_source"
-    ADJUDICATE = "adjudicate"
     AMBIGUOUS = "ambiguous"
     NOT_APPLICABLE = "not_applicable"
 
@@ -129,13 +131,12 @@ class MicrostateEvidence:
 
 @dataclass(frozen=True, slots=True)
 class MicrostateDecisionRecord:
-    """One residue-local microstate decision plus mutation payload."""
+    """One residue-local diagnostic decision and its supporting details."""
 
     residue_site: ResidueSite
     classification: MicrostateClassification
     decision: MicrostateDecision
     reasons: tuple[MicrostateDecisionReason, ...]
-    demoted_atom_names: tuple[str, ...] = ()
     issue_details: tuple[str, ...] = ()
 
 
@@ -224,7 +225,14 @@ def adjudicate_microstate_evidence(
     """Adjudicate one residue-local evidence record into a closed decision."""
 
     if evidence.classification.uses_standard_polymer_policy():
-        return _adjudicate_standard_polymer_microstate(evidence)
+        # Polymer H, charges and orders are selected together by the site resolver.
+        # This diagnostic projection cannot authorize charge-only mutation.
+        return MicrostateDecisionRecord(
+            residue_site=evidence.residue_site,
+            classification=evidence.classification,
+            decision=MicrostateDecision.PRESERVE_SOURCE,
+            reasons=(MicrostateDecisionReason.FAMILY_NOT_SUPPORTED,),
+        )
 
     if evidence.classification.uses_curated_retained_policy():
         return _adjudicate_curated_retained_non_polymer_microstate(evidence)
@@ -247,25 +255,6 @@ def validation_issue_from_microstate_decision(
     decision_record: MicrostateDecisionRecord,
 ) -> ValidationIssue | None:
     """Project one adjudication decision into one typed validation issue."""
-
-    if (
-        decision_record.classification.uses_standard_polymer_policy()
-        and decision_record.decision is MicrostateDecision.ADJUDICATE
-        and decision_record.issue_details
-    ):
-        residue_token = decision_record.residue_site.residue_id.display_token()
-        return ValidationIssue.for_residue(
-            kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
-            severity=IssueSeverity.WARNING,
-            message=(
-                f"{residue_token} carries one "
-                "chemically impossible standard-polymer carboxylate-like charge "
-                "annotation without explicit hydrogen evidence; "
-                + "; ".join(decision_record.issue_details)
-                + ". Source atom charges were demoted for canonical handling."
-            ),
-            residue_id=decision_record.residue_site.residue_id,
-        )
 
     if (
         decision_record.classification.uses_curated_retained_policy()
@@ -304,75 +293,6 @@ def validation_issue_from_microstate_decision(
         )
 
     return None
-
-
-def _adjudicate_standard_polymer_microstate(
-    evidence: MicrostateEvidence,
-) -> MicrostateDecisionRecord:
-    """Adjudicate one standard-polymer residue using hard-constraint rules."""
-
-    if evidence.has_explicit_hydrogen_evidence:
-        return MicrostateDecisionRecord(
-            residue_site=evidence.residue_site,
-            classification=evidence.classification,
-            decision=MicrostateDecision.PRESERVE_SOURCE,
-            reasons=(MicrostateDecisionReason.EXPLICIT_HYDROGEN_EVIDENCE,),
-        )
-
-    if not evidence.carboxylate_like_motifs:
-        return MicrostateDecisionRecord(
-            residue_site=evidence.residue_site,
-            classification=evidence.classification,
-            decision=MicrostateDecision.PRESERVE_SOURCE,
-            reasons=(MicrostateDecisionReason.NO_RELEVANT_MOTIF,),
-        )
-
-    demoted_atom_names: list[str] = []
-    issue_details: list[str] = []
-    insufficient_geometry_support = False
-    for motif in evidence.carboxylate_like_motifs:
-        if not motif.source_double_negative:
-            continue
-
-        if not motif.geometry_supports_delocalized_microstate:
-            insufficient_geometry_support = True
-            continue
-
-        demoted_atom_names.extend(motif.oxygen_atom_names)
-        issue_details.append(
-            f"{motif.oxygen_atom_names[0]}/{motif.oxygen_atom_names[1]} were "
-            "both annotated as -1 while "
-            f"{motif.carbon_atom_name}-{motif.oxygen_atom_names[0]}="
-            f"{motif.distance_to_oxygen_1_angstrom:.3f} Å and "
-            f"{motif.carbon_atom_name}-{motif.oxygen_atom_names[1]}="
-            f"{motif.distance_to_oxygen_2_angstrom:.3f} Å support one "
-            "delocalized carboxylate-like microstate"
-        )
-
-    if demoted_atom_names:
-        return MicrostateDecisionRecord(
-            residue_site=evidence.residue_site,
-            classification=evidence.classification,
-            decision=MicrostateDecision.ADJUDICATE,
-            reasons=(MicrostateDecisionReason.HARD_IMPOSSIBILITY,),
-            demoted_atom_names=tuple(dict.fromkeys(demoted_atom_names)),
-            issue_details=tuple(issue_details),
-        )
-
-    if insufficient_geometry_support:
-        return MicrostateDecisionRecord(
-            residue_site=evidence.residue_site,
-            classification=evidence.classification,
-            decision=MicrostateDecision.PRESERVE_SOURCE,
-            reasons=(MicrostateDecisionReason.INSUFFICIENT_GEOMETRY_SUPPORT,),
-        )
-
-    return MicrostateDecisionRecord(
-        residue_site=evidence.residue_site,
-        classification=evidence.classification,
-        decision=MicrostateDecision.PRESERVE_SOURCE,
-        reasons=(MicrostateDecisionReason.NO_RELEVANT_MOTIF,),
-    )
 
 
 def _adjudicate_curated_retained_non_polymer_microstate(
@@ -813,3 +733,46 @@ def _bond_payload_descriptor(payload: tuple[int, bool] | None) -> str:
         return f"order {order} aromatic"
 
     return f"order {order}"
+
+
+def diagnose_source_microstate_contradictions(
+    structure: ProteinStructure,
+    *,
+    component_library: ComponentLibrary | None = None,
+) -> tuple[ValidationIssue, ...]:
+    """Report chemistry contradictions without changing the structure.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Current canonical structure to inspect. Original observations are not
+        replaced by this projection.
+    component_library : ComponentLibrary or None
+        Active component definitions; None selects standard amino acids only.
+
+    Returns
+    -------
+    tuple[ValidationIssue, ...]
+        Retained-component and inorganic diagnostics. Coupled polymer chemistry
+        is resolved and reported by the polymer preparation path instead.
+    """
+    standard_library = build_standard_component_library()
+    library = standard_library if component_library is None else component_library
+    issues = []
+    for offset, residue in enumerate(structure.constitution.residue_slots):
+        index = ResidueIndex(offset)
+        evidence = collect_microstate_evidence(
+            residue,
+            residue_geometry=structure.residue_geometry(index),
+            source_formal_charge_by_atom_name=dict(
+                structure.residue_formal_charge_by_atom_name(index)
+            ),
+            standard_component_library=standard_library,
+            component_library=library,
+        )
+        issue = validation_issue_from_microstate_decision(
+            adjudicate_microstate_evidence(evidence)
+        )
+        if issue is not None:
+            issues.append(issue)
+    return tuple(issues)

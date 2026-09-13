@@ -514,7 +514,7 @@ def test_refine_local_region_preserves_discrete_correction_moves_when_backend_no
     spec = DirectRegionTransformationSpec(
         scope_spec=LocalScopeSpec.from_residues(case.focus_residue_ids),
         force_field=ContinuousRelaxationForceField.UFF,
-        config=ContinuousRelaxationConfig(context_radius_angstrom=3.0),
+        config=ContinuousRelaxationConfig(context_radius_angstrom=0.0),
     )
 
     class FakeBackend:
@@ -589,7 +589,7 @@ def test_refine_local_region_keeps_seed_candidates_when_baseline_candidate_fails
     spec = DirectRegionTransformationSpec(
         scope_spec=LocalScopeSpec.from_residues(case.focus_residue_ids),
         force_field=ContinuousRelaxationForceField.UFF,
-        config=ContinuousRelaxationConfig(context_radius_angstrom=4.0),
+        config=ContinuousRelaxationConfig(context_radius_angstrom=0.0),
     )
 
     class FakeBackend:

@@ -71,6 +71,7 @@ def revalidate_dependent_hydrogens_after_refinement(
         result.refined_structure,
         component_library=component_library,
         target_residue_ids=frozenset(target_residue_ids),
+        rebuild_existing=True,
     )
     if any(issue.severity is IssueSeverity.ERROR for issue in hydrogen_result.issues):
         return result
@@ -214,12 +215,9 @@ def _is_coordinate_only_hydrogen_rematerialization(
         return False
 
     for atom_index in (
-        AtomIndex(index)
-        for index in range(current_structure.geometry.atom_count())
+        AtomIndex(index) for index in range(current_structure.geometry.atom_count())
     ):
-        current_position = current_structure.geometry.atom_geometry(
-            atom_index
-        ).position
+        current_position = current_structure.geometry.atom_geometry(atom_index).position
         candidate_position = candidate_structure.geometry.atom_geometry(
             atom_index
         ).position
@@ -241,16 +239,13 @@ def _hydrogen_atom_indices_with_changed_positions(
 
     changed_atom_indices: list[AtomIndex] = []
     for atom_index in (
-        AtomIndex(index)
-        for index in range(current_structure.geometry.atom_count())
+        AtomIndex(index) for index in range(current_structure.geometry.atom_count())
     ):
         atom_site = current_structure.constitution.atom_site_at(atom_index)
         if not atom_site.is_hydrogen():
             continue
 
-        current_position = current_structure.geometry.atom_geometry(
-            atom_index
-        ).position
+        current_position = current_structure.geometry.atom_geometry(atom_index).position
         candidate_position = candidate_structure.geometry.atom_geometry(
             atom_index
         ).position

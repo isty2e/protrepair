@@ -43,6 +43,7 @@ class _LocalRefinementPrerequisiteTargets:
     """Chemical completion prerequisites for one local refinement directive."""
 
     heavy_residue_ids: tuple[ResidueId, ...] = ()
+    terminal_residue_ids: tuple[ResidueId, ...] = ()
     hydrogen_residue_ids: tuple[ResidueId, ...] = ()
     retained_non_polymer_hydrogen_residue_ids: tuple[ResidueId, ...] = ()
 
@@ -51,6 +52,7 @@ class _LocalRefinementPrerequisiteTargets:
 
         return (
             not self.heavy_residue_ids
+            and not self.terminal_residue_ids
             and not self.hydrogen_residue_ids
             and not self.retained_non_polymer_hydrogen_residue_ids
         )
@@ -299,6 +301,21 @@ def _apply_local_refinement_prerequisites(
             )
             continue
 
+        if prerequisite_targets.terminal_residue_ids:
+            from protrepair.transformer.completion.terminal.augmentation import (
+                augment_c_terminal_oxt,
+            )
+
+            terminal_result = augment_c_terminal_oxt(
+                staged_result.structure,
+                component_library,
+                target_residue_ids=frozenset(prerequisite_targets.terminal_residue_ids),
+            )
+            staged_result = _merge_completion_stage_result(
+                staged_result, stage_result=terminal_result
+            )
+            continue
+
         if prerequisite_targets.hydrogen_residue_ids:
             from protrepair.transformer.completion.hydrogen.core import (
                 materialize_hydrogens_core,
@@ -385,6 +402,7 @@ def _local_refinement_prerequisite_targets(
         for residue_facts in region_chemistry.residue_facts
     }
     heavy_residue_ids: list[ResidueId] = []
+    terminal_residue_ids: list[ResidueId] = []
     hydrogen_residue_ids: list[ResidueId] = []
     retained_non_polymer_hydrogen_residue_ids: list[ResidueId] = []
     explicit_evidence_by_residue_id = evidence_by_residue_id(
@@ -404,7 +422,16 @@ def _local_refinement_prerequisite_targets(
             heavy_residue_ids.append(coverage_facts.residue_id)
             continue
 
-        if chemistry_facts.needs_hydrogenation():
+        if any(
+            target.requires_terminal_oxygen()
+            for target in chemistry_facts.polymer_microstate_targets
+        ):
+            terminal_residue_ids.append(coverage_facts.residue_id)
+            continue
+        if (
+            chemistry_facts.needs_hydrogenation()
+            or chemistry_facts.requires_microstate_realization()
+        ):
             hydrogen_residue_ids.append(coverage_facts.residue_id)
 
     for retained_fact in region_chemistry.retained_non_polymer_facts:
@@ -425,6 +452,7 @@ def _local_refinement_prerequisite_targets(
 
     return _LocalRefinementPrerequisiteTargets(
         heavy_residue_ids=tuple(heavy_residue_ids),
+        terminal_residue_ids=tuple(terminal_residue_ids),
         hydrogen_residue_ids=tuple(hydrogen_residue_ids),
         retained_non_polymer_hydrogen_residue_ids=tuple(
             retained_non_polymer_hydrogen_residue_ids

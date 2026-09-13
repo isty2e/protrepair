@@ -231,6 +231,7 @@ WORKFLOW_ROUTE_BENCHMARK_CASES: dict[str, WorkflowRouteBenchmarkCase] = {
                     (build_residue("ALA", "A", 1, ("N", "CA", "C", "O")),),
                 ),
             ),
+            bonded=True,
         ),
         expected=WorkflowRouteBenchmarkExpectation(
             selection_reason=(

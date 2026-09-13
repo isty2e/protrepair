@@ -128,7 +128,9 @@ def test_terminal_augmentation_capability_keeps_boundary_goal_distinct() -> None
         side=ResidueBoundarySide.N_TERMINUS,
     )
 
-    assert capability.reducible_deficit_families == ()
+    assert capability.reducible_deficit_families == (
+        WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,
+    )
     assert capability.reads_fact_family(WorkflowCapabilityFactFamily.BOUNDARY)
     assert capability.supports_proposition(
         scope=c_terminal_goal.scope,

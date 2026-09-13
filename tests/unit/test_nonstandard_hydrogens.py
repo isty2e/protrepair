@@ -5,9 +5,11 @@ import pytest
 from tests.support.canonical_builders import (
     CanonicalResiduePayload,
     atom_payload,
-    build_structure,
     chain_payload,
     residue_payload,
+)
+from tests.support.canonical_builders import (
+    build_bonded_structure as build_structure,
 )
 
 from protrepair.chemistry.nonstandard.registry import (

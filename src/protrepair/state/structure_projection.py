@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.preparation import PolymerSitePreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
@@ -29,17 +30,6 @@ from protrepair.state.structure_residue import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
-
-__all__ = [
-    "ProteinStructureObservation",
-    "StructureProjectionStateFacts",
-    "derive_backbone_heavy_atom_completeness_state",
-    "derive_component_support_state",
-    "derive_hydrogen_applicability_state",
-    "derive_hydrogen_coverage_state",
-    "derive_sidechain_heavy_atom_completeness_state",
-    "derive_stereochemistry_state",
-]
 
 
 def derive_component_support_state(
@@ -187,6 +177,7 @@ class StructureProjectionStateFacts:
     terminal_boundary_observation: TerminalBoundaryObservation = field(
         default_factory=TerminalBoundaryObservation.empty
     )
+    polymer_microstate_targets: tuple[PolymerSitePreparation, ...] = ()
 
     def __post_init__(self) -> None:
         shared_facts = (
@@ -199,6 +190,15 @@ class StructureProjectionStateFacts:
         )
         expected_carrier = shared_facts[0].carrier
         expected_scope = shared_facts[0].scope
+        if any(
+            (
+                target.context.source.constitution != expected_carrier.constitution
+                or target.context.source.topology != expected_carrier.topology
+                or target.context.source.provenance != expected_carrier.provenance
+            )
+            for target in self.polymer_microstate_targets
+        ):
+            raise ValueError("polymer targets must share the projection chemistry")
         if any(fact.carrier != expected_carrier for fact in shared_facts[1:]):
             raise ValueError("structure projection facts require one shared carrier")
         if any(fact.scope != expected_scope for fact in shared_facts[1:]):
@@ -247,7 +247,24 @@ class StructureProjectionStateFacts:
         ] = (),
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
     ) -> "StructureProjectionStateFacts":
-        """Derive primitive scoped facts over one whole structure."""
+        """Derive scoped facts over a whole canonical structure.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Current snapshot.
+        component_library : ComponentLibrary or None
+            Active definitions, or None for defaults.
+        retained_non_polymer_chemistry_evidence : tuple
+            Explicit RetainedNonPolymerChemistryEvidence entries.
+        hydrogen_expectation_model : StructureHydrogenExpectationModel or None
+            Reusable expectation model. Changed chemistry requires rebinding.
+
+        Returns
+        -------
+        StructureProjectionStateFacts
+            Whole-structure facts derived with a shared polymer preparation context.
+        """
 
         return cls._from_projection(
             context_structure=structure,
@@ -275,7 +292,28 @@ class StructureProjectionStateFacts:
         ] = (),
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
     ) -> "StructureProjectionStateFacts":
-        """Derive primitive scoped facts over one residue/ligand projection."""
+        """Derive facts for selected residues within their chemical context.
+
+        Parameters
+        ----------
+        context_structure : ProteinStructure
+            Complete context snapshot; selection does not create new chemical termini.
+        residues : tuple[ResidueSite, ...]
+            Selected polymer residues from that context.
+        ligands : tuple[ResidueSite, ...]
+            Selected retained components.
+        component_library : ComponentLibrary or None
+            Active definitions, or None for defaults.
+        retained_non_polymer_chemistry_evidence : tuple
+            Explicit RetainedNonPolymerChemistryEvidence entries.
+        hydrogen_expectation_model : StructureHydrogenExpectationModel or None
+            Reusable expectation model. Changed chemistry requires rebinding.
+
+        Returns
+        -------
+        StructureProjectionStateFacts
+            Projected state with context-bound polymer site targets.
+        """
 
         projected_residue_ids = tuple(
             residue.residue_id for residue in (*residues, *ligands)
@@ -373,6 +411,15 @@ class StructureProjectionStateFacts:
                 value=derive_stereochemistry_state(residue_facts),
             ),
             terminal_boundary_observation=terminal_observation,
+            polymer_microstate_targets=tuple(
+                target
+                for residue in residues
+                for target in (
+                    runtime.hydrogen_expectation_model.polymer_preparation.targets_for(
+                        residue.residue_id
+                    )
+                )
+            ),
         )
 
 
@@ -464,3 +511,15 @@ class ProteinStructureObservation:
             stereochemistry_state=facts.stereochemistry_fact.value,
             terminal_boundary_observation=facts.terminal_boundary_observation,
         )
+
+
+__all__ = [
+    "ProteinStructureObservation",
+    "StructureProjectionStateFacts",
+    "derive_backbone_heavy_atom_completeness_state",
+    "derive_component_support_state",
+    "derive_hydrogen_applicability_state",
+    "derive_hydrogen_coverage_state",
+    "derive_sidechain_heavy_atom_completeness_state",
+    "derive_stereochemistry_state",
+]

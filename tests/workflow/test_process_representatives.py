@@ -24,7 +24,7 @@ from tests.support.whole_structure_sources import WHOLE_STRUCTURE_CORPUS_SOURCES
 
 from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
-from protrepair.diagnostics.kinds import ValidationIssueKind
+from protrepair.diagnostics.kinds import RepairEventKind, ValidationIssueKind
 from protrepair.diagnostics.parser_readability import (
     diagnose_rdkit_no_conect_sanitize_readability,
     measure_rdkit_no_conect_sanitize_readability,
@@ -64,12 +64,7 @@ WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, frozenset[str]]] = {
     "1afc-hydrogen-his-protonated": {
         "2026.03.2": frozenset(
             {
-                "0f70c9476311a0c537186ed812630315239a95a175bb1924adff426366b34fde",
-            }
-        ),
-        "2026.03.3": frozenset(
-            {
-                "0f70c9476311a0c537186ed812630315239a95a175bb1924adff426366b34fde",
+                "f8d2b7cc64467765c1cbf5c19da17122ed66d5f96b890b71c907b7e16a4ed99d",
             }
         ),
     },
@@ -173,11 +168,11 @@ def test_registered_rdkit_coordinate_digest_accepts_current_contract(
 ) -> None:
     """Each registered RDKit backend should accept the current-code digest."""
 
-    for rdkit_version in ("2026.03.2", "2026.03.3"):
+    for rdkit_version in ("2026.03.2",):
         _patch_rdkit_version(monkeypatch, rdkit_version)
         _assert_rdkit_coordinate_digest_matches(
             "1afc-hydrogen-his-protonated",
-            "0f70c9476311a0c537186ed812630315239a95a175bb1924adff426366b34fde",
+            "f8d2b7cc64467765c1cbf5c19da17122ed66d5f96b890b71c907b7e16a4ed99d",
         )
 
 
@@ -253,8 +248,8 @@ def test_process_structure_repairs_1afc_to_no_conect_rdkit_readable_output() -> 
 
 
 @pytest.mark.representative_regression
-def test_explicit_3j6b_repair_keeps_no_conect_rdkit_readability() -> None:
-    """Explicit 3J6B repair should keep no-CONECT RDKit sanitize readability."""
+def test_explicit_3j6b_repair_reports_unresolved_cropped_chemistry() -> None:
+    """Do not refine cropped internal boundaries as invented free termini."""
 
     source = Path(
         "tests/fixtures/pdb/refinement/3j6b_terminal_helix_misthread_local.pdb"
@@ -285,8 +280,24 @@ def test_explicit_3j6b_repair_keeps_no_conect_rdkit_readability() -> None:
         ),
     )
 
-    assert measure_rdkit_no_conect_sanitize_readability(result.structure) is True
-    assert not result.issues
+    assert any(
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
+        and "realized polymer microstates" in issue.message
+        for issue in result.issues
+    )
+    assert not any(
+        event.kind is RepairEventKind.LOCAL_REFINEMENT_APPLIED
+        for event in result.repairs
+    )
+    readable = measure_rdkit_no_conect_sanitize_readability(result.structure)
+    assert not readable
+    assert any(
+        issue.kind is ValidationIssueKind.PARSER_READABILITY for issue in result.issues
+    )
+    assert result.terminal_branch_report is not None
+    score = result.terminal_branch_report.preferred_outcome().branch_quality_score
+    assert score.parser_incompatible == 1
+    assert score.parser_extra_heavy_bond_count > 0
 
 
 @pytest.mark.representative_regression
