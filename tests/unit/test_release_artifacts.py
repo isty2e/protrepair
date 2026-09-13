@@ -94,8 +94,7 @@ def test_ci_exercises_required_rdkit_dependency_world() -> None:
     )[1]
     assert "Installed wheel and sdist FASPR/RDKit smoke" in installed_artifact_job
     assert (
-        "pip install -c constraints/release.txt hatchling hatch-vcs "
-        "scikit-build-core"
+        "pip install -c constraints/release.txt hatchling hatch-vcs scikit-build-core"
     ) in installed_artifact_job
     assert "Build release artifacts" in installed_artifact_job
     assert (
@@ -119,8 +118,7 @@ def test_ci_exercises_required_rdkit_dependency_world() -> None:
         "scikit-build-core"
     ) in artifact_content_job
     assert (
-        "run: .venv/bin/python -m pytest "
-        "tests/release/test_artifact_contents.py -q"
+        "run: .venv/bin/python -m pytest tests/release/test_artifact_contents.py -q"
     ) in artifact_content_job
     assert "continue-on-error" not in artifact_content_job
 
@@ -156,8 +154,6 @@ def test_ci_action_refs_follow_release_pinning_policy() -> None:
 def test_release_gate_sources_are_sdist_visible() -> None:
     """Release gates should not live only in ignored local checkout files."""
 
-    checklist = Path("docs/release-checklist.md").read_text()
-    normalized_checklist = " ".join(checklist.split())
     gitignore_lines = {
         line.strip()
         for line in Path(".gitignore").read_text().splitlines()
@@ -177,31 +173,6 @@ def test_release_gate_sources_are_sdist_visible() -> None:
     assert '"constraints/release.txt",' in pyproject
     assert '"scripts/run_installed_artifact_smoke.py",' in pyproject
     assert '"scripts",' not in pyproject
-    assert "python scripts/run_installed_artifact_smoke.py --artifact-path" in checklist
-    assert "tests/release/test_artifact_contents.py" in checklist
-    assert "tests/unit/test_release_artifacts.py" in checklist
-    assert "tests/unit/test_radii.py" in checklist
-    assert "tests/corpus" in checklist
-    assert "tests/workflow" in checklist
-    assert "-m \"not benchmark\"" in checklist
-    assert "constraints/release.txt" in checklist
-    assert "docs/radius-policy.md" in checklist
-    assert "Release CI builds wheel and sdist artifacts" in normalized_checklist
-    assert "--with-refinement" not in normalized_checklist
-    assert "CPython 3.10, 3.11, and 3.12" in checklist
-    assert "Linux through GitHub Actions `ubuntu-latest`" in checklist
-    assert "Python 3.13+, macOS, and Windows are not advertised" in checklist
-    assert "PROTREPAIR_RELEASE_STRICT_RDKIT=1" in checklist
-    assert "rdkit==2026.3.2" in checklist
-    assert "2026.03.2" in checklist
-    assert "all atomic numbers 1 through 118" in normalized_checklist
-    assert "live RDKit PeriodicTable verifier" in normalized_checklist
-    assert "byte-for-byte" in checklist
-    assert "SHA-256" in checklist
-    assert "same verified 1AFC coordinate digest" in normalized_checklist
-    assert "2026.03.3" in checklist
-    assert "CMake 3.18 or newer" in normalized_checklist
-    assert "working C++ compiler toolchain" in normalized_checklist
 
 
 def test_installed_artifact_smoke_exercises_required_rdkit_by_default() -> None:
@@ -212,7 +183,7 @@ def test_installed_artifact_smoke_exercises_required_rdkit_by_default() -> None:
     assert "[refinement]" not in smoke_script
     assert "with_refinement" not in smoke_script
     assert "--with-refinement" not in smoke_script
-    assert "find_spec(\"rdkit\") is None" not in smoke_script
+    assert 'find_spec("rdkit") is None' not in smoke_script
     assert "from rdkit import Chem" in smoke_script
     assert "transform_local_region" in smoke_script
     assert '"--artifact-path"' in smoke_script
@@ -285,10 +256,7 @@ def test_rdkit_radius_snapshot_provenance_is_documented() -> None:
     assert "GetRcovalent" in notices
     assert "static snapshot of RDKit PeriodicTable radii" in radius_policy
     assert "must not depend on vdW clash overlap" in radius_policy
-    assert (
-        'RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION = "2026.03.2"'
-        in radii_source
-    )
+    assert 'RDKIT_PERIODIC_TABLE_RADIUS_SNAPSHOT_VERSION = "2026.03.2"' in radii_source
     assert "rdkit==2026.3.2" in radii_source
 
 

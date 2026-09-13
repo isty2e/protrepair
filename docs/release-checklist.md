@@ -55,10 +55,10 @@ Local compatibility runs may still skip version-bound coordinate digests when
 RDKit is present but unregistered. Missing RDKit is a broken required-dependency
 installation, not a supported runtime mode. Current release constraints pin
 `rdkit==2026.3.2`, which corresponds to RDKit backend version `2026.03.2`.
-The current rotatable-hydrogen implementation has the same verified 1AFC
-coordinate digest under RDKit `2026.03.2`. Digests from older
-code are not accepted because they represent the former incomplete torsion
-scan.
+The current preparation workflow has a verified 1AFC coordinate digest for
+RDKit `2026.03.2`. Other versions require a fresh comparison before registration.
+Digests from older code are not accepted for the current hydrogen-placement and
+coupled microstate implementation.
 
 Element-radius diagnostics use a static `rdkit==2026.3.2` PeriodicTable
 snapshot generated from `GetRvdw` and `GetRcovalent`, not runtime RDKit lookup.
