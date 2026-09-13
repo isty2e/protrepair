@@ -1,5 +1,6 @@
 """Tests for boundary-normalized source connection facts."""
 
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -39,8 +40,10 @@ def _source_connection(
     return SourceConnection(
         endpoint_1=endpoint_1,
         endpoint_2=endpoint_2,
-        relationship_type=relationship_type,
-        source_metadata=SourceBondMetadata(record_type=record_type),
+        source_metadata=SourceBondMetadata(
+            record_type=record_type,
+            reported_relationship_type=relationship_type,
+        ),
     )
 
 
@@ -76,21 +79,21 @@ def test_source_connection_rejects_noncanonical_field_types() -> None:
         SourceConnection(
             endpoint_1=cast(SourceAtomIdentity, object()),
             endpoint_2=endpoint_2,
-            relationship_type=BondRelationshipType.COVALENT,
             source_metadata=metadata,
         )
     with pytest.raises(TypeError, match="relationship_type"):
         SourceConnection(
             endpoint_1=endpoint_1,
             endpoint_2=endpoint_2,
-            relationship_type=cast(BondRelationshipType, "covalent"),
-            source_metadata=metadata,
+            source_metadata=replace(
+                metadata,
+                reported_relationship_type=cast(BondRelationshipType, "covalent"),
+            ),
         )
     with pytest.raises(TypeError, match="metadata"):
         SourceConnection(
             endpoint_1=endpoint_1,
             endpoint_2=endpoint_2,
-            relationship_type=BondRelationshipType.COVALENT,
             source_metadata=cast(SourceBondMetadata, object()),
         )
 

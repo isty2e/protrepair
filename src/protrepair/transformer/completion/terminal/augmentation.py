@@ -1,6 +1,9 @@
 """Terminal heavy-atom augmentation over canonical protein structures."""
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
+from protrepair.chemistry.component.topology import (
+    template_resolved_topology_bonds_for_new_atoms,
+)
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.diagnostics.kinds import RepairEventKind
 from protrepair.structure.aggregate import ProteinStructure
@@ -150,6 +153,24 @@ def augment_c_terminal_oxt(
             structure=structure,
             repairs=(),
             issues=(),
+        )
+
+    repaired_bonds = template_resolved_topology_bonds_for_new_atoms(
+        source_constitution=structure.constitution,
+        target_constitution=augmented_structure.constitution,
+        component_library=library,
+    )
+    if repaired_bonds:
+        augmented_structure = ProteinStructure.from_payload(
+            constitution=augmented_structure.constitution,
+            geometry=augmented_structure.geometry,
+            topology=StructureTopology(
+                constitution=augmented_structure.constitution,
+                atom_topologies=augmented_structure.topology.atom_topologies,
+                bonds=(*augmented_structure.topology.bonds, *repaired_bonds),
+            ),
+            polymer_blueprint=augmented_structure.polymer_blueprint,
+            provenance=augmented_structure.provenance,
         )
 
     return TransformationResult(

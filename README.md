@@ -14,13 +14,15 @@ with its connectivity.
   RDKit-backed inference.
 - Preserves supported ligands, cofactors, metals, ions, and source
   connectivity.
+- Reconstructs explicitly mapped missing polymer spans from an external donor
+  structure, including AlphaFold-derived donors.
 - Uses topology-aware local refinement and optional FASPR side-chain packing.
 - Reports structured issues and optional Ramachandran or coarse
   secondary-structure analyses.
 
-ProtRepair repairs the atoms present in a structure model. It does not
-currently build missing residue spans or arbitrary nonstandard heavy-atom
-chemistry.
+Span reconstruction needs an explicit donor mapping; ProtRepair does not
+perform de novo loop prediction. Arbitrary nonstandard heavy-atom chemistry is
+also outside the current scope.
 
 ## Installation
 

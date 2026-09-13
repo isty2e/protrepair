@@ -8,10 +8,15 @@ from protrepair.chemistry import (
     ComponentLibrary,
     build_default_component_library,
 )
+from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.topology import (
-    polymer_context_hydrogen_anchor_definitions,
-    polymer_template_hydrogen_bond_definitions_for_names,
     template_heavy_bond_definitions_for_present_atoms,
+)
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
+from protrepair.chemistry.microstate.preparation import (
+    PolymerMicrostatePreparation,
+    PolymerSitePreparation,
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
@@ -51,15 +56,6 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import AtomIndex
-
-__all__ = [
-    "ResidueChemistryReadinessFacts",
-    "ResidueCompletionStateFacts",
-    "ResidueCoverageFacts",
-    "ResidueProjectionFactRuntime",
-    "ResidueProjectionStateFacts",
-    "RetainedNonPolymerChemistryReadinessFact",
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +176,33 @@ class ResidueChemistryReadinessFacts:
     hydrogen_applicability_state: HydrogenApplicabilityState
     hydrogen_coverage_state: HydrogenCoverageState
 
+    polymer_microstate_targets: tuple[PolymerSitePreparation, ...] = ()
+
+    def requires_microstate_realization(self) -> bool:
+        """Return whether a selected graph differs from current chemistry.
+
+        Returns
+        -------
+        bool
+            True for a resolved but unrealized site, independently of H inventory.
+        """
+        return any(
+            target.resolution.graph is not None and not target.is_realized()
+            for target in self.polymer_microstate_targets
+        )
+
+    def has_unrealized_microstates(self) -> bool:
+        """Return whether any applicable site is unresolved or unrealized.
+
+        Returns
+        -------
+        bool
+            A chemistry-readiness blocker, including sites with complete H counts.
+        """
+        return any(
+            not target.is_realized() for target in self.polymer_microstate_targets
+        )
+
     def is_supported(self) -> bool:
         """Return whether canonical chemistry support is available."""
 
@@ -278,32 +301,32 @@ def _polymer_hydrogen_topology_availability_state(
     *,
     component_library: ComponentLibrary,
     expected_hydrogen_atom_names: tuple[str, ...],
+    preparation: PolymerMicrostatePreparation,
     covalent_like_endpoint_pairs: Collection[tuple[AtomIndex, AtomIndex]],
 ) -> TopologyAvailabilityState:
-    """Return polymer hydrogen topology availability from expected H anchors."""
+    """Check H attachment topology independently of heavy-site conformance."""
 
     template = component_library.get(residue.component_id)
     if template is None:
         return TopologyAvailabilityState.UNSUPPORTED
-
     if not expected_hydrogen_atom_names:
+        return TopologyAvailabilityState.ABSENT
+
+    try:
+        parents = preparation.context.hydrogen_parents(
+            residue.residue_id,
+            PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN),
+        )
+    except ValueError:
+        return TopologyAvailabilityState.ABSENT
+    if any(name not in parents for name in expected_hydrogen_atom_names):
         return TopologyAvailabilityState.ABSENT
 
     return residue_bond_topology_availability_state(
         structure,
         residue,
-        expected_bond_definitions=(
-            *polymer_template_hydrogen_bond_definitions_for_names(
-                template,
-                hydrogen_atom_names=expected_hydrogen_atom_names,
-            ),
-            *(
-                anchor.bond_definition
-                for anchor in polymer_context_hydrogen_anchor_definitions(
-                    component_id=residue.component_id,
-                    hydrogen_atom_names=expected_hydrogen_atom_names,
-                )
-            ),
+        expected_bond_definitions=tuple(
+            BondDefinition(parents[name], name) for name in expected_hydrogen_atom_names
         ),
         empty_state=TopologyAvailabilityState.ABSENT,
         covalent_like_endpoint_pairs=covalent_like_endpoint_pairs,
@@ -438,6 +461,9 @@ class ResidueProjectionFactRuntime:
                 ),
             )
             if hydrogen_expectation_model is None
+            or not hydrogen_expectation_model.polymer_preparation.matches_chemistry(
+                context_structure
+            )
             else hydrogen_expectation_model
         )
 
@@ -512,16 +538,12 @@ class ResidueProjectionFactRuntime:
             )
         )
         if heavy_atom_topology_availability_state.is_unavailable():
-            hydrogen_topology_availability_state = (
-                heavy_atom_topology_availability_state
-            )
+            attachment_state = heavy_atom_topology_availability_state
         elif h_applicability_state is HydrogenApplicabilityState.NOT_APPLICABLE:
-            hydrogen_topology_availability_state = (
-                TopologyAvailabilityState.NOT_APPLICABLE
-            )
+            attachment_state = TopologyAvailabilityState.NOT_APPLICABLE
         elif h_coverage_state is HydrogenCoverageState.COMPLETE:
-            hydrogen_topology_availability_state = (
-                _polymer_hydrogen_topology_availability_state(
+            try:
+                attachment_state = _polymer_hydrogen_topology_availability_state(
                     self.context_structure,
                     residue,
                     component_library=self.component_library,
@@ -531,11 +553,13 @@ class ResidueProjectionFactRuntime:
                             (),
                         )
                     ),
+                    preparation=self.hydrogen_expectation_model.polymer_preparation,
                     covalent_like_endpoint_pairs=self.covalent_like_endpoint_pairs,
                 )
-            )
+            except ValueError:
+                attachment_state = TopologyAvailabilityState.ABSENT
         else:
-            hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
+            attachment_state = TopologyAvailabilityState.ABSENT
 
         return ResidueChemistryReadinessFacts(
             residue_id=residue.residue_id,
@@ -543,11 +567,14 @@ class ResidueProjectionFactRuntime:
             heavy_atom_topology_availability_state=(
                 heavy_atom_topology_availability_state
             ),
-            hydrogen_topology_availability_state=(
-                hydrogen_topology_availability_state
-            ),
+            hydrogen_topology_availability_state=attachment_state,
             hydrogen_applicability_state=h_applicability_state,
             hydrogen_coverage_state=h_coverage_state,
+            polymer_microstate_targets=(
+                self.hydrogen_expectation_model.polymer_preparation.targets_for(
+                    residue.residue_id
+                )
+            ),
         )
 
     def derive_retained_non_polymer_chemistry_readiness_fact(
@@ -633,9 +660,7 @@ class ResidueProjectionFactRuntime:
                 else TopologyAvailabilityState.ABSENT
             )
         elif evidence is not None:
-            heavy_topology_source = (
-                RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
-            )
+            heavy_topology_source = RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
             heavy_atom_topology_availability_state = TopologyAvailabilityState.ABSENT
             hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
         elif template is not None:
@@ -677,15 +702,11 @@ class ResidueProjectionFactRuntime:
                         hydrogen_expectation_resolution.heavy_bond_definitions
                     ),
                     empty_state=TopologyAvailabilityState.PRESENT,
-                    covalent_like_endpoint_pairs=(
-                        self.covalent_like_endpoint_pairs
-                    ),
+                    covalent_like_endpoint_pairs=(self.covalent_like_endpoint_pairs),
                 )
             )
         else:
-            heavy_topology_source = (
-                RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
-            )
+            heavy_topology_source = RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
             heavy_atom_topology_availability_state = TopologyAvailabilityState.ABSENT
             hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
 
@@ -701,9 +722,7 @@ class ResidueProjectionFactRuntime:
                 heavy_atom_topology_availability_state
                 is TopologyAvailabilityState.ABSENT
             ):
-                hydrogen_topology_availability_state = (
-                    TopologyAvailabilityState.ABSENT
-                )
+                hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
             elif h_applicability_state is HydrogenApplicabilityState.NOT_APPLICABLE:
                 hydrogen_topology_availability_state = (
                     TopologyAvailabilityState.NOT_APPLICABLE
@@ -720,9 +739,7 @@ class ResidueProjectionFactRuntime:
                     )
                 )
             else:
-                hydrogen_topology_availability_state = (
-                    TopologyAvailabilityState.ABSENT
-                )
+                hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
 
         return RetainedNonPolymerChemistryReadinessFact(
             residue_id=residue.residue_id,
@@ -733,9 +750,7 @@ class ResidueProjectionFactRuntime:
             heavy_atom_topology_availability_state=(
                 heavy_atom_topology_availability_state
             ),
-            hydrogen_topology_availability_state=(
-                hydrogen_topology_availability_state
-            ),
+            hydrogen_topology_availability_state=(hydrogen_topology_availability_state),
             hydrogen_applicability_state=h_applicability_state,
             hydrogen_coverage_state=h_coverage_state,
         )
@@ -801,3 +816,13 @@ class ResidueProjectionFactRuntime:
                 value=stereo_state,
             ),
         )
+
+
+__all__ = [
+    "ResidueChemistryReadinessFacts",
+    "ResidueCompletionStateFacts",
+    "ResidueCoverageFacts",
+    "ResidueProjectionFactRuntime",
+    "ResidueProjectionStateFacts",
+    "RetainedNonPolymerChemistryReadinessFact",
+]

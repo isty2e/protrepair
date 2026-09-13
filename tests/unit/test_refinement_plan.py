@@ -606,7 +606,13 @@ def test_plan_allows_6nbb_zinc_as_nonbonding_fixed_context() -> None:
     )
 
 
-def test_plan_allows_template_less_connected_retained_non_polymer_context() -> None:
+@pytest.mark.parametrize(
+    "with_source_connection,source_order", ((False, None), (True, None), (True, 2))
+)
+def test_plan_allows_template_less_connected_retained_non_polymer_context(
+    with_source_connection: bool,
+    source_order: int | None,
+) -> None:
     """Connected hetero context may use RDKit fallback topology without a template."""
 
     structure = build_test_structure(
@@ -637,6 +643,34 @@ def test_plan_allows_template_less_connected_retained_non_polymer_context() -> N
         source_format=FileFormat.PDB,
     )
 
+    if with_source_connection:
+        structure = ProteinStructure.from_payload(
+            constitution=structure.constitution,
+            geometry=structure.geometry,
+            topology=StructureTopology(
+                constitution=structure.constitution,
+                atom_topologies=structure.topology.atom_topologies,
+                bonds=(
+                    TopologyBond(
+                        structure.constitution.atom_index(
+                            AtomRef(ResidueId("L", 1), "C1")
+                        ),
+                        structure.constitution.atom_index(
+                            AtomRef(ResidueId("L", 1), "O1")
+                        ),
+                        order=source_order,
+                        relationship_type=BondRelationshipType.UNKNOWN,
+                        provenance=BondProvenance.SOURCE_EXPLICIT,
+                        source_metadata=SourceBondMetadata(
+                            SourceBondRecordType.PDB_CONECT, "CONECT"
+                        ),
+                    ),
+                ),
+            ),
+            polymer_blueprint=structure.polymer_blueprint,
+            provenance=structure.provenance,
+        )
+
     plan = build_continuous_relaxation_problem(
         structure,
         scope_spec=LocalScopeSpec.from_atoms(
@@ -666,6 +700,7 @@ def test_plan_allows_template_less_connected_retained_non_polymer_context() -> N
             ),
         }
         == {bond.atom_index_1, bond.atom_index_2}
+        and bond.order == (2 if source_order == 2 else 1)
         for bond in plan.bonds
     )
 

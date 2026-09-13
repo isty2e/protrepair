@@ -15,9 +15,7 @@ from protrepair.workflow.actions.context import TransformerExecutionContext
 
 
 @dataclass(frozen=True, slots=True)
-class HeavyAtomCompletionTransformer(
-    ResidueSetWorkflowStructureTransformer
-):
+class HeavyAtomCompletionTransformer(ResidueSetWorkflowStructureTransformer):
     """Workflow-visible heavy-atom completion transformer."""
 
     scope: ResidueSetScope
@@ -64,7 +62,7 @@ class HeavyAtomCompletionTransformer(
         return ProjectedCodomainState(
             scope=self.scope,
             state=stage_result.structure.with_ligand_facets_from(
-                context.original_structure
+                projected_domain.state
             ),
             repairs=stage_result.repairs,
             issues=stage_result.issues,

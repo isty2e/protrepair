@@ -374,6 +374,36 @@ class WorkflowTransformRequests:
                     "external_span_reconstructions must contain "
                     "ExternalSpanReconstructionSpec values"
                 )
+        for reconstruction_index, reconstruction in enumerate(
+            external_span_reconstructions
+        ):
+            reconstruction_absent_ids = frozenset(
+                reconstruction.scope.absent_residue_ids
+            )
+            reconstruction_anchor_ids = frozenset(
+                reconstruction.scope.anchor_residue_ids()
+            )
+            for previous_reconstruction in external_span_reconstructions[
+                :reconstruction_index
+            ]:
+                if reconstruction.scope == previous_reconstruction.scope:
+                    continue
+
+                previous_absent_ids = frozenset(
+                    previous_reconstruction.scope.absent_residue_ids
+                )
+                previous_anchor_ids = frozenset(
+                    previous_reconstruction.scope.anchor_residue_ids()
+                )
+                if (
+                    reconstruction_absent_ids & previous_absent_ids
+                    or reconstruction_absent_ids & previous_anchor_ids
+                    or previous_absent_ids & reconstruction_anchor_ids
+                ):
+                    raise ValueError(
+                        "external_span_reconstructions with different scopes "
+                        "must not overlap or depend on one another"
+                    )
         if reference_sidechain_packing is not None and not isinstance(
             reference_sidechain_packing, PackingSpec
         ):

@@ -9,11 +9,6 @@ from protrepair.workflow.planning.default_action_registry.capabilities import (
     EXTERNAL_SPAN_RECONSTRUCTION_CAPABILITY,
 )
 
-__all__ = [
-    "external_span_reconstruction_is_admissible",
-    "external_span_reconstruction_proposals",
-]
-
 
 def external_span_reconstruction_is_admissible(
     domain: WorkflowActionDomain,
@@ -30,11 +25,17 @@ def external_span_reconstruction_proposals(
 
     return tuple(
         WorkflowActionProposal(
-            transformer=ExternalSpanReconstructionTransformer.from_reconstruction_spec(
-                reconstruction
+            transformer=ExternalSpanReconstructionTransformer(
+                reconstruction=reconstruction
             ),
             capability=EXTERNAL_SPAN_RECONSTRUCTION_CAPABILITY,
             explicitly_requested=True,
         )
-        for reconstruction in domain.transform_requests.external_span_reconstructions
+        for reconstruction in domain.span_reconstruction.pending_reconstructions()
     )
+
+
+__all__ = [
+    "external_span_reconstruction_is_admissible",
+    "external_span_reconstruction_proposals",
+]

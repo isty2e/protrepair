@@ -2,8 +2,98 @@
 
 ## Unreleased
 
+### Fixed
+
+- reject donor-span requests whose declared anchors disagree with post-insertion
+  chain neighbors, or whose source carbonyl already has an additional covalent
+  attachment or terminal OXT. Internal and one-anchor spans fail without changing
+  the source rather than adding unvalidated peptide bonds
+- reject donor spans with missing or unresolved peptide connections, and reject
+  insertion across an existing source anchor-to-anchor C-N bond without deleting
+  that bond. Both paths report an atomic span failure
+- apply polymer H counts, charges, and bond orders together in direct and workflow
+  preparation, including H-complete structures with inconsistent chemistry.
+  Histidine ratio requests now produce a complete cationic ring graph
+- preserve original H names and isotopes, and keep ligand edits made by earlier
+  workflow actions. Rebuilding H after heavy movement preserves identity without
+  restoring stale coordinates
+- add the C-OXT bond when completing a free C terminus, and require realized
+  chemistry throughout the included FF region. Internal cropped boundaries remain
+  unsupported rather than being silently treated as free termini
+- score parser defects even with partial H coverage and recheck previously
+  satisfied goals against the returned structure
+- retain original charge, hydrogen/isotope, coordinate, and explicit-connection
+  observations across repair and canonical reprocessing, separately from the
+  current topology. Template-filled connection types remain distinguishable
+  from source declarations; these observations do not select a protonation state
+- preserve explicit zero formal charges rather than conflating them with
+  unspecified charges at PDB/mmCIF ingress and egress, including alternate-location
+  and duplicate-atom selection
+- stop copying the first atom's formal charge onto newly placed atoms during
+  heavy-atom and hydrogen completion. Existing atom charges and charges
+  explicitly assigned to new atoms are preserved
+- retain explicitly reported source bond orders separately from template-filled
+  topology orders, including through atom repair and hydrogen placement. This
+  preserves evidence for later chemistry decisions without changing the graph
+  used by writers or force-field binding
+- assign Kekule bond orders to standard PHE, TYR, and TRP rings so RDKit
+  recognizes their aromatic chemistry instead of saturated radical centers.
+  Source charges and hydrogens are unchanged; explicit source orders still
+  override the defaults
+- preserve bond-order evidence through PDB CONECT and mmCIF `struct_conn`
+  roundtrips, including intra-residue and repaired bonds. Connectivity-only
+  records no longer erase known component orders; explicit source orders
+  survive template and force-field projection
+- give standard backbone and ASN/GLN side-chain carbonyls their double bonds
+  in the component library, so force-field binding no longer treats them as
+  saturated radical centers. This changes some local refinement coordinates;
+  protonation-dependent bond orders and charges are not resolved by this fix
+- constrain each donor-span anchor separately when joint least-squares fitting
+  leaves one outside its tolerance. Existing successful fits and the geometry
+  checks after fitting are unchanged; no optimizer dependency is added
+- retry unsuccessful donor-span closure with joint donor pose/torsion fitting
+  against both fixed source anchors and their actual peptide junctions, without
+  deforming donor bonds or angles. Each anchor must meet the existing tolerance;
+  repair details report the maximum anchor RMSD and total fitting iterations
+- keep explicit refinement requests usable alongside span reconstruction and
+  atom completion; planning no longer tries to bind missing atoms before earlier
+  transformations can create them. Unresolved scopes produce refinement diagnostics
+  instead of aborting the workflow
+- preserve cross-residue covalent geometry during donor-backed span closure;
+  Pro ring bonds and fixed source carbonyl planes no longer act as independent
+  torsions. Amide-N substituents are checked before insertion. CCD chooses its
+  initial sweep from measured endpoint descent and retains deterministic
+  retries without moving source atoms
+
+### Breaking changes
+
+- allow `TopologyBond.order` to be `None` for unresolved source connectivity,
+  instead of reporting an unsupported single-bond assumption. Contradictory
+  explicit orders are rejected; unresolved covalent orders cannot be bound
+  to RDKit as single bonds
+- normalize `ExternalSpanReconstructionSpec` around a canonical
+  `AbsentResidueSpanScope`; remove the source-specific
+  `blueprint_coverage_gap` field, the behavior-free `supporting_role` field,
+  and the duplicate transformer scope
+
 ### Added
 
+- add a pure standard-polymer microstate resolver that keeps H counts,
+  formal charges, and bond orders coupled. It preserves source evidence and
+  distinguishes ambiguity, conflicts, and unsupported chemistry
+- retain explicitly applied polymer microstate choices separately from original
+  observations, and add a snapshot-bound check of current H/charge/bond realization
+- add marked free-terminal assumptions to the internal PRAS preparation policy,
+  without replacing current peptide connections or contrary original chemistry
+- generate graph-constrained H coordinates for internal polymer microstate
+  application, with separate chemistry-only preservation and explicit H
+  rebuilding
+- reconstruct explicitly mapped missing polymer spans from external donor
+  structures with anchor-frame placement, bounded donor-seeded CCD closure,
+  chemistry and stereochemistry gates, atomic topology updates, and structured
+  failure reporting
+- export observed-chain sequence alignment helpers from `protrepair.sources`
+  for building AlphaFold-backed reconstruction requests
 - export `PackingMode`, `PackingScope`, and `PackingSpec` from
   `protrepair.workflow.contracts` so callers can configure side-chain packing
   without importing an internal transformer module

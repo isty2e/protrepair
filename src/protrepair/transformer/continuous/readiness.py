@@ -110,6 +110,12 @@ class ContinuousRelaxationReadinessPolicy:
                 "before any force field can be bound"
             )
 
+        if any(not target.is_realized() for target in facts.polymer_microstate_targets):
+            return ContinuousRelaxationReadinessAssessment(
+                "continuous relaxation requires realized polymer microstates "
+                "before any force field can be bound"
+            )
+
         return ContinuousRelaxationReadinessAssessment()
 
     def assess_atom_scope_facts(
@@ -132,8 +138,7 @@ class ContinuousRelaxationReadinessPolicy:
         if (
             coverage_facts.backbone_heavy_atom_completeness_state.requires_completion()
             or (
-                coverage_facts.sidechain_heavy_atom_completeness_state
-                .requires_completion()
+                coverage_facts.sidechain_heavy_atom_completeness_state.requires_completion()
             )
         ):
             return ContinuousRelaxationReadinessAssessment(
@@ -147,6 +152,17 @@ class ContinuousRelaxationReadinessPolicy:
                 "before any force field can be bound"
             )
 
+        unresolved = tuple(
+            fact.residue_id.display_token()
+            for fact in chemistry_facts.residue_facts
+            if fact.has_unrealized_microstates()
+        )
+        if unresolved:
+            return ContinuousRelaxationReadinessAssessment(
+                "continuous relaxation requires realized polymer microstates in "
+                "the included region: " + ", ".join(unresolved)
+            )
+
         if (
             selected_scope_facts.structure_facts.stereochemistry_fact.value
             is StereochemistryState.VIOLATED
@@ -156,15 +172,11 @@ class ContinuousRelaxationReadinessPolicy:
                 "stereochemistry to be consistent before any force field can be bound"
             )
 
-        retained_non_polymer_blocker = (
-            self.retained_non_polymer_hydrogen_blocker(
-                chemistry_facts.retained_non_polymer_facts
-            )
+        retained_non_polymer_blocker = self.retained_non_polymer_hydrogen_blocker(
+            chemistry_facts.retained_non_polymer_facts
         )
         if retained_non_polymer_blocker is not None:
-            return ContinuousRelaxationReadinessAssessment(
-                retained_non_polymer_blocker
-            )
+            return ContinuousRelaxationReadinessAssessment(retained_non_polymer_blocker)
 
         bond_realizability = selected_scope_facts.continuous_bond_realizability_facts
         if not self.bond_realizability_supports_execution(bond_realizability):
@@ -246,9 +258,7 @@ class ContinuousRelaxationReadinessPolicy:
         return None
 
 
-DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY = (
-    ContinuousRelaxationReadinessPolicy()
-)
+DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY = ContinuousRelaxationReadinessPolicy()
 
 
 def derive_atom_scope_continuous_relaxation_facts(
@@ -286,6 +296,9 @@ def derive_atom_scope_continuous_relaxation_facts(
             ),
         )
         if hydrogen_expectation_model is None
+        or not hydrogen_expectation_model.polymer_preparation.matches_chemistry(
+            snapshot.structure
+        )
         else hydrogen_expectation_model
     )
     atom_input = AtomInput(
@@ -438,25 +451,22 @@ def _derive_execution_region_readiness_facts(
         ),
         hydrogen_expectation_model=hydrogen_expectation_model,
     )
-    continuous_bond_realizability_blocker = (
-        continuous_region_bond_realizability_error(
-            continuous_region,
-            component_library=component_library,
-            allow_retained_non_polymer_rdkit_fallback=(
-                allow_retained_non_polymer_rdkit_fallback
-            ),
-            retained_non_polymer_chemistry_evidence=(
-                retained_non_polymer_chemistry_evidence
-            ),
-            retained_non_polymer_chemistry_resolution_by_residue_id=(
-                None
-                if hydrogen_expectation_model is None
-                else (
-                    hydrogen_expectation_model
-                    .retained_non_polymer_resolution_by_residue_id
-                )
-            ),
-        )
+    continuous_bond_realizability_blocker = continuous_region_bond_realizability_error(
+        continuous_region,
+        component_library=component_library,
+        allow_retained_non_polymer_rdkit_fallback=(
+            allow_retained_non_polymer_rdkit_fallback
+        ),
+        retained_non_polymer_chemistry_evidence=(
+            retained_non_polymer_chemistry_evidence
+        ),
+        retained_non_polymer_chemistry_resolution_by_residue_id=(
+            None
+            if hydrogen_expectation_model is None
+            else (
+                hydrogen_expectation_model.retained_non_polymer_resolution_by_residue_id
+            )
+        ),
     )
     return (
         ContinuousRegionReadinessFacts(
@@ -500,10 +510,8 @@ def topology_availability_state_supports_continuous_relaxation(
 ) -> bool:
     """Return whether one topology-availability state admits relaxation use."""
 
-    return (
-        DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY
-        .topology_availability_supports_execution(state)
-    )
+    policy = DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY
+    return policy.topology_availability_supports_execution(state)
 
 
 def topology_availability_facts_supports_continuous_relaxation(
@@ -512,8 +520,9 @@ def topology_availability_facts_supports_continuous_relaxation(
     """Return whether every selected topology fact admits relaxation use."""
 
     return (
-        DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY
-        .topology_facts_support_execution(facts)
+        DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY.topology_facts_support_execution(
+            facts
+        )
     )
 
 
@@ -530,10 +539,8 @@ def continuous_bond_realizability_facts_support_continuous_relaxation(
 ) -> bool:
     """Return whether the selected-scope bond graph admits continuous planning."""
 
-    return (
-        DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY
-        .bond_realizability_supports_execution(facts)
-    )
+    policy = DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY
+    return policy.bond_realizability_supports_execution(facts)
 
 
 def structure_facts_continuous_relaxation_error(
@@ -541,11 +548,9 @@ def structure_facts_continuous_relaxation_error(
 ) -> str | None:
     """Return the current whole-structure relaxation blocker, if any."""
 
-    return (
-        DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY
-        .assess_structure_facts(facts)
-        .blocker_message
-    )
+    return DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY.assess_structure_facts(
+        facts
+    ).blocker_message
 
 
 def structure_facts_supports_continuous_relaxation(
@@ -561,11 +566,9 @@ def atom_scope_facts_continuous_relaxation_error(
 ) -> str | None:
     """Return the current selected-scope relaxation blocker, if any."""
 
-    return (
-        DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY
-        .assess_atom_scope_facts(facts)
-        .blocker_message
-    )
+    return DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY.assess_atom_scope_facts(
+        facts
+    ).blocker_message
 
 
 def retained_non_polymer_hydrogen_readiness_error(
@@ -573,10 +576,8 @@ def retained_non_polymer_hydrogen_readiness_error(
 ) -> str | None:
     """Return the retained non-polymer hydrogen blocker for one local region."""
 
-    return (
-        DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY
-        .retained_non_polymer_hydrogen_blocker(retained_non_polymer_facts)
-    )
+    policy = DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY
+    return policy.retained_non_polymer_hydrogen_blocker(retained_non_polymer_facts)
 
 
 def atom_scope_facts_supports_continuous_relaxation(

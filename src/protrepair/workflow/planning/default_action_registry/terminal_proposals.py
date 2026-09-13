@@ -9,11 +9,6 @@ from protrepair.workflow.planning.default_action_registry.capabilities import (
     TERMINAL_AUGMENTATION_CAPABILITY,
 )
 
-__all__ = [
-    "terminal_augmentation_is_admissible",
-    "terminal_augmentation_proposals",
-]
-
 
 def terminal_augmentation_is_admissible(domain: WorkflowActionDomain) -> bool:
     """Return whether terminal augmentation is admissible in the active domain."""
@@ -24,6 +19,7 @@ def terminal_augmentation_is_admissible(domain: WorkflowActionDomain) -> bool:
             boundary_facts=domain.boundary_facts,
             requested_goals=domain.requested_goals,
             component_library=domain.component_library,
+            required_residue_ids=domain.explicit_repair.prerequisite_residue_ids(),
         )
         is not None
     )
@@ -39,6 +35,7 @@ def terminal_augmentation_proposals(
         boundary_facts=domain.boundary_facts,
         requested_goals=domain.requested_goals,
         component_library=domain.component_library,
+        required_residue_ids=domain.explicit_repair.prerequisite_residue_ids(),
     )
     if terminal_transformer is None:
         return ()
@@ -49,3 +46,9 @@ def terminal_augmentation_proposals(
             capability=TERMINAL_AUGMENTATION_CAPABILITY,
         ),
     )
+
+
+__all__ = [
+    "terminal_augmentation_is_admissible",
+    "terminal_augmentation_proposals",
+]

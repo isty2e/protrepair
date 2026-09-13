@@ -42,6 +42,7 @@ class WorkflowActionEffectClass(str, Enum):
     """What kind of structural effect one action family applies."""
 
     AUGMENTS_ABSENCE = "augments_absence"
+    REVISES_CHEMISTRY = "revises_chemistry"
     REMOVES_PRESENT = "removes_present"
     REVISES_PRESENT_GEOMETRY = "revises_present_geometry"
 

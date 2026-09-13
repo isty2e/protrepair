@@ -281,9 +281,9 @@ def test_retained_cysteine_disulfide_uses_shared_hydrogen_semantics() -> None:
     )
 
     for residue_id in (left_id, right_id):
-        assert "HG" not in expectation.expected_hydrogen_atom_names_by_residue[
-            residue_id
-        ]
+        assert (
+            "HG" not in expectation.expected_hydrogen_atom_names_by_residue[residue_id]
+        )
         residue = result.structure.constitution.residue_or_ligand(residue_id)
         assert residue is not None and not residue.has_atom_site("HG")
 
@@ -883,9 +883,7 @@ def test_disulfide_action_canonicalizes_candidate_order() -> None:
 def test_disulfide_action_rejects_duplicate_candidates() -> None:
     """Repeated evidence cannot produce repeated topology writes or events."""
 
-    candidate = LikelyDisulfideBond(
-        ResidueId("A", 1), ResidueId("B", 1), 2.1
-    )
+    candidate = LikelyDisulfideBond(ResidueId("A", 1), ResidueId("B", 1), 2.1)
 
     with pytest.raises(ValueError, match="must not repeat"):
         DisulfideTopologyResolutionTransformer(candidates=(candidate, candidate))
@@ -897,12 +895,8 @@ def test_disulfide_action_rejects_shared_endpoints() -> None:
     with pytest.raises(ValueError, match="share endpoints"):
         DisulfideTopologyResolutionTransformer(
             candidates=(
-                LikelyDisulfideBond(
-                    ResidueId("A", 1), ResidueId("B", 1), 2.1
-                ),
-                LikelyDisulfideBond(
-                    ResidueId("A", 1), ResidueId("C", 1), 2.2
-                ),
+                LikelyDisulfideBond(ResidueId("A", 1), ResidueId("B", 1), 2.1),
+                LikelyDisulfideBond(ResidueId("A", 1), ResidueId("C", 1), 2.2),
             )
         )
 
@@ -1053,9 +1047,7 @@ def test_ambiguous_disulfide_findings_are_identity_sorted() -> None:
     )
     assert all(
         tuple(candidate.residue_id for candidate in finding.candidates)
-        == tuple(
-            sorted(candidate.residue_id for candidate in finding.candidates)
-        )
+        == tuple(sorted(candidate.residue_id for candidate in finding.candidates))
         for finding in facts.ambiguous_findings
     )
 
@@ -1107,9 +1099,7 @@ def test_conflict_records_all_competing_covalent_partners() -> None:
     competing_bonds = tuple(
         TopologyBond(
             atom_index_1=a_sg,
-            atom_index_2=structure.constitution.atom_index(
-                AtomRef(partner_id, "SG")
-            ),
+            atom_index_2=structure.constitution.atom_index(AtomRef(partner_id, "SG")),
             relationship_type=BondRelationshipType.COVALENT,
             provenance=BondProvenance.SOURCE_EXPLICIT,
         )
@@ -1175,9 +1165,7 @@ def test_disulfide_endpoint_multiplicity_is_typed_and_provenance_agnostic(
     )
 
 
-def test_non_covalent_sg_relationship_does_not_create_endpoint_multiplicity() -> (
-    None
-):
+def test_non_covalent_sg_relationship_does_not_create_endpoint_multiplicity() -> None:
     """Relationship type, not shared atom identity alone, defines the conflict."""
 
     structure = three_cysteine_structure((0.0, 2.1, -2.1))
@@ -1211,9 +1199,7 @@ def test_non_covalent_sg_relationship_does_not_create_endpoint_multiplicity() ->
     ).endpoint_multiplicity_contradictions
 
 
-def test_continuous_bond_planning_rejects_multiply_bonded_disulfide_endpoint() -> (
-    None
-):
+def test_continuous_bond_planning_rejects_multiply_bonded_disulfide_endpoint() -> None:
     """An impossible projected S-S graph must fail before backend materialization."""
 
     structure = three_cysteine_structure((0.0, 2.1, -2.1))
@@ -1281,9 +1267,7 @@ def test_continuous_bond_planning_allows_a_partial_disulfide_projection() -> Non
     )
 
 
-def test_unrelated_disulfide_contradiction_does_not_block_local_bond_planning() -> (
-    None
-):
+def test_unrelated_disulfide_contradiction_does_not_block_local_bond_planning() -> None:
     """A distant malformed cluster must not make an independent region unrealizable."""
 
     structure = cysteine_sulfur_structure(
@@ -1368,6 +1352,25 @@ def test_planner_allows_backbone_window_remote_from_disulfide_contradiction() ->
     assert outcome.transformers[0].window_spec == window_spec
 
 
+def test_unbound_window_is_not_a_proven_disulfide_conflict() -> None:
+    structure = backbone_window_disulfide_multiplicity_structure()
+    window_spec = BackboneWindowRefinementSpec(
+        residue_ids=(ResidueId("Z", 1), ResidueId("Z", 2))
+    )
+    outcome = plan_workflow_actions(
+        structure,
+        requested_goals=RequestedGoalSet(),
+        transform_requests=WorkflowTransformRequests(
+            backbone_window_refinements=(window_spec,)
+        ),
+    )
+    assert any(
+        isinstance(transformer, BackboneWindowRefinementTransformer)
+        and transformer.window_spec == window_spec
+        for transformer in outcome.transformers
+    )
+
+
 @pytest.mark.parametrize(
     ("sulfur_atom_ref", "atom_ref_pairs", "message"),
     (
@@ -1437,13 +1440,15 @@ def test_triangle_disulfide_topology_reports_each_multiply_bonded_endpoint() -> 
         ((a_sg, b_sg), (a_sg, c_sg), (b_sg, c_sg)),
     )
 
-    contradictions = (
-        DisulfideEndpointMultiplicityContradiction.all_from_structure(structure)
+    contradictions = DisulfideEndpointMultiplicityContradiction.all_from_structure(
+        structure
     )
 
-    assert tuple(
-        contradiction.sulfur_atom_ref for contradiction in contradictions
-    ) == (a_sg, b_sg, c_sg)
+    assert tuple(contradiction.sulfur_atom_ref for contradiction in contradictions) == (
+        a_sg,
+        b_sg,
+        c_sg,
+    )
 
 
 def test_disulfide_endpoint_multiplicity_requires_two_complete_projected_pairs() -> (
@@ -1479,9 +1484,7 @@ def test_disulfide_endpoint_multiplicity_requires_two_complete_projected_pairs()
     )
 
 
-def test_retained_cysteine_endpoint_multiplicity_uses_same_topology_contract() -> (
-    None
-):
+def test_retained_cysteine_endpoint_multiplicity_uses_same_topology_contract() -> None:
     """Polymer classification must not split canonical CYS disulfide semantics."""
 
     residue_ids = tuple(ResidueId("L", index) for index in range(1, 4))
@@ -1503,11 +1506,9 @@ def test_retained_cysteine_endpoint_multiplicity_uses_same_topology_contract() -
         ),
     )
 
-    contradictions = (
-        StructureDisulfideTopologyFacts.from_structure(
-            structure
-        ).endpoint_multiplicity_contradictions
-    )
+    contradictions = StructureDisulfideTopologyFacts.from_structure(
+        structure
+    ).endpoint_multiplicity_contradictions
 
     assert len(contradictions) == 1
     assert contradictions[0].sulfur_atom_ref == shared_sulfur
@@ -1538,9 +1539,7 @@ def test_malformed_disulfide_cluster_does_not_hide_independent_candidate() -> No
     promotable_residue_pairs = tuple(
         candidate.residue_pair() for candidate in facts.promotable_candidates
     )
-    assert promotable_residue_pairs == (
-        (ResidueId("D", 1), ResidueId("E", 1)),
-    )
+    assert promotable_residue_pairs == ((ResidueId("D", 1), ResidueId("E", 1)),)
 
     result = process_structure(structure)
 
@@ -1651,9 +1650,7 @@ def test_promoted_insertion_code_endpoint_roundtrips_through_pdb() -> None:
     assert (ResidueId("A", 1, "A"), ResidueId("B", 1)) in endpoint_pairs
 
 
-def test_workflow_promotes_independent_disulfides_atomically_and_idempotently() -> (
-    None
-):
+def test_workflow_promotes_independent_disulfides_atomically_and_idempotently() -> None:
     """Planning should resolve all independent candidates in one topology action."""
 
     structure = two_disulfide_pair_structure()
@@ -1676,15 +1673,21 @@ def test_workflow_promotes_independent_disulfides_atomically_and_idempotently() 
         and bond.provenance is BondProvenance.EVIDENCE_RESOLVED
     )
     assert len(evidence_bonds) == 2
-    assert sum(
-        repair.kind is RepairEventKind.DISULFIDE_TOPOLOGY_RESOLVED
-        for repair in result.repairs
-    ) == 2
-    assert len(
-        inter_residue_bonds(
-            ProteinStructureSnapshot.from_structure(result.structure)
+    assert (
+        sum(
+            repair.kind is RepairEventKind.DISULFIDE_TOPOLOGY_RESOLVED
+            for repair in result.repairs
         )
-    ) == 2
+        == 2
+    )
+    assert (
+        len(
+            inter_residue_bonds(
+                ProteinStructureSnapshot.from_structure(result.structure)
+            )
+        )
+        == 2
+    )
 
     replanning = plan_workflow_actions(
         result.structure,
@@ -1722,9 +1725,7 @@ def test_promoted_disulfides_project_through_egress(
         (ResidueId("C", 1), ResidueId("D", 1)),
     }
     if file_format is FileFormat.PDB:
-        assert sum(
-            line.startswith("CONECT") for line in serialized.splitlines()
-        ) == 4
+        assert sum(line.startswith("CONECT") for line in serialized.splitlines()) == 4
     else:
         assert serialized.count(" disulf ") == 2
 
@@ -1741,8 +1742,7 @@ def test_workflow_preserves_conflicting_topology_and_reports_contradiction() -> 
     assert result.structure.topology.bonds == structure.topology.bonds
     assert any(
         issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
-        and set(issue.scope.residue_ids)
-        == {ResidueId("A", 1, "A"), ResidueId("B", 1)}
+        and set(issue.scope.residue_ids) == {ResidueId("A", 1, "A"), ResidueId("B", 1)}
         for issue in result.issues
     )
 
@@ -1891,9 +1891,7 @@ def cysteine_sulfur_structure(
                     residue_payload(
                         component_id="CYS",
                         residue_id=residue_id,
-                        atoms=(
-                            atom_payload("SG", "S", Vec3(x_coordinate, 0.0, 0.0)),
-                        ),
+                        atoms=(atom_payload("SG", "S", Vec3(x_coordinate, 0.0, 0.0)),),
                     ),
                 ),
             )
@@ -2036,12 +2034,8 @@ def cysteine_pair_with_intra_residue_sg_bond() -> ProteinStructure:
         source_format=FileFormat.PDB,
         source_name="cysteine-pair-with-local-sg-bond",
     )
-    left_index = structure.constitution.atom_index(
-        AtomRef(ResidueId("A", 1), "CB")
-    )
-    right_index = structure.constitution.atom_index(
-        AtomRef(ResidueId("A", 1), "SG")
-    )
+    left_index = structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "CB"))
+    right_index = structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "SG"))
     return ProteinStructure.from_payload(
         constitution=structure.constitution,
         geometry=structure.geometry,

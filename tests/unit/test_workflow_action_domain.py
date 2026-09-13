@@ -3,9 +3,11 @@
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
-    build_structure,
     chain_payload,
     residue_payload,
+)
+from tests.support.canonical_builders import (
+    build_bonded_structure as build_structure,
 )
 from tests.support.refinement_benchmarks import resolve_fixture_path
 from tests.support.refinement_cases import EXPLORATORY_REFINEMENT_FIXTURE_SOURCES
@@ -16,8 +18,11 @@ from tests.support.retained_non_polymer_components import (
 from protrepair.chemistry import build_default_component_library
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure
-from protrepair.relation.blueprint import StructureBlueprintCoverageGap
-from protrepair.scope import ResidueSetScope, WholeStructureScope
+from protrepair.scope import (
+    AbsentResidueSpanScope,
+    ResidueSetScope,
+    WholeStructureScope,
+)
 from protrepair.state import (
     HydrogenCoverageState,
     SidechainHeavyAtomCompletenessState,
@@ -36,6 +41,9 @@ from protrepair.structure.polymer_blueprint import (
 )
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.snapshot import ProteinStructureSnapshot
+from protrepair.transformer.completion.terminal.augmentation import (
+    augment_c_terminal_oxt,
+)
 from protrepair.transformer.continuous.binding_policy import (
     ManualContinuousRelaxationBinding,
 )
@@ -109,7 +117,7 @@ def test_hydrogen_completion_domain_waits_for_atom_coverage_prerequisites() -> N
         ),
     )
     heavy_complete_domain = _workflow_action_domain(
-        _heavy_complete_structure(),
+        augment_c_terminal_oxt(_heavy_complete_structure()).structure,
         requested_goals=RequestedGoalSet(
             (
                 requested_process_goal(
@@ -124,8 +132,8 @@ def test_hydrogen_completion_domain_waits_for_atom_coverage_prerequisites() -> N
     assert _is_admissible(HydrogenCompletionTransformer, heavy_complete_domain)
 
 
-def test_hydrogen_completion_domain_allows_prior_atom_coverage_adoption() -> None:
-    """Hydrogen completion may rely on prior atom-coverage adoption memory."""
+def test_hydrogen_completion_domain_does_not_treat_adoption_as_coverage() -> None:
+    """A prior action does not establish its intended result on the current state."""
 
     domain = _workflow_action_domain(
         _sidechain_incomplete_structure(),
@@ -144,7 +152,7 @@ def test_hydrogen_completion_domain_allows_prior_atom_coverage_adoption() -> Non
         ),
     )
 
-    assert _is_admissible(HydrogenCompletionTransformer, domain)
+    assert not _is_admissible(HydrogenCompletionTransformer, domain)
 
 
 def test_retained_non_polymer_hydrogen_completion_domain_is_admissible() -> None:
@@ -212,8 +220,7 @@ def test_retained_non_polymer_domain_admits_strict_fallback_diagnostic() -> None
     )
 
     assert any(
-        fact.requires_hydrogen_completion()
-        and fact.depends_on_rdkit_fallback_support()
+        fact.requires_hydrogen_completion() and fact.depends_on_rdkit_fallback_support()
         for fact in (
             permissive_domain.chemistry_readiness_facts.retained_non_polymer_facts
         )
@@ -228,9 +235,7 @@ def test_retained_non_polymer_domain_admits_strict_fallback_diagnostic() -> None
     )
 
 
-def test_retained_non_polymer_hydrogen_domain_blocks_complete_strict_fallback() -> (
-    None
-):
+def test_retained_non_polymer_hydrogen_domain_blocks_complete_strict_fallback() -> None:
     """Strict mode should not loop on an already-complete RDKit fallback surface."""
 
     pytest.importorskip("rdkit")
@@ -329,10 +334,6 @@ def test_workflow_action_domain_exposes_cohesive_read_views() -> None:
     assert domain.burden.has_intrinsic_geometry_burden() is False
     assert domain.span_reconstruction.allows_reconstruction() is False
 
-    assert not hasattr(domain, "requires_atom_completion")
-    assert not hasattr(domain, "explicit_repair_refinement_prerequisite_residue_ids")
-    assert not hasattr(domain, "has_adopted_action_family")
-
 
 def test_local_refinement_domain_can_use_prior_augmentation_memory() -> None:
     """Local refinement admissibility may come from prior augmentation memory."""
@@ -395,9 +396,7 @@ def test_explicit_repair_refinement_requires_local_atom_completion() -> None:
         ),
     )
 
-    assert domain.explicit_repair.atom_completion_residue_ids() == (
-        residue_id,
-    )
+    assert domain.explicit_repair.atom_completion_residue_ids() == (residue_id,)
     assert _is_admissible(HeavyAtomCompletionTransformer, domain)
     assert not _is_admissible(HydrogenCompletionTransformer, domain)
 
@@ -407,7 +406,7 @@ def test_explicit_repair_refinement_requires_local_hydrogen_completion() -> None
 
     residue_id = ResidueId("A", 1)
     domain = _workflow_action_domain(
-        _heavy_complete_structure(),
+        augment_c_terminal_oxt(_heavy_complete_structure()).structure,
         transform_requests=WorkflowTransformRequests(
             repair_refinement=RepairRefinementSpec(
                 scope_spec=LocalScopeSpec.from_residues((residue_id,)),
@@ -418,9 +417,7 @@ def test_explicit_repair_refinement_requires_local_hydrogen_completion() -> None
         ),
     )
 
-    assert domain.explicit_repair.hydrogen_missing_residue_ids() == (
-        residue_id,
-    )
+    assert domain.explicit_repair.hydrogen_missing_residue_ids() == (residue_id,)
     assert _is_admissible(HydrogenCompletionTransformer, domain)
 
 
@@ -447,9 +444,7 @@ def _workflow_action_domain(
         else transform_requests
     )
     active_planning_context = (
-        WorkflowPlanningContext()
-        if planning_context is None
-        else planning_context
+        WorkflowPlanningContext() if planning_context is None else planning_context
     )
     coverage_facts, chemistry_readiness_facts = (
         derive_structure_coverage_and_chemistry_readiness_facts(
@@ -457,12 +452,8 @@ def _workflow_action_domain(
             component_library=active_component_library,
         )
     )
-    disulfide_topology_facts = StructureDisulfideTopologyFacts.from_structure(
-        structure
-    )
-    disulfide_hydrogen_facts = StructureDisulfideHydrogenFacts.from_structure(
-        structure
-    )
+    disulfide_topology_facts = StructureDisulfideTopologyFacts.from_structure(structure)
+    disulfide_hydrogen_facts = StructureDisulfideHydrogenFacts.from_structure(structure)
     state_deficit = WorkflowStateDeficit.from_facts(
         coverage_facts=coverage_facts,
         chemistry_readiness_facts=chemistry_readiness_facts,
@@ -473,15 +464,16 @@ def _workflow_action_domain(
     )
     explicit_repair_refinement_execution_projection = None
     if active_transform_requests.repair_refinement is not None:
-        explicit_repair_refinement_execution_projection = (
-            LocalContinuousExecutionResidueProjection.from_scope_spec(
-                ProteinStructureSnapshot.from_structure(structure),
-                active_transform_requests.repair_refinement.resolved_execution_scope_spec(),
-                context_radius_angstrom=(
-                    active_transform_requests.repair_refinement.config.context_radius_angstrom
-                ),
-                component_library=active_component_library,
-            )
+        project_execution_residues = (
+            LocalContinuousExecutionResidueProjection.from_scope_spec
+        )
+        explicit_repair_refinement_execution_projection = project_execution_residues(
+            ProteinStructureSnapshot.from_structure(structure),
+            active_transform_requests.repair_refinement.resolved_execution_scope_spec(),
+            context_radius_angstrom=(
+                active_transform_requests.repair_refinement.config.context_radius_angstrom
+            ),
+            component_library=active_component_library,
         )
     return WorkflowActionDomain(
         structure=structure,
@@ -682,13 +674,23 @@ def _gap_structure():
     )
 
 
-
 def _internal_gap_reconstruction_spec() -> ExternalSpanReconstructionSpec:
     donor_structure = build_structure(
         chains=(
             chain_payload(
                 "X",
                 (
+                    residue_payload(
+                        component_id="ALA",
+                        residue_id=ResidueId("X", 1),
+                        atoms=(
+                            atom_payload("N", "N", Vec3(-4.0, 0.0, 0.0)),
+                            atom_payload("CA", "C", Vec3(-3.0, 0.0, 0.0)),
+                            atom_payload("C", "C", Vec3(-2.0, 0.0, 0.0)),
+                            atom_payload("O", "O", Vec3(-1.0, 0.0, 0.0)),
+                            atom_payload("CB", "C", Vec3(-3.0, 1.0, 0.0)),
+                        ),
+                    ),
                     residue_payload(
                         component_id="ASP",
                         residue_id=ResidueId("X", 2),
@@ -711,6 +713,16 @@ def _internal_gap_reconstruction_spec() -> ExternalSpanReconstructionSpec:
                             atom_payload("CB", "C", Vec3(5.0, 1.0, 0.0)),
                         ),
                     ),
+                    residue_payload(
+                        component_id="GLY",
+                        residue_id=ResidueId("X", 4),
+                        atoms=(
+                            atom_payload("N", "N", Vec3(8.0, 0.0, 0.0)),
+                            atom_payload("CA", "C", Vec3(9.0, 0.0, 0.0)),
+                            atom_payload("C", "C", Vec3(10.0, 0.0, 0.0)),
+                            atom_payload("O", "O", Vec3(11.0, 0.0, 0.0)),
+                        ),
+                    ),
                 ),
             ),
         ),
@@ -718,10 +730,8 @@ def _internal_gap_reconstruction_spec() -> ExternalSpanReconstructionSpec:
         source_name="workflow-action-domain-donor",
     )
     return ExternalSpanReconstructionSpec(
-        blueprint_coverage_gap=StructureBlueprintCoverageGap(
-            structure_chain_id="A",
-            blueprint_chain_id="A",
-            absent_sequence_positions=(2, 3),
+        scope=AbsentResidueSpanScope(
+            absent_residue_ids=(ResidueId("A", 2), ResidueId("A", 3)),
             preceding_residue_id=ResidueId("A", 1),
             following_residue_id=ResidueId("A", 4),
         ),

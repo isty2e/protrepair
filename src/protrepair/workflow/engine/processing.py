@@ -12,14 +12,14 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
+from protrepair.diagnostics.source_microstate import (
+    diagnose_source_microstate_contradictions,
+)
 from protrepair.errors import RdkitUnavailableError
 from protrepair.io import read_structure
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.transformer.source_microstate_adjudication import (
-    adjudicate_source_microstate_contradictions,
-)
 from protrepair.workflow.contracts.planning import (
     WorkflowLigandContextMode,
     WorkflowPlanningContext,
@@ -74,15 +74,13 @@ def process_canonical_structure(
         structure,
         policy=normalization_policy,
     )
-    adjudicated_structure, initial_microstate_issues = (
-        adjudicate_source_microstate_contradictions(
-            normalized_structure,
-            component_library=component_library,
-        )
+    initial_microstate_issues = diagnose_source_microstate_contradictions(
+        normalized_structure,
+        component_library=component_library,
     )
     validated_retained_non_polymer_chemistry_evidence = (
         _validated_retained_non_polymer_chemistry_evidence(
-            adjudicated_structure,
+            normalized_structure,
             active_ingress.retained_non_polymer_chemistry_overrides,
         )
     )
@@ -90,12 +88,12 @@ def process_canonical_structure(
         None
         if active_transform_requests.reference_sidechain_packing is None
         else prepare_workflow_packing_reference(
-            adjudicated_structure,
+            normalized_structure,
             active_transform_requests.reference_sidechain_packing,
         )
     )
     runtime_result = execute_iterative_workflow(
-        adjudicated_structure,
+        normalized_structure,
         requested_goals=requested_goal_set,
         transform_requests=active_transform_requests,
         planning_context=active_planning_context,

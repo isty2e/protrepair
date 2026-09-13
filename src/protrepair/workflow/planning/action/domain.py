@@ -23,6 +23,9 @@ from protrepair.structure.labels import ResidueId
 from protrepair.transformer.local.projection import (
     LocalContinuousExecutionResidueProjection,
 )
+from protrepair.workflow.contracts.external_reference import (
+    ExternalSpanReconstructionSpec,
+)
 from protrepair.workflow.contracts.planning import WorkflowPlanningContext
 from protrepair.workflow.contracts.request import (
     RequestedGoalSet,
@@ -124,8 +127,7 @@ class WorkflowExplicitRepairReadView:
             return ()
 
         return (
-            repair_refinement.resolved_execution_scope_spec()
-            .referenced_residue_ids()
+            repair_refinement.resolved_execution_scope_spec().referenced_residue_ids()
         )
 
     def prerequisite_residue_ids(
@@ -162,7 +164,10 @@ class WorkflowExplicitRepairReadView:
             if (
                 not _coverage_requires_heavy_completion(residue_facts.coverage)
                 and residue_facts.chemistry.is_supported()
-                and residue_facts.chemistry.needs_hydrogenation()
+                and (
+                    residue_facts.chemistry.needs_hydrogenation()
+                    or residue_facts.chemistry.requires_microstate_realization()
+                )
             )
         )
 
@@ -177,7 +182,10 @@ class WorkflowExplicitRepairReadView:
             if (
                 _coverage_requires_heavy_completion(residue_facts.coverage)
                 and residue_facts.chemistry.is_supported()
-                and residue_facts.chemistry.needs_hydrogenation()
+                and (
+                    residue_facts.chemistry.needs_hydrogenation()
+                    or residue_facts.chemistry.requires_microstate_realization()
+                )
             )
         )
 
@@ -231,7 +239,6 @@ class WorkflowCompletionReadView:
     state_deficit: WorkflowStateDeficit
     chemistry_readiness_facts: StructureChemistryReadinessFacts
     explicit_repair: WorkflowExplicitRepairReadView
-    memory: WorkflowPlanningMemoryReadView
 
     def requires_atom_completion(self) -> bool:
         """Return whether unblocked required atom coverage remains."""
@@ -241,35 +248,6 @@ class WorkflowCompletionReadView:
             and not atom_deficit.blocked_by_component_support
             for atom_deficit in self.state_deficit.coverage.atom_deficits
         ) or bool(self.explicit_repair.atom_completion_residue_ids())
-
-    def requires_hydrogen_completion(self) -> bool:
-        """Return whether hydrogen augmentation is currently admissible."""
-
-        chemistry_deficit = self.state_deficit.chemistry_readiness
-        if (
-            chemistry_deficit.disposition is WorkflowDeficitDisposition.REQUIRED
-            and not chemistry_deficit.hydrogen_blocked_residue_ids
-            and (
-                chemistry_deficit.hydrogen_missing_residue_ids
-                or (
-                    chemistry_deficit.hydrogen_prerequisite_residue_ids
-                    and self.memory.has_reducer_for_deficit_family(
-                        WorkflowCapabilityDeficitFamily.ATOM_COVERAGE
-                    )
-                )
-            )
-        ):
-            return True
-
-        if self.explicit_repair.hydrogen_missing_residue_ids():
-            return True
-
-        if self.explicit_repair.hydrogen_prerequisite_residue_ids():
-            return self.memory.has_reducer_for_deficit_family(
-                WorkflowCapabilityDeficitFamily.ATOM_COVERAGE
-            )
-
-        return False
 
     def requires_retained_non_polymer_hydrogen_completion(self) -> bool:
         """Return whether retained non-polymer hydrogen completion is admissible."""
@@ -303,10 +281,7 @@ class WorkflowBurdenReadView:
         """Return whether parser-profile compatibility burden is present."""
 
         parser_compatibility = self.state_deficit.parser_compatibility
-        return (
-            parser_compatibility is not None
-            and parser_compatibility.has_burden()
-        )
+        return parser_compatibility is not None and parser_compatibility.has_burden()
 
     def has_interaction_burden(self) -> bool:
         """Return whether ligand-aware interaction burden is present."""
@@ -327,16 +302,31 @@ class WorkflowBurdenReadView:
 class WorkflowSpanReconstructionReadView:
     """Read view over explicit span reconstruction request availability."""
 
+    structure: ProteinStructure
     planning_context: WorkflowPlanningContext
     transform_requests: WorkflowTransformRequests
+
+    def pending_reconstructions(
+        self,
+    ) -> tuple[ExternalSpanReconstructionSpec, ...]:
+        """Return donor requests whose target span is not fully materialized."""
+
+        if not self.planning_context.allows_span_reconstruction():
+            return ()
+
+        return tuple(
+            reconstruction
+            for reconstruction in self.transform_requests.external_span_reconstructions
+            if any(
+                self.structure.constitution.residue_or_ligand(residue_id) is None
+                for residue_id in reconstruction.scope.absent_residue_ids
+            )
+        )
 
     def allows_reconstruction(self) -> bool:
         """Return whether donor-backed span reconstruction is admissible."""
 
-        return (
-            self.planning_context.allows_span_reconstruction()
-            and bool(self.transform_requests.external_span_reconstructions)
-        )
+        return bool(self.pending_reconstructions())
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,7 +408,6 @@ class WorkflowActionDomain:
             state_deficit=self.state_deficit,
             chemistry_readiness_facts=self.chemistry_readiness_facts,
             explicit_repair=self.explicit_repair,
-            memory=self.memory,
         )
 
     @property
@@ -436,6 +425,7 @@ class WorkflowActionDomain:
         """Return the donor-backed span reconstruction read view."""
 
         return WorkflowSpanReconstructionReadView(
+            structure=self.structure,
             planning_context=self.planning_context,
             transform_requests=self.transform_requests,
         )

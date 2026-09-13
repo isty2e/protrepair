@@ -13,7 +13,7 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 from tests.support.canonical_builders import (
-    build_structure as build_canonical_structure,
+    build_bonded_structure as build_canonical_structure,
 )
 from tests.support.request_builders import (
     c_terminal_oxt_requested_goals,
@@ -30,6 +30,7 @@ from protrepair.diagnostics import (
     ValidationIssueKind,
     detect_sidechain_stereochemistry,
 )
+from protrepair.diagnostics.geometry import detect_heavy_geometry
 from protrepair.diagnostics.parser_readability import (
     RDKitNoConectParserReadabilityProbe,
     RDKitNoConectSanitizeReadabilityMetrics,
@@ -64,6 +65,8 @@ from protrepair.structure.labels import (
     ResidueId,
 )
 from protrepair.structure.provenance import FileFormat
+from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
+from protrepair.transformer.completion.hydrogen.repair import add_hydrogens
 from protrepair.transformer.continuous.binding_policy import (
     ManualContinuousRelaxationBinding,
     RecommendedContinuousRelaxationBinding,
@@ -127,7 +130,7 @@ from protrepair.workflow.contracts import (
 )
 from protrepair.workflow.contracts.result import WorkflowBranchQualityScore
 from protrepair.workflow.engine.finalization import (
-    _final_parser_readability_issues,
+    final_parser_readability_issues,
 )
 from protrepair.workflow.engine.packing import (
     WorkflowPackingReference,
@@ -135,12 +138,12 @@ from protrepair.workflow.engine.packing import (
 )
 from protrepair.workflow.engine.reporting import evaluate_requested_goal_report
 from protrepair.workflow.engine.runtime import (
+    WorkflowBranchEvaluator,
     WorkflowRuntimeState,
-    _adopted_workflow_children,
-    _workflow_children_with_regression_retention,
-    _workflow_children_within_node_budget,
-    _WorkflowBranchEvaluator,
+    adopted_workflow_children,
     execute_iterative_workflow,
+    workflow_children_with_regression_retention,
+    workflow_children_within_node_budget,
 )
 from protrepair.workflow.planning.action.registry import WorkflowStateAction
 from protrepair.workflow.planning.planner import (
@@ -856,9 +859,15 @@ def test_process_structure_routes_stereochemistry_correction_before_refinement()
     )
     assert corrected_residue is not None
     assert any(atom_site.element == "H" for atom_site in corrected_residue.atom_sites)
-    assert any(
-        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
+    repair_kinds = [repair.kind for repair in result.repairs]
+    assert repair_kinds.index(RepairEventKind.STEREOCHEMISTRY_CORRECTED) < (
+        repair_kinds.index(RepairEventKind.LOCAL_REFINEMENT_APPLIED)
     )
+    assert detect_heavy_geometry(
+        result.structure,
+        component_library=build_default_component_library(),
+    ).is_empty()
+    assert not result.issues
     assert not any(
         "requires hydrogens to be fully realized" in issue.message
         for issue in result.issues
@@ -1628,6 +1637,7 @@ def test_process_structure_applies_local_refinement_after_heavy_repair(
         source_format=FileFormat.PDB,
         source_name="workflow-local-refinement-heavy-hydrogenated",
     )
+    hydrogenated_structure = add_hydrogens(hydrogenated_structure).structure
     local_refinement = RepairRefinementSpec(
         scope_spec=LocalScopeSpec.from_residues((residue_id,)),
         binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.UFF),
@@ -1672,7 +1682,22 @@ def test_process_structure_applies_local_refinement_after_heavy_repair(
     ) -> ProcessResult:
         assert component_library is not None
         assert reference_structure is None
-        assert structure is heavy_completed_structure
+        residue = structure.constitution.residue_or_ligand(residue_id)
+        assert residue is not None and residue.has_atom_site("OXT")
+        heavy_residue = heavy_completed_structure.constitution.residue_or_ligand(
+            residue_id
+        )
+        assert heavy_residue is not None
+        for atom in heavy_residue.atom_sites:
+            ref = AtomRef(residue_id, atom.name)
+            assert (
+                structure.geometry.atom_geometry(
+                    structure.constitution.atom_index(ref)
+                ).position
+                == heavy_completed_structure.geometry.atom_geometry(
+                    heavy_completed_structure.constitution.atom_index(ref)
+                ).position
+            )
         assert not prepare_heavy_atoms
         assert target_residue_ids == frozenset({residue_id})
         assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD
@@ -1758,10 +1783,10 @@ def test_process_structure_expands_multi_node_workflow_frontier_fifo(
     planner_calls: list[tuple[str, tuple[type[WorkflowStateAction], ...]]] = []
     execution_calls: list[type[WorkflowStateAction]] = []
     retained_frontiers: list[tuple[tuple[str, ...], int]] = []
-    original_retain_states = _WorkflowBranchEvaluator.retain_states
+    original_retain_states = WorkflowBranchEvaluator.retain_states
 
     def track_retain_states(
-        evaluator: _WorkflowBranchEvaluator,
+        evaluator: WorkflowBranchEvaluator,
         states: tuple[WorkflowRuntimeState, ...],
     ) -> None:
         original_retain_states(evaluator, states)
@@ -1856,7 +1881,7 @@ def test_process_structure_expands_multi_node_workflow_frontier_fifo(
         fake_execute_workflow_transformer,
     )
     monkeypatch.setattr(
-        _WorkflowBranchEvaluator,
+        WorkflowBranchEvaluator,
         "retain_states",
         track_retain_states,
     )
@@ -1983,18 +2008,18 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
     )
     component_library = build_default_component_library()
     planning_context = WorkflowPlanningContext()
-    branch_evaluator = _WorkflowBranchEvaluator(
+    branch_evaluator = WorkflowBranchEvaluator(
         requested_goals=RequestedGoalSet(),
         component_library=component_library,
         planning_context=planning_context,
         already_satisfied_requested_goals=(),
     )
-    assert _adopted_workflow_children(
+    assert adopted_workflow_children(
         adopted_children=(child, peer),
         branch_evaluator=branch_evaluator,
     ) == (child, peer)
 
-    retained_children = _workflow_children_with_regression_retention(
+    retained_children = workflow_children_with_regression_retention(
         current_branch_state=current_branch_state,
         attempted_transformers=(transformer,),
         transform_requests=WorkflowTransformRequests(),
@@ -2010,7 +2035,7 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
         transformer
     )
     assert retained_current_branch.adopted_decision.reason is not None
-    assert _workflow_children_within_node_budget(
+    assert workflow_children_within_node_budget(
         children=retained_children,
         child_budget=1,
         branch_evaluator=branch_evaluator,
@@ -3073,7 +3098,7 @@ def test_final_parser_readability_issues_include_ambiguous_disulfide_blocker(
         fake_ambiguous_disulfide_parser_witness_blocker_issues,
     )
 
-    issues = _final_parser_readability_issues(
+    issues = final_parser_readability_issues(
         structure,
         component_library=build_default_component_library(),
     )
@@ -3573,8 +3598,10 @@ def test_process_structure_applies_local_refinement_after_hydrogenation(
         assert isinstance(histidine_protonation, DisabledHistidineProtonationRequest)
         assert local_refinement is None
         calls.append("hydrogen")
+        completed = materialize_hydrogens_core(structure, component_library)
+        assert not completed.issues
         return ProcessResult(
-            structure=structure,
+            structure=completed.structure,
             repairs=(),
             issues=(),
             analyses=None,
@@ -3619,7 +3646,9 @@ def test_process_structure_applies_local_refinement_after_hydrogenation(
         ),
     )
 
-    assert result.structure is structure
+    assert result.structure.constitution != structure.constitution
+    residue = result.structure.constitution.residue_or_ligand(ResidueId("A", 1))
+    assert residue is not None and residue.has_atom_site("H1")
     assert calls == ["hydrogen", "refine"]
 
 
@@ -3682,6 +3711,7 @@ def test_process_structure_applies_local_prerequisites_before_explicit_refinemen
         source_format=FileFormat.PDB,
         source_name="workflow-local-refinement-explicit-prereqs-hydrogenated",
     )
+    hydrogenated_structure = add_hydrogens(hydrogenated_structure).structure
     local_refinement = RepairRefinementSpec(
         scope_spec=LocalScopeSpec.from_residues((residue_id,)),
         binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.UFF),
@@ -3726,7 +3756,22 @@ def test_process_structure_applies_local_prerequisites_before_explicit_refinemen
     ) -> ProcessResult:
         assert component_library is not None
         assert reference_structure is None
-        assert structure is heavy_completed_structure
+        residue = structure.constitution.residue_or_ligand(residue_id)
+        assert residue is not None and residue.has_atom_site("OXT")
+        heavy_residue = heavy_completed_structure.constitution.residue_or_ligand(
+            residue_id
+        )
+        assert heavy_residue is not None
+        for atom in heavy_residue.atom_sites:
+            ref = AtomRef(residue_id, atom.name)
+            assert (
+                structure.geometry.atom_geometry(
+                    structure.constitution.atom_index(ref)
+                ).position
+                == heavy_completed_structure.geometry.atom_geometry(
+                    heavy_completed_structure.constitution.atom_index(ref)
+                ).position
+            )
         assert not prepare_heavy_atoms
         assert target_residue_ids == frozenset({residue_id})
         assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD
@@ -3829,8 +3874,10 @@ def test_process_structure_recommended_policy_defers_binding_until_hydrogens_exi
         assert isinstance(histidine_protonation, DisabledHistidineProtonationRequest)
         assert local_refinement is None
         calls.append("hydrogen")
+        completed = materialize_hydrogens_core(structure, component_library)
+        assert not completed.issues
         return ProcessResult(
-            structure=structure,
+            structure=completed.structure,
             repairs=(),
             issues=(),
             analyses=None,
@@ -3883,16 +3930,18 @@ def test_process_structure_recommended_policy_defers_binding_until_hydrogens_exi
         ),
     )
 
-    assert result.structure is structure
+    assert result.structure.constitution != structure.constitution
+    residue = result.structure.constitution.residue_or_ligand(ResidueId("A", 1))
+    assert residue is not None and residue.has_atom_site("H1")
     assert isinstance(local_refinement.binding, ManualContinuousRelaxationBinding)
     assert local_refinement.binding.force_field is ContinuousRelaxationForceField.UFF
     assert calls == ["hydrogen", "refine"]
 
 
-def test_process_structure_uses_composite_hydrogen_workflow_for_heavy_incomplete_input(
+def test_process_structure_does_not_hydrogenate_after_failed_heavy_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Heavy-incomplete hydrogenation should execute heavy then hydrogen stages."""
+    """Adopting a no-op heavy action cannot satisfy H prerequisites."""
 
     structure = build_workflow_structure(
         chains=(
@@ -3976,10 +4025,10 @@ def test_process_structure_uses_composite_hydrogen_workflow_for_heavy_incomplete
         ),
     )
 
-    assert result.structure is structure
+    residue = result.structure.constitution.residue_or_ligand(ResidueId("A", 1))
+    assert residue is not None and not residue.has_atom_site("CB")
     assert calls == [
         ("heavy", frozenset({ResidueId(chain_id="A", seq_num=1)}), None),
-        ("hydrogen", frozenset({ResidueId(chain_id="A", seq_num=1)}), False),
     ]
 
 
@@ -4146,6 +4195,7 @@ def test_process_structure_recommended_policy_defers_binding_for_heavy_only_refi
         source_format=FileFormat.PDB,
         source_name="workflow-recommended-uff-hydrogenated",
     )
+    hydrogenated_structure = add_hydrogens(hydrogenated_structure).structure
     local_refinement = RepairRefinementSpec(
         scope_spec=LocalScopeSpec.from_residues((residue_id,)),
         config=ContinuousRelaxationConfig(),
@@ -4191,7 +4241,22 @@ def test_process_structure_recommended_policy_defers_binding_for_heavy_only_refi
     ) -> ProcessResult:
         assert component_library is not None
         assert reference_structure is None
-        assert structure is heavy_completed_structure
+        residue = structure.constitution.residue_or_ligand(residue_id)
+        assert residue is not None and residue.has_atom_site("OXT")
+        heavy_residue = heavy_completed_structure.constitution.residue_or_ligand(
+            residue_id
+        )
+        assert heavy_residue is not None
+        for atom in heavy_residue.atom_sites:
+            ref = AtomRef(residue_id, atom.name)
+            assert (
+                structure.geometry.atom_geometry(
+                    structure.constitution.atom_index(ref)
+                ).position
+                == heavy_completed_structure.geometry.atom_geometry(
+                    heavy_completed_structure.constitution.atom_index(ref)
+                ).position
+            )
         assert not prepare_heavy_atoms
         assert target_residue_ids == frozenset({residue_id})
         assert orphan_fragment_policy is OrphanFragmentPolicy.REBUILD

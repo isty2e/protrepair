@@ -74,8 +74,8 @@ def plan_coverage_transformers(
     """Return workflow coverage planning over concrete transformers."""
 
     span_reconstruction_transformers = tuple(
-        ExternalSpanReconstructionTransformer.from_reconstruction_spec(
-            reconstruction,
+        ExternalSpanReconstructionTransformer(
+            reconstruction=reconstruction,
         )
         for reconstruction in transform_requests.external_span_reconstructions
     )

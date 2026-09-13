@@ -7,9 +7,11 @@ from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     CanonicalResiduePayload,
     atom_payload,
-    build_structure,
     chain_payload,
     residue_payload,
+)
+from tests.support.canonical_builders import (
+    build_bonded_structure as build_structure,
 )
 
 from protrepair.chemistry import ComponentLibrary
@@ -40,8 +42,7 @@ from protrepair.workflow.contracts import StructureIngressOptions
 SERINE_RESIDUE_ID = ResidueId(chain_id="A", seq_num=17)
 
 
-def test_cleanup_residual_hydrogen_clashes_reorients_ligand_clashing_serine_hydrogen(
-) -> None:
+def test_cleanup_reorients_ligand_clashing_serine_hydrogen() -> None:
     """Cleanup should reorient one rotatable hydrogen away from a ligand clash."""
 
     library = build_standard_component_library()

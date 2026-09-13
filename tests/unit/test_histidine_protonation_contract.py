@@ -7,23 +7,26 @@ from typing import get_args
 
 import pytest
 from tests.support.canonical_builders import (
+    atom_payload,
+    chain_payload,
+    residue_payload,
+)
+from tests.support.canonical_builders import (
     build_structure as build_canonical_structure,
 )
-from tests.support.canonical_builders import chain_payload
 
-from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from protrepair.chemistry.microstate.resolution import MicrostateConstraints
+from protrepair.geometry import Vec3
 from protrepair.structure import ProteinStructure
 from protrepair.structure.constitution import AtomSite, ChainSite, ResidueSite
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import ResidueIndex
 from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
-from protrepair.transformer.completion.hydrogen.directives import (
-    HistidineDeltaProtonationDirective,
-    derive_hydrogen_directives,
-)
 from protrepair.transformer.completion.hydrogen.protonation import (
     HistidineDeltaProtonationAssignment,
+    histidine_microstate_requests,
     normalize_histidine_protonation_request,
     resolve_histidine_protonation_assignments,
 )
@@ -242,78 +245,36 @@ def test_resolve_histidine_assignments_is_stable_at_float_integer_boundary() -> 
     assert assignments[-1].residue_index == ResidueIndex(28)
 
 
-def test_derive_hydrogen_directives_lowers_histidine_assignments() -> None:
-    chain = _chain("HIS")
-    his_template = build_default_component_library().get("HIS")
-    assert his_template is not None
-
-    directives = derive_hydrogen_directives(
-        chain,
-        templates=(his_template,),
-        histidine_protonation_assignments=(
-            HistidineDeltaProtonationAssignment(ResidueIndex(0)),
+def test_histidine_requests_bind_whole_ring_and_reset_unselected_sites() -> None:
+    structure = build_canonical_structure(
+        chains=(
+            chain_payload(
+                "A",
+                tuple(
+                    residue_payload(
+                        component_id=residue.component_id,
+                        residue_id=residue.residue_id,
+                        atoms=(atom_payload("N", "N", Vec3(0.0, 0.0, 0.0)),),
+                    )
+                    for residue in _chain("HIS", "ALA", "HIS").residues
+                ),
+            ),
         ),
+        source_format=FileFormat.PDB,
     )
-
-    assert any(
-        isinstance(directive, HistidineDeltaProtonationDirective)
-        and directive.residue_index == ResidueIndex(0)
-        for directive in directives
+    requests = histidine_microstate_requests(
+        structure, PrasRatioHistidineProtonationRequest(0.5)
     )
-
-
-def test_derive_hydrogen_directives_noops_missing_histidine_template() -> None:
-    directives = derive_hydrogen_directives(
-        _chain("HIS"),
-        templates=(None,),
-        histidine_protonation_assignments=(
-            HistidineDeltaProtonationAssignment(ResidueIndex(0)),
+    assert requests == {
+        (ResidueId("A", 1), PolymerChemicalSite.SIDECHAIN): MicrostateConstraints(
+            hydrogens=(("ND1", 1), ("NE2", 1))
         ),
+        (ResidueId("A", 3), PolymerChemicalSite.SIDECHAIN): None,
+    }
+    assert (
+        histidine_microstate_requests(structure, DisabledHistidineProtonationRequest())
+        == {}
     )
-
-    assert not any(
-        isinstance(directive, HistidineDeltaProtonationDirective)
-        for directive in directives
-    )
-
-
-def test_derive_hydrogen_directives_rejects_duplicate_histidine_assignments() -> None:
-    chain = _chain("HIS")
-    his_template = build_default_component_library().get("HIS")
-
-    with pytest.raises(ValueError, match="must not repeat"):
-        derive_hydrogen_directives(
-            chain,
-            templates=(his_template,),
-            histidine_protonation_assignments=(
-                HistidineDeltaProtonationAssignment(ResidueIndex(0)),
-                HistidineDeltaProtonationAssignment(ResidueIndex(0)),
-            ),
-        )
-
-
-def test_derive_hydrogen_directives_rejects_out_of_scope_assignment() -> None:
-    with pytest.raises(ValueError, match="outside the chain"):
-        derive_hydrogen_directives(
-            _chain("HIS"),
-            templates=(None,),
-            histidine_protonation_assignments=(
-                HistidineDeltaProtonationAssignment(ResidueIndex(1)),
-            ),
-        )
-
-
-def test_derive_hydrogen_directives_rejects_non_histidine_assignment() -> None:
-    ala_template = build_default_component_library().get("ALA")
-
-    with pytest.raises(ValueError, match="must target HIS"):
-        derive_hydrogen_directives(
-            _chain("ALA"),
-            templates=(ala_template,),
-            histidine_protonation_assignments=(
-                HistidineDeltaProtonationAssignment(ResidueIndex(0)),
-            ),
-        )
 
 
 def _chain(*component_ids: str) -> ChainSite:

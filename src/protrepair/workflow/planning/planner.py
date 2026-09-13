@@ -389,12 +389,8 @@ def plan_workflow_actions(
         )
     )
     boundary_facts = StructureBoundaryStateFacts.from_structure(structure)
-    disulfide_topology_facts = StructureDisulfideTopologyFacts.from_structure(
-        structure
-    )
-    disulfide_hydrogen_facts = StructureDisulfideHydrogenFacts.from_structure(
-        structure
-    )
+    disulfide_topology_facts = StructureDisulfideTopologyFacts.from_structure(structure)
+    disulfide_hydrogen_facts = StructureDisulfideHydrogenFacts.from_structure(structure)
     intrinsic_geometry_facts: StructureIntrinsicGeometryFacts | None = None
     parser_compatibility_facts: StructureParserCompatibilityFacts | None = None
     interaction_facts: StructureInteractionFacts | None = None
@@ -451,8 +447,8 @@ def plan_workflow_actions(
     )
     explicit_repair_refinement_execution_projection = None
     if transform_requests.repair_refinement is not None:
-        explicit_repair_refinement_execution_projection = (
-            LocalContinuousExecutionResidueProjection.from_scope_spec(
+        try:
+            projection = LocalContinuousExecutionResidueProjection.from_scope_spec(
                 ProteinStructureSnapshot.from_structure(structure),
                 transform_requests.repair_refinement.resolved_execution_scope_spec(),
                 context_radius_angstrom=(
@@ -460,7 +456,11 @@ def plan_workflow_actions(
                 ),
                 component_library=active_component_library,
             )
-        )
+            explicit_repair_refinement_execution_projection = projection
+        except ValueError:
+            # An earlier transformer may materialize this scope. Keep the request;
+            # execution owns rejection if it still cannot bind on the next state.
+            pass
     action_domain = WorkflowActionDomain(
         structure=structure,
         requested_goals=requested_goals,

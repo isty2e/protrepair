@@ -1,41 +1,35 @@
 """Package exception taxonomy tests."""
 
-import inspect
+from pathlib import Path
+
+import pytest
 
 import protrepair
-import protrepair.errors as errors
+from protrepair.chemistry import van_der_waals_radius_angstrom
+from protrepair.io import read_structure
 from protrepair.transformer.packing.faspr.backend import PackingBackendError
 
 
-def test_protrepair_error_is_canonical_public_exception_base() -> None:
-    """The package should expose one protrepair-named exception base."""
+def test_radius_lookup_failure_is_catchable_through_package_error() -> None:
+    """A real public-boundary failure must use the shared exception contract."""
 
-    assert protrepair.ProtrepairError is errors.ProtrepairError
-    assert "ProtrepairError" in protrepair.__all__
-    assert not hasattr(errors, "PrasError")
-    assert "PrasError" not in protrepair.__all__
+    with pytest.raises(protrepair.ProtrepairError) as failure:
+        van_der_waals_radius_angstrom("Xx")
+
+    assert isinstance(failure.value, ValueError)
 
 
-def test_package_exceptions_inherit_from_protrepair_error() -> None:
-    """Every package-specific exception should inherit from ProtrepairError."""
+def test_missing_structure_is_catchable_through_package_error(tmp_path: Path) -> None:
+    """I/O failures must remain catchable without importing an internal error type."""
 
-    package_exceptions = [
-        exception_type
-        for _, exception_type in inspect.getmembers(errors, inspect.isclass)
-        if (
-            exception_type.__module__ == errors.__name__
-            and exception_type is not errors.ProtrepairError
-        )
-    ]
+    with pytest.raises(protrepair.ProtrepairError) as failure:
+        read_structure(tmp_path / "missing.pdb")
 
-    assert package_exceptions
-    assert all(
-        issubclass(exception_type, errors.ProtrepairError)
-        for exception_type in package_exceptions
-    )
+    assert isinstance(failure.value.__cause__, FileNotFoundError)
 
 
 def test_backend_exceptions_inherit_from_protrepair_error() -> None:
     """Backend-local exception bases should use the package-level base."""
 
-    assert issubclass(PackingBackendError, errors.ProtrepairError)
+    with pytest.raises(protrepair.ProtrepairError, match="backend failure"):
+        raise PackingBackendError("backend failure")

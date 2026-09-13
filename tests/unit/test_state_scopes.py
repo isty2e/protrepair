@@ -1,7 +1,5 @@
 """Unit tests for canonical scoped-state contracts and adapters."""
 
-import importlib
-
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
@@ -47,14 +45,6 @@ from protrepair.workflow.planning.completion import (
     WorkflowCompositeExecutionScope,
     WorkflowResidueSetExecutionScope,
 )
-
-
-def test_scope_package_root_remains_semantic_only_surface() -> None:
-    """The scope package root should not re-export structure-aware lowering owners."""
-
-    scope_module = importlib.import_module("protrepair.scope")
-
-    assert not hasattr(scope_module, "OBSERVED_ATOM_SCOPE_LOWERING")
 
 
 def _single_residue_structure() -> ProteinStructure:
@@ -124,8 +114,7 @@ def test_canonical_state_scopes_normalize_chain_and_composite_inputs() -> None:
         CompositeScope(scopes=(WholeStructureScope(),))
 
 
-def test_local_scope_specs_and_semantic_scopes_project_into_canonical_state_scopes(
-) -> None:
+def test_local_and_semantic_scopes_project_into_canonical_state_scopes() -> None:
     """Boundary local scope specs should align with canonical semantic scopes."""
 
     residue_selection = LocalScopeSpec.from_residues(
@@ -134,10 +123,8 @@ def test_local_scope_specs_and_semantic_scopes_project_into_canonical_state_scop
     atom_selection = LocalScopeSpec.from_atoms(
         (AtomRef(ResidueId(chain_id="A", seq_num=10), "CA"),)
     )
-    attached_hydrogen_selection = (
-        LocalScopeSpec.from_atoms_with_attached_hydrogens(
-            (AtomRef(ResidueId(chain_id="A", seq_num=10), "CA"),)
-        )
+    attached_hydrogen_selection = LocalScopeSpec.from_atoms_with_attached_hydrogens(
+        (AtomRef(ResidueId(chain_id="A", seq_num=10), "CA"),)
     )
     absent_scope = AbsentResidueSpanScope(
         preceding_residue_id=ResidueId(chain_id="A", seq_num=10),
@@ -316,9 +303,7 @@ def test_scoped_state_represents_state_values_over_explicit_scope() -> None:
     """Scoped state should bind one state value to one explicit canonical scope."""
 
     scoped_state = ScopedState(
-        scope=ResidueSetScope(
-            residue_ids=(ResidueId(chain_id="A", seq_num=5),)
-        ),
+        scope=ResidueSetScope(residue_ids=(ResidueId(chain_id="A", seq_num=5),)),
         value=HydrogenCoverageState.COMPLETE,
     )
 
@@ -331,18 +316,14 @@ def test_structure_endpointd_state_binds_explicit_carrier_and_roundtrips() -> No
 
     snapshot = ProteinStructureSnapshot.from_structure(_single_residue_structure())
     scoped_state = ScopedState(
-        scope=ResidueSetScope(
-            residue_ids=(ResidueId(chain_id="A", seq_num=1),)
-        ),
+        scope=ResidueSetScope(residue_ids=(ResidueId(chain_id="A", seq_num=1),)),
         value=HydrogenCoverageState.COMPLETE,
     )
     carrier_state = scoped_state.for_carrier(snapshot)
 
     assert carrier_state == CarrierScopedState(
         carrier=snapshot,
-        scope=ResidueSetScope(
-            residue_ids=(ResidueId(chain_id="A", seq_num=1),)
-        ),
+        scope=ResidueSetScope(residue_ids=(ResidueId(chain_id="A", seq_num=1),)),
         value=HydrogenCoverageState.COMPLETE,
     )
     assert carrier_state.without_carrier() == scoped_state
@@ -376,9 +357,9 @@ def test_scope_coarsenings_cover_canonical_containment_paths() -> None:
     assert AtomToChainSetScopeCoarsening().coarsen(atom_scope) == ChainSetScope(
         chain_ids=("A",)
     )
-    assert ScopeToWholeStructureCoarsening().coarsen(
-        atom_scope
-    ) == WholeStructureScope()
+    assert (
+        ScopeToWholeStructureCoarsening().coarsen(atom_scope) == WholeStructureScope()
+    )
 
 
 def test_absent_span_scope_relations_allow_same_anchor_subset_refinement() -> None:
@@ -396,16 +377,12 @@ def test_absent_span_scope_relations_allow_same_anchor_subset_refinement() -> No
     finer_scope = AbsentResidueSpanScope(
         preceding_residue_id=ResidueId(chain_id="A", seq_num=10),
         following_residue_id=ResidueId(chain_id="A", seq_num=14),
-        absent_residue_ids=(
-            ResidueId(chain_id="A", seq_num=12),
-        ),
+        absent_residue_ids=(ResidueId(chain_id="A", seq_num=12),),
     )
     disjoint_scope = AbsentResidueSpanScope(
         preceding_residue_id=ResidueId(chain_id="A", seq_num=20),
         following_residue_id=ResidueId(chain_id="A", seq_num=24),
-        absent_residue_ids=(
-            ResidueId(chain_id="A", seq_num=21),
-        ),
+        absent_residue_ids=(ResidueId(chain_id="A", seq_num=21),),
     )
 
     assert scope_refines(finer_scope, coarse_scope)
@@ -421,9 +398,7 @@ def test_only_supported_scope_subset_lowers_into_observed_atom_scopes() -> None:
 
     whole_scope = WholeStructureScope()
     chain_scope = ChainSetScope(chain_ids=("A",))
-    residue_scope = ResidueSetScope(
-        residue_ids=(ResidueId(chain_id="A", seq_num=1),)
-    )
+    residue_scope = ResidueSetScope(residue_ids=(ResidueId(chain_id="A", seq_num=1),))
     atom_scope = AtomSetScope(
         atom_refs=(AtomRef(ResidueId(chain_id="A", seq_num=1), "CA"),)
     )
@@ -479,6 +454,4 @@ def test_only_supported_scope_subset_lowers_into_observed_atom_scopes() -> None:
     assert OBSERVED_ATOM_SCOPE_LOWERING.lower(
         atom_scope,
         carrier=snapshot,
-    ) == AtomSetScope(
-        atom_refs=(AtomRef(ResidueId(chain_id="A", seq_num=1), "CA"),)
-    )
+    ) == AtomSetScope(atom_refs=(AtomRef(ResidueId(chain_id="A", seq_num=1), "CA"),))

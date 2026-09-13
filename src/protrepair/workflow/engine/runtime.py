@@ -65,7 +65,7 @@ class WorkflowRuntimeState:
 
 
 @dataclass(frozen=True, slots=True)
-class _WorkflowBranchEvaluation:
+class WorkflowBranchEvaluation:
     """One runtime branch's goal report and policy-independent quality score."""
 
     requested_goal_report: RequestedGoalReport
@@ -73,7 +73,7 @@ class _WorkflowBranchEvaluation:
 
 
 @dataclass(slots=True)
-class _WorkflowBranchEvaluator:
+class WorkflowBranchEvaluator:
     """Memoize branch evaluations for one immutable workflow runtime."""
 
     requested_goals: RequestedGoalSet
@@ -82,10 +82,10 @@ class _WorkflowBranchEvaluator:
     already_satisfied_requested_goals: tuple[WorkflowGoal, ...]
     _evaluations_by_result_depth: dict[
         tuple[int, int],
-        tuple[TransformationResult, _WorkflowBranchEvaluation],
+        tuple[TransformationResult, WorkflowBranchEvaluation],
     ] = field(default_factory=dict, init=False, repr=False)
 
-    def evaluation(self, state: WorkflowRuntimeState) -> _WorkflowBranchEvaluation:
+    def evaluation(self, state: WorkflowRuntimeState) -> WorkflowBranchEvaluation:
         """Return the cached evaluation for one exact result and search depth."""
 
         search_depth = len(state.planner_memory.adopted_transformers)
@@ -98,9 +98,7 @@ class _WorkflowBranchEvaluator:
             state.result.structure,
             requested_goals=self.requested_goals.goals,
             component_library=self.component_library,
-            already_satisfied_requested_goals=(
-                self.already_satisfied_requested_goals
-            ),
+            already_satisfied_requested_goals=(self.already_satisfied_requested_goals),
         )
         evaluation = self._evaluation_for_report(
             state.result,
@@ -142,10 +140,10 @@ class _WorkflowBranchEvaluator:
         *,
         requested_goal_report: RequestedGoalReport,
         search_depth: int,
-    ) -> _WorkflowBranchEvaluation:
+    ) -> WorkflowBranchEvaluation:
         """Pair one goal report with its policy-independent structure score."""
 
-        return _WorkflowBranchEvaluation(
+        return WorkflowBranchEvaluation(
             requested_goal_report=requested_goal_report,
             quality_score=evaluate_workflow_branch_quality_score(
                 result,
@@ -176,7 +174,7 @@ class _WorkflowBranchEvaluator:
             and not blocked_requested_goal_blockers
         ):
             selection_evaluation = self.evaluation(state)
-            evaluation = _WorkflowBranchEvaluation(
+            evaluation = WorkflowBranchEvaluation(
                 requested_goal_report=selection_evaluation.requested_goal_report,
                 quality_score=replace(
                     selection_evaluation.quality_score,
@@ -264,7 +262,7 @@ def execute_iterative_workflow(
         )
     )
     terminal_branches: list[WorkflowTerminalBranch] = []
-    branch_evaluator: _WorkflowBranchEvaluator | None = None
+    branch_evaluator: WorkflowBranchEvaluator | None = None
     while True:
         if not trace.frontier.active_nodes:
             trace = trace.stop(reason=SpeculativeStopReason.NO_PROPOSALS_AVAILABLE)
@@ -284,7 +282,7 @@ def execute_iterative_workflow(
             ),
         )
         if branch_evaluator is None:
-            branch_evaluator = _WorkflowBranchEvaluator(
+            branch_evaluator = WorkflowBranchEvaluator(
                 requested_goals=requested_goals,
                 component_library=component_library,
                 planning_context=planning_context,
@@ -393,13 +391,13 @@ def execute_iterative_workflow(
                 ),
             )
         adopted_children = list(
-            _adopted_workflow_children(
+            adopted_workflow_children(
                 adopted_children=tuple(adopted_children),
                 branch_evaluator=branch_evaluator,
             )
         )
         adopted_children = list(
-            _workflow_children_with_regression_retention(
+            workflow_children_with_regression_retention(
                 current_branch_state=runtime_state,
                 attempted_transformers=proposal_batch,
                 transform_requests=transform_requests,
@@ -408,7 +406,7 @@ def execute_iterative_workflow(
             )
         )
         adopted_children = list(
-            _workflow_children_within_node_budget(
+            workflow_children_within_node_budget(
                 children=tuple(adopted_children),
                 child_budget=remaining_child_budget,
                 branch_evaluator=branch_evaluator,
@@ -452,7 +450,7 @@ def execute_workflow_transformer(
     )
 
 
-def _adopted_workflow_children(
+def adopted_workflow_children(
     *,
     adopted_children: tuple[
         SpeculativeAdoptedChild[
@@ -463,7 +461,7 @@ def _adopted_workflow_children(
         ],
         ...,
     ],
-    branch_evaluator: _WorkflowBranchEvaluator,
+    branch_evaluator: WorkflowBranchEvaluator,
 ) -> tuple[
     SpeculativeAdoptedChild[
         WorkflowRuntimeState,
@@ -473,7 +471,20 @@ def _adopted_workflow_children(
     ],
     ...,
 ]:
-    """Return non-dominated sibling branches under the goal-first key."""
+    """Keep sibling branches tied at the best goal-first quality key.
+
+    Parameters
+    ----------
+    adopted_children : tuple[SpeculativeAdoptedChild, ...]
+        Candidate workflow branches after transformation.
+    branch_evaluator : WorkflowBranchEvaluator
+        Evaluation cache belonging to this workflow invocation.
+
+    Returns
+    -------
+    tuple[SpeculativeAdoptedChild, ...]
+        Best-quality siblings in their original order.
+    """
 
     if not adopted_children:
         return ()
@@ -496,7 +507,7 @@ def _adopted_workflow_children(
     )
 
 
-def _workflow_children_with_regression_retention(
+def workflow_children_with_regression_retention(
     *,
     current_branch_state: WorkflowRuntimeState,
     attempted_transformers: tuple[WorkflowStateAction, ...],
@@ -510,7 +521,7 @@ def _workflow_children_with_regression_retention(
         ],
         ...,
     ],
-    branch_evaluator: _WorkflowBranchEvaluator,
+    branch_evaluator: WorkflowBranchEvaluator,
 ) -> tuple[
     SpeculativeAdoptedChild[
         WorkflowRuntimeState,
@@ -520,7 +531,27 @@ def _workflow_children_with_regression_retention(
     ],
     ...,
 ]:
-    """Retain the current branch as a no-op child when all children regress."""
+    """Retain the parent when permitted and every child regresses.
+
+    Parameters
+    ----------
+    current_branch_state : WorkflowRuntimeState
+        Parent result and action history.
+    attempted_transformers : tuple[WorkflowStateAction, ...]
+        Actions attempted in this batch.
+    transform_requests : WorkflowTransformRequests
+        Explicit requests governing eligibility for parent retention.
+    retained_children : tuple[SpeculativeAdoptedChild, ...]
+        Candidate children already selected for further search.
+    branch_evaluator : WorkflowBranchEvaluator
+        This invocation's evaluator and quality policy context.
+
+    Returns
+    -------
+    tuple[SpeculativeAdoptedChild, ...]
+        Children, optionally followed by the unchanged parent with updated attempt
+        history. Explicit-request and regression policies still govern retention.
+    """
 
     if not retained_children:
         return ()
@@ -574,7 +605,7 @@ def _workflow_children_with_regression_retention(
     )
 
 
-def _workflow_children_within_node_budget(
+def workflow_children_within_node_budget(
     *,
     children: tuple[
         SpeculativeAdoptedChild[
@@ -586,7 +617,7 @@ def _workflow_children_within_node_budget(
         ...,
     ],
     child_budget: int,
-    branch_evaluator: _WorkflowBranchEvaluator,
+    branch_evaluator: WorkflowBranchEvaluator,
 ) -> tuple[
     SpeculativeAdoptedChild[
         WorkflowRuntimeState,
@@ -596,7 +627,22 @@ def _workflow_children_within_node_budget(
     ],
     ...,
 ]:
-    """Return the best child branches that fit the remaining trace budget."""
+    """Select best-quality children within the existing trace budget.
+
+    Parameters
+    ----------
+    children : tuple[SpeculativeAdoptedChild, ...]
+        Branches eligible for trace insertion.
+    child_budget : int
+        Remaining node capacity; non-positive values retain no children.
+    branch_evaluator : WorkflowBranchEvaluator
+        This invocation's quality evaluator.
+
+    Returns
+    -------
+    tuple[SpeculativeAdoptedChild, ...]
+        All children when they fit, otherwise a stable best-quality prefix.
+    """
 
     if child_budget <= 0 or not children:
         return ()
@@ -665,7 +711,7 @@ def _workflow_child_quality_key(
         TransformationResult,
     ],
     *,
-    branch_evaluator: _WorkflowBranchEvaluator,
+    branch_evaluator: WorkflowBranchEvaluator,
 ) -> tuple[
     SpeculativeAdoptedChild[
         WorkflowRuntimeState,

@@ -1,6 +1,8 @@
 """Hydrogen completion orchestration over primitive hydrogen transforms."""
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
@@ -14,6 +16,9 @@ from protrepair.transformer.completion.hydrogen.protonation import (
     normalize_histidine_protonation_request,
 )
 from protrepair.transformer.completion.policies import OrphanFragmentPolicy
+from protrepair.transformer.completion.terminal.augmentation import (
+    augment_c_terminal_oxt,
+)
 from protrepair.transformer.refinement.directive import RepairLocalRefinementDirective
 from protrepair.transformer.refinement.repair_stage import (
     apply_repair_stage_local_refinement,
@@ -54,11 +59,34 @@ def add_hydrogens(
             reference_structure=reference_structure,
             target_residue_ids=target_residue_ids,
             orphan_fragment_policy=orphan_fragment_policy,
+            augment_c_terminal_oxt=False,
+            # The core uses this only to authorize refinement-gated scaffold
+            # placement. Execution stays below, after coupled H/graph realization.
             local_refinement=local_refinement,
         )
         prepared_structure = heavy_result.structure
         repairs = heavy_result.repairs
         issues = heavy_result.issues
+        preparation = PolymerMicrostatePreparation(
+            PolymerMicrostateContext(prepared_structure), library
+        )
+        terminal_targets = frozenset(
+            residue.residue_id
+            for chain in prepared_structure.constitution.chains
+            for residue in chain.residues
+            if target_residue_ids is None or residue.residue_id in target_residue_ids
+            if any(
+                target.requires_terminal_oxygen()
+                for target in preparation.targets_for(residue.residue_id)
+            )
+        )
+        if terminal_targets:
+            terminal_result = augment_c_terminal_oxt(
+                prepared_structure, library, target_residue_ids=terminal_targets
+            )
+            prepared_structure = terminal_result.structure
+            repairs += terminal_result.repairs
+            issues += terminal_result.issues
 
     placement_result = materialize_hydrogens_core(
         prepared_structure,

@@ -11,6 +11,7 @@ from protrepair.state.domain import (
     TopologyAvailabilityState,
 )
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.local import LocalScopeSpec
 from protrepair.workflow.planning.transformation.legality import (
     LocalTransformationStratum,
@@ -206,6 +207,7 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
                     ),
                 ),
             ),
+            bonded=True,
         ),
         workflow=WorkflowExpectation(
             requests_hydrogen_population=True,
@@ -222,13 +224,13 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
             ),
         ),
     ),
-    "hydrogenated-template-ready": CorrectionStateCase(
-        case_id="hydrogenated-template-ready",
+    "hydrogenated-cropped-boundary-blocked": CorrectionStateCase(
+        case_id="hydrogenated-cropped-boundary-blocked",
         description=(
-            "Hydrogenated Thr local fixture with clash-free coordinates should "
-            "be relaxation-ready."
+            "Hydrogenated Thr is not FF-ready when its included cropped "
+            "neighbors have unresolved backbone chemistry."
         ),
-        coverage_tags=(CorrectionCoverageTag.RELAXATION_READY,),
+        coverage_tags=(CorrectionCoverageTag.CHEMISTRY_PREPARATION,),
         structure_factory=lambda component_library: hydrogenated_refinement_fixture(
             "1bkr-thr101",
             component_library=component_library,
@@ -238,11 +240,8 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
             clash_state=ClashState.NONE,
             hydrogen_applicability_state=HydrogenApplicabilityState.APPLICABLE,
             hydrogen_coverage_state=HydrogenCoverageState.COMPLETE,
-            continuous_relaxation_ready=True,
-            legal_families=(
-                LocalTransformationFamily.CONTINUOUS_LOCAL_RELAXATION,
-            ),
-            legal_strata=(LocalTransformationStratum.RELAXATION,),
+            continuous_relaxation_ready=False,
+            termination_reason=TransformationTerminationReason.NO_LEGAL_TRANSFORMATIONS,
             topology_expectations=(
                 TopologyExpectation(
                     residue_id=ResidueId("A", 101),
@@ -267,90 +266,94 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
             CorrectionCoverageTag.CHEMISTRY_PREPARATION,
             CorrectionCoverageTag.RELAXATION_READY,
         ),
-        structure_factory=lambda _library: with_topology_bonds(
-            build_structure(
-                "topology-coordinate-blocked",
-                (
-                    build_chain(
-                        "A",
+        structure_factory=lambda _library: (
+            add_hydrogens(
+                with_topology_bonds(
+                    build_structure(
+                        "topology-coordinate-blocked",
                         (
-                            build_residue(
-                                "SER",
+                            build_chain(
                                 "A",
-                                1,
                                 (
-                                    "N",
-                                    "CA",
-                                    "C",
-                                    "O",
-                                    "CB",
-                                    "OG",
-                                    "H1",
-                                    "H2",
-                                    "H3",
-                                    "HA",
-                                    "HB1",
-                                    "HB2",
-                                    "HG",
+                                    build_residue(
+                                        "SER",
+                                        "A",
+                                        1,
+                                        (
+                                            "N",
+                                            "CA",
+                                            "C",
+                                            "O",
+                                            "CB",
+                                            "OG",
+                                            "H1",
+                                            "H2",
+                                            "H3",
+                                            "HA",
+                                            "HB1",
+                                            "HB2",
+                                            "HG",
+                                        ),
+                                    ),
                                 ),
                             ),
-                        ),
-                    ),
-                    build_chain(
-                        "B",
-                        (
-                            build_residue(
-                                "SER",
+                            build_chain(
                                 "B",
-                                1,
                                 (
-                                    "N",
-                                    "CA",
-                                    "C",
-                                    "O",
-                                    "CB",
-                                    "OG",
-                                    "H1",
-                                    "H2",
-                                    "H3",
-                                    "HA",
-                                    "HB1",
-                                    "HB2",
-                                    "HG",
+                                    build_residue(
+                                        "SER",
+                                        "B",
+                                        1,
+                                        (
+                                            "N",
+                                            "CA",
+                                            "C",
+                                            "O",
+                                            "CB",
+                                            "OG",
+                                            "H1",
+                                            "H2",
+                                            "H3",
+                                            "HA",
+                                            "HB1",
+                                            "HB2",
+                                            "HG",
+                                        ),
+                                    ),
                                 ),
                             ),
                         ),
                     ),
-                ),
-            ),
-            *residue_bond_specs(
-                ResidueId("A", 1),
-                (
-                    ("N", "CA"),
-                    ("CA", "C"),
-                    ("C", "O"),
-                    ("CA", "CB"),
-                    ("CB", "OG"),
-                    ("CA", "HA"),
-                    ("CB", "HB1"),
-                    ("CB", "HB2"),
-                    ("OG", "HG"),
-                ),
-            ),
-            *residue_bond_specs(
-                ResidueId("B", 1),
-                (
-                    ("N", "CA"),
-                    ("CA", "C"),
-                    ("C", "O"),
-                    ("CA", "CB"),
-                    ("CB", "OG"),
-                    ("CA", "HA"),
-                    ("CB", "HB1"),
-                    ("CB", "HB2"),
-                    ("OG", "HG"),
-                ),
-            ),
+                    *residue_bond_specs(
+                        ResidueId("A", 1),
+                        (
+                            ("N", "CA"),
+                            ("CA", "C"),
+                            ("C", "O"),
+                            ("CA", "CB"),
+                            ("CB", "OG"),
+                            ("CA", "HA"),
+                            ("CB", "HB1"),
+                            ("CB", "HB2"),
+                            ("OG", "HG"),
+                        ),
+                    ),
+                    *residue_bond_specs(
+                        ResidueId("B", 1),
+                        (
+                            ("N", "CA"),
+                            ("CA", "C"),
+                            ("C", "O"),
+                            ("CA", "CB"),
+                            ("CB", "OG"),
+                            ("CA", "HA"),
+                            ("CB", "HB1"),
+                            ("CB", "HB2"),
+                            ("OG", "HG"),
+                        ),
+                    ),
+                )
+            ).structure
         ),
         local=LocalExpectation(
             scope_spec=LocalScopeSpec.from_residues(
@@ -418,9 +421,7 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
             legal_families=(
                 LocalTransformationFamily.DISCRETE_PRE_REFINEMENT_CORRECTION,
             ),
-            legal_strata=(
-                LocalTransformationStratum.PREPARATION,
-            ),
+            legal_strata=(LocalTransformationStratum.PREPARATION,),
         ),
     ),
     "candidate-construction-branched-sidechain": CorrectionStateCase(
@@ -433,17 +434,11 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
         ),
         local=LocalExpectation(
             scope_spec=LocalScopeSpec.from_residues((ResidueId("A", 253),)),
-            continuous_relaxation_ready=True,
+            continuous_relaxation_ready=False,
             discrete_seeding_applicable=True,
             validate_discrete_seeding_detector=True,
-            legal_families=(
-                LocalTransformationFamily.BRANCHED_SIDECHAIN_SEED,
-                LocalTransformationFamily.CONTINUOUS_LOCAL_RELAXATION,
-            ),
-            legal_strata=(
-                LocalTransformationStratum.CANDIDATE_CONSTRUCTION,
-                LocalTransformationStratum.RELAXATION,
-            ),
+            legal_families=(LocalTransformationFamily.BRANCHED_SIDECHAIN_SEED,),
+            legal_strata=(LocalTransformationStratum.CANDIDATE_CONSTRUCTION,),
         ),
     ),
 }

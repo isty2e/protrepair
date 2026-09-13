@@ -1,5 +1,7 @@
 """Canonical test-support builders over constitution and geometry facets."""
 
+from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry.component.topology import template_resolved_topology_bonds
 from protrepair.geometry import Vec3
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import (
@@ -20,7 +22,11 @@ from protrepair.structure.provenance import (
     StructureIngress,
     StructureProvenance,
 )
-from protrepair.structure.topology import AtomTopology, StructureTopology
+from protrepair.structure.topology import (
+    AtomTopology,
+    StructureTopology,
+    sequence_inferred_polymer_topology_bonds,
+)
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
 CanonicalAtomPayload = tuple[AtomSite, AtomGeometry, int | None]
@@ -34,6 +40,41 @@ CanonicalChainPayload = tuple[
     tuple[tuple[ResidueId, ResidueGeometry], ...],
     tuple[tuple[ResidueId, tuple[tuple[str, int | None], ...]], ...],
 ]
+
+
+def build_bonded_structure(
+    *,
+    chains: tuple[CanonicalChainPayload, ...],
+    ligands: tuple[CanonicalResiduePayload, ...] = (),
+    source_format: FileFormat,
+    source_name: str | None = None,
+    polymer_blueprint: PolymerBlueprint | None = None,
+) -> ProteinStructure:
+    """Build a fixture with explicit template/sequence topology, not atom-only state."""
+    structure = build_structure(
+        chains=chains,
+        ligands=ligands,
+        source_format=source_format,
+        source_name=source_name,
+        polymer_blueprint=polymer_blueprint,
+    )
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=(
+                *template_resolved_topology_bonds(
+                    structure.constitution,
+                    component_library=build_default_component_library(),
+                ),
+                *sequence_inferred_polymer_topology_bonds(structure.constitution),
+            ),
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
 
 
 def atom_payload(
@@ -77,8 +118,7 @@ def residue_payload(
     )
     residue_geometry = ResidueGeometry(
         atoms_by_name={
-            atom_site.name: atom_geometry
-            for atom_site, atom_geometry, _ in atoms
+            atom_site.name: atom_geometry for atom_site, atom_geometry, _ in atoms
         },
     )
     formal_charge_by_atom_name = tuple(

@@ -2,6 +2,7 @@
 
 import os
 import secrets
+from itertools import groupby
 from os import PathLike
 from pathlib import Path
 
@@ -132,7 +133,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             structure,
             bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
         )
-        pdb_text = _restore_pdb_isotope_element_symbols(
+        pdb_text = _restore_pdb_atom_attributes(
             raw_structure.make_pdb_string(),
             structure,
         )
@@ -142,19 +143,46 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         )
 
     if file_format is FileFormat.MMCIF:
+        bonds = gemmi_connection_topology_bonds_for_egress(
+            structure,
+            include_model_resolved=True,
+        )
         add_topology_connections_to_gemmi_structure(
             raw_structure,
             structure,
-            bonds=gemmi_connection_topology_bonds_for_egress(
-                structure,
-                include_model_resolved=True,
-            ),
+            bonds=bonds,
         )
         mmcif_document = raw_structure.make_mmcif_document()
-        _restore_mmcif_isotope_element_symbols(mmcif_document, structure)
+        _set_mmcif_connection_orders(mmcif_document, bonds)
+        _restore_mmcif_atom_attributes(mmcif_document, structure)
         return mmcif_document.as_string()
 
     raise UnsupportedFileFormatError(f"unsupported file format: {file_format}")
+
+
+def _set_mmcif_connection_orders(
+    document: gemmi.cif.Document,
+    bonds: tuple[TopologyBond, ...],
+) -> None:
+    """Project canonical orders into the rows emitted in Gemmi connection order."""
+    if not bonds:
+        return
+    table = document.sole_block().find_mmcif_category("_struct_conn.")
+    table.ensure_loop()
+    loop = table.loop
+    if loop is None:
+        raise ModelInvariantError("Gemmi did not emit a connection loop")
+    loop.add_columns(["_struct_conn.pdbx_value_order"], "?")
+    values = document.sole_block().find_values("_struct_conn.pdbx_value_order")
+    tokens = {1: "sing", 2: "doub", 3: "trip", 4: "quad", None: "?"}
+    if len(values) != len(bonds):
+        raise ModelInvariantError(
+            "Gemmi connection rows do not match topology projection"
+        )
+    for index, bond in enumerate(bonds):
+        if bond.order not in tokens:
+            raise ModelInvariantError(f"mmCIF cannot encode bond order {bond.order}")
+        values[index] = tokens[bond.order]
 
 
 def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> str:
@@ -166,21 +194,24 @@ def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> st
         structure,
         bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
     )
-    return _restore_pdb_isotope_element_symbols(
+    return _restore_pdb_atom_attributes(
         raw_structure.make_pdb_string(),
         structure,
     )
 
 
-def _restore_pdb_isotope_element_symbols(
+def _restore_pdb_atom_attributes(
     pdb_text: str,
     structure: ProteinStructure,
 ) -> str:
-    """Restore isotope aliases that Gemmi cannot represent as elements."""
+    """Restore isotope symbols and explicit zeros collapsed by Gemmi."""
 
     if not any(
         atom_site.element_identity.is_isotope_alias()
         for atom_site in structure.constitution.atom_slots
+    ) and not any(
+        atom is not None and atom.formal_charge == 0
+        for atom in structure.topology.atom_topologies
     ):
         return pdb_text
 
@@ -202,31 +233,38 @@ def _restore_pdb_isotope_element_symbols(
         strict=True,
     ):
         atom_site = structure.constitution.atom_site_at(AtomIndex(atom_index_value))
-        if not atom_site.element_identity.is_isotope_alias():
+        formal_charge = structure.topology.formal_charge(AtomIndex(atom_index_value))
+        if not atom_site.element_identity.is_isotope_alias() and formal_charge != 0:
             continue
 
         line = lines[line_index]
         line_ending = line[len(line.rstrip("\r\n")) :]
-        record = line.removesuffix(line_ending).ljust(78)
-        lines[line_index] = (
-            record[:76]
-            + f"{atom_site.element_identity.source_symbol:>2}"
-            + record[78:]
-            + line_ending
-        )
+        record = line.removesuffix(line_ending).ljust(80)
+        if atom_site.element_identity.is_isotope_alias():
+            record = (
+                record[:76]
+                + f"{atom_site.element_identity.source_symbol:>2}"
+                + record[78:]
+            )
+        if formal_charge == 0:
+            record = record[:78] + "0+" + record[80:]
+        lines[line_index] = record + line_ending
 
     return "".join(lines)
 
 
-def _restore_mmcif_isotope_element_symbols(
+def _restore_mmcif_atom_attributes(
     document: gemmi.cif.Document,
     structure: ProteinStructure,
 ) -> None:
-    """Restore source isotope aliases in one generated mmCIF document."""
+    """Restore canonical isotope symbols and explicit neutral charge values."""
 
     if not any(
         atom_site.element_identity.is_isotope_alias()
         for atom_site in structure.constitution.atom_slots
+    ) and not any(
+        atom is not None and atom.formal_charge == 0
+        for atom in structure.topology.atom_topologies
     ):
         return
 
@@ -236,6 +274,11 @@ def _restore_mmcif_isotope_element_symbols(
 
     block = document.sole_block()
     atom_site_type_symbols = block.find_loop("_atom_site.type_symbol")
+    atom_charges = block.find_loop("_atom_site.pdbx_formal_charge")
+    if len(atom_charges) != len(atom_index_values):
+        raise ModelInvariantError(
+            "mmCIF charge projection requires one row per atom slot"
+        )
     if len(atom_site_type_symbols) != len(atom_index_values):
         raise ModelInvariantError(
             "mmCIF isotope restoration requires one type symbol per atom slot"
@@ -244,9 +287,9 @@ def _restore_mmcif_isotope_element_symbols(
     for row_index, atom_index_value in enumerate(atom_index_values):
         atom_site = structure.constitution.atom_site_at(AtomIndex(atom_index_value))
         if atom_site.element_identity.is_isotope_alias():
-            atom_site_type_symbols[row_index] = (
-                atom_site.element_identity.source_symbol
-            )
+            atom_site_type_symbols[row_index] = atom_site.element_identity.source_symbol
+        if structure.topology.formal_charge(AtomIndex(atom_index_value)) == 0:
+            atom_charges[row_index] = "0"
 
     atom_type_symbols = block.find_loop("_atom_type.symbol")
     if not atom_type_symbols:
@@ -301,9 +344,19 @@ def add_topology_connections_to_gemmi_structure(
 ) -> None:
     """Add topology bonds as gemmi connection records."""
 
+    used_names = {connection.name for connection in raw_structure.connections}
+    next_suffix_by_name: dict[str, int] = {}
     for bond in bonds:
         raw_connection = gemmi.Connection()
-        raw_connection.name = source_connection_name(bond)
+        base_name = source_connection_name(bond)
+        name = base_name
+        suffix = next_suffix_by_name.get(base_name, 1)
+        while name in used_names:
+            name = f"{base_name}_{suffix}"
+            suffix += 1
+        next_suffix_by_name[base_name] = suffix
+        used_names.add(name)
+        raw_connection.name = name
         raw_connection.link_id = source_connection_link_id(bond)
         raw_connection.type = gemmi_connection_type(bond.relationship_type)
         if (
@@ -478,7 +531,7 @@ def append_pdb_conect_records_from_topology(
     """Append PDB CONECT records projected from canonical topology."""
 
     serial_by_atom_ref = pdb_atom_serial_by_atom_ref(pdb_text)
-    neighbor_serials_by_source: dict[int, set[int]] = {}
+    neighbor_serials_by_source: dict[int, list[int]] = {}
     for bond in pdb_conect_topology_bonds_for_egress(structure):
         atom_ref_1 = structure.constitution.atom_ref_at(bond.atom_index_1)
         atom_ref_2 = structure.constitution.atom_ref_at(bond.atom_index_2)
@@ -487,8 +540,17 @@ def append_pdb_conect_records_from_topology(
         if serial_1 is None or serial_2 is None:
             continue
 
-        neighbor_serials_by_source.setdefault(serial_1, set()).add(serial_2)
-        neighbor_serials_by_source.setdefault(serial_2, set()).add(serial_1)
+        multiplicity = 1 if bond.order is None else bond.order
+        if multiplicity > 4:
+            raise ModelInvariantError(
+                f"PDB CONECT cannot encode bond order {multiplicity}"
+            )
+        neighbor_serials_by_source.setdefault(serial_1, []).extend(
+            [serial_2] * multiplicity
+        )
+        neighbor_serials_by_source.setdefault(serial_2, []).extend(
+            [serial_1] * multiplicity
+        )
 
     conect_lines = tuple(
         line
@@ -624,17 +686,21 @@ def format_pdb_conect_lines(
 ) -> tuple[str, ...]:
     """Return one or more fixed-width PDB CONECT records for one source atom."""
 
+    # Keep multiplicities together so readers need not recover an order split
+    # over continuation rows; identical repeated rows remain redundant evidence.
+    chunks: list[list[int]] = [[]]
+    for neighbor, occurrences in groupby(sorted(neighbor_serials)):
+        count = sum(1 for _ in occurrences)
+        if count > 4:
+            raise ModelInvariantError("PDB CONECT multiplicity exceeds quadruple order")
+        if len(chunks[-1]) + count > 4:
+            chunks.append([])
+        chunks[-1].extend([neighbor] * count)
     return tuple(
-        f"CONECT{source_serial:>5}"
-        + "".join(f"{neighbor_serial:>5}" for neighbor_serial in neighbor_chunk)
-        for neighbor_chunk in _chunks(neighbor_serials, size=4)
+        f"CONECT{source_serial:>5}" + "".join(f"{neighbor:>5}" for neighbor in chunk)
+        for chunk in chunks
+        if chunk
     )
-
-
-def _chunks(values: tuple[int, ...], *, size: int) -> tuple[tuple[int, ...], ...]:
-    """Return fixed-size chunks of one tuple."""
-
-    return tuple(values[index : index + size] for index in range(0, len(values), size))
 
 
 def build_gemmi_residue(

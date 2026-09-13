@@ -1,22 +1,45 @@
 """Boundary-normalized source connection contracts."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from protrepair.errors import ModelInvariantError
 from protrepair.io.source_identity import SourceAtomIdentity
+from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
+    BondProvenance,
     BondRelationshipType,
     SourceBondMetadata,
     SourceBondRecordType,
+    TopologyBond,
+    is_covalent_like_relationship,
 )
 
 
 @dataclass(frozen=True, slots=True)
 class SourceConnection:
-    """One source-declared connection before canonical topology lowering."""
+    """One source-declared connection before canonical topology lowering.
+
+    ``source_metadata.reported_order=None`` supplies connectivity without an order.
+    In particular, a single CONECT neighbor occurrence is not an assertion
+    that the chemical bond is single.
+
+    Parameters
+    ----------
+    endpoint_1, endpoint_2 : SourceAtomIdentity
+        Source endpoints, including component and alternate-location identity.
+    source_metadata : SourceBondMetadata
+        Source relationship and order, before component or sequence resolution.
+
+    Raises
+    ------
+    TypeError
+        A field has a noncanonical type.
+    ValueError
+        Endpoints identify the same atom.
+    """
 
     endpoint_1: SourceAtomIdentity
     endpoint_2: SourceAtomIdentity
-    relationship_type: BondRelationshipType
     source_metadata: SourceBondMetadata
 
     def __post_init__(self) -> None:
@@ -29,10 +52,6 @@ class SourceConnection:
             )
         if self.endpoint_1.atom_ref == self.endpoint_2.atom_ref:
             raise ValueError("source connections require two distinct atoms")
-        if not isinstance(self.relationship_type, BondRelationshipType):
-            raise TypeError(
-                "source connection relationship_type must be a BondRelationshipType"
-            )
         if not isinstance(self.source_metadata, SourceBondMetadata):
             raise TypeError("source connection metadata must be SourceBondMetadata")
 
@@ -56,7 +75,7 @@ class SourceConnection:
         residue_id_2 = self.endpoint_2.atom_ref.residue_id
         return bool(
             self.source_metadata.record_type is not SourceBondRecordType.PDB_CONECT
-            and self.relationship_type
+            and self.source_metadata.reported_relationship_type
             in {
                 BondRelationshipType.COVALENT,
                 BondRelationshipType.UNKNOWN,
@@ -76,6 +95,127 @@ class SourceConnection:
         return self.source_metadata.record_type is not SourceBondRecordType.PDB_SSBOND
 
     def is_fallback_record(self) -> bool:
-        """Return whether this record fills only an otherwise unclaimed edge."""
+        """Return whether typed records take precedence over this record's type."""
 
         return self.source_metadata.record_type is SourceBondRecordType.PDB_CONECT
+
+    def merge(self, other: "SourceConnection") -> "SourceConnection":
+        """Combine declarations for the same surviving atom pair.
+
+        Parameters
+        ----------
+        other : SourceConnection
+            A declaration whose endpoints survived canonical selection.
+
+        Returns
+        -------
+        SourceConnection
+            Typed metadata with any compatible supplementary order evidence.
+
+        Raises
+        ------
+        ModelInvariantError
+            The endpoints, explicit orders, or typed declarations conflict.
+        """
+        if {self.endpoint_1.atom_ref, self.endpoint_2.atom_ref} != {
+            other.endpoint_1.atom_ref,
+            other.endpoint_2.atom_ref,
+        }:
+            raise ModelInvariantError(
+                "cannot merge source connections for different atoms"
+            )
+        order = self.source_metadata.reported_order
+        other_order = other.source_metadata.reported_order
+        if order is not None and other_order is not None and order != other_order:
+            raise ModelInvariantError(
+                "conflicting source bond orders for one atom pair"
+            )
+
+        if not self.is_fallback_record() and not other.is_fallback_record():
+            if replace(
+                self,
+                source_metadata=replace(self.source_metadata, reported_order=None),
+            ) != replace(
+                other,
+                source_metadata=replace(other.source_metadata, reported_order=None),
+            ):
+                raise ModelInvariantError(
+                    "conflicting bonds in typed source connections"
+                )
+        preferred = other if self.is_fallback_record() else self
+        return replace(
+            preferred,
+            source_metadata=replace(
+                preferred.source_metadata,
+                reported_order=order if order is not None else other_order,
+            ),
+        )
+
+    def to_topology_bond(
+        self,
+        atom_index_1: AtomIndex,
+        atom_index_2: AtomIndex,
+        *,
+        expected_bond: TopologyBond | None,
+    ) -> TopologyBond:
+        """Resolve absent attributes without replacing explicit source evidence.
+
+        Parameters
+        ----------
+        atom_index_1, atom_index_2 : AtomIndex
+            Surviving canonical endpoints corresponding to this connection.
+        expected_bond : TopologyBond or None
+            Component or sequence chemistry for the same endpoint pair.
+
+        Returns
+        -------
+        TopologyBond
+            Source-backed connectivity with a resolved or explicitly unknown order.
+
+        Raises
+        ------
+        ModelInvariantError
+            The expected endpoints differ, or a disulfide carries a multiple order.
+        """
+        if expected_bond is not None and set(expected_bond.endpoint_pair()) != {
+            atom_index_1,
+            atom_index_2,
+        }:
+            raise ModelInvariantError(
+                "expected chemistry refers to a different atom pair"
+            )
+        relationship = self.source_metadata.reported_relationship_type
+        reported_order = self.source_metadata.reported_order
+        order = reported_order
+        aromatic = False
+        compatible = (
+            expected_bond is not None
+            and is_covalent_like_relationship(expected_bond)
+            and relationship
+            in {
+                BondRelationshipType.UNKNOWN,
+                BondRelationshipType.COVALENT,
+                BondRelationshipType.DISULFIDE,
+            }
+        )
+        if compatible and expected_bond is not None:
+            if relationship is BondRelationshipType.UNKNOWN:
+                relationship = expected_bond.relationship_type
+            if order is None:
+                order = expected_bond.order
+            aromatic = expected_bond.aromatic and order in {1, 2}
+        if relationship is BondRelationshipType.DISULFIDE:
+            if reported_order not in {None, 1}:
+                raise ModelInvariantError(
+                    "disulfide connectivity conflicts with a multiple bond order"
+                )
+            order = 1
+        return TopologyBond(
+            atom_index_1,
+            atom_index_2,
+            order=order,
+            aromatic=aromatic,
+            relationship_type=relationship,
+            provenance=BondProvenance.SOURCE_EXPLICIT,
+            source_metadata=self.source_metadata,
+        )

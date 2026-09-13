@@ -5,9 +5,11 @@ from typing import cast
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
-    build_structure,
     chain_payload,
     residue_payload,
+)
+from tests.support.canonical_builders import (
+    build_bonded_structure as build_structure,
 )
 
 import protrepair.transformer.refinement.local_pipeline.candidates as local_candidates
@@ -262,8 +264,7 @@ def test_local_refinement_stage_respects_strict_passive_context_policy(
     assert len(fallback_issues) == 1
     assert fallback_issues[0].residue_id == ligand_residue_id
     assert not any(
-        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
-        for issue in result.issues
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
     )
 
 
@@ -783,9 +784,9 @@ def build_backbone_structure(
     )
 
 
-def _passive_context_retained_non_polymer_structure() -> (
-    tuple[ProteinStructure, ResidueId, ResidueId]
-):
+def _passive_context_retained_non_polymer_structure() -> tuple[
+    ProteinStructure, ResidueId, ResidueId
+]:
     """Return a local-refinement fixture with one passive template-less ligand."""
 
     residue_id = ResidueId(chain_id="A", seq_num=1)

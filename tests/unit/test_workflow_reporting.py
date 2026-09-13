@@ -97,6 +97,7 @@ def test_requested_goal_report_uses_coverage_facts_only_for_heavy_requests(
     report = evaluate_requested_goal_report(
         structure,
         requested_goals=(requested_state,),
+        already_satisfied_requested_goals=(requested_state,),
     )
     outcome = report.outcome_for(requested_state)
     assert outcome is not None
@@ -198,9 +199,7 @@ def test_process_structure_reports_blocking_phase_for_matrix_blocked_scenario() 
     outcome = result.requested_goal_report.outcome_for(requested_state)
     assert outcome is not None
     assert outcome.status is RequestedGoalStatus.BLOCKED
-    assert outcome.blocking_phases == (
-        WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION,
-    )
+    assert outcome.blocking_phases == (WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION,)
 
     assert result.terminal_branch_report is not None
     coverage_phase = (
@@ -312,8 +311,10 @@ def test_process_structure_defers_intrinsic_phase_report_for_hydrogen_complete_r
         )
 
 
+@pytest.mark.parametrize("hydrogenate", (False, True))
 def test_terminal_branch_phase_report_surfaces_parser_incompatibility_as_intrinsic(
     monkeypatch: pytest.MonkeyPatch,
+    hydrogenate: bool,
 ) -> None:
     """Parser compatibility is a geometry/reporting fact, not chemistry readiness."""
 
@@ -338,10 +339,14 @@ def test_terminal_branch_phase_report_surfaces_parser_incompatibility_as_intrins
         source_format=FileFormat.PDB,
         source_name="workflow-reporting-parser-compatibility",
     )
-    hydrogenated_structure = add_hydrogens(
-        structure,
-        component_library=build_default_component_library(),
-    ).structure
+    hydrogenated_structure = (
+        add_hydrogens(
+            structure,
+            component_library=build_default_component_library(),
+        ).structure
+        if hydrogenate
+        else structure
+    )
 
     def _parser_incompatible(
         current_structure: ProteinStructure,
@@ -400,6 +405,9 @@ def test_terminal_branch_phase_report_surfaces_parser_incompatibility_as_intrins
     result = process_structure(hydrogenated_structure)
 
     assert result.terminal_branch_report is not None
+    score = result.terminal_branch_report.preferred_outcome().branch_quality_score
+    assert score.parser_incompatible == 1
+    assert score.parser_extra_heavy_bond_count == 1
     intrinsic_phase = (
         result.terminal_branch_report.preferred_outcome().phase_report.outcome_for(
             WorkflowPlanningPhase.INTRINSIC_GEOMETRY_CORRECTION

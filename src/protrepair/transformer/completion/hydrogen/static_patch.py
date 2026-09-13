@@ -14,7 +14,6 @@ from protrepair.geometry import (
 from protrepair.transformer.completion.hydrogen.domain import HydrogenResidueSite
 from protrepair.transformer.completion.hydrogen.geometry import (
     cysteine_thiol,
-    n_terminal_hydrogens,
     serine_hydroxyl,
     threonine_hydroxyl,
     tyrosine_hydroxyl,
@@ -32,8 +31,36 @@ def generate_hydrogen_patch(
     site: HydrogenResidueSite,
     patch: OrderedAtomPatch,
     semantics: HydrogenSemantics,
+    selected_hydrogen_names: frozenset[str] | None = None,
 ) -> OrderedAtomPatch:
-    """Return the hydrogenated patch for one residue."""
+    """Place fixed-template H without selecting polymer microstates.
+
+    Parameters
+    ----------
+    site : HydrogenResidueSite
+        Residue and environment used by rotatable H placement.
+    patch : OrderedAtomPatch
+        Heavy coordinates to extend.
+    semantics : HydrogenSemantics
+        Static placement program or rotatable-group semantics.
+    selected_hydrogen_names : frozenset[str] or None
+        Static-program H names to evaluate; None evaluates the whole program.
+        Rotatable-group placement uses its own fixed inventory.
+
+    Returns
+    -------
+    OrderedAtomPatch
+        Extended coordinates; chemistry and topology are applied by the caller.
+
+    Raises
+    ------
+    ValueError
+        Static semantics have no placement plan.
+    KeyError
+        A selected operation lacks a required anchor.
+    GeometryPlacementError
+        Required geometry is degenerate or non-finite.
+    """
 
     sidechain_atom_names: list[str]
     sidechain_coordinates: CoordinateBlock
@@ -63,6 +90,7 @@ def generate_hydrogen_patch(
             patch=patch,
             semantics=semantics,
             include_backbone_hydrogen=site.includes_backbone_hydrogen(),
+            selected_hydrogen_names=selected_hydrogen_names,
         )
 
     atom_names = list(deepcopy(patch.atom_names))
@@ -81,8 +109,36 @@ def standard_sidechain_hydrogens(
     patch: OrderedAtomPatch,
     semantics: HydrogenSemantics,
     include_backbone_hydrogen: bool,
+    selected_hydrogen_names: frozenset[str] | None = None,
 ) -> tuple[list[str], CoordinateBlock]:
-    """Return ordered sidechain hydrogens for a static residue plan."""
+    """Evaluate selected operations in a static H placement program.
+
+    Parameters
+    ----------
+    patch : OrderedAtomPatch
+        Heavy coordinates used as anchors.
+    semantics : HydrogenSemantics
+        Component placement program.
+    include_backbone_hydrogen : bool
+        Select the program variant containing backbone H.
+    selected_hydrogen_names : frozenset[str] or None
+        Evaluate operations producing at least one selected name. None selects all;
+        a selected multi-output operation still returns all its outputs.
+
+    Returns
+    -------
+    tuple[list[str], CoordinateBlock]
+        Generated names and matching coordinates in program order.
+
+    Raises
+    ------
+    ValueError
+        No static program is available.
+    KeyError
+        A selected operation lacks an anchor.
+    GeometryPlacementError
+        Selected anchor geometry is invalid.
+    """
 
     plan = semantics.static_plan(include_backbone_hydrogen=include_backbone_hydrogen)
     if plan is None:
@@ -92,6 +148,11 @@ def standard_sidechain_hydrogens(
     sidechain_atom_names: list[str] = []
     sidechain_coordinates: CoordinateBlock = []
     for output_names, method_name, arguments in plan:
+        if (
+            selected_hydrogen_names is not None
+            and not selected_hydrogen_names.intersection(output_names)
+        ):
+            continue
         coordinates = HydrogenSemantics.evaluate_operation(
             method_name,
             arguments,
@@ -303,31 +364,6 @@ def tyrosine_sidechain_hydrogens(
         ),
         optimized,
     ]
-
-
-def histidine_delta_hydrogen(patch: OrderedAtomPatch) -> Vec3:
-    """Return the additional ND1 hydrogen used for protonated histidines."""
-
-    atom_coordinates = patch.position_map()
-    return PlanarCenter(
-        atom_coordinates["CE1"],
-        atom_coordinates["ND1"],
-        atom_coordinates["CG"],
-    ).projected(
-        bond_length=1.01,
-    )
-
-
-def n_terminal_hydrogen_coordinates(
-    patch: OrderedAtomPatch,
-    component_id: str,
-) -> tuple[Vec3, ...]:
-    """Return the ordered N-terminal hydrogens for the first residue in a chain."""
-
-    return n_terminal_hydrogens(
-        component_id,
-        patch.position_map(),
-    )
 
 
 def evaluate_plan(

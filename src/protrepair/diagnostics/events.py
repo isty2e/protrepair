@@ -36,30 +36,24 @@ class EventScope:
         raw_residue_ids = tuple(self.residue_ids)
         for residue_id in raw_residue_ids:
             if not isinstance(residue_id, ResidueId):
-                raise TypeError(
-                    "event scope residue_ids must contain ResidueId values"
-                )
+                raise TypeError("event scope residue_ids must contain ResidueId values")
 
         residue_ids = tuple(dict.fromkeys(raw_residue_ids))
         if self.kind is EventScopeKind.STRUCTURE:
             if residue_ids:
-                raise ValueError(
-                    "structure event scope must not carry residue ids"
-                )
+                raise ValueError("structure event scope must not carry residue ids")
         elif self.kind is EventScopeKind.RESIDUE:
             if len(residue_ids) != 1:
-                raise ValueError(
-                    "residue event scope requires exactly one residue id"
-                )
+                raise ValueError("residue event scope requires exactly one residue id")
         elif self.kind is EventScopeKind.RESIDUE_PAIR:
             if len(residue_ids) != 2:
                 raise ValueError(
                     "residue-pair event scope requires exactly two residue ids"
                 )
         elif self.kind is EventScopeKind.RESIDUE_SPAN:
-            if len(residue_ids) < 2:
+            if not residue_ids:
                 raise ValueError(
-                    "residue-span event scope requires at least two residue ids"
+                    "residue-span event scope requires at least one residue id"
                 )
         elif self.kind is EventScopeKind.RESIDUE_SET:
             if not residue_ids:
@@ -173,9 +167,7 @@ class RepairEvent:
         residue_impacts = tuple(self.residue_impacts)
         for residue_impact in residue_impacts:
             if not isinstance(residue_impact, ResidueAtomImpact):
-                raise TypeError(
-                    "repair events require ResidueAtomImpact values"
-                )
+                raise TypeError("repair events require ResidueAtomImpact values")
 
         provenance_origins = tuple(dict.fromkeys(self.provenance_origins))
         if self.scope.kind is not EventScopeKind.STRUCTURE:
@@ -183,8 +175,7 @@ class RepairEvent:
             for residue_impact in residue_impacts:
                 if residue_impact.residue_id not in scope_residue_ids:
                     raise ValueError(
-                        "repair event residue impacts must fall inside the event "
-                        "scope"
+                        "repair event residue impacts must fall inside the event scope"
                     )
         for provenance_origin in provenance_origins:
             if not isinstance(provenance_origin, StructureProvenanceOrigin):
@@ -303,9 +294,7 @@ class ValidationIssue:
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, ValidationIssueKind):
-            raise TypeError(
-                "validation issues require a ValidationIssueKind value"
-            )
+            raise TypeError("validation issues require a ValidationIssueKind value")
         if not isinstance(self.severity, IssueSeverity):
             raise TypeError("validation issues require an IssueSeverity value")
         if not isinstance(self.scope, EventScope):
@@ -313,9 +302,7 @@ class ValidationIssue:
         residue_impacts = tuple(self.residue_impacts)
         for residue_impact in residue_impacts:
             if not isinstance(residue_impact, ResidueAtomImpact):
-                raise TypeError(
-                    "validation issues require ResidueAtomImpact values"
-                )
+                raise TypeError("validation issues require ResidueAtomImpact values")
         if self.scope.kind is not EventScopeKind.STRUCTURE:
             scope_residue_ids = set(self.scope.residue_ids)
             for residue_impact in residue_impacts:

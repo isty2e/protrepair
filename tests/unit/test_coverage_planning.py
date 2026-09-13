@@ -2,9 +2,11 @@
 
 from tests.support.canonical_builders import (
     atom_payload,
-    build_structure,
     chain_payload,
     residue_payload,
+)
+from tests.support.canonical_builders import (
+    build_bonded_structure as build_structure,
 )
 from tests.support.request_builders import (
     transform_requests,
@@ -12,7 +14,7 @@ from tests.support.request_builders import (
 )
 
 from protrepair.geometry import Vec3
-from protrepair.relation.blueprint import StructureBlueprintCoverageGap
+from protrepair.scope import AbsentResidueSpanScope
 from protrepair.state import HydrogenCoverageState
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.polymer_blueprint import (
@@ -21,6 +23,9 @@ from protrepair.structure.polymer_blueprint import (
     PolymerResidueSlot,
 )
 from protrepair.structure.provenance import FileFormat
+from protrepair.transformer.completion.terminal.augmentation import (
+    augment_c_terminal_oxt,
+)
 from protrepair.workflow.actions.external_span_reconstruction import (
     ExternalSpanReconstructionTransformer,
 )
@@ -98,10 +103,8 @@ def test_plan_workflow_actions_emits_atom_completion_after_span_adoption() -> No
 
     structure = _gap_and_sidechain_gap_structure()
     reconstruction_spec = _internal_gap_reconstruction_spec()
-    adopted_span_transformer = (
-        ExternalSpanReconstructionTransformer.from_reconstruction_spec(
-            reconstruction_spec
-        )
+    adopted_span_transformer = ExternalSpanReconstructionTransformer(
+        reconstruction=reconstruction_spec
     )
 
     outcome = plan_workflow_actions(
@@ -121,8 +124,7 @@ def test_plan_workflow_actions_emits_atom_completion_after_span_adoption() -> No
     assert isinstance(outcome.transformers[0], HeavyAtomCompletionTransformer)
 
 
-def test_plan_workflow_actions_keeps_existing_residue_gaps_in_atom_completion_phase(
-) -> None:
+def test_plan_workflow_actions_keeps_residue_gaps_in_atom_completion_phase() -> None:
     """Existing-residue atom gaps should not require donor-backed span machinery."""
 
     structure = _backbone_gap_structure()
@@ -137,8 +139,6 @@ def test_plan_workflow_actions_keeps_existing_residue_gaps_in_atom_completion_ph
 
     assert len(outcome.transformers) == 1
     assert isinstance(outcome.transformers[0], HeavyAtomCompletionTransformer)
-
-
 
 
 def test_plan_workflow_actions_treats_terminal_gap_opt_in_as_coverage_span_phase() -> (
@@ -179,8 +179,9 @@ def test_plan_workflow_actions_reaches_hydrogen_after_coverage_phases() -> None:
     assert len(first_outcome.transformers) == 1
     assert isinstance(first_outcome.transformers[0], HeavyAtomCompletionTransformer)
 
+    terminal = augment_c_terminal_oxt(_heavy_complete_structure()).structure
     second_outcome = plan_workflow_actions(
-        _heavy_complete_structure(),
+        terminal,
         requested_goals=RequestedGoalSet(
             whole_structure_requested_goals(HydrogenCoverageState.COMPLETE)
         ),
@@ -332,6 +333,11 @@ def _internal_gap_reconstruction_spec() -> ExternalSpanReconstructionSpec:
                 "X",
                 (
                     residue_payload(
+                        component_id="ALA",
+                        residue_id=ResidueId("X", 1),
+                        atoms=_atoms("N", "CA", "C", "O", "CB"),
+                    ),
+                    residue_payload(
                         component_id="ASP",
                         residue_id=ResidueId("X", 2),
                         atoms=_atoms("N", "CA", "C", "O", "CB"),
@@ -341,6 +347,11 @@ def _internal_gap_reconstruction_spec() -> ExternalSpanReconstructionSpec:
                         residue_id=ResidueId("X", 3),
                         atoms=_atoms("N", "CA", "C", "O", "CB", "CG"),
                     ),
+                    residue_payload(
+                        component_id="GLY",
+                        residue_id=ResidueId("X", 4),
+                        atoms=_atoms("N", "CA", "C", "O"),
+                    ),
                 ),
             ),
         ),
@@ -348,10 +359,8 @@ def _internal_gap_reconstruction_spec() -> ExternalSpanReconstructionSpec:
         source_name="internal-gap-donor",
     )
     return ExternalSpanReconstructionSpec(
-        blueprint_coverage_gap=StructureBlueprintCoverageGap(
-            structure_chain_id="A",
-            blueprint_chain_id="A",
-            absent_sequence_positions=(2, 3),
+        scope=AbsentResidueSpanScope(
+            absent_residue_ids=(ResidueId("A", 2), ResidueId("A", 3)),
             preceding_residue_id=ResidueId("A", 1),
             following_residue_id=ResidueId("A", 4),
         ),
@@ -376,6 +385,11 @@ def _prefix_gap_reconstruction_spec() -> ExternalSpanReconstructionSpec:
                         residue_id=ResidueId("X", 2),
                         atoms=_atoms("N", "CA", "C", "O", "CB"),
                     ),
+                    residue_payload(
+                        component_id="ASP",
+                        residue_id=ResidueId("X", 3),
+                        atoms=_atoms("N", "CA", "C", "O", "CB"),
+                    ),
                 ),
             ),
         ),
@@ -383,10 +397,8 @@ def _prefix_gap_reconstruction_spec() -> ExternalSpanReconstructionSpec:
         source_name="prefix-gap-donor",
     )
     return ExternalSpanReconstructionSpec(
-        blueprint_coverage_gap=StructureBlueprintCoverageGap(
-            structure_chain_id="A",
-            blueprint_chain_id="A",
-            absent_sequence_positions=(1, 2),
+        scope=AbsentResidueSpanScope(
+            absent_residue_ids=(ResidueId("A", 1), ResidueId("A", 2)),
             preceding_residue_id=None,
             following_residue_id=ResidueId("A", 3),
         ),

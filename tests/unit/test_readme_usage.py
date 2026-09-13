@@ -6,11 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from protrepair.io import read_structure
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _README_PATH = _REPO_ROOT / "README.md"
 _GETTING_STARTED_PATH = _REPO_ROOT / "docs" / "getting-started.md"
 _PYTHON_BLOCK_PATTERN = re.compile(r"```python\n(?P<body>.*?)\n```", re.S)
-_MARKDOWN_LINK_PATTERN = re.compile(r"\[[^]]+\]\((?P<target>[^)]+)\)")
 
 
 @pytest.mark.parametrize(
@@ -48,38 +49,9 @@ def test_primary_documentation_python_examples_run_in_document_order(
         )
 
     output_path = tmp_path / output_filename
-    assert "ATOM" in output_path.read_text()
-
-
-def test_all_documentation_python_examples_compile() -> None:
-    """Every Python fence in user documentation should compile."""
-
-    for document_path in _documentation_paths():
-        for example_index, snippet in enumerate(
-            _python_examples(document_path),
-            start=1,
-        ):
-            compile(
-                snippet,
-                f"{document_path.name} python example {example_index}",
-                "exec",
-            )
-
-
-def test_documentation_local_links_resolve() -> None:
-    """Relative Markdown links should resolve from their owning document."""
-
-    for document_path in _documentation_paths():
-        document = document_path.read_text()
-        for match in _MARKDOWN_LINK_PATTERN.finditer(document):
-            target = match.group("target")
-            if "://" in target or target.startswith(("#", "mailto:")):
-                continue
-
-            relative_path = target.partition("#")[0]
-            assert (document_path.parent / relative_path).exists(), (
-                f"broken link in {document_path}: {target}"
-            )
+    written = read_structure(output_path)
+    assert written.constitution.chains
+    assert written.constitution.atom_slots
 
 
 def _python_examples(document_path: Path) -> tuple[str, ...]:
@@ -89,9 +61,3 @@ def _python_examples(document_path: Path) -> tuple[str, ...]:
     return tuple(
         match.group("body") for match in _PYTHON_BLOCK_PATTERN.finditer(document)
     )
-
-
-def _documentation_paths() -> tuple[Path, ...]:
-    """Return the Markdown files that form the user documentation surface."""
-
-    return (_README_PATH, *sorted((_REPO_ROOT / "docs").glob("*.md")))

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from protrepair.chemistry.component.library import ComponentLibrary
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
     evidence_by_residue_id,
@@ -25,6 +27,7 @@ class StructureHydrogenExpectationModel:
     """Hydrogen expectation policy derived for one observed structure."""
 
     expected_hydrogen_atom_names_by_residue: Mapping[ResidueId, tuple[str, ...]]
+    polymer_preparation: PolymerMicrostatePreparation
     retained_non_polymer_resolution_by_residue_id: Mapping[
         ResidueId,
         RetainedNonPolymerChemistryResolution,
@@ -57,10 +60,14 @@ def derive_structure_hydrogen_expectation_model(
     """Derive structure-level hydrogen expectation policy."""
 
     disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(structure)
+    polymer_preparation = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(structure), component_library
+    )
     expected_hydrogen_atom_names_by_residue = _polymer_expected_hydrogen_atom_names(
         structure,
         component_library=component_library,
         disulfide_bonded_residue_ids=disulfide_residue_ids,
+        preparation=polymer_preparation,
     )
     evidence_map = evidence_by_residue_id(retained_non_polymer_chemistry_evidence)
     retained_non_polymer_resolution_by_residue_id: dict[
@@ -83,6 +90,7 @@ def derive_structure_hydrogen_expectation_model(
             )
 
     return StructureHydrogenExpectationModel(
+        polymer_preparation=polymer_preparation,
         expected_hydrogen_atom_names_by_residue=MappingProxyType(
             expected_hydrogen_atom_names_by_residue
         ),
@@ -97,6 +105,7 @@ def _polymer_expected_hydrogen_atom_names(
     *,
     component_library: ComponentLibrary,
     disulfide_bonded_residue_ids: frozenset[ResidueId],
+    preparation: PolymerMicrostatePreparation,
 ) -> dict[ResidueId, tuple[str, ...]]:
     """Return chain-aware expected hydrogens for polymer residues."""
 
@@ -106,11 +115,40 @@ def _polymer_expected_hydrogen_atom_names(
             chain,
             component_library=component_library,
             disulfide_bonded_residue_ids=disulfide_bonded_residue_ids,
+            preparation=preparation,
             expected_hydrogen_atom_names_by_residue=(
                 expected_hydrogen_atom_names_by_residue
             ),
         )
 
+    for chain in structure.constitution.chains:
+        for residue in chain.residues:
+            targets = preparation.targets_for(residue.residue_id)
+            if not targets:
+                continue
+            template = targets[0].site.template
+            controlled = frozenset(
+                name for target in targets for name in target.controlled_parent_names()
+            )
+            try:
+                names = [
+                    atom.name
+                    for atom, _ in preparation.fixed_hydrogen_atom_sites(
+                        residue.residue_id
+                    )
+                ]
+            except ValueError:
+                names = list(template.expected_hydrogen_atom_names())
+                anchors = template.template_hydrogen_anchor_by_name(names)
+                names = [name for name in names if anchors.get(name) not in controlled]
+            for target in targets:
+                try:
+                    names.extend(atom.name for atom, _ in target.hydrogen_atom_sites())
+                except ValueError:
+                    # Unknown site inventory is not invented from a template.
+                    # Readiness separately retains this unresolved target.
+                    continue
+            expected_hydrogen_atom_names_by_residue[residue.residue_id] = names
     return {
         residue_id: tuple(atom_names)
         for residue_id, atom_names in expected_hydrogen_atom_names_by_residue.items()
@@ -122,6 +160,7 @@ def _extend_chain_expected_hydrogens(
     *,
     component_library: ComponentLibrary,
     disulfide_bonded_residue_ids: frozenset[ResidueId],
+    preparation: PolymerMicrostatePreparation,
     expected_hydrogen_atom_names_by_residue: dict[ResidueId, list[str]],
 ) -> None:
     """Accumulate chain-aware expected hydrogens onto one residue map."""
@@ -130,6 +169,8 @@ def _extend_chain_expected_hydrogens(
         component_library.get(residue.component_id) for residue in chain.residues
     )
     for residue, template in zip(chain.residues, templates, strict=True):
+        if preparation.targets_for(residue.residue_id):
+            continue
         if template is None or not template.can_add_hydrogens():
             continue
 
@@ -153,6 +194,7 @@ def _extend_chain_expected_hydrogens(
         first_template = templates[0]
         if (
             first_template is not None
+            and not preparation.targets_for(first_residue.residue_id)
             and first_template.can_add_hydrogens()
             and _supports_peptide_backbone_hydrogens(first_residue)
         ):
@@ -166,6 +208,8 @@ def _extend_chain_expected_hydrogens(
             )
 
     for residue_index, residue in enumerate(chain.residues[:-1]):
+        if preparation.targets_for(chain.residues[residue_index + 1].residue_id):
+            continue
         template = templates[residue_index]
         next_template = templates[residue_index + 1]
         if template is None or next_template is None:
@@ -197,8 +241,8 @@ def _append_expected_hydrogen_atom_names(
 ) -> None:
     """Append unique expected hydrogen names for one residue id."""
 
-    ordered_hydrogen_atom_names = (
-        expected_hydrogen_atom_names_by_residue.setdefault(residue_id, [])
+    ordered_hydrogen_atom_names = expected_hydrogen_atom_names_by_residue.setdefault(
+        residue_id, []
     )
     seen_hydrogen_atom_names = set(ordered_hydrogen_atom_names)
     for hydrogen_atom_name in hydrogen_atom_names:

@@ -72,17 +72,54 @@ class SourceBondRecordType(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class SourceBondMetadata:
-    """Source-origin metadata for one SOURCE_EXPLICIT topology bond."""
+    """Source declarations retained independently of effective bond chemistry.
+
+    Parameters
+    ----------
+    record_type : SourceBondRecordType
+        Format of the preferred connectivity declaration.
+    source_id : str or None, default=None
+        Identifier of that declaration; whitespace-only identifiers become None.
+    reported_distance_angstrom : float or None, default=None
+        Positive finite distance in that declaration, if present.
+    reported_order : int or None, default=None
+        Positive integral order explicitly supplied by source records. It may
+        come from a supplementary CONECT record rather than the preferred typed
+        declaration. None means no explicit order, even if topology resolves one.
+    reported_relationship_type : BondRelationshipType, default=UNKNOWN
+        Relationship declared by the source, before template-based resolution.
+
+    Raises
+    ------
+    TypeError
+        The record type, relationship type, or reported order is noncanonical.
+    ValueError
+        The reported order is nonpositive or the distance is not finite and positive.
+    """
 
     record_type: SourceBondRecordType
     source_id: str | None = None
     reported_distance_angstrom: float | None = None
+    reported_order: int | None = None
+    reported_relationship_type: BondRelationshipType = BondRelationshipType.UNKNOWN
 
     def __post_init__(self) -> None:
+        if not isinstance(self.reported_relationship_type, BondRelationshipType):
+            raise TypeError(
+                "source bond reported_relationship_type must be a BondRelationshipType"
+            )
         if not isinstance(self.record_type, SourceBondRecordType):
             raise TypeError(
                 "source bond metadata record_type must be a SourceBondRecordType"
             )
+
+        if self.reported_order is not None:
+            if isinstance(self.reported_order, bool) or not isinstance(
+                self.reported_order, int
+            ):
+                raise TypeError("source bond reported_order must be an integer or None")
+            if self.reported_order <= 0:
+                raise ValueError("source bond reported_order must be positive")
 
         source_id = None if self.source_id is None else self.source_id.strip() or None
         reported_distance = self.reported_distance_angstrom
@@ -107,11 +144,39 @@ class SourceBondMetadata:
 
 @dataclass(frozen=True, slots=True)
 class TopologyBond:
-    """One canonical bond in the structure topology bond graph."""
+    """One canonical bond in the structure topology bond graph.
+
+    ``order=None`` means unresolved, not single. Endpoint provenance does not
+    imply that the source supplied an order; ingress may resolve it from
+    component or sequence chemistry while retaining the original reported order
+    in source metadata. Execution and serialization use ``order``, not that evidence.
+
+    Parameters
+    ----------
+    atom_index_1, atom_index_2 : AtomIndex
+        Distinct endpoints in the owning constitution, stored in ascending order.
+    order : int or None, default=1
+        Positive integral bond order, or unresolved order evidence.
+    aromatic : bool, default=False
+        Aromatic chemistry support, separate from the integral order representation.
+    relationship_type : BondRelationshipType, default=COVALENT
+        Physical relationship, independent of execution support.
+    provenance : BondProvenance, default=TEMPLATE_RESOLVED
+        Evidence family supporting the endpoint pair.
+    source_metadata : SourceBondMetadata or None, default=None
+        Source record metadata, permitted only for SOURCE_EXPLICIT bonds.
+
+    Raises
+    ------
+    TypeError
+        The order or enum fields have invalid types.
+    ValueError
+        Endpoints coincide, order is nonpositive, or metadata conflicts with provenance.
+    """
 
     atom_index_1: AtomIndex
     atom_index_2: AtomIndex
-    order: int = 1
+    order: int | None = 1
     aromatic: bool = False
     relationship_type: BondRelationshipType = BondRelationshipType.COVALENT
     provenance: BondProvenance = BondProvenance.TEMPLATE_RESOLVED
@@ -125,10 +190,11 @@ class TopologyBond:
         if atom_index_2.value < atom_index_1.value:
             atom_index_1, atom_index_2 = atom_index_2, atom_index_1
 
-        if isinstance(self.order, bool) or not isinstance(self.order, int):
-            raise TypeError("topology bond order must be an integer")
-        if self.order <= 0:
-            raise ValueError("topology bond order must be positive")
+        if self.order is not None:
+            if isinstance(self.order, bool) or not isinstance(self.order, int):
+                raise TypeError("topology bond order must be an integer or None")
+            if self.order <= 0:
+                raise ValueError("topology bond order must be positive")
 
         if not isinstance(self.relationship_type, BondRelationshipType):
             raise TypeError(
@@ -183,6 +249,91 @@ def is_model_resolved_provenance(bond: TopologyBond) -> bool:
     """Return whether a topology bond was resolved by canonical model policy."""
 
     return not is_source_provenance(bond)
+
+
+def sequence_inferred_polymer_topology_bonds(
+    constitution: StructureConstitution,
+) -> tuple[TopologyBond, ...]:
+    """Return peptide C-N bonds implied by canonical polymer sequence slots.
+
+    Parameters
+    ----------
+    constitution : StructureConstitution
+        Canonical atom and residue address space to inspect.
+
+    Returns
+    -------
+    tuple[TopologyBond, ...]
+        Sequence-inferred covalent bonds between adjacent polymer residues.
+    """
+
+    bonds: list[TopologyBond] = []
+    for chain_site in constitution.chains:
+        for left_residue, right_residue in zip(
+            chain_site.residues,
+            chain_site.residues[1:],
+            strict=False,
+        ):
+            if (
+                left_residue.is_hetero
+                or right_residue.is_hetero
+                or not left_residue.residue_id.immediately_precedes(
+                    right_residue.residue_id
+                )
+                or not left_residue.has_atom_site("C")
+                or not right_residue.has_atom_site("N")
+            ):
+                continue
+
+            bonds.append(
+                TopologyBond(
+                    atom_index_1=constitution.atom_index_in_residue(
+                        constitution.residue_index(left_residue.residue_id),
+                        "C",
+                    ),
+                    atom_index_2=constitution.atom_index_in_residue(
+                        constitution.residue_index(right_residue.residue_id),
+                        "N",
+                    ),
+                    relationship_type=BondRelationshipType.COVALENT,
+                    provenance=BondProvenance.SEQUENCE_INFERRED,
+                )
+            )
+
+    return tuple(bonds)
+
+
+def sequence_inferred_polymer_topology_bonds_for_new_atoms(
+    *,
+    source_constitution: StructureConstitution,
+    target_constitution: StructureConstitution,
+) -> tuple[TopologyBond, ...]:
+    """Return sequence bonds whose endpoints include newly materialized atoms.
+
+    Parameters
+    ----------
+    source_constitution : StructureConstitution
+        Constitution before atom materialization.
+    target_constitution : StructureConstitution
+        Constitution after atom materialization.
+
+    Returns
+    -------
+    tuple[TopologyBond, ...]
+        Target-addressed sequence bonds with at least one new endpoint.
+    """
+
+    return tuple(
+        bond
+        for bond in sequence_inferred_polymer_topology_bonds(target_constitution)
+        if any(
+            source_constitution.resolve_atom_index(
+                target_constitution.atom_ref_at(atom_index)
+            )
+            is None
+            for atom_index in bond.endpoint_pair()
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True, init=False)
