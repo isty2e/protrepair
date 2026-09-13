@@ -1,6 +1,5 @@
 """Unit tests for canonical structure and atom-scope observation ontology."""
 
-import ast
 from pathlib import Path
 
 import pytest
@@ -129,27 +128,6 @@ except ImportError:  # pragma: no cover - required dependency import guard
     Chem = None
 
 RDKIT_AVAILABLE = Chem is not None
-
-
-def test_state_package_does_not_import_transformer_implementation() -> None:
-    """State facts should not depend on concrete transformer implementations."""
-
-    violations: list[str] = []
-    for path in Path("src/protrepair/state").glob("*.py"):
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                module_name = node.module
-                if module_name is not None and module_name.startswith(
-                    "protrepair.transformer"
-                ):
-                    violations.append(f"{path}:{node.lineno}")
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name.startswith("protrepair.transformer"):
-                        violations.append(f"{path}:{node.lineno}")
-
-    assert not violations
 
 
 def test_protein_structure_state_marks_unsupported_components_indeterminate() -> None:

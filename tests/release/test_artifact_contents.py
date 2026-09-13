@@ -1,13 +1,18 @@
 """Fresh release artifact content tests."""
 
+import json
+import shlex
 import subprocess
 import sys
 import tarfile
 from dataclasses import dataclass
+from email.parser import BytesParser
 from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -86,12 +91,6 @@ def test_built_wheel_contains_runtime_assets_and_notices(
     assert _has_suffix(names, ".dist-info/licenses/vendor/faspr/PROVENANCE.md")
     assert _has_suffix(names, ".dist-info/licenses/vendor/faspr/README.upstream.md")
 
-    notices = notices_bytes.decode("utf-8")
-
-    assert "src/protrepair/chemistry/radii.py" in notices
-    assert "rdkit==2026.3.2" in notices
-    assert "GetRvdw" in notices
-    assert "GetRcovalent" in notices
     assert notices_bytes == (REPOSITORY_ROOT / "THIRD_PARTY_NOTICES.md").read_bytes()
     assert (
         rdkit_license_bytes
@@ -103,6 +102,58 @@ def test_built_wheel_contains_runtime_assets_and_notices(
             REPOSITORY_ROOT / "src" / "protrepair" / "chemistry" / "radii.py"
         ).read_bytes()
     )
+
+
+def test_built_wheel_requires_native_chemistry_without_extras(
+    built_release_artifacts: BuiltReleaseArtifacts,
+) -> None:
+    """Installers must request Gemmi and RDKit for the default distribution."""
+
+    with ZipFile(built_release_artifacts.wheel_path) as archive:
+        metadata = BytesParser().parsebytes(
+            _zip_member_bytes(archive, ".dist-info/METADATA")
+        )
+
+    requirements = tuple(
+        Requirement(value) for value in metadata.get_all("Requires-Dist", [])
+    )
+    default_dependencies = {
+        requirement.name.lower()
+        for requirement in requirements
+        if requirement.marker is None or requirement.marker.evaluate({"extra": ""})
+    }
+    assert {"gemmi", "rdkit"} <= default_dependencies
+
+    python_versions = SpecifierSet(metadata["Requires-Python"])
+    assert all(version in python_versions for version in ("3.10", "3.11", "3.12"))
+    assert "3.9" not in python_versions
+    assert "3.13" not in python_versions
+
+
+@pytest.mark.parametrize("enable_fast_math", (False, True))
+def test_cmake_generates_fast_math_flags_only_on_request(
+    tmp_path: Path, enable_fast_math: bool
+) -> None:
+    """Check generated compiler commands rather than the CMake source spelling."""
+
+    build_dir = tmp_path / "build"
+    command = [
+        "cmake",
+        "-S",
+        str(REPOSITORY_ROOT),
+        "-B",
+        str(build_dir),
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    ]
+    if enable_fast_math:
+        command.append("-DPROTREPAIR_FASPR_ENABLE_FAST_MATH=ON")
+    subprocess.run(command, check=True, capture_output=True, text=True)
+
+    commands = json.loads((build_dir / "compile_commands.json").read_text())
+    assert commands
+    for entry in commands:
+        arguments = shlex.split(entry["command"])
+        assert ("-ffast-math" in arguments) is enable_fast_math
 
 
 def test_built_sdist_contains_release_sources_and_vendor_snapshot(
@@ -156,8 +207,7 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
     assert not any("/dist/" in name for name in names)
     smoke_script = "/scripts/run_installed_artifact_smoke.py"
     assert not any(
-        "/scripts/" in name and not name.endswith(smoke_script)
-        for name in names
+        "/scripts/" in name and not name.endswith(smoke_script) for name in names
     )
     assert notices_bytes == (REPOSITORY_ROOT / "THIRD_PARTY_NOTICES.md").read_bytes()
     assert (

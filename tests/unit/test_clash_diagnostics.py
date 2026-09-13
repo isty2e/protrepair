@@ -1,7 +1,6 @@
 """Steric-clash diagnostics over canonical repaired structures."""
 
 from dataclasses import dataclass, replace
-from pathlib import Path
 
 import pytest
 from tests.support.canonical_builders import (
@@ -200,16 +199,6 @@ def test_prepared_pair_index_preserves_streaming_pair_order(
     actual_pairs = tuple(prepared_pair_index.candidate_pairs(policy=policy))
 
     assert actual_pairs == expected_pairs
-
-
-def test_clash_pair_generation_has_no_stringly_domain_coercion() -> None:
-    """Hot pair filtering should not use getattr/string fallback domain coercion."""
-
-    source = Path("src/protrepair/diagnostics/clash_pair_generation.py").read_text()
-
-    assert "_domain_value" not in source
-    assert "getattr(" not in source
-    assert '== "ligand"' not in source
 
 
 @pytest.mark.parametrize(

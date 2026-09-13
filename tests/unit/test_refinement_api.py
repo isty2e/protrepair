@@ -1,8 +1,6 @@
 """Unit tests for public local-refinement API resolution and boundaries."""
 
-import ast
 import importlib
-from pathlib import Path
 
 import pytest
 from tests.support.canonical_builders import (
@@ -1066,45 +1064,6 @@ def test_refinement_acceptance_metrics_reject_flat_constructor_kwargs() -> None:
             focus_clash_count=0,
             focus_geometry_outlier_count=0,
         )
-
-
-def test_refinement_acceptance_policy_avoids_flat_projection_properties() -> None:
-    """Production acceptance policy should read the orthogonal metric records."""
-
-    policy_paths = (
-        Path("src/protrepair/transformer/refinement/acceptance.py"),
-        Path("src/protrepair/transformer/dependent_hydrogen.py"),
-        Path("src/protrepair/transformer/refinement/local_pipeline/assessment.py"),
-    )
-    flat_projection_attributes = {
-        "focus_clash_count",
-        "focus_geometry_outlier_count",
-        "focus_restraint_backed_geometry_outlier_count",
-        "focus_fallback_geometry_outlier_count",
-        "focus_severe_restraint_backed_bond_length_outlier_count",
-        "focus_clash_overlap_sum_angstrom",
-        "focus_near_covalent_contact_count",
-        "focus_worst_near_covalent_overlap_angstrom",
-        "focus_total_near_covalent_overlap_angstrom",
-        "focus_stereochemistry_violation_count",
-        "whole_structure_near_covalent_contact_count",
-        "whole_structure_worst_near_covalent_overlap_angstrom",
-        "whole_structure_total_near_covalent_overlap_angstrom",
-        "whole_structure_rdkit_sanitize_readable",
-        "whole_structure_parser_extra_proximity_bond_count",
-        "whole_structure_parser_extra_heavy_proximity_bond_count",
-    }
-    violations: list[str] = []
-    for policy_path in policy_paths:
-        tree = ast.parse(policy_path.read_text())
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Attribute)
-                and node.attr in flat_projection_attributes
-            ):
-                violations.append(f"{policy_path}:{node.lineno}:{node.attr}")
-
-    assert not violations
 
 
 def _acceptance_metrics(

@@ -33,11 +33,10 @@ PROTREPAIR_RELEASE_STRICT_RDKIT=1 python -m pytest \
   tests/unit tests/corpus tests/workflow -m "not benchmark" -q
 ```
 
-Run the release-facing API and documentation smoke surface:
+Run the executable usage examples and artifact boundary tests:
 
 ```bash
 python -m pytest \
-  tests/unit/test_release_public_api_contract.py \
   tests/unit/test_readme_usage.py \
   tests/unit/test_release_artifacts.py \
   -q

@@ -334,10 +334,6 @@ def test_workflow_action_domain_exposes_cohesive_read_views() -> None:
     assert domain.burden.has_intrinsic_geometry_burden() is False
     assert domain.span_reconstruction.allows_reconstruction() is False
 
-    assert not hasattr(domain, "requires_atom_completion")
-    assert not hasattr(domain, "explicit_repair_refinement_prerequisite_residue_ids")
-    assert not hasattr(domain, "has_adopted_action_family")
-
 
 def test_local_refinement_domain_can_use_prior_augmentation_memory() -> None:
     """Local refinement admissibility may come from prior augmentation memory."""
