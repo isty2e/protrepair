@@ -19,6 +19,16 @@ requires donor context on both sides. A terminal span requires donor context at
 its anchored side. Donor components also need canonical component chemistry so
 the inserted atoms can enter the structure with a canonical bond graph.
 
+Every C-N junction within the selected donor window, including its flanks, must
+have a resolved single, non-aromatic covalent bond in the donor topology. Chain
+order or nearby coordinates alone do not establish that connection.
+
+An internal source span is rejected if the preceding anchor's C is already
+covalently bonded to the following anchor's N. Insertion would leave a second
+path between them; this operation does not delete or replace existing source
+bonds. A reverse-direction cyclic connection or an unrelated side-chain link is
+not that shortcut.
+
 You may submit more than one donor for exactly the same source span. The
 workflow keeps those requests as separate candidates. Different source spans
 must not overlap or use a residue missing from another request as an anchor;

@@ -27,7 +27,12 @@ from protrepair.structure.disulfide import disulfide_atom_ref_pairs
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
-from protrepair.structure.topology import BondProvenance
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
 from protrepair.transformer.base import ProjectedCodomainState, ProjectedDomainState
 from protrepair.transformer.completion import span_reconstruction as kernel
 from protrepair.transformer.completion.span_reconstruction import (
@@ -57,6 +62,259 @@ from protrepair.workflow.contracts import (
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/pdb/span-reconstruction"
+
+
+@pytest.mark.parametrize("junction", [35, 36, 37, 38])
+@pytest.mark.parametrize("workflow", [False, True])
+def test_span_rejects_disconnected_donor_window(junction: int, workflow: bool) -> None:
+    reference = read_structure(FIXTURES / "1ubq.pdb")
+    gap = tuple(ResidueId("A", number) for number in (36, 37, 38))
+    source = _source(reference, gap)
+    scope = AbsentResidueSpanScope(ResidueId("A", 35), ResidueId("A", 39), gap)
+    left = reference.constitution.atom_index(AtomRef(ResidueId("A", junction), "C"))
+    right = reference.constitution.atom_index(
+        AtomRef(ResidueId("A", junction + 1), "N")
+    )
+    removed = reference.topology.bond_between(left, right)
+    assert removed is not None
+    donor = _with_topology_bonds(
+        reference, tuple(bond for bond in reference.topology.bonds if bond != removed)
+    )
+    assert donor.geometry == reference.geometry
+
+    if workflow:
+        result = process_structure(
+            source,
+            transform_requests=WorkflowTransformRequests(
+                external_span_reconstructions=(
+                    ExternalSpanReconstructionSpec(scope, donor, gap),
+                ),
+            ),
+        )
+        assert result.structure.constitution == source.constitution
+        assert result.structure.geometry == source.geometry
+        assert result.structure.topology == source.topology
+        assert not result.repairs
+        assert len(result.issues) == 1
+        assert result.issues[0].kind is ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED
+        assert f"A:{junction}.C" in result.issues[0].message
+    else:
+        outcome = reconstruct_donor_span(
+            source,
+            scope=scope,
+            donor_structure=donor,
+            donor_residue_ids=gap,
+            donor_preceding_residue_id=scope.preceding_residue_id,
+            donor_following_residue_id=scope.following_residue_id,
+        )
+        assert isinstance(outcome, SpanReconstructionFailure)
+        assert outcome.kind is SpanReconstructionFailureKind.INVALID_PEPTIDE_JUNCTION
+        assert f"A:{junction}.C" in outcome.message
+
+
+@pytest.mark.parametrize(
+    ("relationship", "order", "aromatic"),
+    [
+        (BondRelationshipType.HYDROGEN_BOND, 1, False),
+        (BondRelationshipType.METAL_COORDINATION, 1, False),
+        (BondRelationshipType.UNKNOWN, 1, False),
+        (BondRelationshipType.DISULFIDE, 1, False),
+        (BondRelationshipType.COVALENT, None, False),
+        (BondRelationshipType.COVALENT, 2, False),
+        (BondRelationshipType.COVALENT, 1, True),
+    ],
+)
+def test_donor_junction_requires_resolved_peptide_chemistry(
+    relationship: BondRelationshipType, order: int | None, aromatic: bool
+) -> None:
+    reference = read_structure(FIXTURES / "1ubq-short-gaps.pdb")
+    gap = (ResidueId("A", 4),)
+    source = _source(reference, gap)
+    scope = AbsentResidueSpanScope(ResidueId("A", 3), ResidueId("A", 5), gap)
+    left = reference.constitution.atom_index(AtomRef(ResidueId("A", 3), "C"))
+    right = reference.constitution.atom_index(AtomRef(gap[0], "N"))
+    original = reference.topology.bond_between(left, right)
+    assert original is not None
+    donor = _with_topology_bonds(
+        reference,
+        tuple(
+            replace(
+                bond, relationship_type=relationship, order=order, aromatic=aromatic
+            )
+            if bond == original
+            else bond
+            for bond in reference.topology.bonds
+        ),
+    )
+    outcome = reconstruct_donor_span(
+        source,
+        scope=scope,
+        donor_structure=donor,
+        donor_residue_ids=gap,
+        donor_preceding_residue_id=scope.preceding_residue_id,
+        donor_following_residue_id=scope.following_residue_id,
+    )
+    assert isinstance(outcome, SpanReconstructionFailure)
+    assert outcome.kind is SpanReconstructionFailureKind.INVALID_PEPTIDE_JUNCTION
+
+
+@pytest.mark.parametrize("workflow", [False, True])
+@pytest.mark.parametrize(
+    "provenance", [BondProvenance.SOURCE_EXPLICIT, BondProvenance.SEQUENCE_INFERRED]
+)
+def test_span_rejects_existing_source_anchor_shortcut(
+    workflow: bool, provenance: BondProvenance
+) -> None:
+    reference = read_structure(FIXTURES / "1crn.pdb")
+    gap = (ResidueId("A", 15), ResidueId("A", 16))
+    source = _source(reference, gap)
+    scope = AbsentResidueSpanScope(ResidueId("A", 14), ResidueId("A", 17), gap)
+    shortcut = TopologyBond(
+        source.constitution.atom_index(AtomRef(ResidueId("A", 14), "C")),
+        source.constitution.atom_index(AtomRef(ResidueId("A", 17), "N")),
+        provenance=provenance,
+    )
+    source = _with_topology_bonds(source, (*source.topology.bonds, shortcut))
+    if workflow:
+        result = process_structure(
+            source,
+            transform_requests=WorkflowTransformRequests(
+                external_span_reconstructions=(
+                    ExternalSpanReconstructionSpec(scope, reference, gap),
+                ),
+            ),
+        )
+        assert result.structure.constitution == source.constitution
+        assert result.structure.geometry == source.geometry
+        assert result.structure.topology == source.topology
+        assert not result.repairs
+        assert len(result.issues) == 1
+        assert result.issues[0].kind is ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED
+        assert "already" in result.issues[0].message
+    else:
+        outcome = reconstruct_donor_span(
+            source,
+            scope=scope,
+            donor_structure=reference,
+            donor_residue_ids=gap,
+            donor_preceding_residue_id=scope.preceding_residue_id,
+            donor_following_residue_id=scope.following_residue_id,
+        )
+        assert isinstance(outcome, SpanReconstructionFailure)
+        assert outcome.kind is SpanReconstructionFailureKind.INVALID_TARGET_STATE
+
+
+@pytest.mark.parametrize("prefix", [False, True])
+@pytest.mark.parametrize("junction", [3, 4])
+def test_terminal_span_rejects_disconnected_donor_window(
+    prefix: bool, junction: int
+) -> None:
+    reference = read_structure(FIXTURES / "1ubq-short-gaps.pdb")
+    gap = tuple(ResidueId("A", number) for number in ((3, 4) if prefix else (4, 5)))
+    removed_ids = tuple(
+        residue.residue_id
+        for residue in reference.constitution.chains[0].residues
+        if (
+            residue.residue_id.seq_num <= 4
+            if prefix
+            else residue.residue_id.seq_num >= 4
+        )
+    )
+    source = _source(reference, removed_ids)
+    scope = AbsentResidueSpanScope(
+        None if prefix else ResidueId("A", 3),
+        ResidueId("A", 5) if prefix else None,
+        gap,
+    )
+    removed_bond = reference.topology.bond_between(
+        reference.constitution.atom_index(AtomRef(ResidueId("A", junction), "C")),
+        reference.constitution.atom_index(AtomRef(ResidueId("A", junction + 1), "N")),
+    )
+    assert removed_bond is not None
+    donor = _with_topology_bonds(
+        reference,
+        tuple(bond for bond in reference.topology.bonds if bond != removed_bond),
+    )
+    result = process_structure(
+        source,
+        transform_requests=WorkflowTransformRequests(
+            external_span_reconstructions=(
+                ExternalSpanReconstructionSpec(scope, donor, gap),
+            ),
+        ),
+    )
+    assert result.structure.constitution == source.constitution
+    assert result.structure.geometry == source.geometry
+    assert result.structure.topology == source.topology
+    assert not result.repairs
+    assert len(result.issues) == 1
+    assert f"A:{junction}.C" in result.issues[0].message
+
+
+@pytest.mark.parametrize(
+    ("reverse", "relationship"),
+    [
+        (True, BondRelationshipType.COVALENT),
+        (False, BondRelationshipType.HYDROGEN_BOND),
+        (False, BondRelationshipType.METAL_COORDINATION),
+    ],
+)
+def test_source_anchor_guard_preserves_other_connection_roles(
+    reverse: bool, relationship: BondRelationshipType
+) -> None:
+    reference = read_structure(FIXTURES / "1crn.pdb")
+    gap = (ResidueId("A", 15), ResidueId("A", 16))
+    source = _source(reference, gap)
+    scope = AbsentResidueSpanScope(ResidueId("A", 14), ResidueId("A", 17), gap)
+    left_number, right_number = (17, 14) if reverse else (14, 17)
+    left_ref = AtomRef(ResidueId("A", left_number), "C")
+    right_ref = AtomRef(ResidueId("A", right_number), "N")
+    connection = TopologyBond(
+        source.constitution.atom_index(left_ref),
+        source.constitution.atom_index(right_ref),
+        relationship_type=relationship,
+        provenance=BondProvenance.SOURCE_EXPLICIT,
+    )
+    source = _with_topology_bonds(source, (*source.topology.bonds, connection))
+    result = process_structure(
+        source,
+        transform_requests=WorkflowTransformRequests(
+            external_span_reconstructions=(
+                ExternalSpanReconstructionSpec(scope, reference, gap),
+            ),
+        ),
+    )
+    assert not result.issues
+    assert all(
+        result.structure.constitution.residue_or_ligand(rid) is not None for rid in gap
+    )
+    carried = result.structure.topology.bond_between(
+        result.structure.constitution.atom_index(left_ref),
+        result.structure.constitution.atom_index(right_ref),
+    )
+    assert carried is not None
+    assert carried.relationship_type is relationship
+    assert carried.provenance is BondProvenance.SOURCE_EXPLICIT
+    for ref in (left_ref, right_ref):
+        assert _position(result.structure, ref.residue_id, ref.atom_name) == _position(
+            source, ref.residue_id, ref.atom_name
+        )
+
+
+def _with_topology_bonds(
+    structure: ProteinStructure, bonds: tuple[TopologyBond, ...]
+) -> ProteinStructure:
+    return ProteinStructure.from_payload(
+        constitution=structure.constitution,
+        geometry=structure.geometry,
+        topology=StructureTopology(
+            constitution=structure.constitution,
+            atom_topologies=structure.topology.atom_topologies,
+            bonds=bonds,
+        ),
+        polymer_blueprint=structure.polymer_blueprint,
+        provenance=structure.provenance,
+    )
 
 
 @pytest.mark.parametrize("start", [4, 26, 49, 72])

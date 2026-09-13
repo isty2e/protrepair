@@ -7,6 +7,7 @@ import pytest
 from tests.support.canonical_builders import (
     CanonicalResiduePayload,
     atom_payload,
+    build_bonded_structure,
     build_structure,
     chain_payload,
     residue_payload,
@@ -119,7 +120,7 @@ def test_span_reconstruction_rejects_mismatched_donor_mapping() -> None:
         source_format=FileFormat.PDB,
         source_name="source",
     )
-    donor_structure = build_structure(
+    donor_structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "X",
@@ -161,7 +162,7 @@ def test_span_anchor_frame_rejects_finite_coordinate_overflow() -> None:
         source_format=FileFormat.PDB,
         source_name="source",
     )
-    donor_structure = build_structure(
+    donor_structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "X",
@@ -232,7 +233,7 @@ def test_span_axis_rotation_classifies_finite_arithmetic_overflow() -> None:
         source_format=FileFormat.PDB,
         source_name="source",
     )
-    donor_structure = build_structure(
+    donor_structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "X",

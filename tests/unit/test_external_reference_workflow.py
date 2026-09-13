@@ -5,6 +5,7 @@ from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     CanonicalResiduePayload,
     atom_payload,
+    build_bonded_structure,
     build_structure,
     chain_payload,
     residue_payload,
@@ -413,7 +414,7 @@ def test_workflow_selects_valid_alternative_donor_for_the_same_span() -> None:
         source_name="source",
     )
     donor_structures = tuple(
-        build_structure(
+        build_bonded_structure(
             chains=(
                 chain_payload(
                     "X",
@@ -990,7 +991,7 @@ def test_internal_span_reconstruction_closes_perturbed_donor_and_updates_topolog
         polymer_blueprint=source_structure.polymer_blueprint,
         provenance=source_structure.provenance,
     )
-    donor_structure = build_structure(
+    donor_structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "X",
@@ -1138,7 +1139,7 @@ def test_single_residue_span_reconstruction_uses_residue_span_event_scope() -> N
         source_format=FileFormat.PDB,
         source_name="source",
     )
-    donor_structure = build_structure(
+    donor_structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "X",
@@ -1399,7 +1400,7 @@ def test_span_reconstruction_failure_is_atomic_for_unreachable_anchor() -> None:
         source_format=FileFormat.PDB,
         source_name="source",
     )
-    donor_structure = build_structure(
+    donor_structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "X",
@@ -1518,7 +1519,7 @@ def test_span_reconstruction_rejects_displaced_anchor_atomically() -> None:
         source_format=FileFormat.PDB,
         source_name="source",
     )
-    donor_structure = build_structure(
+    donor_structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "X",
@@ -1574,7 +1575,7 @@ def test_terminal_span_reconstruction_rejects_invalid_internal_junction() -> Non
         source_format=FileFormat.PDB,
         source_name="source",
     )
-    donor_structure = build_structure(
+    donor_structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "X",

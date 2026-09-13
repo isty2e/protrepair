@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- reject donor spans with missing or unresolved peptide connections, and reject
+  insertion across an existing source anchor-to-anchor C-N bond without deleting
+  that bond. Both paths report an atomic span failure
 - apply polymer H counts, charges, and bond orders together in direct and workflow
   preparation, including H-complete structures with inconsistent chemistry.
   Histidine ratio requests now produce a complete cationic ring graph

@@ -17,7 +17,10 @@ from protrepair.scope import AbsentResidueSpanScope
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
-from protrepair.structure.topology import is_covalent_like_relationship
+from protrepair.structure.topology import (
+    BondRelationshipType,
+    is_covalent_like_relationship,
+)
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
 FloatArray = npt.NDArray[np.float64]
@@ -725,7 +728,8 @@ def reconstruct_donor_span(
     scope : AbsentResidueSpanScope
         Missing source residues and their available anchors.
     donor_structure : ProteinStructure
-        Canonical structure supplying the residue conformations.
+        Canonical structure supplying the residue conformations and resolved
+        peptide bonds throughout the selected window, including its flanks.
     donor_residue_ids : tuple[ResidueId, ...]
         Donor residues corresponding one-to-one with ``scope``.
     donor_preceding_residue_id : ResidueId | None
@@ -742,7 +746,8 @@ def reconstruct_donor_span(
     -------
     ReconstructedSpanCandidate | SpanReconstructionFailure
         A screened heavy-atom candidate, or failure evidence without a partial
-        mutation.
+        mutation. Disconnected donor windows and existing source C-N shortcuts
+        between the anchors are rejected before fitting.
 
     Raises
     ------
@@ -797,6 +802,10 @@ def reconstruct_donor_span(
         raise TypeError(
             "span reconstruction component_library must be ComponentLibrary"
         )
+
+    source_topology_failure = _source_anchor_topology_failure(source_structure, scope)
+    if source_topology_failure is not None:
+        return source_topology_failure
 
     donor_window_ids = tuple(
         residue_id
@@ -936,6 +945,32 @@ def reconstruct_donor_span(
     )
 
 
+def _source_anchor_topology_failure(
+    structure: ProteinStructure, scope: AbsentResidueSpanScope
+) -> SpanReconstructionFailure | None:
+    if scope.preceding_residue_id is None or scope.following_residue_id is None:
+        return None
+
+    preceding_carbon = structure.constitution.resolve_atom_index(
+        AtomRef(scope.preceding_residue_id, "C")
+    )
+    following_nitrogen = structure.constitution.resolve_atom_index(
+        AtomRef(scope.following_residue_id, "N")
+    )
+    if preceding_carbon is None or following_nitrogen is None:
+        return None
+
+    bond = structure.topology.bond_between(preceding_carbon, following_nitrogen)
+    if bond is not None and is_covalent_like_relationship(bond):
+        return SpanReconstructionFailure(
+            SpanReconstructionFailureKind.INVALID_TARGET_STATE,
+            f"source anchors {scope.preceding_residue_id.display_token()}.C and "
+            f"{scope.following_residue_id.display_token()}.N are already "
+            "covalently linked; span insertion cannot replace that bond",
+        )
+    return None
+
+
 def _build_donor_window(
     donor_structure: ProteinStructure,
     residue_ids: tuple[ResidueId, ...],
@@ -1047,11 +1082,13 @@ def _build_donor_window(
                 neighbors[right].add(left)
                 if bond.order != 1 or bond.aromatic:
                     rigid_pairs.add((min(left, right), max(left, right)))
-    for offset in range(len(residue_ids) - 1):
-        left = atom_index_by_residue_and_name[(offset, "C")]
-        right = atom_index_by_residue_and_name[(offset + 1, "N")]
-        neighbors[left].add(right)
-        neighbors[right].add(left)
+    unresolved_peptide_junctions = {
+        (
+            atom_index_by_residue_and_name[(offset, "C")],
+            atom_index_by_residue_and_name[(offset + 1, "N")],
+        ): offset
+        for offset in range(len(residue_ids) - 1)
+    }
     local_indices = {
         donor_structure.constitution.atom_index(
             AtomRef(residue_ids[offset], name)
@@ -1068,6 +1105,19 @@ def _build_donor_window(
             neighbors[right].add(left)
             if bond.order != 1 or bond.aromatic:
                 rigid_pairs.add((min(left, right), max(left, right)))
+            elif bond.relationship_type is BondRelationshipType.COVALENT:
+                unresolved_peptide_junctions.pop(
+                    (min(left, right), max(left, right)), None
+                )
+
+    if unresolved_peptide_junctions:
+        offset = next(iter(unresolved_peptide_junctions.values()))
+        return SpanReconstructionFailure(
+            SpanReconstructionFailureKind.INVALID_PEPTIDE_JUNCTION,
+            f"donor junction {residue_ids[offset].display_token()}.C to "
+            f"{residue_ids[offset + 1].display_token()}.N requires a canonical "
+            "single non-aromatic covalent bond",
+        )
 
     return _DonorWindow(
         residue_payloads=tuple(residue_payloads),
