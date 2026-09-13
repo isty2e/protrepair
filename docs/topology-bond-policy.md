@@ -104,10 +104,8 @@ integral bonds until atom repair closes them. The same integer orders feed
 PDB/mmCIF output. Use mmCIF for an alternate source Kekule form when explicit
 single orders must be distinguished from connectivity-only records.
 
-This is not a complete polymer microstate model. Charge-dependent groups,
-including guanidinium, carboxylates, and histidine, still need coordinated
-bond-order, charge, and hydrogen resolution. Source charges are not changed by
-these fixed carbonyl and ring corrections. Custom component definitions are
+These fixed corrections do not choose protonation. Charge-dependent groups
+use the coupled microstate resolver below; custom component definitions are
 unchanged.
 
 ### Coupled Microstate Resolution
@@ -189,10 +187,26 @@ By default this operation keeps existing or original H coordinates as anchors.
 When heavy atoms have moved, the caller can request H rebuilding instead of
 restoring stale original positions. Neither mode certifies clash-free geometry.
 
-These internal operations and preparation policy are not yet connected to
-`process_structure`, the default hydrogen workflow, or FF readiness. The existing
-histidine ratio execution is unchanged.
-Local graph and placement checks do not establish whole-structure repair quality.
+Both `add_hydrogens` and `process_structure` use these targets for polymer H
+placement. Fixed-template H placement excludes atoms owned by a coupled site.
+H inventory, H attachment topology, and charge/bond conformance are separate
+state facts: having all H atoms does not suppress a needed chemistry correction.
+The planner can request that correction, or terminal atom completion when OXT
+is missing, before local refinement. Hydrogen-only calls with heavy preparation
+disabled report missing OXT rather than adding it implicitly.
+
+FF readiness checks the chemistry of every included residue, not just movable
+atoms. Unresolved sites block that region while unrelated valid regions remain
+usable. In particular, internal gaps in cropped structures are not assumed to
+be free termini. Local refinement across those boundaries remains unsupported
+without an explicit, chemically supported boundary representation. The cropped
+3J6B helix fixture therefore reports blocked refinement and its remaining parser
+defect instead of running UFF with incomplete boundary valence. Restoring that
+case requires a boundary-chemistry design, not a weaker readiness check.
+
+Graph conformance and successful H placement do not certify clash-free geometry,
+RDKit no-CONECT readability, or overall repair quality; the workflow reports
+those outcomes separately, including when H coverage is partial.
 
 ## Projection Rules
 
@@ -272,9 +286,9 @@ Polymer hydrogen completion uses the strongest available support mode for each
 new H anchor:
 
 - static or rotatable component-template anchors are `TEMPLATE_RESOLVED`;
-- backbone and N-terminal polymer context anchors are `SEQUENCE_INFERRED`;
-- request-driven histidine delta protonation is `REPAIR_INFERRED` until a
-  stronger microstate template or external evidence model exists.
+- coupled microstate anchors, including backbone and cationic HIS, are
+  `TEMPLATE_RESOLVED`. The selected graph supplies their chemistry; the preparation
+  assumption or explicit request is recorded separately from bond provenance.
 
 Existing source-explicit H bonds remain authoritative when the same endpoint
 pair is regenerated during hydrogen completion.

@@ -56,7 +56,7 @@ RDKit is present but unregistered. Missing RDKit is a broken required-dependency
 installation, not a supported runtime mode. Current release constraints pin
 `rdkit==2026.3.2`, which corresponds to RDKit backend version `2026.03.2`.
 The current rotatable-hydrogen implementation has the same verified 1AFC
-coordinate digest under RDKit `2026.03.2` and `2026.03.3`. Digests from older
+coordinate digest under RDKit `2026.03.2`. Digests from older
 code are not accepted because they represent the former incomplete torsion
 scan.
 

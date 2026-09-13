@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- apply polymer H counts, charges, and bond orders together in direct and workflow
+  preparation, including H-complete structures with inconsistent chemistry.
+  Histidine ratio requests now produce a complete cationic ring graph
+- preserve original H names and isotopes, and keep ligand edits made by earlier
+  workflow actions. Rebuilding H after heavy movement preserves identity without
+  restoring stale coordinates
+- add the C-OXT bond when completing a free C terminus, and require realized
+  chemistry throughout the included FF region. Internal cropped boundaries remain
+  unsupported rather than being silently treated as free termini
+- score parser defects even with partial H coverage and recheck previously
+  satisfied goals against the returned structure
 - retain original charge, hydrogen/isotope, coordinate, and explicit-connection
   observations across repair and canonical reprocessing, separately from the
   current topology. Template-filled connection types remain distinguishable
@@ -60,17 +71,16 @@
 
 ### Added
 
-- add an internal, pure standard-polymer microstate resolver that keeps H counts,
+- add a pure standard-polymer microstate resolver that keeps H counts,
   formal charges, and bond orders coupled. It preserves source evidence and
-  distinguishes ambiguity, conflicts, and unsupported chemistry; runtime
-  hydrogen placement and workflow integration are not yet changed
+  distinguishes ambiguity, conflicts, and unsupported chemistry
 - retain explicitly applied polymer microstate choices separately from original
   observations, and add a snapshot-bound check of current H/charge/bond realization
 - add marked free-terminal assumptions to the internal PRAS preparation policy,
   without replacing current peptide connections or contrary original chemistry
 - generate graph-constrained H coordinates for internal polymer microstate
   application, with separate chemistry-only preservation and explicit H
-  rebuilding. Default hydrogen workflow and FF-readiness integration are pending
+  rebuilding
 - reconstruct explicitly mapped missing polymer spans from external donor
   structures with anchor-frame placement, bounded donor-seeded CCD closure,
   chemistry and stereochemistry gates, atomic topology updates, and structured
