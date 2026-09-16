@@ -31,6 +31,10 @@ from protrepair.io.source_identity import (
     normalize_chain_id,
     normalize_insertion_code,
 )
+from protrepair.io.source_peptide import (
+    source_compatible_peptide_bonds,
+    source_sequence_inferred_polymer_topology_bonds,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import (
     AtomSite,
@@ -55,7 +59,6 @@ from protrepair.structure.topology import (
     AtomTopology,
     StructureTopology,
     TopologyBond,
-    sequence_inferred_polymer_topology_bonds,
 )
 
 
@@ -125,6 +128,7 @@ def normalize_raw_structure(
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str] | None = None,
     source_charges_by_atom_identity: Mapping[SourceAtomIdentity, Sequence[int | None]]
     | None = None,
+    source_peptide_break_after: frozenset[ResidueId] = frozenset(),
 ) -> ProteinStructure:
     """Normalize one first model from format-boundary-projected source facts.
 
@@ -150,6 +154,9 @@ def normalize_raw_structure(
         including explicit zero and unspecified None. Without these annotations,
         native zero cannot be distinguished from an unspecified charge and is
         treated as unspecified.
+    source_peptide_break_after : frozenset[ResidueId]
+        Residues followed by a source TER record, even if the native parser
+        did not retain that boundary.
 
     Returns
     -------
@@ -265,7 +272,14 @@ def normalize_raw_structure(
             component_library=build_default_component_library(),
         )
     }
-    for bond in sequence_inferred_polymer_topology_bonds(constitution):
+    peptide_candidates = source_sequence_inferred_polymer_topology_bonds(
+        raw_structure,
+        file_format=file_format,
+        constitution=constitution,
+        geometry=geometry,
+        peptide_break_after=source_peptide_break_after,
+    )
+    for bond in peptide_candidates:
         expected_bonds_by_pair.setdefault(bond.endpoint_pair(), bond)
     source_topology_bonds = _topology_bonds_from_source_connections(
         source_connections,
@@ -276,6 +290,14 @@ def normalize_raw_structure(
     source_endpoint_pairs = frozenset(
         bond.endpoint_pair() for bond in source_topology_bonds
     )
+    for bond in peptide_candidates:
+        expected_bonds_by_pair.pop(bond.endpoint_pair(), None)
+    for bond in source_compatible_peptide_bonds(
+        peptide_candidates,
+        source_bonds=source_topology_bonds,
+        constitution=constitution,
+    ):
+        expected_bonds_by_pair[bond.endpoint_pair()] = bond
     remaining_expected_bonds = tuple(
         bond
         for bond in expected_bonds_by_pair.values()

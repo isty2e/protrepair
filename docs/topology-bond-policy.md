@@ -84,6 +84,30 @@ PDB also cannot distinguish unresolved order from an unannotated single bond.
 Use mmCIF when that distinction matters. Neither format is a lossless archive
 of all internal chemistry provenance.
 
+## Peptide Succession
+
+Author residue numbers are labels, not sequence positions. Ingress can recover
+peptide bonds across reversed insertion codes or skipped author numbers from
+consecutive mmCIF `label_seq_id` values, or a complete observed component sequence
+that exactly matches the source polymer entity's SEQRES. Recovery also requires
+consecutive source slots in the same entity/asym/segment and a selected C-N distance
+greater than zero and at most 1.8 angstrom. The distance corroborates sequence
+evidence; it does not establish connectivity by itself.
+
+Without those positions, ordinary consecutive author labels remain the fallback.
+Explicit sequence gaps, entity/asym/segment boundaries, terminal OXT, and conflicting
+covalent attachments prevent inference. PDB HETATM storage alone does
+not create a boundary for a component already classified as a polymer residue.
+Source connections retain precedence, including their reported orders and
+alternate-location selection. Recovered bonds are `SEQUENCE_INFERRED`, not
+original source declarations; residue identities and heavy coordinates do not
+change.
+
+Gapped sequence alignment is not used to recover unusual numbering. Repeated
+residues can admit several gap placements, so an alignment alone would not prove
+which observed residues are consecutive. Such inputs need explicit sequence
+positions or connectivity evidence.
+
 ## Standard Component Chemistry
 
 The built-in standard residues assign double bonds to backbone C=O and the

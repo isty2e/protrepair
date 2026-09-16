@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- recover peptide connectivity across nonmonotonic author residue numbering
+  from source sequence evidence and corroborating geometry. Explicit gaps,
+  boundary chemistry, and source connections still constrain inference
 - reject donor-span requests whose declared anchors disagree with post-insertion
   chain neighbors, or whose source carbonyl already has an additional covalent
   attachment or terminal OXT. Internal and one-anchor spans fail without changing
