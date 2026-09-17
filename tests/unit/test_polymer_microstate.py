@@ -87,6 +87,38 @@ def _resolve(
     ).resolve(residue, structure.provenance.ingress.observation, override=override)
 
 
+@pytest.mark.parametrize(
+    "kind", [PolymerChemicalSite.BACKBONE_N, PolymerChemicalSite.BACKBONE_C]
+)
+def test_backbone_resolution_requires_its_boundary_not_unrelated_sidechain(kind):
+    source = _source("HIS")
+    residue = source.constitution.residue_site_at(ResidueIndex(0))
+    backbone = replace(
+        residue,
+        atom_sites=tuple(
+            a for a in residue.atom_sites if a.name in {"N", "CA", "C", "O"}
+        ),
+    )
+    site = PolymerMicrostateSite(
+        build_standard_component_library().require("HIS"), kind, PeptideLinkage.LINKED
+    )
+    assert (
+        site.resolve(backbone, source.provenance.ingress.observation).graph is not None
+    )
+    incomplete = replace(
+        backbone, atom_sites=tuple(a for a in backbone.atom_sites if a.name != "CA")
+    )
+    assert (
+        site.resolve(incomplete, source.provenance.ingress.observation).status
+        is MicrostateResolutionStatus.INSUFFICIENT
+    )
+    sidechain = PolymerMicrostateSite(site.template, PolymerChemicalSite.SIDECHAIN)
+    assert (
+        sidechain.resolve(backbone, source.provenance.ingress.observation).status
+        is MicrostateResolutionStatus.INSUFFICIENT
+    )
+
+
 def _with_source_bonds(
     structure: ProteinStructure,
     *specs: tuple[str, str, BondRelationshipType, int | None],

@@ -677,8 +677,8 @@ def test_hydrogen_placement_is_stable_on_already_hydrogenated_input() -> None:
     )
 
 
-def test_unsupported_component_skips_only_that_residue() -> None:
-    """Unsupported residues should not block supported neighbors in one chain."""
+def test_incomplete_modified_sidechain_does_not_block_backbone_or_neighbors() -> None:
+    """Partial MLY keeps usable backbone chemistry without inventing a side chain."""
 
     structure = structure_from_tokens(
         Path("tests/fixtures/corpus/pdb1afc.ent"),
@@ -706,7 +706,8 @@ def test_unsupported_component_skips_only_that_residue() -> None:
     first_after, second_after = result.structure.chain_site("A").residues
 
     assert "H1" in first_after.atom_site_names()
-    assert "H" not in second_after.atom_site_names()
+    assert "H" in second_after.atom_site_names()
+    assert not second_after.has_atom_site("CB")
     assert result.has_warnings()
     assert any(
         issue.kind is ValidationIssueKind.UNSUPPORTED_HYDROGENATION
@@ -715,8 +716,8 @@ def test_unsupported_component_skips_only_that_residue() -> None:
     )
 
 
-def test_unsupported_component_isolation_is_per_chain_not_global() -> None:
-    """An unsupported residue in one chain should not block another chain."""
+def test_incomplete_modified_sidechain_isolation_is_per_chain() -> None:
+    """A missing side chain does not block backbone or another chain's H."""
 
     supported_structure = structure_from_tokens(
         Path("tests/fixtures/corpus/pdb1afc.ent"),
@@ -771,7 +772,8 @@ def test_unsupported_component_isolation_is_per_chain_not_global() -> None:
     unsupported_after = result.structure.chain_site("B").residues[0]
 
     assert supported_after.has_atom_site("H1")
-    assert not unsupported_after.has_atom_site("H1")
+    assert {"H1", "H2", "H3"} <= set(unsupported_after.atom_site_names())
+    assert not unsupported_after.has_atom_site("CB")
     assert result.has_warnings()
     assert any(
         issue.kind is ValidationIssueKind.UNSUPPORTED_HYDROGENATION

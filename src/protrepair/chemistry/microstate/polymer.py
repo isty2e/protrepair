@@ -114,8 +114,9 @@ class PolymerMicrostateSite:
         -------
         MicrostateResolution
             Coupled graph, ambiguity, conflict, or explicit inapplicability.
-            Missing heavy atoms and uninterpretable H attachments are insufficient
-            even with an override; an override cannot invent an atom mapping.
+            Missing site or boundary atoms and uninterpretable H attachments are
+            insufficient even with an override. Backbone sites do not require
+            completion of an unrelated side chain.
 
         Raises
         ------
@@ -159,9 +160,19 @@ class PolymerMicrostateSite:
                     details=("applied override no longer matches the chemical site",),
                 )
             override = applied_override.constraints()
-        required = set(stock.expected_heavy_atom_names()) | {
-            atom.name for atom in reference.atoms
-        }
+        required = {atom.name for atom in reference.atoms}
+        heavy_names = set(stock.expected_heavy_atom_names())
+        if self.kind is PolymerChemicalSite.SIDECHAIN:
+            required.update(heavy_names)
+        else:
+            site_names = set(required)
+            required.update(
+                name
+                for bond in stock.definition.bonds
+                if {bond.atom_name_1, bond.atom_name_2} & site_names
+                for name in (bond.atom_name_1, bond.atom_name_2)
+                if name in heavy_names
+            )
         missing = required - set(residue.atom_site_names())
         if missing:
             return MicrostateResolution(
