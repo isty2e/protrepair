@@ -21,8 +21,13 @@
   workflow actions. Rebuilding H after heavy movement preserves identity without
   restoring stale coordinates
 - add the C-OXT bond when completing a free C terminus, and require realized
-  chemistry throughout the included FF region. Internal cropped boundaries remain
-  unsupported rather than being silently treated as free termini
+  chemistry or explicit calculation-only peptide support throughout the FF region
+- close ordinary local peptide cuts with fixed source-backed or compact synthetic
+  caps. They preserve boundary valence without declaring biological free termini,
+  changing source chemistry, or exporting support atoms
+- preserve canonical H parents during FF bond planning even when distorted
+  coordinates place another heavy atom closer. Backbone microstate resolution
+  checks its own scaffold rather than requiring an unrelated side chain
 - score parser defects even with partial H coverage and recheck previously
   satisfied goals against the returned structure
 - retain original charge, hydrogen/isotope, coordinate, and explicit-connection

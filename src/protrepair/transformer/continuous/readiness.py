@@ -45,10 +45,9 @@ from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
+from protrepair.transformer.continuous.bonds import plan_continuous_region_bonds
 from protrepair.transformer.continuous.domain import ContinuousRelaxationRegion
-from protrepair.transformer.continuous.realizability import (
-    continuous_region_bond_realizability_error,
-)
+from protrepair.transformer.continuous.peptide_boundary import PeptideBoundaryPlan
 
 CONTINUOUS_RELAXATION_CLASH_POLICY = ClashPolicy(
     include_hydrogens=True,
@@ -153,9 +152,8 @@ class ContinuousRelaxationReadinessPolicy:
             )
 
         unresolved = tuple(
-            fact.residue_id.display_token()
-            for fact in chemistry_facts.residue_facts
-            if fact.has_unrealized_microstates()
+            residue_id.display_token()
+            for residue_id in continuous_region_facts.unsupported_polymer_residue_ids()
         )
         if unresolved:
             return ContinuousRelaxationReadinessAssessment(
@@ -188,6 +186,11 @@ class ContinuousRelaxationReadinessPolicy:
             return ContinuousRelaxationReadinessAssessment(
                 "continuous relaxation requires a realizable selected-scope bond "
                 "graph before any force field can be bound"
+            )
+
+        if continuous_region_facts.peptide_boundary_blocker is not None:
+            return ContinuousRelaxationReadinessAssessment(
+                continuous_region_facts.peptide_boundary_blocker
             )
 
         return ContinuousRelaxationReadinessAssessment()
@@ -451,27 +454,44 @@ def _derive_execution_region_readiness_facts(
         ),
         hydrogen_expectation_model=hydrogen_expectation_model,
     )
-    continuous_bond_realizability_blocker = continuous_region_bond_realizability_error(
-        continuous_region,
-        component_library=component_library,
-        allow_retained_non_polymer_rdkit_fallback=(
-            allow_retained_non_polymer_rdkit_fallback
-        ),
-        retained_non_polymer_chemistry_evidence=(
-            retained_non_polymer_chemistry_evidence
-        ),
-        retained_non_polymer_chemistry_resolution_by_residue_id=(
-            None
-            if hydrogen_expectation_model is None
-            else (
-                hydrogen_expectation_model.retained_non_polymer_resolution_by_residue_id
-            )
-        ),
-    )
+    continuous_bond_realizability_blocker = None
+    peptide_boundary_blocker = None
+    modeled_peptide_endpoints = ()
+    try:
+        support = continuous_region.require_local_bond_planning_support(
+            component_library,
+            allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+            retained_non_polymer_chemistry_resolution_by_residue_id=(
+                None
+                if hydrogen_expectation_model is None
+                else (
+                    hydrogen_expectation_model.retained_non_polymer_resolution_by_residue_id
+                )
+            ),
+        )
+        bonds = plan_continuous_region_bonds(
+            continuous_region,
+            component_library,
+            support_by_residue_index=support,
+        )
+    except RefinementError as error:
+        continuous_bond_realizability_blocker = str(error)
+    else:
+        try:
+            modeled_peptide_endpoints = PeptideBoundaryPlan.from_region(
+                continuous_region,
+                bonds,
+                component_library,
+            ).modeled_source_endpoints()
+        except RefinementError as error:
+            peptide_boundary_blocker = str(error)
     return (
         ContinuousRegionReadinessFacts(
             coverage_facts=continuous_region_coverage_facts,
             chemistry_readiness_facts=continuous_region_chemistry_readiness_facts,
+            modeled_peptide_endpoints=modeled_peptide_endpoints,
+            peptide_boundary_blocker=peptide_boundary_blocker,
         ),
         ContinuousBondRealizabilityFacts(
             carrier=snapshot.structure,

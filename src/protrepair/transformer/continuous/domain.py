@@ -87,6 +87,46 @@ class ContinuousRelaxationRegion:
                 selected_residue_index_set=selected_residue_index_set,
             )
         )
+        # A shared omitted residue must not become two overlapping caps. Keep
+        # cyclic proline N chemistry intact instead of replacing it with NME.
+        while True:
+            omitted: dict[ResidueIndex, set[str]] = {}
+            additions: set[ResidueIndex] = set()
+            for bond in planned_inter_residue_bonds:
+                first = constitution.residue_index_for_atom_index(bond.atom_index_1)
+                second = constitution.residue_index_for_atom_index(bond.atom_index_2)
+                if (first in included_residue_index_set) == (
+                    second in included_residue_index_set
+                ):
+                    continue
+                outside = (
+                    bond.atom_index_2
+                    if first in included_residue_index_set
+                    else bond.atom_index_1
+                )
+                outside_residue = (
+                    second if first in included_residue_index_set else first
+                )
+                names = {
+                    constitution.atom_site_at(i).name
+                    for i in (bond.atom_index_1, bond.atom_index_2)
+                }
+                if names != {"C", "N"} or bond.order != 1 or bond.aromatic:
+                    continue
+                name = constitution.atom_site_at(outside).name
+                omitted.setdefault(outside_residue, set()).add(name)
+                if (
+                    name == "N"
+                    and constitution.residue_site_at(outside_residue).component_id
+                    == "PRO"
+                ):
+                    additions.add(outside_residue)
+            additions.update(
+                index for index, names in omitted.items() if names == {"C", "N"}
+            )
+            if not additions:
+                break
+            included_residue_index_set.update(additions)
         included_residue_indices = tuple(
             ResidueIndex(residue_index)
             for residue_index, residue_site in enumerate(

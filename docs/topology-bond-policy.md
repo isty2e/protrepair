@@ -219,14 +219,29 @@ The planner can request that correction, or terminal atom completion when OXT
 is missing, before local refinement. Hydrogen-only calls with heavy preparation
 disabled report missing OXT rather than adding it implicitly.
 
-FF readiness checks the chemistry of every included residue, not just movable
-atoms. Unresolved sites block that region while unrelated valid regions remain
-usable. In particular, internal gaps in cropped structures are not assumed to
-be free termini. Local refinement across those boundaries remains unsupported
-without an explicit, chemically supported boundary representation. The cropped
-3J6B helix fixture therefore reports blocked refinement and its remaining parser
-defect instead of running UFF with incomplete boundary valence. Restoring that
-case requires a boundary-chemistry design, not a weaker readiness check.
+FF readiness checks every included residue, not just movable atoms. Internal
+gaps are not treated as biological free termini. For ordinary peptide cuts,
+local refinement completes the temporary calculation graph with fixed caps:
+ACE/NME groups use omitted source geometry, while a missing source partner uses
+a compact formyl or primary-amide group. An internal N without H evidence can
+receive a calculation-only N-H attachment. Shared omitted neighbors and proline
+N partners stay in fixed context rather than becoming overlapping or chemically
+inappropriate caps.
+
+These groups supply boundary valence, not a reconstruction of missing residues.
+They are initialized directly; no separate cap optimization or convergence
+threshold is required. Cap-use diagnostics identify the supported source sites.
+Only original movable-atom coordinates return from the calculation: no cap atoms,
+cap bonds, supplemental H, or source charge changes are exported. The source
+microstate remains unresolved where its original partner is missing.
+
+Conflicting source chemistry, ambiguous attachments, unsupported non-peptide
+cuts, and missing cap anchors still block execution. A source-backed cap needs
+the relevant backbone scaffold and validated H anchors, not completion of an
+omitted side chain. Heavy-atom completeness remains required for residues
+actually included in the force field. Computational caps do not resolve
+off-scope contacts or guarantee ideal bond lengths; returned-source quality is
+assessed separately.
 
 Graph conformance and successful H placement do not certify clash-free geometry,
 RDKit no-CONECT readability, or overall repair quality; the workflow reports

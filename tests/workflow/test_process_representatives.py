@@ -24,6 +24,7 @@ from tests.support.whole_structure_sources import WHOLE_STRUCTURE_CORPUS_SOURCES
 
 from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
+from protrepair.diagnostics.clashes import detect_clashes_involving_residues
 from protrepair.diagnostics.kinds import RepairEventKind, ValidationIssueKind
 from protrepair.diagnostics.parser_readability import (
     diagnose_rdkit_no_conect_sanitize_readability,
@@ -64,7 +65,7 @@ WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, frozenset[str]]] = {
     "1afc-hydrogen-his-protonated": {
         "2026.03.2": frozenset(
             {
-                "f8d2b7cc64467765c1cbf5c19da17122ed66d5f96b890b71c907b7e16a4ed99d",
+                "aac88f46d303ca162c7cc2c0657721710ff82c673aaeed3ebc62369794defd84",
             }
         ),
     },
@@ -168,12 +169,15 @@ def test_registered_rdkit_coordinate_digest_accepts_current_contract(
 ) -> None:
     """Each registered RDKit backend should accept the current-code digest."""
 
-    for rdkit_version in ("2026.03.2",):
+    case_id = "1afc-hydrogen-his-protonated"
+    for rdkit_version, digests in WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP[
+        case_id
+    ].items():
         _patch_rdkit_version(monkeypatch, rdkit_version)
-        _assert_rdkit_coordinate_digest_matches(
-            "1afc-hydrogen-his-protonated",
-            "f8d2b7cc64467765c1cbf5c19da17122ed66d5f96b890b71c907b7e16a4ed99d",
-        )
+        for digest in digests:
+            _assert_rdkit_coordinate_digest_matches(case_id, digest)
+        with pytest.raises(AssertionError):
+            _assert_rdkit_coordinate_digest_matches(case_id, "unregistered-digest")
 
 
 def test_unknown_rdkit_coordinate_digest_fails_release_gate(
@@ -248,8 +252,8 @@ def test_process_structure_repairs_1afc_to_no_conect_rdkit_readable_output() -> 
 
 
 @pytest.mark.representative_regression
-def test_explicit_3j6b_repair_reports_unresolved_cropped_chemistry() -> None:
-    """Do not refine cropped internal boundaries as invented free termini."""
+def test_explicit_3j6b_repair_uses_calculation_only_peptide_boundaries() -> None:
+    """Close the FF graph without exporting caps or inventing free termini."""
 
     source = Path(
         "tests/fixtures/pdb/refinement/3j6b_terminal_helix_misthread_local.pdb"
@@ -281,23 +285,29 @@ def test_explicit_3j6b_repair_reports_unresolved_cropped_chemistry() -> None:
     )
 
     assert any(
-        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
-        and "realized polymer microstates" in issue.message
-        for issue in result.issues
-    )
-    assert not any(
         event.kind is RepairEventKind.LOCAL_REFINEMENT_APPLIED
+        and "rdkit" in (event.details or "")
         for event in result.repairs
     )
-    readable = measure_rdkit_no_conect_sanitize_readability(result.structure)
-    assert not readable
     assert any(
-        issue.kind is ValidationIssueKind.PARSER_READABILITY for issue in result.issues
+        issue.kind is ValidationIssueKind.COMPUTATIONAL_PEPTIDE_CAP
+        for issue in result.issues
     )
+    assert measure_rdkit_no_conect_sanitize_readability(result.structure)
+    assert not detect_clashes_involving_residues(
+        result.structure,
+        residue_ids=frozenset(ResidueId("9", n) for n in (149, 152, 235)),
+        component_library=build_default_component_library(),
+    ).clashes
+    for site in result.structure.constitution.residue_slots:
+        assert site.residue_id.chain_id == "9"
+    for number in (122, 155):
+        site = result.structure.constitution.residue_or_ligand(ResidueId("9", number))
+        assert site is not None and not site.has_atom_site("OXT")
     assert result.terminal_branch_report is not None
     score = result.terminal_branch_report.preferred_outcome().branch_quality_score
-    assert score.parser_incompatible == 1
-    assert score.parser_extra_heavy_bond_count > 0
+    assert score.parser_incompatible == 0
+    assert score.parser_extra_heavy_bond_count == 0
 
 
 @pytest.mark.representative_regression

@@ -11,6 +11,9 @@ from protrepair.transformer.artifacts import RegionTransformationResult
 from protrepair.transformer.artifacts.patch import StructureDelta
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.domain import ContinuousRelaxationProblem
+from protrepair.transformer.continuous.local_relaxation import (
+    ContinuousLocalRelaxationTransformer,
+)
 from protrepair.transformer.continuous.readiness import (
     derive_atom_scope_continuous_relaxation_facts,
     require_atom_scope_continuous_relaxation_execution,
@@ -112,17 +115,18 @@ class RefinementExecutionCandidate:
                 None
                 if request.hydrogen_expectation_model is None
                 else (
-                    request.hydrogen_expectation_model
-                    .retained_non_polymer_resolution_by_residue_id
+                    request.hydrogen_expectation_model.retained_non_polymer_resolution_by_residue_id
                 )
             ),
         )
         return SpeculativeExecution(
             proposal=self,
-            outcome=request.backend.relax(
-                problem,
+            outcome=ContinuousLocalRelaxationTransformer(
+                spec=request.spec,
+                component_library=request.component_library,
                 restraint_library=request.restraint_library,
-            ),
+                backend=request.backend,
+            ).relax_problem(problem),
         )
 
     def execute_discrete_only(self) -> "ExecutedRefinementCandidate":
@@ -168,9 +172,7 @@ class RefinementExecutionBatch:
         """Return how many candidates in this batch use one execution mode."""
 
         return sum(
-            1
-            for candidate in self.candidates
-            if candidate.execution_mode is mode
+            1 for candidate in self.candidates if candidate.execution_mode is mode
         )
 
     def discrete_parser_preconditioning_candidate(
@@ -220,6 +222,7 @@ class RefinementExecutionBatch:
             executions=tuple(executed_candidates),
             errors=tuple(execution_errors),
         )
+
 
 ExecutedRefinementCandidate: TypeAlias = SpeculativeExecution[
     RefinementExecutionCandidate,
