@@ -1,5 +1,6 @@
 """Bond planning and materialization for continuous-relaxation problems."""
 
+from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
@@ -193,6 +194,11 @@ def plan_continuous_region_bonds(
             included_residue_index_set=included_residue_index_set,
         )
     )
+    canonical_hydrogen_pairs: dict[AtomIndex, set[tuple[int, int]]] = defaultdict(set)
+    for bond in bond_set:
+        for index in (bond.atom_index_1, bond.atom_index_2):
+            if constitution.atom_site_at(index).is_hydrogen():
+                canonical_hydrogen_pairs[index].add(bond.sort_key())
     for residue_index in region.included_residue_indices:
         residue_site = region.residue_site(residue_index)
         template = component_library.get(residue_site.component_id)
@@ -279,7 +285,17 @@ def plan_continuous_region_bonds(
         and constitution.residue_index_for_atom_index(bond.atom_index_2)
         in included_residue_index_set
     )
-    by_pair = {bond.sort_key(): bond for bond in bond_set}
+    # A canonical H attachment excludes competing template/proximity parents,
+    # not just competing orders at the same endpoint pair.
+    by_pair = {
+        bond.sort_key(): bond
+        for bond in bond_set
+        if all(
+            index not in canonical_hydrogen_pairs
+            or bond.sort_key() in canonical_hydrogen_pairs[index]
+            for index in (bond.atom_index_1, bond.atom_index_2)
+        )
+    }
     # Fallback templates supply missing edges, never competing orders for a
     # canonical edge whose chemistry may differ from the default microstate.
     for topology_bond in region.snapshot.structure.topology.bonds:

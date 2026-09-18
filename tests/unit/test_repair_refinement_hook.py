@@ -453,6 +453,17 @@ def test_refinement_candidate_threads_retained_ligand_policy_to_execution(
 
     component_library = build_default_component_library()
     backend = RecordingBackend()
+
+    def execute_problem(transformer, problem):
+        return transformer.backend.relax(
+            problem, restraint_library=transformer.restraint_library
+        )
+
+    monkeypatch.setattr(
+        local_candidates.ContinuousLocalRelaxationTransformer,
+        "relax_problem",
+        execute_problem,
+    )
     request = LocalRefinementRequest(
         context=ProteinTransformationContext.from_snapshot_atom_input(
             snapshot,

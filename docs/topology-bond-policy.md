@@ -84,6 +84,30 @@ PDB also cannot distinguish unresolved order from an unannotated single bond.
 Use mmCIF when that distinction matters. Neither format is a lossless archive
 of all internal chemistry provenance.
 
+## Peptide Succession
+
+Author residue numbers are labels, not sequence positions. Ingress can recover
+peptide bonds across reversed insertion codes or skipped author numbers from
+consecutive mmCIF `label_seq_id` values, or a complete observed component sequence
+that exactly matches the source polymer entity's SEQRES. Recovery also requires
+consecutive source slots in the same entity/asym/segment and a selected C-N distance
+greater than zero and at most 1.8 angstrom. The distance corroborates sequence
+evidence; it does not establish connectivity by itself.
+
+Without those positions, ordinary consecutive author labels remain the fallback.
+Explicit sequence gaps, entity/asym/segment boundaries, terminal OXT, and conflicting
+covalent attachments prevent inference. PDB HETATM storage alone does
+not create a boundary for a component already classified as a polymer residue.
+Source connections retain precedence, including their reported orders and
+alternate-location selection. Recovered bonds are `SEQUENCE_INFERRED`, not
+original source declarations; residue identities and heavy coordinates do not
+change.
+
+Gapped sequence alignment is not used to recover unusual numbering. Repeated
+residues can admit several gap placements, so an alignment alone would not prove
+which observed residues are consecutive. Such inputs need explicit sequence
+positions or connectivity evidence.
+
 ## Standard Component Chemistry
 
 The built-in standard residues assign double bonds to backbone C=O and the
@@ -195,14 +219,29 @@ The planner can request that correction, or terminal atom completion when OXT
 is missing, before local refinement. Hydrogen-only calls with heavy preparation
 disabled report missing OXT rather than adding it implicitly.
 
-FF readiness checks the chemistry of every included residue, not just movable
-atoms. Unresolved sites block that region while unrelated valid regions remain
-usable. In particular, internal gaps in cropped structures are not assumed to
-be free termini. Local refinement across those boundaries remains unsupported
-without an explicit, chemically supported boundary representation. The cropped
-3J6B helix fixture therefore reports blocked refinement and its remaining parser
-defect instead of running UFF with incomplete boundary valence. Restoring that
-case requires a boundary-chemistry design, not a weaker readiness check.
+FF readiness checks every included residue, not just movable atoms. Internal
+gaps are not treated as biological free termini. For ordinary peptide cuts,
+local refinement completes the temporary calculation graph with fixed caps:
+ACE/NME groups use omitted source geometry, while a missing source partner uses
+a compact formyl or primary-amide group. An internal N without H evidence can
+receive a calculation-only N-H attachment. Shared omitted neighbors and proline
+N partners stay in fixed context rather than becoming overlapping or chemically
+inappropriate caps.
+
+These groups supply boundary valence, not a reconstruction of missing residues.
+They are initialized directly; no separate cap optimization or convergence
+threshold is required. Cap-use diagnostics identify the supported source sites.
+Only original movable-atom coordinates return from the calculation: no cap atoms,
+cap bonds, supplemental H, or source charge changes are exported. The source
+microstate remains unresolved where its original partner is missing.
+
+Conflicting source chemistry, ambiguous attachments, unsupported non-peptide
+cuts, and missing cap anchors still block execution. A source-backed cap needs
+the relevant backbone scaffold and validated H anchors, not completion of an
+omitted side chain. Heavy-atom completeness remains required for residues
+actually included in the force field. Computational caps do not resolve
+off-scope contacts or guarantee ideal bond lengths; returned-source quality is
+assessed separately.
 
 Graph conformance and successful H placement do not certify clash-free geometry,
 RDKit no-CONECT readability, or overall repair quality; the workflow reports

@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 from enum import Enum
 
+from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
+from protrepair.chemistry.microstate.preparation import PolymerSitePreparation
+from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.scope import AtomSetScope, ResidueSetScope
 from protrepair.state.scoped import CarrierScopedState
 from protrepair.state.structure_axes import (
@@ -45,6 +48,7 @@ from protrepair.state.topology import (
     TopologyAvailabilityState as TopologyAvailabilityState,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.labels import AtomRef, ResidueId
 
 
 class ClashState(str, Enum):
@@ -181,6 +185,8 @@ class ContinuousRegionReadinessFacts:
 
     coverage_facts: StructureCoverageFacts
     chemistry_readiness_facts: StructureChemistryReadinessFacts
+    modeled_peptide_endpoints: tuple[AtomRef, ...] = ()
+    peptide_boundary_blocker: str | None = None
 
     def __post_init__(self) -> None:
         if self.coverage_facts.carrier != self.chemistry_readiness_facts.carrier:
@@ -188,12 +194,44 @@ class ContinuousRegionReadinessFacts:
                 "continuous-region readiness facts require one shared carrier across "
                 "coverage and chemistry readiness facts"
             )
+        if self.peptide_boundary_blocker is not None and self.modeled_peptide_endpoints:
+            raise ValueError("blocked peptide support cannot certify modeled endpoints")
 
     @property
     def carrier(self) -> ProteinStructure:
         """Return the shared structure carrier for this included local region."""
 
         return self.coverage_facts.carrier
+
+    def unsupported_polymer_residue_ids(self) -> tuple[ResidueId, ...]:
+        """Report chemistry not covered by source realization or boundary support.
+
+        Returns
+        -------
+        tuple[ResidueId, ...]
+            Source conflicts remain blockers. A modeled internal peptide gap is
+            usable for this calculation only, not a realized source microstate.
+        """
+        return tuple(
+            fact.residue_id
+            for fact in self.chemistry_readiness_facts.residue_facts
+            if any(
+                not target.is_realized() and not self._models_target(target)
+                for target in fact.polymer_microstate_targets
+            )
+        )
+
+    def _models_target(self, target: PolymerSitePreparation) -> bool:
+        name = {
+            PolymerChemicalSite.BACKBONE_N: "N",
+            PolymerChemicalSite.BACKBONE_C: "C",
+        }.get(target.site.kind)
+        return (
+            name is not None
+            and target.site.linkage is PeptideLinkage.UNKNOWN
+            and target.resolution.status is MicrostateResolutionStatus.INSUFFICIENT
+            and AtomRef(target.residue_id, name) in self.modeled_peptide_endpoints
+        )
 
 
 @dataclass(frozen=True, slots=True)

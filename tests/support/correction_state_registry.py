@@ -224,11 +224,11 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
             ),
         ),
     ),
-    "hydrogenated-cropped-boundary-blocked": CorrectionStateCase(
-        case_id="hydrogenated-cropped-boundary-blocked",
+    "hydrogenated-cropped-boundary-supported": CorrectionStateCase(
+        case_id="hydrogenated-cropped-boundary-supported",
         description=(
-            "Hydrogenated Thr is not FF-ready when its included cropped "
-            "neighbors have unresolved backbone chemistry."
+            "Hydrogenated Thr can use modeled peptide boundaries without "
+            "asserting that its cropped neighbors have realized source chemistry."
         ),
         coverage_tags=(CorrectionCoverageTag.CHEMISTRY_PREPARATION,),
         structure_factory=lambda component_library: hydrogenated_refinement_fixture(
@@ -240,8 +240,9 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
             clash_state=ClashState.NONE,
             hydrogen_applicability_state=HydrogenApplicabilityState.APPLICABLE,
             hydrogen_coverage_state=HydrogenCoverageState.COMPLETE,
-            continuous_relaxation_ready=False,
-            termination_reason=TransformationTerminationReason.NO_LEGAL_TRANSFORMATIONS,
+            continuous_relaxation_ready=True,
+            legal_families=(LocalTransformationFamily.CONTINUOUS_LOCAL_RELAXATION,),
+            legal_strata=(LocalTransformationStratum.RELAXATION,),
             topology_expectations=(
                 TopologyExpectation(
                     residue_id=ResidueId("A", 101),
@@ -293,6 +294,7 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
                                             "HB1",
                                             "HB2",
                                             "HG",
+                                            "OXT",
                                         ),
                                     ),
                                 ),
@@ -318,6 +320,7 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
                                             "HB1",
                                             "HB2",
                                             "HG",
+                                            "OXT",
                                         ),
                                     ),
                                 ),
@@ -330,6 +333,7 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
                             ("N", "CA"),
                             ("CA", "C"),
                             ("C", "O"),
+                            ("C", "OXT"),
                             ("CA", "CB"),
                             ("CB", "OG"),
                             ("CA", "HA"),
@@ -344,6 +348,7 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
                             ("N", "CA"),
                             ("CA", "C"),
                             ("C", "O"),
+                            ("C", "OXT"),
                             ("CA", "CB"),
                             ("CB", "OG"),
                             ("CA", "HA"),
@@ -434,11 +439,17 @@ CORRECTION_STATE_CASES: dict[str, CorrectionStateCase] = {
         ),
         local=LocalExpectation(
             scope_spec=LocalScopeSpec.from_residues((ResidueId("A", 253),)),
-            continuous_relaxation_ready=False,
+            continuous_relaxation_ready=True,
             discrete_seeding_applicable=True,
             validate_discrete_seeding_detector=True,
-            legal_families=(LocalTransformationFamily.BRANCHED_SIDECHAIN_SEED,),
-            legal_strata=(LocalTransformationStratum.CANDIDATE_CONSTRUCTION,),
+            legal_families=(
+                LocalTransformationFamily.BRANCHED_SIDECHAIN_SEED,
+                LocalTransformationFamily.CONTINUOUS_LOCAL_RELAXATION,
+            ),
+            legal_strata=(
+                LocalTransformationStratum.CANDIDATE_CONSTRUCTION,
+                LocalTransformationStratum.RELAXATION,
+            ),
         ),
     ),
 }

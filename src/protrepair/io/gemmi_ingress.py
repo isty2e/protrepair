@@ -133,8 +133,8 @@ def _normalize_structure_text(
     if file_format is FileFormat.PDB:
         raw_structure = gemmi.read_pdb_string(contents)
         pdb_conect_source_connections = _pdb_conect_source_connections(contents)
-        source_element_by_atom_identity, source_charges = _pdb_source_atom_attributes(
-            contents
+        source_element_by_atom_identity, source_charges, peptide_break_after = (
+            _pdb_source_atom_attributes(contents)
         )
     else:
         source_document = gemmi.cif.Document()
@@ -149,6 +149,7 @@ def _normalize_structure_text(
             source_document
         )
         source_orders_by_id = _mmcif_connection_orders(source_document)
+        peptide_break_after = frozenset()
 
     # Typed Gemmi declarations precede untyped PDB CONECT fallback so the
     # canonical endpoint keeps the strongest surviving source fact.
@@ -168,6 +169,7 @@ def _normalize_structure_text(
         source_connections=source_connections,
         source_element_by_atom_identity=source_element_by_atom_identity,
         source_charges_by_atom_identity=source_charges,
+        source_peptide_break_after=peptide_break_after,
     )
 
 
@@ -409,7 +411,7 @@ def _first_model_unambiguous_pdb_atom_identities(
     """
 
     records_by_serial: dict[int, list[SourceAtomIdentity]] = {}
-    for line in _first_model_pdb_atom_lines(contents):
+    for line in _first_model_pdb_coordinate_records(contents):
         atom_serial_and_identity = _pdb_atom_serial_and_identity(line)
         if atom_serial_and_identity is None:
             continue
@@ -426,17 +428,28 @@ def _first_model_unambiguous_pdb_atom_identities(
 
 def _pdb_source_atom_attributes(
     contents: str,
-) -> tuple[dict[SourceAtomIdentity, str], dict[SourceAtomIdentity, list[int | None]]]:
-    """Read isotope symbols and ordered charge occurrences before Gemmi projection."""
+) -> tuple[
+    dict[SourceAtomIdentity, str],
+    dict[SourceAtomIdentity, list[int | None]],
+    frozenset[ResidueId],
+]:
+    """Read isotope/charge observations and TER boundaries before Gemmi projection."""
 
     source_elements: dict[SourceAtomIdentity, str] = {}
     source_charges: dict[SourceAtomIdentity, list[int | None]] = {}
-    for line in _first_model_pdb_atom_lines(contents):
+    peptide_break_after: set[ResidueId] = set()
+    previous_residue: ResidueId | None = None
+    for line in _first_model_pdb_coordinate_records(contents):
+        if line[:6].strip() == "TER":
+            if previous_residue is not None:
+                peptide_break_after.add(previous_residue)
+            continue
         atom_serial_and_identity = _pdb_atom_serial_and_identity(line)
         if atom_serial_and_identity is None:
             continue
 
         identity = atom_serial_and_identity[1]
+        previous_residue = identity.atom_ref.residue_id
         token = line[78:80].strip()
         if not token:
             charge = None
@@ -455,7 +468,7 @@ def _pdb_source_atom_attributes(
             source_symbol,
         )
 
-    return source_elements, source_charges
+    return source_elements, source_charges, frozenset(peptide_break_after)
 
 
 def _mmcif_source_atom_attributes(
@@ -638,8 +651,8 @@ def _non_null_cif_value(value: str) -> str:
     return gemmi.cif.as_string(value).strip()
 
 
-def _first_model_pdb_atom_lines(contents: str) -> Iterator[str]:
-    """Yield coordinate records belonging unambiguously to the first PDB model."""
+def _first_model_pdb_coordinate_records(contents: str) -> Iterator[str]:
+    """Yield atom and TER records belonging to the first PDB model."""
 
     current_model_index = 1
     explicit_model_count = 0
@@ -658,7 +671,7 @@ def _first_model_pdb_atom_lines(contents: str) -> Iterator[str]:
             continue
         if first_model_closed or current_model_index != 1:
             continue
-        if line.startswith(("ATOM  ", "HETATM")):
+        if line.startswith(("ATOM  ", "HETATM")) or line[:6].strip() == "TER":
             yield line
 
 
