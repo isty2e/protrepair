@@ -435,3 +435,81 @@ def test_source_backbone_bond_order_limits_remaining_peptide_valence(atom_name, 
     ]
     assert len(explicit) == 1
     assert explicit[0].order == (3 if order == "trip" else 2)
+
+
+@pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
+@pytest.mark.parametrize("hetero_offset", (0, 1, 2))
+def test_het_polymer_sorting_preserves_raw_sequence_neighbors(
+    file_format, hetero_offset
+):
+    source = _source(positions=(1, 2, 3))
+    source[0][0][hetero_offset].het_flag = "H"
+    source[0][0][hetero_offset].name = "MSE"
+    source.entities[0].full_sequence = [r.name for r in source[0][0]]
+    ids = (ResidueId("A", 1, "B"), ResidueId("A", 1, "A"), ResidueId("A", 1))
+    expected = {
+        frozenset((AtomRef(first, "C"), AtomRef(second, "N")))
+        for first, second in zip(ids, ids[1:], strict=False)
+    }
+    structure = _read(source, file_format)
+    assert _peptide_pairs(structure) == expected
+    assert tuple(r.residue_id for r in structure.constitution.chains[0].residues) == (
+        tuple(sorted(ids))
+    )
+    for residue, residue_id in zip(source[0][0], ids, strict=True):
+        for atom in residue:
+            index = structure.constitution.atom_index(AtomRef(residue_id, atom.name))
+            position = structure.geometry.atom_geometry(index).position
+            assert (position.x, position.y, position.z) == pytest.approx(
+                (atom.pos.x, atom.pos.y, atom.pos.z)
+            )
+    reread = read_structure_string(
+        write_structure_string(structure, file_format), file_format
+    )
+    assert _peptide_pairs(reread) == expected
+
+
+@pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
+def test_het_sorting_does_not_invent_reverse_links_without_sequence_evidence(
+    file_format,
+):
+    source = _source(sequence=())
+    source[0][0][2].het_flag = "H"
+    source[0][0][2].name = "MSE"
+    assert not _peptide_pairs(_read(source, file_format))
+
+
+def test_het_sorting_keeps_declared_sequence_gaps():
+    source = _source(sequence=("ALA", "ASN", "GLY", "MSE"), positions=(1, 3, 4))
+    source[0][0][2].het_flag = "H"
+    source[0][0][2].name = "MSE"
+    assert _peptide_pairs(_read(source, FileFormat.MMCIF)) == {
+        frozenset(
+            (AtomRef(ResidueId("A", 1, "A"), "C"), AtomRef(ResidueId("A", 1), "N"))
+        )
+    }
+
+
+@pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
+def test_appended_het_polymer_still_connects_to_author_neighbors(file_format):
+    source = _source(("1", "2", "3"), sequence=())
+    source[0][0][1].het_flag = "H"
+    source[0][0][1].name = "MSE"
+    relocated = source[0][0][1].clone()
+    del source[0][0][1]
+    source[0][0].add_residue(relocated)
+    if file_format is FileFormat.PDB:
+        text = "\n".join(
+            line
+            for line in source.make_pdb_string().splitlines()
+            if not line.startswith("TER")
+        )
+        structure = read_structure_string(text + "\n", file_format)
+    else:
+        structure = _read(source, file_format)
+    assert _peptide_pairs(structure) == {
+        frozenset(
+            (AtomRef(ResidueId("A", n), "C"), AtomRef(ResidueId("A", n + 1), "N"))
+        )
+        for n in (1, 2)
+    }

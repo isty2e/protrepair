@@ -104,8 +104,27 @@ def source_sequence_inferred_polymer_topology_bonds(
         source_offsets = {
             residue_id: offset for offset, residue_id in enumerate(raw_slots)
         }
-        slots = tuple(site.residue_id for site in chain.residues)
-        for first_id, second_id in zip(slots, slots[1:], strict=False):
+        source_slots = tuple(selected)
+        pairs = dict.fromkeys(zip(source_slots, source_slots[1:], strict=False))
+        atom_slots = tuple(
+            residue_id for residue_id, raw in selected.items() if raw.het_flag != "H"
+        )
+        # Reconcile relocated HET records only when ordinary source order supports
+        # author ordering. Canonical sorting must not reverse an insertion run.
+        if all(
+            first < second
+            for first, second in zip(atom_slots, atom_slots[1:], strict=False)
+        ):
+            slots = tuple(site.residue_id for site in chain.residues)
+            for first_id, second_id in zip(slots, slots[1:], strict=False):
+                if any(
+                    selected.get(residue_id) is not None
+                    and selected[residue_id].het_flag == "H"
+                    for residue_id in (first_id, second_id)
+                ):
+                    pairs.setdefault((first_id, second_id), None)
+
+        for first_id, second_id in pairs:
             if first_id in peptide_break_after:
                 continue
             first = selected.get(first_id)
