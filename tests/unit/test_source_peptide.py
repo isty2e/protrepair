@@ -306,3 +306,132 @@ def test_source_carbonyl_hydrogen_cap_blocks_inferred_peptide():
         bond.provenance is BondProvenance.SOURCE_EXPLICIT
         for bond in structure.topology.bonds
     )
+
+
+def _source_with_n_attachments(
+    names: tuple[str, ...],
+    *,
+    component: str = "GLY",
+    charge: int = 0,
+    kind: gemmi.ConnectionType = gemmi.ConnectionType.Covale,
+) -> gemmi.Structure:
+    source = _source(positions=(1, 2, 3))
+    residue = source[0][0][1]
+    residue.name = component
+    residue["N"][0].charge = charge
+    source.entities[0].full_sequence = ["ALA", component, "SER"]
+    for name in names:
+        atom = gemmi.Atom()
+        atom.name = name
+        atom.element = gemmi.Element("D" if name.startswith("D") else name[0])
+        atom.pos = gemmi.Position(3.33, 1.0, 0.0)
+        residue.add_atom(atom)
+
+        connection = gemmi.Connection()
+        connection.name = f"local-{name}"
+        connection.type = kind
+        for partner, atom_name in (
+            (connection.partner1, "N"),
+            (connection.partner2, name),
+        ):
+            partner.chain_name = "A"
+            partner.res_id = residue
+            partner.atom_name = atom_name
+        source.connections.append(connection)
+    return source
+
+
+@pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
+@pytest.mark.parametrize(
+    "component,names,charge,accept",
+    (
+        ("GLY", ("H",), 0, True),
+        ("GLY", ("H", "CB"), 0, False),
+        ("GLY", ("CB",), 0, False),
+        ("GLY", ("H1", "H2"), 0, False),
+        ("GLY", ("H1", "H2"), 1, True),
+        ("GLY", ("H1", "H2", "H3"), 1, False),
+        ("GLY", ("D1",), 0, True),
+        ("GLY", ("D1", "D2"), 0, False),
+        ("PRO", ("CD",), 0, True),
+        ("PRO", ("CD", "H"), 0, False),
+        ("HYP", ("CD",), 0, True),
+    ),
+)
+def test_source_n_attachments_constrain_inferred_peptide(
+    file_format, component, names, charge, accept
+):
+    source = _source_with_n_attachments(names, component=component, charge=charge)
+    if file_format is FileFormat.PDB:
+        text = source.make_pdb_string()
+        serials = {
+            line[12:16].strip(): int(line[6:11])
+            for line in text.splitlines()
+            if line.startswith("ATOM") and line[22:27].strip() == "1A"
+        }
+        records = "".join(
+            f"CONECT{serials['N']:5d}{serials[name]:5d}\n" for name in names
+        )
+        structure = read_structure_string(
+            text.replace("END\n", "") + records + "END\n", file_format
+        )
+    else:
+        structure = _read(source, file_format)
+    nitrogen = AtomRef(ResidueId("A", 1, "A"), "N")
+    candidate = frozenset((AtomRef(ResidueId("A", 1, "B"), "C"), nitrogen))
+    assert (candidate in _peptide_pairs(structure)) is accept
+    assert structure.topology.formal_charge(
+        structure.constitution.atom_index(nitrogen)
+    ) == (charge or None)
+    explicit_pairs = {
+        frozenset(structure.constitution.atom_ref_at(i) for i in b.endpoint_pair())
+        for b in structure.topology.bonds
+        if b.provenance is BondProvenance.SOURCE_EXPLICIT
+    }
+    assert explicit_pairs == {
+        frozenset((nitrogen, AtomRef(nitrogen.residue_id, name))) for name in names
+    }
+
+
+def test_non_covalent_n_contact_does_not_block_inferred_peptide():
+    source = _source_with_n_attachments(("CB",), kind=gemmi.ConnectionType.Hydrog)
+    structure = _read(source, FileFormat.MMCIF)
+    assert len(_peptide_pairs(structure)) == 2
+
+
+@pytest.mark.parametrize("atom_name,order", (("N", "trip"), ("C", "doub")))
+def test_source_backbone_bond_order_limits_remaining_peptide_valence(atom_name, order):
+    source = _source(("1", "2", "3"), positions=(1, 2, 3))
+    residue = source[0][0][1]
+    oxygen = gemmi.Atom()
+    oxygen.name = "O"
+    oxygen.element = gemmi.Element("O")
+    oxygen.pos = gemmi.Position(5.33, 1.2, 0)
+    residue.add_atom(oxygen)
+    _crosslink(source, gemmi.ConnectionType.Covale)
+    connection = source.connections[0]
+    connection.partner1.res_id = residue
+    connection.partner1.atom_name = atom_name
+    connection.partner2.res_id = residue
+    connection.partner2.atom_name = "CA"
+    document = source.make_mmcif_document()
+    block = document.sole_block()
+    category = block.get_mmcif_category("_struct_conn.")
+    category["pdbx_value_order"] = [order]
+    block.set_mmcif_category("_struct_conn.", category)
+
+    structure = read_structure_string(document.as_string(), FileFormat.MMCIF)
+    endpoint = AtomRef(ResidueId("A", 2), atom_name)
+    partner = (
+        AtomRef(ResidueId("A", 1), "C")
+        if atom_name == "N"
+        else AtomRef(ResidueId("A", 3), "N")
+    )
+    assert frozenset((endpoint, partner)) not in _peptide_pairs(structure)
+    explicit = [
+        b
+        for b in structure.topology.bonds
+        if b.provenance is BondProvenance.SOURCE_EXPLICIT
+    ]
+    assert len(explicit) == 1
+    assert explicit[0].order == (3 if order == "trip" else 2)

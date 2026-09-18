@@ -5,6 +5,7 @@ from collections.abc import Mapping
 
 import gemmi
 
+from protrepair.chemistry.microstate.graph import MicrostateAtom
 from protrepair.errors import StructureNormalizationError
 from protrepair.io.source_identity import normalize_chain_id, normalize_insertion_code
 from protrepair.structure.constitution import StructureConstitution
@@ -14,6 +15,7 @@ from protrepair.structure.peptide import PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
+    AtomTopology,
     BondProvenance,
     BondRelationshipType,
     TopologyBond,
@@ -168,7 +170,9 @@ def source_compatible_peptide_bonds(
     candidates: tuple[TopologyBond, ...],
     *,
     source_bonds: tuple[TopologyBond, ...],
+    template_bonds: tuple[TopologyBond, ...],
     constitution: StructureConstitution,
+    atom_topologies: tuple[AtomTopology | None, ...],
 ) -> tuple[TopologyBond, ...]:
     """Remove inferred peptide edges conflicting with surviving source chemistry.
 
@@ -178,17 +182,33 @@ def source_compatible_peptide_bonds(
         Source-sequence-supported peptide candidates.
     source_bonds : tuple[TopologyBond, ...]
         Explicit connections after component and alternate-location selection.
+    template_bonds : tuple[TopologyBond, ...]
+        Materialized component bonds, before peptide inference.
     constitution : StructureConstitution
         Shared endpoint address space.
+    atom_topologies : tuple[AtomTopology or None, ...]
+        Slot-aligned original charges; missing charge is not rewritten.
 
     Returns
     -------
     tuple[TopologyBond, ...]
         Candidates not superseded by an explicit edge or competing attachment.
-        Non-covalent contacts do not occupy covalent valence.
+        Non-covalent contacts do not occupy covalent valence. Known attachments
+        bound available valence; this does not assign missing H or a microstate.
     """
 
     explicit_pairs = {bond.endpoint_pair() for bond in source_bonds}
+    template_pairs = {bond.endpoint_pair() for bond in template_bonds}
+    endpoints = {index for bond in candidates for index in bond.endpoint_pair()}
+    neighbors: dict[AtomIndex, dict[AtomIndex, TopologyBond]] = defaultdict(dict)
+    for bond in template_bonds:
+        if not is_covalent_like_relationship(bond):
+            continue
+        first, second = bond.endpoint_pair()
+        for index, neighbor in ((first, second), (second, first)):
+            if index in endpoints:
+                neighbors[index][neighbor] = bond
+
     blocking_neighbors: dict[AtomIndex, set[AtomIndex]] = defaultdict(set)
     for bond in source_bonds:
         if not (
@@ -198,17 +218,46 @@ def source_compatible_peptide_bonds(
             continue
         first, second = bond.endpoint_pair()
         for index, neighbor in ((first, second), (second, first)):
+            if index not in endpoints:
+                continue
+            neighbors[index][neighbor] = bond
             ref = constitution.atom_ref_at(index)
             neighbor_ref = constitution.atom_ref_at(neighbor)
-            if ref.residue_id != neighbor_ref.residue_id or (
-                ref.atom_name == "C" and neighbor_ref.atom_name not in {"CA", "O"}
+            if (
+                ref.residue_id != neighbor_ref.residue_id
+                or (ref.atom_name == "C" and neighbor_ref.atom_name not in {"CA", "O"})
+                or (
+                    ref.atom_name == "N"
+                    and not constitution.atom_site_at(neighbor).is_hydrogen()
+                    and neighbor_ref.atom_name != "CA"
+                    and bond.endpoint_pair() not in template_pairs
+                )
             ):
                 blocking_neighbors[index].add(neighbor)
+
+    saturated: set[AtomIndex] = set()
+    for index in endpoints:
+        site = constitution.atom_site_at(index)
+        topology = atom_topologies[index.value]
+        charge = topology.formal_charge if topology is not None else None
+        try:
+            capacity = MicrostateAtom(site.name, site.element, charge or 0, 0, 0)
+        except ValueError:
+            saturated.add(index)
+            continue
+        # An unspecified source order occupies at least one valence slot. Source
+        # declarations have replaced any template order for the same pair.
+        bonds = tuple(neighbors[index].values())
+        if any(bond.aromatic for bond in bonds) or (
+            1 + sum(bond.order or 1 for bond in bonds) > capacity.closed_shell_valence()
+        ):
+            saturated.add(index)
 
     return tuple(
         bond
         for bond in candidates
         if bond.endpoint_pair() not in explicit_pairs
+        and not saturated.intersection(bond.endpoint_pair())
         and not blocking_neighbors[bond.atom_index_1] - {bond.atom_index_2}
         and not blocking_neighbors[bond.atom_index_2] - {bond.atom_index_1}
     )

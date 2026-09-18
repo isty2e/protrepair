@@ -265,13 +265,15 @@ def normalize_raw_structure(
         constitution=constitution,
         residue_payloads=normalized_residue_payloads,
     )
-    expected_bonds_by_pair = {
-        bond.endpoint_pair(): bond
-        for bond in template_resolved_topology_bonds(
-            constitution,
-            component_library=build_default_component_library(),
-        )
-    }
+    template_bonds = template_resolved_topology_bonds(
+        constitution,
+        component_library=build_default_component_library(),
+    )
+    expected_bonds_by_pair = {bond.endpoint_pair(): bond for bond in template_bonds}
+    atom_topologies = _atom_topologies_from_payloads(
+        constitution=constitution,
+        residue_payloads=normalized_residue_payloads,
+    )
     peptide_candidates = source_sequence_inferred_polymer_topology_bonds(
         raw_structure,
         file_format=file_format,
@@ -295,7 +297,9 @@ def normalize_raw_structure(
     for bond in source_compatible_peptide_bonds(
         peptide_candidates,
         source_bonds=source_topology_bonds,
+        template_bonds=template_bonds,
         constitution=constitution,
+        atom_topologies=atom_topologies,
     ):
         expected_bonds_by_pair[bond.endpoint_pair()] = bond
     remaining_expected_bonds = tuple(
@@ -306,10 +310,7 @@ def normalize_raw_structure(
     topology_bonds = source_topology_bonds + remaining_expected_bonds
     topology = StructureTopology(
         constitution=constitution,
-        atom_topologies=_atom_topologies_from_payloads(
-            constitution=constitution,
-            residue_payloads=normalized_residue_payloads,
-        ),
+        atom_topologies=atom_topologies,
         bonds=topology_bonds,
     )
     return ProteinStructure.from_payload(
