@@ -267,19 +267,32 @@ or unknown relationships are not promoted to PDB `CONECT`; source-explicit
 non-covalent relationships remain source-preserving boundary records where the
 format supports them.
 
-PDB egress intentionally uses two boundary projections. Gemmi connection
-records preserve typed source relationships, so PDB `LINK`/`SSBOND`-like records
-carry source-explicit bonds except source records that originally came from PDB
-`CONECT`. Source hydrogen bonds are omitted because PDB has no corresponding
-typed connection record. PDB `CONECT` is an untyped connectivity table, so it
-is appended from canonical topology after gemmi serialization and includes
-source PDB `CONECT` records plus covalent-like bonds, whether source-reported
-or model-resolved. mmCIF has a
-single `_struct_conn` projection because that boundary can carry typed
-relationships and repaired/model-resolved covalent-like bonds in the same
-table. Serialized connection distances are derived from current coordinates;
-the source-reported distance remains provenance metadata and is not emitted as
-a stale geometric claim after coordinates change.
+PDB egress uses two projections:
+
+- Typed `LINK`/`SSBOND` records carry source-explicit relationships, except those
+  originally reported only as `CONECT`. Resolved disulfides are also included,
+  regardless of provenance, so repaired bonds survive reimport as disulfides.
+  Source hydrogen bonds are omitted because PDB has no corresponding typed record.
+- `CONECT` records carry source PDB connectivity and all covalent-like bonds,
+  whether source-reported or model-resolved. They are appended after Gemmi
+  serialization because this table carries connectivity rather than relationship
+  types.
+
+A canonical single, non-aromatic covalent bond between two CYS SG atoms is
+written as `SSBOND`, as is a bond already typed as disulfide. `LINK` plus one
+`CONECT` entry cannot distinguish known single order from unknown order;
+`SSBOND` preserves both the sulfur linkage and its single order. This projection
+does not change the input topology. On PDB reimport, the covalent CYS link is
+typed as disulfide. A CYS SG-SG covalent bond with unknown order, multiple order,
+or aromatic marking remains `LINK`/`CONECT` instead of being narrowed to a single
+disulfide. Unknown and non-covalent relationships are not promoted by sulfur
+names or proximity. The no-`CONECT` diagnostic export uses the same typed-record
+policy.
+
+mmCIF uses one `_struct_conn` projection, preserving canonical relationship
+types and orders for both source and model-resolved covalent-like bonds.
+Serialized connection distances come from current coordinates; source-reported
+distances remain provenance metadata rather than stale geometric claims.
 
 Readiness must compare expected bond endpoint pairs against
 `StructureTopology.bonds`. Atom coordinates alone do not prove topology

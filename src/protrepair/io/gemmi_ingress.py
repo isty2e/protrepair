@@ -17,9 +17,7 @@ from protrepair.io.gemmi_normalization import (
     to_gemmi_coor_format,
 )
 from protrepair.io.ingress_policy import StructureNormalizationPolicy
-from protrepair.io.source_connection import SourceConnection
 from protrepair.io.source_identity import (
-    SourceAtomIdentity,
     normalize_altloc,
     normalize_chain_id,
     normalize_insertion_code,
@@ -28,6 +26,7 @@ from protrepair.io.structure_ingress import normalize_raw_structure
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
     BondRelationshipType,
     SourceBondMetadata,

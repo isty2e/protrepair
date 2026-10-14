@@ -33,7 +33,7 @@ def disulfide_atom_ref_pairs_from_topology(
 
     pairs: set[tuple[AtomRef, AtomRef]] = set()
     for bond in topology.bonds:
-        pair = _disulfide_atom_ref_pair(constitution, bond)
+        pair = disulfide_atom_ref_pair(constitution, bond)
         if pair is not None:
             pairs.add(pair)
 
@@ -52,18 +52,32 @@ def disulfide_bonded_cysteine_residue_ids(
     )
 
 
-def _disulfide_atom_ref_pair(
+def disulfide_atom_ref_pair(
     constitution: StructureConstitution,
     bond: TopologyBond,
 ) -> tuple[AtomRef, AtomRef] | None:
-    """Project one covalent-like topology bond when both endpoints are CYS SG."""
+    """Project the CYS SG endpoints of one covalent-like topology bond.
+
+    Parameters
+    ----------
+    constitution : StructureConstitution
+        Constitution owning the bond's atom indices.
+    bond : TopologyBond
+        Canonical relationship to inspect, independently of provenance or distance.
+
+    Returns
+    -------
+    tuple[AtomRef, AtomRef] or None
+        Sorted CYS SG pair, or None when the bond has no disulfide semantics.
+    """
 
     if not is_covalent_like_relationship(bond):
         return None
 
-    atom_ref_1 = constitution.atom_ref_at(bond.atom_index_1)
-    atom_ref_2 = constitution.atom_ref_at(bond.atom_index_2)
-    if atom_ref_1.atom_name != "SG" or atom_ref_2.atom_name != "SG":
+    if (
+        constitution.atom_site_at(bond.atom_index_1).name != "SG"
+        or constitution.atom_site_at(bond.atom_index_2).name != "SG"
+    ):
         return None
 
     residue_1 = constitution.residue_site_at(
@@ -75,6 +89,8 @@ def _disulfide_atom_ref_pair(
     if residue_1.component_id != "CYS" or residue_2.component_id != "CYS":
         return None
 
+    atom_ref_1 = constitution.atom_ref_at(bond.atom_index_1)
+    atom_ref_2 = constitution.atom_ref_at(bond.atom_index_2)
     if atom_ref_2 < atom_ref_1:
         return (atom_ref_2, atom_ref_1)
 

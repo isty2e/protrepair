@@ -22,12 +22,11 @@ from protrepair.errors import (
 )
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure_string, write_structure_string
-from protrepair.io.source_connection import SourceConnection
-from protrepair.io.source_identity import SourceAtomIdentity
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import AtomIndex
+from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
     BondProvenance,
     BondRelationshipType,

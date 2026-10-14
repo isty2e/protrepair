@@ -39,6 +39,50 @@ def test_ingestion_plane_normal_returns_none_for_collinear_positions() -> None:
     )
 
 
+def test_cif_quoted_atom_names_share_geometry_and_connectivity(tmp_path: Path) -> None:
+    cif_path = tmp_path / "quoted-component.cif"
+    cif_path.write_text(
+        """data_LIG
+_chem_comp.id LIG
+_chem_comp.type 'NON-POLYMER'
+_chem_comp.name 'Prime-containing atoms'
+loop_
+_chem_comp_atom.atom_id
+_chem_comp_atom.type_symbol
+_chem_comp_atom.charge
+_chem_comp_atom.pdbx_stereo_config
+_chem_comp_atom.pdbx_model_Cartn_x_ideal
+_chem_comp_atom.pdbx_model_Cartn_y_ideal
+_chem_comp_atom.pdbx_model_Cartn_z_ideal
+"C1'" C 0 N 0 0 0
+"O2'" O 0 N 1.4 0 0
+'H1' H 0 N -1 0 0
+loop_
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+_chem_comp_bond.pdbx_aromatic_flag
+"C1'" "O2'" 'SING' 'N'
+"C1'" H1 SING N
+""",
+        encoding="utf-8",
+    )
+    record = read_nonstandard_component_registry(cif_path).get("LIG")
+    assert record is not None
+    component = record.to_idealized_component()
+
+    carbon = component.atom("C1'")
+    oxygen = component.atom("O2'")
+    assert carbon is not None
+    assert oxygen is not None
+    assert carbon.ideal_position == (0.0, 0.0, 0.0)
+    assert oxygen.ideal_position == (1.4, 0.0, 0.0)
+    assert component.hydrogen_anchor_atom_name("H1") == "C1'"
+    target = record.to_restraint_template().bond_target("C1'", "O2'")
+    assert target is not None
+    assert target.target_distance_angstrom == 1.4
+
+
 def test_read_nonstandard_component_registry_reads_custom_monomer_cif(
     tmp_path: Path,
 ) -> None:

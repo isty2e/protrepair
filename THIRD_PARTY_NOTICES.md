@@ -60,15 +60,19 @@ Lab Smooth Backbone-Dependent Rotamer Library 2010. The Dunbrack source page
 states that the library is distributed under Creative Commons Attribution 4.0
 International (CC BY 4.0) and requires source acknowledgement.
 
-## Structure-data fixtures
+## Structure and chemical-component data
 
-Some test fixtures and migration inputs are derived from Protein Data Bank
-structure files. Those coordinate-data files are not covered by the repository
-MIT code license.
+Some test fixtures, migration inputs, and bundled chemical-component records
+are derived from Protein Data Bank structure files and the wwPDB Chemical
+Component Dictionary. These data files are not covered by the repository MIT
+code license.
 
 - Representative local paths include:
   - `tests/fixtures/pdb/`
   - `tests/fixtures/corpus/`
+  - `tests/fixtures/chemistry/nonstandard-primes/`
+- Frozen CCD fixture provenance:
+  [source files and hashes](tests/fixtures/chemistry/nonstandard-primes/README.md)
 - Upstream data source: wwPDB / RCSB PDB archive
 - Data policy: CC0 1.0
 - Reference: <https://www.rcsb.org/pages/usage-policy>

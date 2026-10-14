@@ -46,6 +46,7 @@ class _IdealAtomGeometry:
 
 def _build_component_atom_record(
     *,
+    component_id: str,
     atom_name: str,
     element: str,
     charge: str | None,
@@ -53,12 +54,19 @@ def _build_component_atom_record(
 ) -> NonstandardComponentAtom:
     """Build one canonical atom record with optional ideal geometry."""
 
-    normalized_atom_name = atom_name.strip().upper()
+    normalized_atom_name = (clean_value(atom_name) or "").upper()
+    normalized_charge = clean_value(charge)
+    if normalized_charge in (None, "?", "."):
+        raise ValueError(
+            f"component {component_id} atom {normalized_atom_name} has an unknown "
+            "formal charge; covalent component assets require an integer assignment"
+        )
+
     atom_geometry = ideal_geometry_by_atom_name.get(normalized_atom_name)
     return NonstandardComponentAtom(
-        atom_name=atom_name,
-        element=element,
-        formal_charge=int((charge or "0").strip() or "0"),
+        atom_name=normalized_atom_name,
+        element=clean_value(element) or "",
+        formal_charge=int(normalized_charge),
         stereo_config=None if atom_geometry is None else atom_geometry.stereo_config,
         ideal_position=None if atom_geometry is None else atom_geometry.position,
     )
@@ -71,7 +79,31 @@ def _read_cif_document_blocks(path: Path):
 
 
 def read_nonstandard_component_registry(path: Path) -> NonstandardComponentRegistry:
-    """Read one CCD or monomer-CIF asset into normalized component records."""
+    """Read covalent CCD or monomer-CIF templates with assigned atom charges.
+
+    Parameters
+    ----------
+    path : Path
+        External component dictionary, not a structure coordinate file.
+
+    Returns
+    -------
+    NonstandardComponentRegistry
+        Component graphs and ideal-geometry restraints.
+
+    Raises
+    ------
+    ValueError
+        A charge is explicitly unknown, or a bond declares metal coordination,
+        metal-pi chemistry, an unresolved metal flag, an unsupported order or
+        incomplete required columns.
+
+    Notes
+    -----
+    An omitted charge column uses the CCD dictionary default of zero. Explicit
+    null values do not. These assets cannot represent a coordination graph;
+    reading a structure still preserves its typed source coordination records.
+    """
 
     parsed_records = tuple(
         parsed_record
@@ -97,7 +129,7 @@ def _parse_component_record(block) -> NonstandardComponentRecord | None:
             [
                 "_chem_comp_atom.atom_id",
                 "_chem_comp_atom.type_symbol",
-                "_chem_comp_atom.charge",
+                "?_chem_comp_atom.charge",
             ]
         )
     )
@@ -112,28 +144,39 @@ def _parse_component_record(block) -> NonstandardComponentRecord | None:
                 "_chem_comp_bond.atom_id_2",
                 "_chem_comp_bond.value_order",
                 "_chem_comp_bond.pdbx_aromatic_flag",
+                "?_chem_comp_bond.pdbx_metal_coordination_flag",
+                "?_chem_comp_bond.pdbx_metal_pi_flag",
             ]
         )
     )
+    if not bond_rows and len(block.find_mmcif_category("_chem_comp_bond.")):
+        raise ValueError(
+            f"component {component_id} has incomplete bond columns; covalent "
+            "component assets require endpoints, order and aromaticity"
+        )
+
     atoms = tuple(
         _build_component_atom_record(
-            atom_name=atom_name,
-            element=element,
-            charge=charge,
+            component_id=component_id,
+            atom_name=row[0],
+            element=row[1],
+            charge=row[2] if row.has(2) else "0",
             ideal_geometry_by_atom_name=ideal_geometry_by_atom_name,
         )
-        for atom_name, element, charge in atom_rows
+        for row in atom_rows
     )
     atom_order_index = {atom.atom_name: index for index, atom in enumerate(atoms)}
     bonds = tuple(
         parse_bond_row(
-            atom_name_1=atom_name_1,
-            atom_name_2=atom_name_2,
-            order_label=order_label,
-            aromatic_flag=aromatic_flag,
+            atom_name_1=row[0],
+            atom_name_2=row[1],
+            order_label=row[2],
+            aromatic_flag=row[3],
             component_id=component_id,
+            metal_coordination_flag=row[4] if row.has(4) else None,
+            metal_pi_flag=row[5] if row.has(5) else None,
         )
-        for atom_name_1, atom_name_2, order_label, aromatic_flag in bond_rows
+        for row in bond_rows
     )
     bond_targets = derive_bond_targets(
         atoms=atoms,
@@ -206,10 +249,11 @@ def parse_ideal_geometry(block) -> Mapping[str, _IdealAtomGeometry]:
     )
     ideal_geometry: dict[str, _IdealAtomGeometry] = {}
     for atom_name, stereo_config, x_coord, y_coord, z_coord in rows:
-        normalized_atom_name = clean_value(atom_name)
-        if normalized_atom_name is None:
+        cleaned_atom_name = clean_value(atom_name)
+        if cleaned_atom_name is None:
             continue
 
+        normalized_atom_name = cleaned_atom_name.upper()
         ideal_geometry[normalized_atom_name] = _IdealAtomGeometry(
             atom_name=normalized_atom_name,
             stereo_config=parse_stereo_config(stereo_config),
@@ -525,10 +569,45 @@ def parse_bond_row(
     order_label: str,
     aromatic_flag: str,
     component_id: str,
+    metal_coordination_flag: str | None = None,
+    metal_pi_flag: str | None = None,
 ) -> BondDefinition:
-    """Normalize one raw bond row into a canonical bond definition."""
+    """Lower one supported covalent asset row without erasing metal flags.
 
-    normalized_order_label = order_label.strip().upper()
+    Parameters
+    ----------
+    atom_name_1, atom_name_2 : str
+        Raw CIF atom names.
+    order_label, aromatic_flag : str
+        CIF order and aromaticity fields.
+    component_id : str
+        Component identity for error attribution.
+    metal_coordination_flag, metal_pi_flag : str or None, default=None
+        Optional CIF fields; None means the column is absent, not a null cell.
+
+    Returns
+    -------
+    BondDefinition
+        Fully specified covalent relationship.
+
+    Raises
+    ------
+    ValueError
+        A metal flag is not N, or the bond order is unsupported.
+    """
+
+    for name, flag in (
+        ("metal coordination", metal_coordination_flag),
+        ("metal-pi", metal_pi_flag),
+    ):
+        if flag is not None and (clean_value(flag) or "").upper() != "N":
+            raise ValueError(
+                f"component {component_id} bond {atom_name_1}--{atom_name_2} has "
+                f"unsupported {name} flag {flag!r}; covalent component assets "
+                "cannot represent this relationship"
+            )
+
+    normalized_order_label = (clean_value(order_label) or "").upper()
     order = BOND_ORDER_LABEL_TO_INT.get(normalized_order_label)
     if order is None:
         raise ValueError(
@@ -536,10 +615,10 @@ def parse_bond_row(
         )
 
     return BondDefinition(
-        atom_name_1=atom_name_1,
-        atom_name_2=atom_name_2,
+        atom_name_1=clean_value(atom_name_1) or "",
+        atom_name_2=clean_value(atom_name_2) or "",
         order=order,
-        aromatic=aromatic_flag.strip().upper() == "Y",
+        aromatic=(clean_value(aromatic_flag) or "").upper() == "Y",
     )
 
 
@@ -598,11 +677,7 @@ def clean_value(value: str | None) -> str | None:
     if value is None:
         return None
 
-    normalized_value = value.strip().strip('"').strip("'").strip()
-    if normalized_value in {"", ".", "?"}:
-        return None
-
-    return normalized_value
+    return gemmi.cif.as_string(value.strip()).strip() or None
 
 
 def distance(left_position: Vector3, right_position: Vector3) -> float:

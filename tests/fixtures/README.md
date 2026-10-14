@@ -36,6 +36,10 @@ membership without requiring a second hand-maintained count in this document.
 - `corpus/*.ent` and `corpus/*.cif`: deposited whole-structure fixtures for
   representative, exploratory, and known-problematic behavior. These are the
   heavy realistic cases that keep CI and benchmark registries reproducible.
+- `chemistry/nonstandard-primes/*.cif`: small frozen CCD component definitions
+  for atom identity, graph, and ideal-geometry regression tests. Their
+  [source record](chemistry/nonstandard-primes/README.md) includes upstream URLs,
+  modification dates, and hashes; they are not whole-structure corpus cases.
 
 ## Test Execution Surfaces
 

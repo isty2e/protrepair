@@ -13,6 +13,9 @@ from protrepair.diagnostics.parser_readability import (
 from protrepair.diagnostics.parser_topology import (
     ambiguous_disulfide_parser_witness_blocker_issues,
 )
+from protrepair.diagnostics.source_coordination import (
+    diagnose_source_coordination_omissions,
+)
 from protrepair.io.pdb_projection import prepare_rdkit_no_conect_pdb_block_projector
 from protrepair.state.structure_topology import (
     DisulfideEndpointMultiplicityContradiction,
@@ -62,6 +65,11 @@ def finalize_workflow_result(
     disulfide_topology_issues = _final_disulfide_topology_issues(result.structure)
     if disulfide_topology_issues:
         result = result.with_appended_issues(disulfide_topology_issues)
+    source_coordination_issues = diagnose_source_coordination_omissions(
+        result.structure
+    )
+    if source_coordination_issues:
+        result = result.with_appended_issues(source_coordination_issues)
     if preliminary_issues:
         result = result.with_appended_issues(preliminary_issues)
     return _attach_requested_analyses(

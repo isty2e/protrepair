@@ -24,9 +24,7 @@ from protrepair.io.ingress_policy import (
     OccupancyPolicy,
     StructureNormalizationPolicy,
 )
-from protrepair.io.source_connection import SourceConnection
 from protrepair.io.source_identity import (
-    SourceAtomIdentity,
     normalize_altloc,
     normalize_chain_id,
     normalize_insertion_code,
@@ -55,8 +53,10 @@ from protrepair.structure.provenance import (
     StructureProvenance,
 )
 from protrepair.structure.slots import AtomIndex
+from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
     AtomTopology,
+    BondRelationshipType,
     StructureTopology,
     TopologyBond,
 )
@@ -218,9 +218,26 @@ def normalize_raw_structure(
         source_connections,
     )
     model = raw_structure[0]
+    coordination_endpoints_by_residue: dict[ResidueId, list[SourceAtomIdentity]] = {}
+    for connection in source_connections:
+        if (
+            connection.source_metadata.reported_relationship_type
+            is BondRelationshipType.METAL_COORDINATION
+        ):
+            for endpoint in connection.endpoint_pair():
+                coordination_endpoints_by_residue.setdefault(
+                    endpoint.atom_ref.residue_id, []
+                ).append(endpoint)
+    excluded_source_endpoints: set[SourceAtomIdentity] = set()
     for raw_chain in model:
         chain_id = normalize_chain_id(raw_chain.name)
         if not policy.selects_chain(chain_id):
+            for raw_residue in raw_chain:
+                excluded_source_endpoints.update(
+                    _referenced_source_endpoints(
+                        raw_residue, chain_id, coordination_endpoints_by_residue
+                    )
+                )
             continue
 
         residue_role_by_id = _canonical_residue_roles_for_chain(
@@ -229,14 +246,16 @@ def normalize_raw_structure(
             entity_type_by_id=entity_type_by_id,
             source_peptide_link_pairs=source_peptide_link_pairs,
         )
-        polymer_residues, chain_ligands = _normalize_chain_residues(
+        polymer_residues, chain_ligands, excluded_endpoints = _normalize_chain_residues(
             raw_chain,
             chain_id,
             policy,
             residue_role_by_id=residue_role_by_id,
             source_element_by_atom_identity=normalized_source_elements,
             source_charges=source_charges,
+            coordination_endpoints_by_residue=coordination_endpoints_by_residue,
         )
+        excluded_source_endpoints.update(excluded_endpoints)
         if polymer_residues:
             chains.append((chain_id, polymer_residues))
         ligands.extend(chain_ligands)
@@ -325,6 +344,14 @@ def normalize_raw_structure(
                     constitution=constitution,
                     geometry=geometry,
                     topology=topology,
+                    excluded_coordination_connections=(
+                        _excluded_coordination_connections(
+                            source_connections,
+                            excluded_source_endpoints,
+                            constitution=constitution,
+                            geometry=geometry,
+                        )
+                    ),
                 ),
             )
         ),
@@ -395,11 +422,10 @@ def apply_structure_normalization_policy(
             structure.constitution.chain(chain_id) for chain_id in selected_chain_ids
         )
 
-    selected_chain_id_set = frozenset(selected_chain_ids)
     selected_ligand_candidates = tuple(
         ligand
         for ligand in structure.constitution.ligands
-        if ligand.residue_id.chain_id in selected_chain_id_set
+        if policy.selects_chain(ligand.residue_id.chain_id)
     )
     if policy.rejects_ligands() and selected_ligand_candidates:
         rejected_ligand = selected_ligand_candidates[0]
@@ -776,24 +802,40 @@ def _normalize_chain_residues(
     residue_role_by_id: Mapping[ResidueId, _CanonicalResidueRole],
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
     source_charges: Mapping[SourceAtomIdentity, Iterator[int | None]] | None,
-) -> tuple[list[_NormalizedResiduePayload], list[_NormalizedResiduePayload]]:
-    """Materialize normalized polymer and retained residues in one chain pass."""
+    coordination_endpoints_by_residue: Mapping[ResidueId, list[SourceAtomIdentity]],
+) -> tuple[
+    list[_NormalizedResiduePayload],
+    list[_NormalizedResiduePayload],
+    set[SourceAtomIdentity],
+]:
+    """Materialize selected residues and record excluded source endpoints."""
 
     grouped_residues: dict[ResidueId, list[_NormalizedResiduePayload]] = {}
     residue_order: list[ResidueId] = []
     grouped_ligands: dict[ResidueId, list[_NormalizedResiduePayload]] = {}
     ligand_order: list[ResidueId] = []
     contains_het_encoded_polymer = False
+    excluded_endpoints: set[SourceAtomIdentity] = set()
 
     for raw_residue in raw_chain:
         residue_id = _raw_residue_id(raw_residue, chain_id)
         role = residue_role_by_id[residue_id]
         if role is _CanonicalResidueRole.WATER:
+            excluded_endpoints.update(
+                _referenced_source_endpoints(
+                    raw_residue, chain_id, coordination_endpoints_by_residue
+                )
+            )
             continue
 
         is_hetero = role is _CanonicalResidueRole.RETAINED_NON_POLYMER
         if is_hetero:
             if policy.drops_ligands():
+                excluded_endpoints.update(
+                    _referenced_source_endpoints(
+                        raw_residue, chain_id, coordination_endpoints_by_residue
+                    )
+                )
                 continue
             if policy.rejects_ligands():
                 raise StructureNormalizationError(
@@ -841,7 +883,64 @@ def _normalize_chain_residues(
             )
             for residue_id in ligand_order
         ],
+        excluded_endpoints,
     )
+
+
+def _referenced_source_endpoints(
+    raw_residue: gemmi.Residue,
+    chain_id: str,
+    endpoints_by_residue: Mapping[ResidueId, list[SourceAtomIdentity]],
+) -> tuple[SourceAtomIdentity, ...]:
+    """Read only referenced identities, not ignored atom numeric payloads."""
+    if not endpoints_by_residue or raw_residue.seqid.num is None:
+        return ()
+    residue_id = _raw_residue_id(raw_residue, chain_id)
+    candidates = endpoints_by_residue.get(residue_id, ())
+    component_id = raw_residue.name.strip().upper()
+    return tuple(
+        endpoint
+        for endpoint in candidates
+        if endpoint.component_id == component_id
+        and any(
+            atom.name.strip().upper() == endpoint.atom_ref.atom_name
+            and normalize_altloc(atom.altloc) == endpoint.altloc
+            for atom in raw_residue
+        )
+    )
+
+
+def _excluded_coordination_connections(
+    connections: tuple[SourceConnection, ...],
+    excluded_endpoints: set[SourceAtomIdentity],
+    *,
+    constitution: StructureConstitution,
+    geometry: StructureGeometry,
+) -> tuple[SourceConnection, ...]:
+    """Capture typed declarations crossing the actual source selection boundary."""
+    excluded_connections: list[SourceConnection] = []
+    for connection in connections:
+        if (
+            connection.source_metadata.reported_relationship_type
+            is not BondRelationshipType.METAL_COORDINATION
+        ):
+            continue
+        for retained, excluded in (
+            connection.endpoint_pair(),
+            tuple(reversed(connection.endpoint_pair())),
+        ):
+            if excluded not in excluded_endpoints:
+                continue
+            if excluded.resolve_index(constitution, geometry) is not None:
+                continue
+            index = retained.resolve_index(constitution, geometry)
+            if (
+                index is not None
+                and gemmi.Element(constitution.atom_site_at(index).element).is_metal
+            ):
+                excluded_connections.append(connection)
+                break
+    return tuple(dict.fromkeys(excluded_connections))
 
 
 def _residue_altloc_score_by_label(
@@ -1238,16 +1337,15 @@ def _topology_bonds_from_source_connections(
         endpoint_1 = connection.endpoint_1
         endpoint_2 = connection.endpoint_2
         require_altloc_match = connection.requires_exact_altloc_match()
-        if not _source_endpoint_survived(
-            endpoint_1,
-            constitution,
-            geometry=geometry,
-            require_altloc_match=require_altloc_match,
-        ) or not _source_endpoint_survived(
-            endpoint_2,
-            constitution,
-            geometry=geometry,
-            require_altloc_match=require_altloc_match,
+        if (
+            endpoint_1.resolve_index(
+                constitution, geometry, require_altloc_match=require_altloc_match
+            )
+            is None
+            or endpoint_2.resolve_index(
+                constitution, geometry, require_altloc_match=require_altloc_match
+            )
+            is None
         ):
             continue
 
@@ -1266,29 +1364,6 @@ def _topology_bonds_from_source_connections(
             *pair, expected_bond=expected_bonds_by_pair.get(pair)
         )
         for pair, connection in connections_by_pair.items()
-    )
-
-
-def _source_endpoint_survived(
-    endpoint: SourceAtomIdentity,
-    constitution: StructureConstitution,
-    *,
-    geometry: StructureGeometry,
-    require_altloc_match: bool = True,
-) -> bool:
-    """Return whether one source endpoint survived canonical normalization."""
-
-    residue_site = constitution.residue_or_ligand(endpoint.atom_ref.residue_id)
-    if residue_site is None or residue_site.component_id != endpoint.component_id:
-        return False
-
-    atom_index = constitution.resolve_atom_index(endpoint.atom_ref)
-    if atom_index is None:
-        return False
-
-    return bool(
-        not require_altloc_match
-        or geometry.atom_geometry(atom_index).altloc == endpoint.altloc
     )
 
 

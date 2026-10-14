@@ -48,3 +48,35 @@ The fallback infers chemistry for the heavy atoms already present. It is not a
 general heavy-atom completion mechanism for arbitrary nonstandard components.
 Single-atom metals and ions are retained as not-applicable chemistry rather
 than passed through organic-molecule hydrogenation.
+
+## Component Dictionaries
+
+Coordinate files and chemical-component dictionaries have different roles.
+PDB/mmCIF ingress keeps typed source coordination records, including declarations
+to partners removed by normalization. The component-dictionary reader instead
+builds covalent templates with integer atom charges. It rejects coordination or
+metal-pi flags, unresolved metal flags, and incomplete bond columns rather than silently
+converting them into ordinary single bonds.
+
+Explicit unknown atom charges (`?` or `.`) are also rejected by that reader. An
+absent charge column uses the dictionary's
+[default of zero](https://mmcif.wwpdb.org/dictionaries/mmcif_pdbx_v50.dic/Items/_chem_comp_atom.charge.html);
+an explicit null cell does not. This is dictionary parsing, not a policy for
+assigning charges to atoms in a deposited structure.
+
+## Excluded Coordination Partners
+
+If normalization removes a source-declared partner of a retained metal, the
+original observation keeps its identity and connection metadata without adding
+an atom or bond to the selected structure. Final processing emits a non-blocking
+`SOURCE_COORDINATION_PARTNER_OMITTED` warning while that partner remains absent.
+
+This warning does not restore water, infer oxidation or protonation, or certify
+a complete metal site. It covers typed source declarations, not coordination
+guessed from distances or untyped CONECT records. A missing endpoint, another
+model, or an unchosen alternate location is not reported as a policy exclusion.
+
+Output contains only selected atoms and their topology. Declarations to excluded
+partners are not written as dangling bonds, so re-reading the output does not
+recover that original off-graph evidence. Keep the processing result and original
+input when the warning's source history matters.
