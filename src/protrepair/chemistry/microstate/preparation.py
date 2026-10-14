@@ -1,7 +1,7 @@
-"""PRAS-style preparation targets, separate from observed chemistry."""
+"""Polymer preparation targets, separate from observed chemistry."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 from protrepair.chemistry.component.library import ComponentLibrary
@@ -12,6 +12,7 @@ from protrepair.chemistry.microstate.catalog import (
     standard_microstate_candidates,
 )
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.histidine_environment import HistidineEnvironment
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
     MicrostateConstraints,
@@ -36,10 +37,12 @@ class PolymerSitePreparation:
         Polymer residue identity.
     site : PolymerMicrostateSite
         Chemical site and established linkage context.
+    preferences : tuple[MicrostateConstraints, ...]
+        Ordered preparation preferences shared with graph-constrained placement.
     override : MicrostateConstraints or None
         Explicit replacement constraints, if requested.
-    retain_applied_override : bool
-        False resets an earlier choice to source-compatible PRAS preferences.
+    retain_applied_choice : bool
+        False resets an earlier choice to source-compatible preparation preferences.
 
     Notes
     -----
@@ -50,8 +53,9 @@ class PolymerSitePreparation:
     context: PolymerMicrostateContext = field(repr=False)
     residue_id: ResidueId
     site: PolymerMicrostateSite
+    preferences: tuple[MicrostateConstraints, ...]
     override: MicrostateConstraints | None = None
-    retain_applied_override: bool = True
+    retain_applied_choice: bool = True
     resolution: MicrostateResolution = field(init=False)
 
     def __post_init__(self) -> None:
@@ -62,8 +66,8 @@ class PolymerSitePreparation:
                 self.residue_id,
                 self.site,
                 override=self.override,
-                preferences=pras_microstate_preferences(self.site),
-                retain_applied_override=self.retain_applied_override,
+                preferences=self.preferences,
+                retain_applied_choice=self.retain_applied_choice,
             ),
         )
 
@@ -154,6 +158,13 @@ class PolymerMicrostatePreparation:
         An absent key preserves a saved choice. A present None resets that site
         to source-compatible preferences; constraints request an explicit override.
 
+    Notes
+    -----
+    Charge defaults are resolved together before local neutral-HIS preferences.
+    Ambiguous neighboring rings supply no polar support, so residue iteration
+    order cannot act as an implicit H-bond network optimizer. Geometry-dependent
+    targets cannot be reused after coordinate edits until a choice is applied.
+
     Raises
     ------
     ValueError
@@ -164,6 +175,7 @@ class PolymerMicrostatePreparation:
     context: PolymerMicrostateContext
     component_library: ComponentLibrary
     _disulfides: frozenset[ResidueId]
+    _coordinate_dependent: bool
 
     def __init__(
         self,
@@ -202,13 +214,58 @@ class PolymerMicrostatePreparation:
                             context,
                             residue.residue_id,
                             site,
+                            preferences=(
+                                pras_microstate_preferences(site)[:1]
+                                if template.component_id == "HIS"
+                                and site.kind is PolymerChemicalSite.SIDECHAIN
+                                else pras_microstate_preferences(site)
+                            ),
                             override=pending.pop(key, None),
-                            retain_applied_override=retain,
+                            retain_applied_choice=retain,
                         )
                     )
                 targets[residue.residue_id] = tuple(entries)
         if pending:
             raise ValueError("microstate request targets an absent polymer site")
+        unresolved_histidines = tuple(
+            target
+            for entries in targets.values()
+            for target in entries
+            if target.site.template.component_id == "HIS"
+            and target.site.kind is PolymerChemicalSite.SIDECHAIN
+            and target.resolution.status is MicrostateResolutionStatus.AMBIGUOUS
+            and all(
+                graph.protonation_key()[0] == 0
+                for graph in target.resolution.candidates
+            )
+        )
+        if unresolved_histidines:
+            environment = HistidineEnvironment(
+                context,
+                component_library,
+                {
+                    target.residue_id: target.resolution
+                    for entries in targets.values()
+                    for target in entries
+                    if target.site.kind is PolymerChemicalSite.SIDECHAIN
+                },
+            )
+            for target in unresolved_histidines:
+                preference = environment.preference(target.residue_id)
+                defaults = pras_microstate_preferences(target.site)
+                updated = replace(
+                    target,
+                    preferences=(
+                        defaults[0],
+                        *((preference,) if preference is not None else ()),
+                        *defaults[1:],
+                    ),
+                )
+                targets[target.residue_id] = tuple(
+                    updated if entry is target else entry
+                    for entry in targets[target.residue_id]
+                )
+        object.__setattr__(self, "_coordinate_dependent", bool(unresolved_histidines))
         object.__setattr__(self, "_targets", MappingProxyType(targets))
         object.__setattr__(self, "context", context)
         object.__setattr__(self, "component_library", component_library)
@@ -217,7 +274,7 @@ class PolymerMicrostatePreparation:
         )
 
     def matches_chemistry(self, structure: ProteinStructure) -> bool:
-        """Allow coordinate-only reuse, never a changed graph or source evidence.
+        """Check every input to selection, including an evaluated environment.
 
         Returns
         -------
@@ -230,6 +287,9 @@ class PolymerMicrostatePreparation:
             source.constitution == structure.constitution
             and source.topology == structure.topology
             and source.provenance == structure.provenance
+            and (
+                not self._coordinate_dependent or source.geometry == structure.geometry
+            )
         )
 
     def fixed_hydrogen_atom_sites(

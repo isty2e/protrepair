@@ -18,7 +18,10 @@ from protrepair.chemistry.microstate.preparation import (
     PolymerMicrostatePreparation,
     pras_microstate_preferences,
 )
-from protrepair.chemistry.microstate.resolution import MicrostateConstraints
+from protrepair.chemistry.microstate.resolution import (
+    MicrostateConstraints,
+    MicrostateSelectionBasis,
+)
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import GeometryPlacementError, Vec3
@@ -121,11 +124,14 @@ def test_preparation_distinguishes_saved_choice_from_changed_ratio(source):
         reset.residue_id,
         reset.site,
         override=reset.override,
-        retain_applied_override=reset.retain_applied_override,
+        retain_applied_choice=reset.retain_applied_choice,
         preferences=pras_microstate_preferences(reset.site),
     )
     neutral = _assert_realized(charged, patch)
-    assert neutral.provenance.microstate_overrides == ()
+    assert all(
+        entry.basis is MicrostateSelectionBasis.DEFAULT
+        for entry in neutral.provenance.microstate_choices
+    )
     assert (
         PolymerMicrostatePreparation(PolymerMicrostateContext(neutral), library)
         .targets_for(cation.residue_id)[0]

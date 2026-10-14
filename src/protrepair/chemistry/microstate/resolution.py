@@ -155,9 +155,17 @@ class MicrostateConstraints:
         )
 
 
+class MicrostateSelectionBasis(str, Enum):
+    """Authority selecting a resolved chemical state."""
+
+    EVIDENCE = "evidence"
+    OVERRIDE = "override"
+    DEFAULT = "default"
+
+
 @dataclass(frozen=True, slots=True)
-class AppliedMicrostateOverride:
-    """Retain an explicitly selected graph without rewriting original evidence.
+class AppliedMicrostateChoice:
+    """Retain a selected graph and its authority without rewriting evidence.
 
     Parameters
     ----------
@@ -167,40 +175,48 @@ class AppliedMicrostateOverride:
         Canonical component identity at application time.
     graph : MicrostateGraph
         Complete selected site, including its chemical boundary valence.
+    basis : MicrostateSelectionBasis
+        OVERRIDE grants explicit replacement authority. DEFAULT is only a
+        source-compatible preference. EVIDENCE remains in the original observation.
 
     Raises
     ------
     TypeError
         Identity or graph has a noncanonical type.
     ValueError
-        The component identity is empty or noncanonical.
+        The component identity is noncanonical, or the basis is EVIDENCE.
     """
 
     residue_id: ResidueId
     component_id: str
     graph: MicrostateGraph
+    basis: MicrostateSelectionBasis
 
     def __post_init__(self) -> None:
         if not isinstance(self.residue_id, ResidueId) or not isinstance(
             self.graph, MicrostateGraph
         ):
             raise TypeError(
-                "applied microstate overrides require canonical identity and graph"
+                "applied microstate choices require canonical identity and graph"
             )
         if not isinstance(self.component_id, str):
             raise TypeError(
-                "applied microstate overrides require a string component identity"
+                "applied microstate choices require a string component identity"
             )
         if (
             not self.component_id
             or self.component_id != self.component_id.strip().upper()
         ):
             raise ValueError(
-                "applied microstate overrides require canonical component identity"
+                "applied microstate choices require canonical component identity"
             )
+        if not isinstance(self.basis, MicrostateSelectionBasis):
+            raise TypeError("applied microstate choices require a canonical basis")
+        if self.basis is MicrostateSelectionBasis.EVIDENCE:
+            raise ValueError("observed chemistry belongs to original evidence")
 
     def constraints(self) -> MicrostateConstraints:
-        """Project the applied choice as explicit constraints, never source facts.
+        """Project graph constraints; the basis determines their authority.
 
         Returns
         -------
@@ -238,6 +254,8 @@ class AppliedMicrostateOverride:
             and self.component_id == component_id
             and tuple((a.name, a.element, a.boundary_order) for a in self.graph.atoms)
             == tuple((a.name, a.element, a.boundary_order) for a in graph.atoms)
+            and tuple((b.atom_name_1, b.atom_name_2) for b in self.graph.bonds)
+            == tuple((b.atom_name_1, b.atom_name_2) for b in graph.bonds)
         )
 
 
@@ -249,14 +267,6 @@ class MicrostateResolutionStatus(str, Enum):
     CONFLICT = "conflict"
     INSUFFICIENT = "insufficient"
     UNSUPPORTED = "unsupported"
-
-
-class MicrostateSelectionBasis(str, Enum):
-    """Authority selecting a resolved chemical state."""
-
-    EVIDENCE = "evidence"
-    OVERRIDE = "override"
-    DEFAULT = "default"
 
 
 @dataclass(frozen=True, slots=True)

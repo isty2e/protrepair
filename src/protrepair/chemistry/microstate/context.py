@@ -12,7 +12,7 @@ from protrepair.chemistry.microstate.catalog import (
 )
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
-    AppliedMicrostateOverride,
+    AppliedMicrostateChoice,
     MicrostateConstraints,
     MicrostateResolution,
     MicrostateResolutionStatus,
@@ -53,7 +53,7 @@ class PolymerMicrostateContext:
     _bonds_by_atom: Mapping[AtomIndex, tuple[TopologyBond, ...]] = field(
         init=False, repr=False
     )
-    _overrides_by_residue: Mapping[ResidueId, tuple[AppliedMicrostateOverride, ...]] = (
+    _choices_by_residue: Mapping[ResidueId, tuple[AppliedMicrostateChoice, ...]] = (
         field(init=False, repr=False)
     )
 
@@ -69,12 +69,12 @@ class PolymerMicrostateContext:
             "_bonds_by_atom",
             MappingProxyType({index: tuple(bonds) for index, bonds in by_atom.items()}),
         )
-        overrides: dict[ResidueId, list[AppliedMicrostateOverride]] = defaultdict(list)
-        for entry in self.source.provenance.microstate_overrides:
+        overrides: dict[ResidueId, list[AppliedMicrostateChoice]] = defaultdict(list)
+        for entry in self.source.provenance.microstate_choices:
             overrides[entry.residue_id].append(entry)
         object.__setattr__(
             self,
-            "_overrides_by_residue",
+            "_choices_by_residue",
             MappingProxyType(
                 {
                     residue_id: tuple(entries)
@@ -90,9 +90,9 @@ class PolymerMicrostateContext:
         *,
         override: MicrostateConstraints | None = None,
         preferences: tuple[MicrostateConstraints, ...] = (),
-        retain_applied_override: bool = True,
+        retain_applied_choice: bool = True,
     ) -> MicrostateResolution:
-        """Resolve a site, retaining a compatible previously applied override.
+        """Resolve a site, retaining a compatible choice at its original authority.
 
         Parameters
         ----------
@@ -104,7 +104,7 @@ class PolymerMicrostateContext:
             New explicit request, taking precedence over a saved choice.
         preferences : tuple[MicrostateConstraints, ...]
             Ordered preparation preferences; never original observations.
-        retain_applied_override : bool
+        retain_applied_choice : bool
             Reuse a saved choice when no new constraint is supplied. False resets
             selection to original evidence and preferences, not neutral chemistry.
 
@@ -112,7 +112,8 @@ class PolymerMicrostateContext:
         -------
         MicrostateResolution
             Desired chemistry, not current conformance. Saved choices with stale
-            component or boundary identity are refused rather than ignored.
+            component or boundary identity are reconsidered when DEFAULT, and
+            refused when OVERRIDE.
 
         Raises
         ------
@@ -121,7 +122,7 @@ class PolymerMicrostateContext:
         ValueError
             An applicable explicit request is empty.
         """
-        if type(retain_applied_override) is not bool:
+        if type(retain_applied_choice) is not bool:
             raise TypeError("retaining an applied microstate choice requires a bool")
         constitution = self.source.constitution
         index = constitution.residue_index(residue_id)
@@ -140,8 +141,8 @@ class PolymerMicrostateContext:
         saved = tuple(
             entry
             for entry in (
-                self._overrides_by_residue.get(residue_id, ())
-                if retain_applied_override
+                self._choices_by_residue.get(residue_id, ())
+                if retain_applied_choice
                 else ()
             )
             if any(atom.name in names for atom in entry.graph.atoms)
@@ -155,7 +156,7 @@ class PolymerMicrostateContext:
             residue,
             self.source.provenance.ingress.observation,
             override=override,
-            applied_override=saved[0] if len(saved) == 1 else None,
+            applied_choice=saved[0] if len(saved) == 1 else None,
             preferences=preferences,
         )
 

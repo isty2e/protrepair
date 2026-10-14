@@ -8,7 +8,7 @@ from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.graph import MicrostateGraph
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
-    AppliedMicrostateOverride,
+    AppliedMicrostateChoice,
     MicrostateConstraints,
     MicrostateResolution,
     MicrostateSelectionBasis,
@@ -88,9 +88,9 @@ class PolymerMicrostatePatch:
         and original observations remain preserved even when coordinates change.
     override : MicrostateConstraints or None
         Explicit replacement authority passed to the chemical resolver.
-    applied_override : AppliedMicrostateOverride or None
-        Explicit choice retained by a prior transformation, if the caller requests
-        reuse. A new override supersedes it. Omission does not inherit authority.
+    applied_choice : AppliedMicrostateChoice or None
+        Choice retained by a prior transformation with its original authority.
+        A new override supersedes it. Omission does not inherit authority.
     preferences : tuple[MicrostateConstraints, ...]
         Ordered, source-compatible preparation preferences.
 
@@ -109,14 +109,14 @@ class PolymerMicrostatePatch:
     hydrogens: tuple[MicrostateHydrogenPlacement, ...]
     reposition_hydrogens: frozenset[str] = frozenset()
     override: InitVar[MicrostateConstraints | None] = None
-    applied_override: InitVar[AppliedMicrostateOverride | None] = None
+    applied_choice: InitVar[AppliedMicrostateChoice | None] = None
     preferences: InitVar[tuple[MicrostateConstraints, ...]] = ()
     resolution: MicrostateResolution = field(init=False)
 
     def __post_init__(
         self,
         override: MicrostateConstraints | None,
-        applied_override: AppliedMicrostateOverride | None,
+        applied_choice: AppliedMicrostateChoice | None,
         preferences: tuple[MicrostateConstraints, ...],
     ) -> None:
         index = self.source.constitution.residue_index(self.residue_id)
@@ -130,7 +130,7 @@ class PolymerMicrostatePatch:
             residue,
             self.source.provenance.ingress.observation,
             override=override,
-            applied_override=applied_override,
+            applied_choice=applied_choice,
             preferences=preferences,
         )
         graph = resolution.graph
@@ -281,8 +281,8 @@ def apply_polymer_microstate_patches(
     ProteinStructure
         Updated H constitution, charges and bonds, preserving heavy coordinates,
         surviving H geometry, unrelated facets and original observations. Applied
-        explicit overrides replace prior choices for the touched sites; applying
-        a site without override authority clears its previous choice.
+        defaults and explicit overrides replace prior choices for the
+        touched sites without changing their authority or original observations.
 
     Raises
     ------
@@ -416,22 +416,25 @@ def apply_polymer_microstate_patches(
 
     overrides = [
         override
-        for override in structure.provenance.microstate_overrides
+        for override in structure.provenance.microstate_choices
         if not any(
             AtomRef(override.residue_id, atom.name) in touched
             for atom in override.graph.atoms
         )
     ]
     overrides.extend(
-        AppliedMicrostateOverride(
-            patch.residue_id, patch.site.template.component_id, patch.graph
+        AppliedMicrostateChoice(
+            patch.residue_id,
+            patch.site.template.component_id,
+            patch.graph,
+            patch.resolution.basis,
         )
         for patch in patches
-        if patch.resolution.basis is MicrostateSelectionBasis.OVERRIDE
+        if patch.resolution.basis is not MicrostateSelectionBasis.EVIDENCE
     )
     provenance = structure.provenance
-    if tuple(overrides) != provenance.microstate_overrides:
-        provenance = replace(provenance, microstate_overrides=tuple(overrides))
+    if tuple(overrides) != provenance.microstate_choices:
+        provenance = replace(provenance, microstate_choices=tuple(overrides))
 
     return ProteinStructure.from_payload(
         constitution=prepared.constitution,

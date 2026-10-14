@@ -13,7 +13,6 @@ from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import (
     PolymerMicrostatePreparation,
     PolymerSitePreparation,
-    pras_microstate_preferences,
 )
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.diagnostics.component_support import (
@@ -195,8 +194,8 @@ def materialize_hydrogens_core(
                         residue_id,
                         target.site,
                         override=target.override,
-                        preferences=pras_microstate_preferences(target.site),
-                        retain_applied_override=target.retain_applied_override,
+                        preferences=target.preferences,
+                        retain_applied_choice=target.retain_applied_choice,
                         rebuild_existing=residue_id in rebuilding,
                     )
                 except GeometryPlacementError as error:

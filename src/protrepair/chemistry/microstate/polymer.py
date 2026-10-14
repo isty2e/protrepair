@@ -14,11 +14,12 @@ from protrepair.chemistry.microstate.catalog import (
 )
 from protrepair.chemistry.microstate.graph import MicrostateGraph
 from protrepair.chemistry.microstate.resolution import (
-    AppliedMicrostateOverride,
+    AppliedMicrostateChoice,
     HydrogenAttachmentBasis,
     MicrostateConstraints,
     MicrostateResolution,
     MicrostateResolutionStatus,
+    MicrostateSelectionBasis,
     MicrostateSite,
     ObservedHydrogenAttachment,
 )
@@ -90,7 +91,7 @@ class PolymerMicrostateSite:
         observation: StructureObservation | None,
         *,
         override: MicrostateConstraints | None = None,
-        applied_override: AppliedMicrostateOverride | None = None,
+        applied_choice: AppliedMicrostateChoice | None = None,
         preferences: tuple[MicrostateConstraints, ...] = (),
     ) -> MicrostateResolution:
         """Resolve chemistry without treating generated atoms as source evidence.
@@ -103,9 +104,11 @@ class PolymerMicrostateSite:
             Original selected input. None is unavailable, not neutral chemistry.
         override : MicrostateConstraints or None
             Explicit site-scoped authority to supersede interpretable source facts.
-        applied_override : AppliedMicrostateOverride or None
-            Previously applied explicit choice. Reused only for the same component,
-            site atoms and boundary valence. A new override takes precedence.
+        applied_choice : AppliedMicrostateChoice or None
+            Previously applied choice. Defaults remain source-compatible
+            preferences, never overrides. Reused only for the same component,
+            site atoms and boundary valence. Stale defaults are reconsidered;
+            stale overrides are refused. A new override takes precedence.
             Current boundary endpoints still require validation by the caller.
         preferences : tuple[MicrostateConstraints, ...]
             Ordered preferences among source-compatible candidates only.
@@ -151,15 +154,19 @@ class PolymerMicrostateSite:
             )
 
         reference = site.candidates[0]
-        if override is None and applied_override is not None:
-            if not applied_override.matches_site(
+        if override is None and applied_choice is not None:
+            if not applied_choice.matches_site(
                 residue.residue_id, residue.component_id, reference
             ):
-                return MicrostateResolution(
-                    MicrostateResolutionStatus.UNSUPPORTED,
-                    details=("applied override no longer matches the chemical site",),
-                )
-            override = applied_override.constraints()
+                if applied_choice.basis is MicrostateSelectionBasis.OVERRIDE:
+                    return MicrostateResolution(
+                        MicrostateResolutionStatus.UNSUPPORTED,
+                        details=("applied choice no longer matches the chemical site",),
+                    )
+            elif applied_choice.basis is MicrostateSelectionBasis.OVERRIDE:
+                override = applied_choice.constraints()
+            else:
+                preferences = (applied_choice.constraints(), *preferences)
         required = {atom.name for atom in reference.atoms}
         heavy_names = set(stock.expected_heavy_atom_names())
         if self.kind is PolymerChemicalSite.SIDECHAIN:
