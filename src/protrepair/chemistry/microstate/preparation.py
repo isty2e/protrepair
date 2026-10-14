@@ -23,6 +23,7 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.labels import ResidueId
+from protrepair.structure.topology import TopologyBond
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,6 +382,49 @@ class PolymerMicrostatePreparation:
                 raise ValueError(f"fixed H names exhausted at {parent}")
             result.extend((atom, parent) for atom in entries)
         return tuple(result)
+
+    def fixed_hydrogen_topology_updates(
+        self, residue_id: ResidueId
+    ) -> tuple[TopologyBond, ...]:
+        """Propose bonds for present fixed H without placing or renaming atoms.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Polymer residue whose source inventory is to be retained.
+
+        Returns
+        -------
+        tuple[TopologyBond, ...]
+            Supported updates outside coupled microstate sites. Missing atoms
+            remain for H placement; absent component support produces no update.
+
+        Raises
+        ------
+        ValueError
+            H inventory or attachment evidence is contradictory or unsupported.
+        """
+        selected = {atom.name for atom, _ in self.fixed_hydrogen_atom_sites(residue_id)}
+        if not selected:
+            return ()
+        structure = self.context.source
+        residue = structure.constitution.residue_site_at(
+            structure.constitution.residue_index(residue_id)
+        )
+        template = self.component_library.get(residue.component_id)
+        assert template is not None
+        return tuple(
+            bond
+            for bond in self.context.hydrogen_topology_updates(
+                residue_id,
+                PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN),
+            )
+            if any(
+                structure.constitution.atom_site_at(index).is_hydrogen()
+                and structure.constitution.atom_ref_at(index).atom_name in selected
+                for index in bond.endpoint_pair()
+            )
+        )
 
     def targets_for(self, residue_id: ResidueId) -> tuple[PolymerSitePreparation, ...]:
         """Return all chemical targets for a polymer residue.

@@ -16,6 +16,9 @@ from protrepair.workflow.actions.heavy_completion import HeavyAtomCompletionTran
 from protrepair.workflow.actions.hydrogen_completion import (
     HydrogenCompletionTransformer,
 )
+from protrepair.workflow.actions.hydrogen_topology import (
+    PolymerHydrogenTopologyResolutionTransformer,
+)
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.actions.packing import CommittedPackingTransformer
 from protrepair.workflow.actions.retained_non_polymer_hydrogen_completion import (
@@ -38,6 +41,7 @@ from protrepair.workflow.planning.default_action_registry.capabilities import (
     HEAVY_ATOM_COMPLETION_CAPABILITY,
     HYDROGEN_COMPLETION_CAPABILITY,
     LOCAL_REFINEMENT_CAPABILITY,
+    POLYMER_HYDROGEN_TOPOLOGY_RESOLUTION_CAPABILITY,
     RETAINED_NON_POLYMER_HYDROGEN_COMPLETION_CAPABILITY,
     STEREOCHEMISTRY_CORRECTION_CAPABILITY,
     TERMINAL_AUGMENTATION_CAPABILITY,
@@ -66,6 +70,10 @@ from protrepair.workflow.planning.default_action_registry.proposals import (
     terminal_augmentation_is_admissible,
     terminal_augmentation_proposals,
 )
+from protrepair.workflow.planning.default_action_registry.topology_proposals import (
+    polymer_hydrogen_topology_resolution_is_admissible,
+    polymer_hydrogen_topology_resolution_proposals,
+)
 
 REQUEST_DRIVEN_WORKFLOW_ACTION_REGISTRY: tuple[
     WorkflowActionRegistryEntry[WorkflowActionDomain],
@@ -88,6 +96,12 @@ REQUEST_DRIVEN_WORKFLOW_ACTION_REGISTRY: tuple[
         capability=DISULFIDE_HYDROGEN_NORMALIZATION_CAPABILITY,
         is_admissible_for_domain=(disulfide_hydrogen_normalization_is_admissible),
         proposals_for_domain=disulfide_hydrogen_normalization_proposals,
+    ),
+    WorkflowActionRegistryEntry(
+        action_type=PolymerHydrogenTopologyResolutionTransformer,
+        capability=POLYMER_HYDROGEN_TOPOLOGY_RESOLUTION_CAPABILITY,
+        is_admissible_for_domain=polymer_hydrogen_topology_resolution_is_admissible,
+        proposals_for_domain=polymer_hydrogen_topology_resolution_proposals,
     ),
     WorkflowActionRegistryEntry(
         action_type=HydrogenCompletionTransformer,

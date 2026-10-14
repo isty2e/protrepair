@@ -2,7 +2,7 @@
 
 from collections import Counter, defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 from protrepair.chemistry.component.template import ResidueTemplate
@@ -527,6 +527,7 @@ class PolymerMicrostateContext:
                     other_ref.residue_id != residue_id
                     or constitution.atom_site_at(other).is_hydrogen()
                     or bond.order not in (None, 1)
+                    or bond.aromatic
                 ):
                     raise ValueError("H attachment requires one local heavy parent")
                 if bond.relationship_type is BondRelationshipType.COVALENT:
@@ -547,6 +548,71 @@ class PolymerMicrostateContext:
                 raise ValueError("current H attachment contradicts its source parent")
             result[atom.name] = parent
         return result
+
+    def hydrogen_topology_updates(
+        self, residue_id: ResidueId, site: PolymerMicrostateSite
+    ) -> tuple[TopologyBond, ...]:
+        """Propose missing single bonds for supported present polymer H.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Polymer residue in this snapshot.
+        site : PolymerMicrostateSite
+            Component naming grammar, not a new protonation selection.
+
+        Returns
+        -------
+        tuple[TopologyBond, ...]
+            Missing bonds or resolutions of incomplete source bonds. Existing
+            source metadata and endpoint provenance survive resolution.
+            This observation does not change the structure.
+
+        Raises
+        ------
+        ValueError
+            The residue is not polymer, a parent is absent or unsupported, or H
+            chemistry contradicts source evidence or a known relationship.
+        """
+        constitution = self.source.constitution
+        index = constitution.residue_index(residue_id)
+        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+            raise ValueError("polymer H topology requires a polymer residue")
+        updates = []
+        for name, parent in self.hydrogen_parents(residue_id, site).items():
+            hydrogen_index = constitution.atom_index(AtomRef(residue_id, name))
+            parent_index = constitution.resolve_atom_index(AtomRef(residue_id, parent))
+            if parent_index is None or constitution.atom_site_at(
+                parent_index
+            ).element not in {"C", "N", "O", "S", "SE"}:
+                raise ValueError(f"unsupported H parent: {parent}")
+            existing = next(
+                (
+                    bond
+                    for bond in self._bonds_by_atom.get(hydrogen_index, ())
+                    if parent_index in bond.endpoint_pair()
+                ),
+                None,
+            )
+            if existing is None:
+                updates.append(TopologyBond(parent_index, hydrogen_index))
+            elif existing.relationship_type not in {
+                BondRelationshipType.COVALENT,
+                BondRelationshipType.UNKNOWN,
+            }:
+                raise ValueError("H parent contradicts a known relationship")
+            elif (
+                existing.relationship_type is not BondRelationshipType.COVALENT
+                or existing.order != 1
+            ):
+                updates.append(
+                    replace(
+                        existing,
+                        relationship_type=BondRelationshipType.COVALENT,
+                        order=1,
+                    )
+                )
+        return tuple(updates)
 
     def realized_heavy_graph(
         self,
