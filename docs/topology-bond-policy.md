@@ -168,9 +168,12 @@ and unrecognized external connections prevent the assumption. Original chemical
 evidence still constrains the selected graph. A free C-terminal site needs OXT;
 when it is missing, heavy-atom completion must precede graph application.
 
-For HIS the policy first prefers neutral
-states, then the epsilon tautomer. This keeps an observed delta H compatible
-with neutral delta HIS instead of overwriting it with the epsilon convention.
+For HIS the policy first prefers neutral states. When source evidence leaves
+both neutral tautomers compatible, local polar contacts can prefer delta or
+epsilon; a tie falls back to epsilon. An observed delta H remains compatible
+with neutral delta HIS rather than being overwritten by a default convention.
+See [histidine preparation](histidine-protonation.md) for the contact method and
+state-specific geometry restraints.
 The policy follows the H counts in
 [PRAS's placement routines](https://github.com/osita-sunday-nnyigide/Pras_Server/blob/master/Pras_Server/MissingHydrogenAtoms.py)
 and its [histidine convention](https://www.protein-science.com/protonation/).
@@ -186,11 +189,15 @@ keeping their identities, isotopes, atom scalars and original observations.
 Chemistry-only application does not reposition them.
 Patches are bound to their source snapshot, and application checks current
 boundary bonds so that a new crosslink cannot inherit an obsolete site decision.
-An applied explicit override is retained separately from the original input.
-Later site resolution can reuse it only for the same residue, component, site
-atoms and boundary valence. A new explicit request replaces it; applying a site
-without override authority clears its prior choice. Current boundary endpoints
-are still checked before application.
+Applied choices are retained separately from the original input. Their basis
+distinguishes explicit overrides from source-compatible defaults; a stored
+default never gains override authority. Later resolution can reuse a choice
+only for the same residue, component, site atoms, skeleton and boundary valence.
+A stale default is reconsidered against current source-compatible preferences;
+a stale explicit override requires reconciliation rather than silent replacement.
+A new explicit request replaces it, and an explicit reset re-evaluates current
+source-compatible preferences. Current boundary endpoints are still checked
+before application.
 
 `PolymerMicrostateContext` distinguishes a selected graph from its current
 realization. It checks H attachments, charges and integral bonds against one
@@ -344,6 +351,15 @@ new H anchor:
 
 Existing source-explicit H bonds remain authoritative when the same endpoint
 pair is regenerated during hydrogen completion.
+
+Present fixed-template H, D and T can also have their attachment topology
+resolved without coordinate placement. Supported source bonds take precedence
+over name aliases; missing or untyped attachments use unambiguous template
+parents. Atom identity, coordinates, scalars and source metadata are preserved.
+Contradictory typed relationships remain diagnosed, not overwritten. Coupled
+microstate sites keep their separate atomic H/charge/bond application path.
+The planner can select this topology-only action for complete H inventories
+that still lack bonds; missing H remains a completion task.
 
 Retained non-polymer hydrogen completion uses the strongest available support
 mode for each generated H anchor:
