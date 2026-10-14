@@ -8,6 +8,7 @@ from protrepair.errors import ModelInvariantError
 from protrepair.structure.constitution import StructureConstitution
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
     BondProvenance,
     BondRelationshipType,
@@ -30,16 +31,21 @@ class StructureObservation:
         Reported charges and source-explicit bonds only. Unreported orders are
         None and unreported relationships are UNKNOWN, not template-filled
         values. Missing H is not negative evidence.
+    excluded_coordination_connections : tuple[SourceConnection, ...]
+        Typed declarations to partners removed by source normalization. These
+        endpoints do not become atoms or bonds in the selected address space.
 
     Raises
     ------
     ModelInvariantError
-        Facets are misaligned or topology contains inferred chemistry.
+        Facets are misaligned, topology contains inferred chemistry, or excluded
+        coordination evidence is untyped or lacks exactly one selected endpoint.
     """
 
     constitution: StructureConstitution
     geometry: StructureGeometry
     topology: StructureTopology
+    excluded_coordination_connections: tuple[SourceConnection, ...] = ()
     _bonds_by_residue: Mapping[ResidueId, tuple[TopologyBond, ...]] = field(
         init=False, repr=False, compare=False
     )
@@ -74,6 +80,29 @@ class StructureObservation:
                     "observation bonds must contain only source declarations"
                 )
 
+        excluded_connections = tuple(
+            dict.fromkeys(self.excluded_coordination_connections)
+        )
+        for connection in excluded_connections:
+            if (
+                connection.source_metadata.reported_relationship_type
+                is not BondRelationshipType.METAL_COORDINATION
+            ):
+                raise ModelInvariantError(
+                    "excluded coordination evidence requires a typed declaration"
+                )
+            retained_count = sum(
+                endpoint.resolve_index(self.constitution, self.geometry) is not None
+                for endpoint in connection.endpoint_pair()
+            )
+            if retained_count != 1:
+                raise ModelInvariantError(
+                    "excluded coordination evidence requires one selected endpoint"
+                )
+        object.__setattr__(
+            self, "excluded_coordination_connections", excluded_connections
+        )
+
         by_residue: dict[ResidueId, list[TopologyBond]] = {}
         for bond in self.topology.bonds:
             first = self.constitution.atom_ref_at(bond.atom_index_1).residue_id
@@ -96,6 +125,7 @@ class StructureObservation:
         constitution: StructureConstitution,
         geometry: StructureGeometry,
         topology: StructureTopology,
+        excluded_coordination_connections: tuple[SourceConnection, ...] = (),
     ) -> "StructureObservation":
         """Capture source facts before any chemistry-changing transformation.
 
@@ -107,6 +137,9 @@ class StructureObservation:
             Geometry in that address space.
         topology : StructureTopology
             Ingress topology whose atom charges still describe input records.
+        excluded_coordination_connections : tuple[SourceConnection, ...]
+            Typed declarations incident to a retained metal whose other source
+            endpoint was encountered in a policy-excluded residue or chain.
 
         Returns
         -------
@@ -145,7 +178,73 @@ class StructureObservation:
             ),
         )
         return cls(
-            constitution=constitution, geometry=geometry, topology=source_topology
+            constitution=constitution,
+            geometry=geometry,
+            topology=source_topology,
+            excluded_coordination_connections=excluded_coordination_connections,
+        )
+
+    def coordination_connections(self) -> tuple[SourceConnection, ...]:
+        """Return retained and excluded typed source coordination declarations.
+
+        Returns
+        -------
+        tuple[SourceConnection, ...]
+            Original source identities and metadata, not current or inferred
+            chemistry. Conflicting off-graph declarations remain separate evidence.
+        """
+        retained_connections: list[SourceConnection] = []
+        for bond in self.topology.bonds:
+            if (
+                bond.relationship_type is not BondRelationshipType.METAL_COORDINATION
+                or bond.source_metadata is None
+            ):
+                continue
+            identities: list[SourceAtomIdentity] = []
+            for index in bond.endpoint_pair():
+                atom_ref = self.constitution.atom_ref_at(index)
+                residue = self.constitution.residue_or_ligand(atom_ref.residue_id)
+                assert residue is not None
+                identities.append(
+                    SourceAtomIdentity(
+                        atom_ref,
+                        residue.component_id,
+                        self.geometry.atom_geometry(index).altloc,
+                    )
+                )
+            retained_connections.append(
+                SourceConnection(*identities, source_metadata=bond.source_metadata)
+            )
+        return (*retained_connections, *self.excluded_coordination_connections)
+
+    def unrepresented_coordination_connections(
+        self,
+        constitution: StructureConstitution,
+        geometry: StructureGeometry,
+    ) -> tuple[SourceConnection, ...]:
+        """Compare historical declarations with the current selected atoms.
+
+        Parameters
+        ----------
+        constitution : StructureConstitution
+            Current atom identities, possibly changed since source selection.
+        geometry : StructureGeometry
+            Current geometry aligned with that constitution.
+
+        Returns
+        -------
+        tuple[SourceConnection, ...]
+            Declarations with exactly one currently represented endpoint. This
+            query does not certify a complete site or validate metal physics.
+        """
+        return tuple(
+            connection
+            for connection in self.coordination_connections()
+            if sum(
+                endpoint.resolve_index(constitution, geometry) is not None
+                for endpoint in connection.endpoint_pair()
+            )
+            == 1
         )
 
     def formal_charge(self, atom_ref: AtomRef) -> int | None:

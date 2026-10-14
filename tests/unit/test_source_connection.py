@@ -5,9 +5,8 @@ from typing import cast
 
 import pytest
 
-from protrepair.io.source_connection import SourceConnection
-from protrepair.io.source_identity import SourceAtomIdentity
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
     BondRelationshipType,
     SourceBondMetadata,

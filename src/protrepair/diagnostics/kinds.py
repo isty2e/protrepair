@@ -35,6 +35,7 @@ class ValidationIssueKind(str, Enum):
     INVALID_STEREOCHEMISTRY = "invalid_stereochemistry"
     REFINEMENT_REJECTED = "refinement_rejected"
     COMPUTATIONAL_PEPTIDE_CAP = "computational_peptide_cap"
+    SOURCE_COORDINATION_PARTNER_OMITTED = "source_coordination_partner_omitted"
     UNSUPPORTED_TEMPLATE_REPAIR = "unsupported_template_repair"
     UNSUPPORTED_HYDROGENATION = "unsupported_hydrogenation"
     PACKING_INVALIDATED_HYDROGENS = "packing_invalidated_hydrogens"

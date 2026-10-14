@@ -1,9 +1,5 @@
 """Source-coordinate identity normalization contracts."""
 
-from dataclasses import dataclass
-
-from protrepair.structure.labels import AtomRef, ResidueId
-
 DEFAULT_CHAIN_ID = "_"
 
 
@@ -26,34 +22,3 @@ def normalize_altloc(raw_altloc: str) -> str | None:
 
     normalized_altloc = raw_altloc.strip("\x00 ").strip()
     return normalized_altloc or None
-
-
-@dataclass(frozen=True, slots=True)
-class SourceAtomIdentity:
-    """Source endpoint identity before selected canonical lowering."""
-
-    atom_ref: AtomRef
-    component_id: str
-    altloc: str | None = None
-
-    def __post_init__(self) -> None:
-        component_id = self.component_id.strip().upper()
-        if not component_id:
-            raise ValueError("source atom identities require a component id")
-
-        altloc = self.altloc
-        if altloc is not None:
-            altloc = altloc.strip() or None
-
-        object.__setattr__(self, "component_id", component_id)
-        object.__setattr__(self, "altloc", altloc)
-
-    def sort_key(self) -> tuple[ResidueId, str, str, str]:
-        """Return a deterministic key for unordered source endpoint pairs."""
-
-        return (
-            self.atom_ref.residue_id,
-            self.atom_ref.atom_name,
-            self.component_id,
-            self.altloc or "",
-        )

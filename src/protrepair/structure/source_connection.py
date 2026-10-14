@@ -1,9 +1,11 @@
-"""Boundary-normalized source connection contracts."""
+"""Source declarations independent of the selected atom address space."""
 
 from dataclasses import dataclass, replace
 
 from protrepair.errors import ModelInvariantError
-from protrepair.io.source_identity import SourceAtomIdentity
+from protrepair.structure.constitution import StructureConstitution
+from protrepair.structure.geometry import StructureGeometry
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
     BondProvenance,
@@ -13,6 +15,86 @@ from protrepair.structure.topology import (
     TopologyBond,
     is_covalent_like_relationship,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceAtomIdentity:
+    """Source endpoint identity before selected canonical lowering.
+
+    Parameters
+    ----------
+    atom_ref : AtomRef
+        Source residue and atom name.
+    component_id : str
+        Component identity, normalized to uppercase without surrounding spaces.
+    altloc : str or None
+        Alternate location; blank values become None.
+
+    Raises
+    ------
+    ValueError
+        The component identity is blank.
+    """
+
+    atom_ref: AtomRef
+    component_id: str
+    altloc: str | None = None
+
+    def __post_init__(self) -> None:
+        component_id = self.component_id.strip().upper()
+        if not component_id:
+            raise ValueError("source atom identities require a component id")
+
+        altloc = self.altloc
+        if altloc is not None:
+            altloc = altloc.strip() or None
+
+        object.__setattr__(self, "component_id", component_id)
+        object.__setattr__(self, "altloc", altloc)
+
+    def sort_key(self) -> tuple[ResidueId, str, str, str]:
+        """Return a deterministic key for unordered source endpoint pairs."""
+
+        return (
+            self.atom_ref.residue_id,
+            self.atom_ref.atom_name,
+            self.component_id,
+            self.altloc or "",
+        )
+
+    def resolve_index(
+        self,
+        constitution: StructureConstitution,
+        geometry: StructureGeometry,
+        *,
+        require_altloc_match: bool = True,
+    ) -> AtomIndex | None:
+        """Resolve this exact source identity in aligned selected facets.
+
+        Parameters
+        ----------
+        constitution : StructureConstitution
+            Selected current atom address space.
+        geometry : StructureGeometry
+            Geometry aligned with that address space.
+        require_altloc_match : bool
+            Whether the selected alternate location must match the declaration.
+
+        Returns
+        -------
+        AtomIndex or None
+            Selected slot, or None if the atom, component or altloc differs.
+        """
+        residue = constitution.residue_or_ligand(self.atom_ref.residue_id)
+        if residue is None or residue.component_id != self.component_id:
+            return None
+
+        index = constitution.resolve_atom_index(self.atom_ref)
+        if index is None:
+            return None
+        if require_altloc_match and geometry.atom_geometry(index).altloc != self.altloc:
+            return None
+        return index
 
 
 @dataclass(frozen=True, slots=True)
