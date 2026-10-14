@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- preserve retained non-polymers on chains with no polymer residues
+- decode quoted CCD atom identifiers without stripping meaningful primes, and
+  correct the corresponding HRG, 60F, IEL and YPZ bundled component records
+- reject component dictionaries with explicit unknown charges, coordination or
+  metal-pi flags, or incomplete bond columns instead of losing that chemistry
+- preserve resolved disulfide relationships through PDB SSBOND and CONECT output,
+  independently of bond provenance; mmCIF retains the canonical relationship
 - recover peptide connectivity across nonmonotonic author residue numbering
   from source sequence evidence and corroborating geometry. Explicit gaps,
   boundary chemistry, and source connections still constrain inference
@@ -86,6 +93,9 @@
 
 ### Added
 
+- retain typed source coordination declarations to policy-excluded partners and
+  report non-blocking omission warnings beside retained metals, without restoring
+  excluded atoms or inferring metal chemistry
 - add a pure standard-polymer microstate resolver that keeps H counts,
   formal charges, and bond orders coupled. It preserves source evidence and
   distinguishes ambiguity, conflicts, and unsupported chemistry
