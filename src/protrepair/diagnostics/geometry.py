@@ -16,6 +16,7 @@ from protrepair.chemistry import (
     build_default_restraint_library,
     prepare_radius_lookup,
 )
+from protrepair.chemistry.restraint.structure import StructureRestraints
 from protrepair.chemistry.restraint.template import (
     AngleRestraintTarget,
     BondRestraintTarget,
@@ -247,6 +248,9 @@ def detect_heavy_geometry(
     )
     bond_length_outliers: list[BondLengthOutlier] = []
     bond_angle_outliers: list[BondAngleOutlier] = []
+    applicable_restraints = StructureRestraints(
+        structure, component_library, active_restraint_library
+    )
     for residue in structure.constitution.iter_residues():
         if (
             selected_residue_ids is not None
@@ -258,7 +262,7 @@ def detect_heavy_geometry(
         if template is None:
             continue
 
-        restraint_template = active_restraint_library.get(residue.component_id)
+        restraint_template = applicable_restraints.for_residue(residue.residue_id)
         residue_geometry = structure.residue_geometry(
             structure.constitution.residue_index(residue.residue_id)
         )
@@ -299,9 +303,7 @@ def severe_intrinsic_geometry_residues(
 ) -> tuple[SevereIntrinsicGeometryResidue, ...]:
     """Return residue-local intrinsic geometry burdens severe enough to auto-repair."""
 
-    bond_length_by_residue: dict[ResidueId, list[BondLengthOutlier]] = defaultdict(
-        list
-    )
+    bond_length_by_residue: dict[ResidueId, list[BondLengthOutlier]] = defaultdict(list)
     for outlier in report.bond_length_outliers:
         bond_length_by_residue[outlier.residue_id].append(outlier)
 
@@ -328,17 +330,11 @@ def severe_intrinsic_geometry_residues(
             continue
 
         worst_bond_length_deviation_angstrom = max(
-            (
-                outlier.deviation_angstrom()
-                for outlier in bond_length_outliers
-            ),
+            (outlier.deviation_angstrom() for outlier in bond_length_outliers),
             default=0.0,
         )
         worst_bond_angle_deviation_degrees = max(
-            (
-                outlier.deviation_degrees()
-                for outlier in bond_angle_outliers
-            ),
+            (outlier.deviation_degrees() for outlier in bond_angle_outliers),
             default=0.0,
         )
         has_large_deviation = (
@@ -361,9 +357,7 @@ def severe_intrinsic_geometry_residues(
                 worst_bond_length_deviation_angstrom=(
                     worst_bond_length_deviation_angstrom
                 ),
-                worst_bond_angle_deviation_degrees=(
-                    worst_bond_angle_deviation_degrees
-                ),
+                worst_bond_angle_deviation_degrees=(worst_bond_angle_deviation_degrees),
             )
         )
 
@@ -461,20 +455,24 @@ def detect_residue_bond_angle_outliers(
 ) -> tuple[BondAngleOutlier, ...]:
     """Return heavy-atom bond-angle outliers for one residue."""
 
-    if restraint_template is not None:
-        return detect_restraint_bond_angle_outliers(
+    restrained = (
+        ()
+        if restraint_template is None
+        else detect_restraint_bond_angle_outliers(
             residue,
             residue_geometry=residue_geometry,
             restraint_template=restraint_template,
             policy=policy,
         )
-
-    return detect_fallback_bond_angle_outliers(
+    )
+    fallback = detect_fallback_bond_angle_outliers(
         residue,
         residue_geometry=residue_geometry,
         template=template,
         policy=policy,
+        restraint_template=restraint_template,
     )
+    return (*restrained, *fallback)
 
 
 def detect_fallback_bond_angle_outliers(
@@ -483,10 +481,37 @@ def detect_fallback_bond_angle_outliers(
     residue_geometry: ResidueGeometry,
     template: ResidueTemplate,
     policy: HeavyGeometryPolicy,
+    restraint_template: ResidueRestraintTemplate | None = None,
 ) -> tuple[BondAngleOutlier, ...]:
-    """Return broad fallback angle outliers when no restraint target exists."""
+    """Screen each angle without an applicable target against the broad window.
+
+    Parameters
+    ----------
+    residue : ResidueSite
+        Present atoms for one residue.
+    residue_geometry : ResidueGeometry
+        Coordinates aligned to the residue.
+    template : ResidueTemplate
+        Component connectivity defining the angle triplets.
+    policy : HeavyGeometryPolicy
+        Broad plausibility window, independent of protonation-state ESDs.
+    restraint_template : ResidueRestraintTemplate or None
+        Applicable targets to exclude from fallback, including custom targets.
+
+    Returns
+    -------
+    tuple[BondAngleOutlier, ...]
+        Outliers not backed by a dictionary target. These are not FF restraints.
+    """
 
     outliers: list[BondAngleOutlier] = []
+    covered_triplets = (
+        frozenset()
+        if restraint_template is None
+        else frozenset(
+            target.canonical_triplet() for target in restraint_template.angle_targets
+        )
+    )
     for center_atom_name in template.expected_atom_names():
         bonded_atom_names = tuple(
             atom_name
@@ -500,6 +525,8 @@ def detect_fallback_bond_angle_outliers(
             sorted(bonded_atom_names),
             2,
         ):
+            if (center_atom_name, atom_name_1, atom_name_2) in covered_triplets:
+                continue
             observed_angle = bond_angle_degrees(
                 residue_geometry,
                 atom_name_1=atom_name_1,

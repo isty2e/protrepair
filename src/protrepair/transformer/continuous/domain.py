@@ -294,6 +294,7 @@ class ContinuousRelaxationProblem:
     region: ContinuousRelaxationRegion
     spec: ContinuousRelaxationSettings
     bonds: tuple[PlannedBond, ...]
+    component_library: ComponentLibrary
 
     @classmethod
     def from_inputs(
@@ -336,6 +337,7 @@ class ContinuousRelaxationProblem:
         return cls(
             region=region,
             spec=spec,
+            component_library=component_library,
             bonds=plan_continuous_region_bonds(
                 region,
                 component_library,

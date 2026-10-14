@@ -10,6 +10,7 @@ from protrepair.chemistry.microstate.catalog import (
     PeptideLinkage,
     PolymerChemicalSite,
 )
+from protrepair.chemistry.microstate.graph import MicrostateGraph
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
     AppliedMicrostateChoice,
@@ -546,6 +547,78 @@ class PolymerMicrostateContext:
                 raise ValueError("current H attachment contradicts its source parent")
             result[atom.name] = parent
         return result
+
+    def realized_heavy_graph(
+        self,
+        residue_id: ResidueId,
+        site: PolymerMicrostateSite,
+        resolution: MicrostateResolution,
+    ) -> MicrostateGraph | None:
+        """Match current heavy chemistry to an independently selected state.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Current polymer residue identity.
+        site : PolymerMicrostateSite
+            Supported site with established linkage.
+        resolution : MicrostateResolution
+            Selection from original evidence or an applied choice, not geometry.
+
+        Returns
+        -------
+        MicrostateGraph or None
+            A protonation-equivalent graph matching current charges and bonds.
+            Missing H is allowed; incompatible present H, unsupported boundaries
+            or a changed heavy graph refuse the projection. No coordinates are read.
+        """
+        selected = resolution.graph
+        catalog = site.candidates()
+        if selected is None or catalog is None:
+            return None
+        try:
+            hydrogens = Counter(
+                self.hydrogen_attachments(residue_id, site, resolution).values()
+            )
+        except ValueError:
+            return None
+        constitution = self.source.constitution
+        topology = self.source.topology
+        indices = {
+            atom.name: constitution.atom_index(AtomRef(residue_id, atom.name))
+            for atom in selected.atoms
+        }
+        bonds_by_pair = {
+            frozenset(bond.endpoint_pair()): bond
+            for index in indices.values()
+            for bond in self._bonds_by_atom.get(index, ())
+        }
+        for graph in catalog.candidates:
+            if graph.protonation_key() != selected.protonation_key():
+                continue
+            if any(hydrogens[a.name] > a.hydrogens for a in graph.atoms):
+                continue
+            if any(
+                (topology.formal_charge(indices[a.name]) or 0) != a.charge
+                for a in graph.atoms
+            ):
+                continue
+            if all(
+                (
+                    bond := bonds_by_pair.get(
+                        frozenset(
+                            (indices[target.atom_name_1], indices[target.atom_name_2])
+                        )
+                    )
+                )
+                is not None
+                and bond.relationship_type is BondRelationshipType.COVALENT
+                and bond.order == target.order
+                and not bond.aromatic
+                for target in graph.bonds
+            ):
+                return graph
+        return None
 
     def is_realized(
         self,

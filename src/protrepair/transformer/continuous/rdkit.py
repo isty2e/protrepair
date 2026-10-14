@@ -11,6 +11,7 @@ except ImportError:  # pragma: no cover - exercised by availability checks
     rdForceFieldHelpers = None
 
 from protrepair.chemistry.restraint.library import RestraintLibrary
+from protrepair.chemistry.restraint.structure import StructureRestraints
 from protrepair.chemistry.restraint.template import (
     AngleRestraintTarget,
     BondRestraintTarget,
@@ -76,6 +77,7 @@ class _ChiralityChange:
     atom_index: AtomIndex
     before_code: str
     after_code: str | None
+
 
 RDKIT_SANITIZE_FLAGS = 0
 if Chem is not None:  # pragma: no branch
@@ -188,9 +190,12 @@ def catastrophic_bond_distortions(
     constitution = problem.region.snapshot.structure.constitution
     movable_atom_index_set = set(problem.region.movable_atom_indices)
     distortions: list[_CatastrophicBondDistortion] = []
+    applicable_restraints = StructureRestraints(
+        problem.region.snapshot.structure, problem.component_library, restraint_library
+    )
     for residue_index in problem.region.included_residue_indices:
         residue_site = constitution.residue_site_at(residue_index)
-        restraint_template = restraint_library.get(residue_site.component_id)
+        restraint_template = applicable_restraints.for_residue(residue_site.residue_id)
         if restraint_template is None:
             continue
 
@@ -427,9 +432,7 @@ def build_rdkit_molecule(
         atom_site = problem.region.atom_site(atom_index)
         atom_geometry = problem.region.atom_geometry(atom_index)
         element_identity = atom_site.element_identity
-        rdkit_atom = Chem.Atom(
-            _rdkit_element_symbol(element_identity.chemical_symbol)
-        )
+        rdkit_atom = Chem.Atom(_rdkit_element_symbol(element_identity.chemical_symbol))
         if element_identity.isotope_mass_number is not None:
             rdkit_atom.SetIsotope(element_identity.isotope_mass_number)
         rdkit_atom.SetNoImplicit(True)
@@ -505,7 +508,11 @@ def build_rdkit_force_field(
     add_bond_and_angle_constraints(
         force_field,
         region=problem.region,
-        restraint_library=restraint_library,
+        applicable_restraints=StructureRestraints(
+            problem.region.snapshot.structure,
+            problem.component_library,
+            restraint_library,
+        ),
         force_field_family=problem.spec.force_field,
         rdkit_atom_index_by_structure_atom_index=(
             rdkit_atom_index_by_structure_atom_index
@@ -553,7 +560,7 @@ def add_bond_and_angle_constraints(
     force_field,
     *,
     region: ContinuousRelaxationRegion,
-    restraint_library: RestraintLibrary,
+    applicable_restraints: StructureRestraints,
     force_field_family: ContinuousRelaxationForceField,
     rdkit_atom_index_by_structure_atom_index: dict[AtomIndex, int],
 ) -> None:
@@ -575,7 +582,7 @@ def add_bond_and_angle_constraints(
         if not movable_atom_names:
             continue
 
-        restraint_template = restraint_library.get(residue_site.component_id)
+        restraint_template = applicable_restraints.for_residue(residue_site.residue_id)
         if restraint_template is None:
             continue
 
