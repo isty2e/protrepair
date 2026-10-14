@@ -19,6 +19,7 @@ from protrepair.io.gemmi_normalization import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite, ResidueSite
+from protrepair.structure.disulfide import disulfide_atom_ref_pair
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
@@ -131,6 +132,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         add_topology_connections_to_gemmi_structure(
             raw_structure,
             structure,
+            file_format=file_format,
             bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
         )
         pdb_text = _restore_pdb_atom_attributes(
@@ -150,6 +152,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         add_topology_connections_to_gemmi_structure(
             raw_structure,
             structure,
+            file_format=file_format,
             bonds=bonds,
         )
         mmcif_document = raw_structure.make_mmcif_document()
@@ -192,6 +195,7 @@ def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> st
     add_topology_connections_to_gemmi_structure(
         raw_structure,
         structure,
+        file_format=FileFormat.PDB,
         bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
     )
     return _restore_pdb_atom_attributes(
@@ -340,9 +344,22 @@ def add_topology_connections_to_gemmi_structure(
     raw_structure: gemmi.Structure,
     structure: ProteinStructure,
     *,
+    file_format: FileFormat,
     bonds: tuple[TopologyBond, ...],
 ) -> None:
-    """Add topology bonds as gemmi connection records."""
+    """Project canonical bonds into format-appropriate Gemmi connections.
+
+    Parameters
+    ----------
+    raw_structure : gemmi.Structure
+        Output structure receiving connection records.
+    structure : ProteinStructure
+        Canonical atom identities and bond semantics.
+    file_format : FileFormat
+        Target format; PDB uses SSBOND for known single CYS S-S links.
+    bonds : tuple[TopologyBond, ...]
+        Bonds selected by the target format's emission policy.
+    """
 
     used_names = {connection.name for connection in raw_structure.connections}
     next_suffix_by_name: dict[str, int] = {}
@@ -359,6 +376,15 @@ def add_topology_connections_to_gemmi_structure(
         raw_connection.name = name
         raw_connection.link_id = source_connection_link_id(bond)
         raw_connection.type = gemmi_connection_type(bond.relationship_type)
+        if (
+            file_format is FileFormat.PDB
+            and bond.relationship_type is BondRelationshipType.COVALENT
+            and bond.order == 1
+            and not bond.aromatic
+            and disulfide_atom_ref_pair(structure.constitution, bond) is not None
+        ):
+            # LINK cannot distinguish a known single bond from unknown order.
+            raw_connection.type = gemmi.ConnectionType.Disulf
         if (
             bond.source_metadata is not None
             and bond.source_metadata.reported_distance_angstrom is not None
@@ -430,16 +456,36 @@ def gemmi_connection_topology_bonds_for_egress(
 def pdb_typed_connection_topology_bonds_for_egress(
     structure: ProteinStructure,
 ) -> tuple[TopologyBond, ...]:
-    """Return source bonds represented by typed PDB connection records."""
+    """Return typed source connections and resolved disulfide chemistry.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Canonical structure whose connectivity is being exported.
+
+    Returns
+    -------
+    tuple[TopologyBond, ...]
+        Source typed bonds and disulfides, excluding hydrogen bonds. Disulfide
+        chemistry is preserved even for repaired bonds or resolved CONECT input.
+    """
 
     return tuple(
         bond
-        for bond in gemmi_connection_topology_bonds_for_egress(
-            structure,
-            include_model_resolved=False,
-            include_pdb_conect_origin=False,
-        )
+        for bond in structure.topology.bonds
         if bond.relationship_type is not BondRelationshipType.HYDROGEN_BOND
+        and (
+            bond.relationship_type is BondRelationshipType.DISULFIDE
+            or disulfide_atom_ref_pair(structure.constitution, bond) is not None
+            or (
+                bond.provenance is BondProvenance.SOURCE_EXPLICIT
+                and (
+                    bond.source_metadata is None
+                    or bond.source_metadata.record_type
+                    is not SourceBondRecordType.PDB_CONECT
+                )
+            )
+        )
     )
 
 
