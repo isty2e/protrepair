@@ -11,8 +11,14 @@ from rdkit import Chem
 
 from protrepair.api import process_structure
 from protrepair.chemistry.component.defaults import build_default_component_library
+from protrepair.chemistry.restraint.defaults import build_default_restraint_library
 from protrepair.diagnostics import RepairEventKind, ValidationIssueKind
 from protrepair.diagnostics.events import IssueSeverity, ValidationIssue
+from protrepair.diagnostics.geometry import (
+    HeavyGeometryPolicy,
+    bond_length_tolerance_angstrom,
+    detect_heavy_geometry,
+)
 from protrepair.geometry import Vec3
 from protrepair.geometry.rotation import AxisRotation
 from protrepair.io import (
@@ -317,6 +323,76 @@ def _with_topology_bonds(
     )
 
 
+@pytest.mark.parametrize(
+    "filename,start,length,lengths,angles",
+    [
+        ("1crn.pdb", 37, 1, True, False),
+        ("1ubq-short-gaps.pdb", 72, 1, False, True),
+        ("1crn.pdb", 34, 9, True, True),
+    ],
+)
+def test_span_retains_inherited_geometry_findings_without_discarding_reconstruction(
+    filename: str, start: int, length: int, lengths: bool, angles: bool
+) -> None:
+    reference = read_structure(FIXTURES / filename)
+    gap = tuple(ResidueId("A", number) for number in range(start, start + length))
+    source = _source(reference, gap)
+    report = detect_heavy_geometry(
+        reference,
+        component_library=build_default_component_library(),
+        residue_ids=gap,
+    )
+    assert bool(report.bond_length_outliers) is lengths
+    assert bool(report.bond_angle_outliers) is angles
+
+    result = process_structure(
+        source,
+        transform_requests=WorkflowTransformRequests(
+            external_span_reconstructions=(
+                ExternalSpanReconstructionSpec(
+                    scope=AbsentResidueSpanScope(
+                        ResidueId("A", start - 1),
+                        ResidueId("A", start + length),
+                        gap,
+                    ),
+                    donor_structure=reference,
+                    donor_residue_ids=gap,
+                ),
+            ),
+        ),
+    )
+
+    assert all(result.structure.constitution.residue_or_ligand(rid) for rid in gap)
+    assert any(
+        event.kind is RepairEventKind.ABSENT_RESIDUE_SPAN_RECONSTRUCTED
+        for event in result.repairs
+    )
+    assert not result.has_errors()
+    final_report = detect_heavy_geometry(
+        result.structure,
+        component_library=build_default_component_library(),
+        residue_ids=gap,
+    )
+    expected_issues = final_report.to_issues()
+    actual_issues = tuple(
+        issue
+        for issue in result.issues
+        if issue.kind is ValidationIssueKind.INVALID_GEOMETRY
+    )
+    assert expected_issues
+    assert (
+        tuple(replace(issue, provenance_origins=()) for issue in actual_issues)
+        == expected_issues
+    )
+    assert all(len(issue.provenance_origins) == 2 for issue in actual_issues)
+    assert all(issue.severity is IssueSeverity.WARNING for issue in actual_issues)
+    for index, atom in enumerate(source.geometry.atom_geometries):
+        ref = source.constitution.atom_ref_at(AtomIndex(index))
+        assert (
+            _position(result.structure, ref.residue_id, ref.atom_name) == atom.position
+        )
+
+
 @pytest.mark.parametrize("start", [4, 26, 49, 72])
 @pytest.mark.parametrize("native", [False, True])
 def test_real_short_gap_closure_preserves_source_and_donor_chemistry(
@@ -350,12 +426,14 @@ def test_real_short_gap_closure_preserves_source_and_donor_chemistry(
             _position(result.structure, ref.residue_id, ref.atom_name) == atom.position
         )
     if native and start == 72:
-        assert result.structure.constitution == source.constitution
-        assert result.structure.topology == source.topology
-        assert len(result.issues) == 1
-        assert "intrinsic heavy-atom geometry" in result.issues[0].message
-        return
-    assert not result.issues
+        assert any(
+            issue.kind is ValidationIssueKind.INVALID_GEOMETRY
+            and issue.severity is IssueSeverity.WARNING
+            for issue in result.issues
+        )
+        assert not result.has_errors()
+    else:
+        assert not result.issues
     residue = donor.constitution.residue_or_ligand(gap[0])
     assert residue is not None
     definition = (
@@ -396,6 +474,139 @@ def test_real_short_gap_closure_preserves_source_and_donor_chemistry(
         )
         is not None
     )
+
+
+@pytest.mark.parametrize("followup", ["none", "corrected", "rejected"])
+def test_small_bond_excess_survives_until_final_state_assessment(
+    monkeypatch: pytest.MonkeyPatch, followup: str
+) -> None:
+    reference = read_structure(FIXTURES / "1ubq-short-gaps.pdb")
+    gap = (ResidueId("A", 4),)
+    source = _source(reference, gap)
+    restraints = build_default_restraint_library().get("PHE")
+    assert restraints is not None
+    target = restraints.bond_target("CA", "CB")
+    assert target is not None
+    upper = target.target_distance_angstrom + bond_length_tolerance_angstrom(
+        policy=HeavyGeometryPolicy(), target=target
+    )
+    ca = _position(reference, gap[0], "CA").to_array()
+    cb = _position(reference, gap[0], "CB").to_array()
+    direction = (cb - ca) / np.linalg.norm(cb - ca)
+    displacement = (upper + 0.01 - np.linalg.norm(cb - ca)) * direction
+    atoms = list(reference.geometry.atom_geometries)
+    for index, atom in enumerate(atoms):
+        ref = reference.constitution.atom_ref_at(AtomIndex(index))
+        if ref.residue_id == gap[0] and ref.atom_name not in {"N", "CA", "C", "O"}:
+            atoms[index] = atom.with_position(
+                Vec3.from_iterable(atom.position.to_array() + displacement)
+            )
+    donor = ProteinStructure.from_payload(
+        constitution=reference.constitution,
+        geometry=StructureGeometry(
+            constitution=reference.constitution, atom_geometries=tuple(atoms)
+        ),
+        topology=reference.topology,
+        polymer_blueprint=reference.polymer_blueprint,
+        provenance=reference.provenance,
+    )
+    reference_residue = reference.constitution.residue_or_ligand(gap[0])
+    assert reference_residue is not None
+    calls = []
+
+    def refine(
+        self: LocalRefinementTransformer,
+        projected_domain: ProjectedDomainState[ProteinStructure],
+        *,
+        carrier: TransformationResult,
+        context: TransformerExecutionContext,
+    ) -> ProjectedCodomainState[ProteinStructure]:
+        structure = projected_domain.state
+        assert structure.constitution.residue_or_ligand(gap[0]) is not None
+        assert not any(
+            issue.kind is ValidationIssueKind.INVALID_GEOMETRY
+            for issue in carrier.issues
+        )
+        calls.append(followup)
+        if followup == "rejected":
+            return ProjectedCodomainState(scope=self.workflow_scope, state=structure)
+
+        corrected_atoms = tuple(
+            atom.with_position(_position(reference, ref.residue_id, ref.atom_name))
+            if ref.residue_id == gap[0]
+            and reference_residue.has_atom_site(ref.atom_name)
+            else atom
+            for index, atom in enumerate(structure.geometry.atom_geometries)
+            for ref in (structure.constitution.atom_ref_at(AtomIndex(index)),)
+        )
+        return ProjectedCodomainState(
+            scope=self.workflow_scope,
+            state=ProteinStructure.from_payload(
+                constitution=structure.constitution,
+                geometry=StructureGeometry(
+                    constitution=structure.constitution,
+                    atom_geometries=corrected_atoms,
+                ),
+                topology=structure.topology,
+                polymer_blueprint=structure.polymer_blueprint,
+                provenance=structure.provenance,
+            ),
+        )
+
+    monkeypatch.setattr(
+        LocalRefinementTransformer, "transform_projected_domain", refine
+    )
+    result = process_structure(
+        source,
+        transform_requests=WorkflowTransformRequests(
+            external_span_reconstructions=(
+                ExternalSpanReconstructionSpec(
+                    AbsentResidueSpanScope(ResidueId("A", 3), ResidueId("A", 5), gap),
+                    donor,
+                    gap,
+                ),
+            ),
+            repair_refinement=None
+            if followup == "none"
+            else RepairRefinementSpec(
+                scope_spec=LocalScopeSpec.from_residues(gap),
+                binding=RecommendedContinuousRelaxationBinding(),
+            ),
+        ),
+    )
+    assert calls == ([] if followup == "none" else [followup])
+    assert result.structure.constitution.residue_or_ligand(gap[0]) is not None
+    assert not result.has_errors()
+    actual_distance = _position(result.structure, gap[0], "CA").distance_to(
+        _position(result.structure, gap[0], "CB")
+    )
+    if followup == "corrected":
+        assert actual_distance == pytest.approx(np.linalg.norm(cb - ca))
+    else:
+        assert actual_distance - upper == pytest.approx(0.01)
+    warnings = tuple(
+        issue
+        for issue in result.issues
+        if issue.kind is ValidationIssueKind.INVALID_GEOMETRY
+    )
+    assert bool(warnings) is (followup != "corrected")
+    assert all(issue.scope.residue_ids == gap for issue in warnings)
+    for index, atom in enumerate(source.geometry.atom_geometries):
+        ref = source.constitution.atom_ref_at(AtomIndex(index))
+        assert (
+            _position(result.structure, ref.residue_id, ref.atom_name) == atom.position
+        )
+    block = write_structure_string(result.structure, FileFormat.PDB)
+    for pdb in (
+        block,
+        "\n".join(line for line in block.splitlines() if not line.startswith("CONECT")),
+    ):
+        assert (
+            Chem.MolFromPDBBlock(
+                pdb, sanitize=True, removeHs=False, proximityBonding=True
+            )
+            is not None
+        )
 
 
 def _short_gap_objective(start: int = 4) -> kernel._AnchoredSpanObjective:

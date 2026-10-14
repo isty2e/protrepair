@@ -208,8 +208,8 @@ class HeavyGeometryReport:
                     kind=ValidationIssueKind.INVALID_GEOMETRY,
                     severity=IssueSeverity.WARNING,
                     message=(
-                        f"{residue_id.display_token()} has implausible heavy-atom "
-                        f"geometry: {'; '.join(parts)}"
+                        f"{residue_id.display_token()} has heavy-atom geometry "
+                        f"outside reference bounds: {'; '.join(parts)}"
                     ),
                     residue_id=residue_id,
                 )

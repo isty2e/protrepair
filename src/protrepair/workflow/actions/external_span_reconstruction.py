@@ -2,17 +2,11 @@
 
 from dataclasses import dataclass
 
-from protrepair.chemistry.component.topology import (
-    template_resolved_topology_bonds_for_new_atoms,
-)
 from protrepair.diagnostics.events import (
     EventScope,
     RepairEvent,
     ResidueAtomImpact,
     ValidationIssue,
-)
-from protrepair.diagnostics.geometry import (
-    detect_heavy_geometry,
 )
 from protrepair.diagnostics.kinds import (
     IssueSeverity,
@@ -28,14 +22,12 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.endpoint import StructureEndpoint
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.provenance import StructureProvenanceOrigin
-from protrepair.structure.topology import (
-    sequence_inferred_polymer_topology_bonds_for_new_atoms,
-)
 from protrepair.transformer.base import (
     ProjectedCodomainState,
     ProjectedDomainState,
 )
 from protrepair.transformer.completion.span_reconstruction import (
+    SpanChemistryConflictError,
     SpanReconstructionFailure,
     SpanReconstructionFailureKind,
     reconstruct_donor_span,
@@ -127,62 +119,17 @@ class ExternalSpanReconstructionTransformer(WorkflowStructureTransformer):
                 provenance_origins=provenance_origins,
             )
 
-        reconstructed_residue_sites = tuple(
-            payload.residue_site for payload in closure_outcome.residue_payloads
-        )
-        reconstructed_residue_geometries = tuple(
-            payload.residue_geometry for payload in closure_outcome.residue_payloads
-        )
-        reconstructed_residue_formal_charge_payloads = tuple(
-            payload.formal_charge_by_atom_name
-            for payload in closure_outcome.residue_payloads
-        )
-        anchor_residue_id = (
-            target.preceding_residue_id
-            if target.preceding_residue_id is not None
-            else target.following_residue_id
-        )
-        assert anchor_residue_id is not None
         source_structure = projected_domain.state
-        updated_constitution = (
-            source_structure.constitution.with_inserted_chain_residues(
-                anchor_residue_id.chain_id,
-                reconstructed_residue_sites,
+        try:
+            updated_structure = closure_outcome.materialize(
+                source_structure, context.component_library
             )
-        )
-        updated_structure = source_structure.with_inserted_chain_residue_facets(
-            anchor_residue_id.chain_id,
-            residue_sites=reconstructed_residue_sites,
-            residue_geometries=reconstructed_residue_geometries,
-            additional_topology_bonds=(
-                *template_resolved_topology_bonds_for_new_atoms(
-                    source_constitution=source_structure.constitution,
-                    target_constitution=updated_constitution,
-                    component_library=context.component_library,
-                ),
-                *sequence_inferred_polymer_topology_bonds_for_new_atoms(
-                    source_constitution=source_structure.constitution,
-                    target_constitution=updated_constitution,
-                ),
-            ),
-            residue_formal_charge_payloads=(
-                reconstructed_residue_formal_charge_payloads
-            ),
-        )
-        geometry_report = detect_heavy_geometry(
-            updated_structure,
-            component_library=context.component_library,
-            residue_ids=target.absent_residue_ids,
-        )
-        if not geometry_report.is_empty():
+        except SpanChemistryConflictError as error:
             return self._failed_codomain(
                 source_structure,
                 SpanReconstructionFailure(
-                    kind=SpanReconstructionFailureKind.INVALID_INTRINSIC_GEOMETRY,
-                    message=(
-                        "reconstructed donor span contains intrinsic heavy-atom "
-                        "geometry outside the accepted bounds"
-                    ),
+                    SpanReconstructionFailureKind.UNSUPPORTED_COMPONENT_CHEMISTRY,
+                    str(error),
                 ),
                 provenance_origins=provenance_origins,
             )
@@ -237,7 +184,8 @@ class ExternalSpanReconstructionTransformer(WorkflowStructureTransformer):
                     component_id=residue.component_id,
                     atom_names=residue.atom_site_names(),
                 )
-                for residue in reconstructed_residue_sites
+                for payload in closure_outcome.residue_payloads
+                for residue in (payload.residue_site,)
             ),
             provenance_origins=provenance_origins,
             details=closure_details,

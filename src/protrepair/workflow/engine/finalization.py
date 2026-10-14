@@ -6,7 +6,12 @@ from protrepair.analysis.kinds import AnalysisKind
 from protrepair.analysis.runtime import build_analysis_bundle
 from protrepair.chemistry import ComponentLibrary
 from protrepair.diagnostics.events import EventScope, ValidationIssue
-from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
+from protrepair.diagnostics.geometry import detect_heavy_geometry
+from protrepair.diagnostics.kinds import (
+    IssueSeverity,
+    RepairEventKind,
+    ValidationIssueKind,
+)
 from protrepair.diagnostics.parser_readability import (
     probe_rdkit_no_conect_parser_readability,
 )
@@ -70,11 +75,46 @@ def finalize_workflow_result(
     )
     if source_coordination_issues:
         result = result.with_appended_issues(source_coordination_issues)
+    geometry_issues = _final_reconstructed_geometry_issues(
+        result, component_library=component_library
+    )
+    if geometry_issues:
+        result = result.with_appended_issues(geometry_issues)
     if preliminary_issues:
         result = result.with_appended_issues(preliminary_issues)
     return _attach_requested_analyses(
         result,
         requested_analyses=requested_analyses,
+    )
+
+
+def _final_reconstructed_geometry_issues(
+    result: ProcessResult,
+    *,
+    component_library: ComponentLibrary,
+) -> tuple[ValidationIssue, ...]:
+    """Report residual span geometry after branch selection and any later repair."""
+
+    origins_by_residue = {
+        residue_id: repair.provenance_origins
+        for repair in result.repairs
+        if repair.kind is RepairEventKind.ABSENT_RESIDUE_SPAN_RECONSTRUCTED
+        for residue_id in repair.scope.residue_ids
+    }
+    if not origins_by_residue:
+        return ()
+
+    report = detect_heavy_geometry(
+        result.structure,
+        component_library=component_library,
+        residue_ids=tuple(origins_by_residue),
+    )
+    return tuple(
+        replace(
+            issue,
+            provenance_origins=origins_by_residue[issue.scope.residue_ids[0]],
+        )
+        for issue in report.to_issues()
     )
 
 

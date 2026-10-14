@@ -1,6 +1,6 @@
 """Anchor-constrained reconstruction of missing polymer residue spans."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from itertools import combinations
 from math import atan2, isfinite
@@ -11,15 +11,32 @@ import numpy.typing as npt
 
 from protrepair.chemistry.component.defaults import build_default_component_library
 from protrepair.chemistry.component.library import ComponentLibrary
+from protrepair.chemistry.component.topology import (
+    template_resolved_topology_bonds_for_new_atoms,
+)
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
+from protrepair.chemistry.microstate.resolution import (
+    AppliedMicrostateChoice,
+    MicrostateSelectionBasis,
+)
 from protrepair.diagnostics.peptide_geometry import PeptideJunctionGeometry
+from protrepair.errors import ProtrepairError
 from protrepair.geometry import Vec3
 from protrepair.scope import AbsentResidueSpanScope
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
+from protrepair.structure.geometry import (
+    AtomGeometry,
+    ResidueGeometry,
+)
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import (
+    BondProvenance,
     BondRelationshipType,
+    TopologyBond,
     is_covalent_like_relationship,
+    sequence_inferred_polymer_topology_bonds_for_new_atoms,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 
@@ -27,6 +44,10 @@ FloatArray = npt.NDArray[np.float64]
 IndexArray = npt.NDArray[np.int64]
 
 ROTATION_AXIS_NORM_EPSILON = 1.0e-10
+
+
+class SpanChemistryConflictError(ProtrepairError, ValueError):
+    """Raised when donor sidechain chemistry cannot be adopted at a source span."""
 
 
 class SpanReconstructionFailureKind(str, Enum):
@@ -39,7 +60,6 @@ class SpanReconstructionFailureKind(str, Enum):
     NON_CONVERGENT_CLOSURE = "non_convergent_closure"
     INVALID_PEPTIDE_JUNCTION = "invalid_peptide_junction"
     UNSUPPORTED_COMPONENT_CHEMISTRY = "unsupported_component_chemistry"
-    INVALID_INTRINSIC_GEOMETRY = "invalid_intrinsic_geometry"
     INVALID_STEREOCHEMISTRY = "invalid_stereochemistry"
 
 
@@ -107,6 +127,9 @@ class ReconstructedSpanCandidate:
         Maximum of the two anchor-triad RMSDs, or ``None`` for one anchor.
     iteration_count : int
         Total CCD sweeps and joint fitting iterations attempted.
+    sidechain_choices : tuple[AppliedMicrostateChoice, ...]
+        Supported donor chemistry adopted as preferences on inserted residues.
+        Donor H and backbone-terminal decisions are not transplanted.
 
     Raises
     ------
@@ -119,6 +142,7 @@ class ReconstructedSpanCandidate:
     residue_payloads: tuple[CompletionResiduePayload, ...]
     maximum_anchor_rmsd_angstrom: float | None
     iteration_count: int
+    sidechain_choices: tuple[AppliedMicrostateChoice, ...] = ()
 
     def __post_init__(self) -> None:
         residue_payloads = tuple(self.residue_payloads)
@@ -155,6 +179,182 @@ class ReconstructedSpanCandidate:
 
         object.__setattr__(self, "residue_payloads", residue_payloads)
         object.__setattr__(self, "maximum_anchor_rmsd_angstrom", endpoint_rmsd_angstrom)
+        choices = tuple(self.sidechain_choices)
+        payload_by_id = {payload.residue_id: payload for payload in residue_payloads}
+        occupied: set[ResidueId] = set()
+        for choice in choices:
+            if not isinstance(choice, AppliedMicrostateChoice):
+                raise TypeError("donor chemistry requires applied microstate choices")
+            payload = payload_by_id.get(choice.residue_id)
+            if (
+                payload is None
+                or choice.residue_id in occupied
+                or choice.basis is not MicrostateSelectionBasis.DEFAULT
+                or choice.component_id != payload.component_id
+            ):
+                raise ValueError(
+                    "donor choices must describe distinct inserted sidechains"
+                )
+            if any(
+                not payload.has_atom(atom.name)
+                or payload.atom_site(atom.name).element != atom.element
+                or (payload.formal_charge(atom.name) or 0) != atom.charge
+                for atom in choice.graph.atoms
+            ):
+                raise ValueError("donor choice disagrees with its heavy-atom payload")
+            occupied.add(choice.residue_id)
+        object.__setattr__(self, "sidechain_choices", choices)
+
+    def with_donor_chemistry(
+        self,
+        donor: ProteinStructure,
+        donor_residue_ids: tuple[ResidueId, ...],
+        component_library: ComponentLibrary,
+    ) -> "ReconstructedSpanCandidate":
+        """Map supported realized donor sidechains, without importing authority.
+
+        Parameters
+        ----------
+        donor : ProteinStructure
+            Original donor, before removal of H or coordinate fitting.
+        donor_residue_ids : tuple[ResidueId, ...]
+            Donor identities in the same order as the inserted payloads.
+        component_library : ComponentLibrary
+            Active definitions used to establish chemical applicability.
+
+        Returns
+        -------
+        ReconstructedSpanCandidate
+            Candidate retaining compatible sidechain graphs as DEFAULT choices.
+
+        Raises
+        ------
+        ValueError
+            Mapping cardinality or donor/payload chemistry disagrees.
+        """
+        context = PolymerMicrostateContext(donor)
+        choices = []
+        for donor_id, payload in zip(
+            donor_residue_ids, self.residue_payloads, strict=True
+        ):
+            component = component_library.get(payload.component_id)
+            if component is None:
+                continue
+            site = PolymerMicrostateSite(component, PolymerChemicalSite.SIDECHAIN)
+            resolution = context.resolve(donor_id, site)
+            graph = context.realized_heavy_graph(donor_id, site, resolution)
+            if graph is not None:
+                choices.append(
+                    AppliedMicrostateChoice(
+                        payload.residue_id,
+                        component.component_id,
+                        graph,
+                        MicrostateSelectionBasis.DEFAULT,
+                    )
+                )
+        return replace(self, sidechain_choices=tuple(choices))
+
+    def materialize(
+        self, source: ProteinStructure, component_library: ComponentLibrary
+    ) -> ProteinStructure:
+        """Insert heavy facets and adopted sidechain chemistry atomically.
+
+        Parameters
+        ----------
+        source : ProteinStructure
+            Unchanged source whose requested span is absent.
+        component_library : ComponentLibrary
+            Active chemistry dictionary for inserted atoms.
+
+        Returns
+        -------
+        ProteinStructure
+            Inserted snapshot preserving existing facets and source observations.
+
+        Raises
+        ------
+        ValueError
+            A residue is already present or chains differ.
+        SpanChemistryConflictError
+            Adopted chemistry conflicts with source evidence or the supported
+            sidechain catalog.
+        """
+        sites = tuple(payload.residue_site for payload in self.residue_payloads)
+        chain_id = sites[0].residue_id.chain_id
+        if any(
+            site.residue_id.chain_id != chain_id
+            or source.constitution.residue_or_ligand(site.residue_id) is not None
+            for site in sites
+        ):
+            raise ValueError("span insertion requires absent residues in one chain")
+        constitution = source.constitution.with_inserted_chain_residues(chain_id, sites)
+        bonds = {
+            bond.endpoint_pair(): bond
+            for bond in template_resolved_topology_bonds_for_new_atoms(
+                source_constitution=source.constitution,
+                target_constitution=constitution,
+                component_library=component_library,
+            )
+        }
+        choices = list(source.provenance.microstate_choices)
+        for choice in self.sidechain_choices:
+            component = component_library.require(choice.component_id)
+            site = PolymerMicrostateSite(component, PolymerChemicalSite.SIDECHAIN)
+            catalog = site.candidates()
+            if catalog is None or choice.graph not in catalog.candidates:
+                raise SpanChemistryConflictError(
+                    "donor choice is not supported sidechain chemistry"
+                )
+            for target in choice.graph.bonds:
+                bond = TopologyBond(
+                    constitution.atom_index(
+                        AtomRef(choice.residue_id, target.atom_name_1)
+                    ),
+                    constitution.atom_index(
+                        AtomRef(choice.residue_id, target.atom_name_2)
+                    ),
+                    order=target.order,
+                    aromatic=target.aromatic,
+                    provenance=BondProvenance.TEMPLATE_RESOLVED,
+                )
+                bonds[bond.endpoint_pair()] = bond
+            # An existing source choice retains its authority; compatibility is
+            # checked below against the fully materialized candidate.
+            if not any(
+                existing.matches_site(
+                    choice.residue_id, choice.component_id, choice.graph
+                )
+                for existing in choices
+            ):
+                choices.append(choice)
+
+        inserted = source.with_inserted_chain_residue_facets(
+            chain_id,
+            residue_sites=sites,
+            residue_geometries=tuple(p.residue_geometry for p in self.residue_payloads),
+            additional_topology_bonds=(
+                *bonds.values(),
+                *sequence_inferred_polymer_topology_bonds_for_new_atoms(
+                    source_constitution=source.constitution,
+                    target_constitution=constitution,
+                ),
+            ),
+            residue_formal_charge_payloads=tuple(
+                p.formal_charge_by_atom_name for p in self.residue_payloads
+            ),
+        ).with_provenance(replace(source.provenance, microstate_choices=tuple(choices)))
+        context = PolymerMicrostateContext(inserted)
+        for choice in self.sidechain_choices:
+            site = PolymerMicrostateSite(
+                component_library.require(choice.component_id),
+                PolymerChemicalSite.SIDECHAIN,
+            )
+            resolved = context.resolve(choice.residue_id, site)
+            if context.realized_heavy_graph(choice.residue_id, site, resolved) is None:
+                raise SpanChemistryConflictError(
+                    "adopted donor chemistry conflicts with the source site"
+                )
+        return inserted
 
 
 @dataclass(frozen=True, slots=True)
@@ -948,6 +1148,8 @@ def reconstruct_donor_span(
         residue_payloads=inserted_payloads,
         maximum_anchor_rmsd_angstrom=endpoint_rmsd,
         iteration_count=iteration_count,
+    ).with_donor_chemistry(
+        donor_structure, normalized_donor_residue_ids, active_library
     )
 
 
