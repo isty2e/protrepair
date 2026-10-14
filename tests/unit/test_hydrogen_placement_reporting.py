@@ -92,7 +92,14 @@ def test_site_failure_is_scoped_and_does_not_apply_partial_graph(
     residue = result.structure.constitution.residue_or_ligand(ResidueId("A", recipient))
     assert residue is not None
     assert all(not residue.has_atom_site(name) for name in expected_names)
-    assert result.structure.provenance.microstate_overrides == ()
+    assert not any(
+        choice.residue_id == ResidueId("A", recipient)
+        and any(
+            atom.name == ("ND1" if kind is PolymerChemicalSite.SIDECHAIN else "N")
+            for atom in choice.graph.atoms
+        )
+        for choice in result.structure.provenance.microstate_choices
+    )
 
 
 def test_successful_placement_has_no_false_geometry_warning() -> None:

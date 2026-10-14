@@ -10,6 +10,9 @@ from protrepair.chemistry.component.topology import (
     template_heavy_bond_definitions_for_present_atoms,
     template_hydrogen_bond_definitions_for_names,
 )
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.scope import ResidueSetScope
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
@@ -120,6 +123,7 @@ class TopologyAvailabilityFacts:
         covalent_like_endpoint_pairs = (
             snapshot.structure.topology.covalent_like_endpoint_pairs()
         )
+        polymer_context = PolymerMicrostateContext(snapshot.structure)
         residue_facts_by_key: dict[
             tuple[ResidueId, TopologyAvailabilityAspect],
             ResidueTopologyAvailabilityFact,
@@ -160,7 +164,7 @@ class TopologyAvailabilityFacts:
                             aspect=aspect,
                             state=TopologyAvailabilityState.ABSENT,
                         )
-                )
+                    )
                 continue
 
             heavy_state = residue_bond_topology_availability_state(
@@ -206,6 +210,22 @@ class TopologyAvailabilityFacts:
             )
             if not present_hydrogen_atom_names:
                 hydrogen_state = TopologyAvailabilityState.ABSENT
+            elif snapshot.structure.constitution.residue_index(residue_id).value < (
+                len(snapshot.structure.constitution.residue_slots)
+                - len(snapshot.structure.constitution.ligands)
+            ):
+                try:
+                    updates = polymer_context.hydrogen_topology_updates(
+                        residue.residue_id,
+                        PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN),
+                    )
+                    hydrogen_state = (
+                        TopologyAvailabilityState.ABSENT
+                        if updates
+                        else TopologyAvailabilityState.PRESENT
+                    )
+                except ValueError:
+                    hydrogen_state = TopologyAvailabilityState.ABSENT
             else:
                 hydrogen_state = residue_bond_topology_availability_state(
                     snapshot.structure,
@@ -279,6 +299,7 @@ class HydrogenAttachmentResolutionState(str, Enum):
 
     NOT_APPLICABLE = "not_applicable"
     ABSENT = "absent"
+    TOPOLOGY_RESOLVED = "topology_resolved"
     TEMPLATE_RESOLVED = "template_resolved"
     COORDINATE_INFERRED = "coordinate_inferred"
 
@@ -328,6 +349,7 @@ class HydrogenAttachmentResolutionFacts:
             else component_library
         )
         residue_facts: list[ResidueHydrogenAttachmentResolutionFact] = []
+        polymer_context = PolymerMicrostateContext(snapshot.structure)
         for residue_id in residue_ids:
             residue = snapshot.structure.constitution.residue_or_ligand(residue_id)
             if residue is None:
@@ -365,6 +387,27 @@ class HydrogenAttachmentResolutionFacts:
                     )
                 )
                 continue
+
+            if snapshot.structure.constitution.residue_index(residue_id).value < (
+                len(snapshot.structure.constitution.residue_slots)
+                - len(snapshot.structure.constitution.ligands)
+            ):
+                try:
+                    updates = polymer_context.hydrogen_topology_updates(
+                        residue_id,
+                        PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN),
+                    )
+                except ValueError:
+                    pass
+                else:
+                    if not updates:
+                        residue_facts.append(
+                            ResidueHydrogenAttachmentResolutionFact(
+                                residue_id=residue_id,
+                                state=HydrogenAttachmentResolutionState.TOPOLOGY_RESOLVED,
+                            )
+                        )
+                        continue
 
             if template.requires_coordinate_hydrogen_topology(
                 present_hydrogen_atom_names

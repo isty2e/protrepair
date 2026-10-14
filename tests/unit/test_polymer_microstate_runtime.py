@@ -201,7 +201,10 @@ def test_changed_histidine_request_replaces_generated_choices(prepared, workflow
     unchanged = prepare(cation)
     assert unchanged.topology == cation.topology
     reset = prepare(cation, PrasRatioHistidineProtonationRequest(0.0))
-    assert not reset.provenance.microstate_overrides
+    assert all(
+        choice.basis.value == "default"
+        for choice in reset.provenance.microstate_choices
+    )
     assert all(target.is_realized() for target in _targets(reset))
     for target in _targets(reset):
         if (

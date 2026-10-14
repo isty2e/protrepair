@@ -1,6 +1,8 @@
 """Canonical geometry-restraint templates for residue-level diagnostics."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from protrepair.chemistry.microstate.graph import MicrostateGraph
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +67,17 @@ class AngleRestraintTarget:
         object.__setattr__(self, "center_atom_name", center_atom_name)
         object.__setattr__(self, "atom_name_2", atom_name_2)
 
+    def canonical_triplet(self) -> tuple[str, str, str]:
+        """Return the center followed by the unordered endpoints in sorted order.
+
+        Returns
+        -------
+        tuple[str, str, str]
+            Canonical identity for angle matching, independent of target values.
+        """
+        left, right = sorted((self.atom_name_1, self.atom_name_2))
+        return self.center_atom_name, left, right
+
     def matches(
         self,
         *,
@@ -80,7 +93,8 @@ class AngleRestraintTarget:
 
         left = atom_name_1.strip().upper()
         right = atom_name_2.strip().upper()
-        return {left, right} == {self.atom_name_1, self.atom_name_2}
+        left, right = sorted((left, right))
+        return self.canonical_triplet() == (normalized_center, left, right)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,14 +156,89 @@ class PlaneRestraintTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class SidechainRestraintVariant:
+    """Own conditional targets for one standard sidechain protonation state.
+
+    Parameters
+    ----------
+    graph : MicrostateGraph
+        Reference chemical site; equivalent resonance forms share its targets.
+    bond_targets : tuple[BondRestraintTarget, ...]
+        State-dependent distances in angstroms.
+    angle_targets : tuple[AngleRestraintTarget, ...]
+        State-dependent angles in degrees.
+
+    Raises
+    ------
+    TypeError
+        The reference graph is not a canonical microstate graph.
+    """
+
+    graph: MicrostateGraph
+    bond_targets: tuple[BondRestraintTarget, ...]
+    angle_targets: tuple[AngleRestraintTarget, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.graph, MicrostateGraph):
+            raise TypeError("sidechain restraint variants require a canonical graph")
+        object.__setattr__(self, "bond_targets", tuple(self.bond_targets))
+        object.__setattr__(self, "angle_targets", tuple(self.angle_targets))
+
+    def matches(self, graph: MicrostateGraph) -> bool:
+        """Match one chemical site and protonation state, not its Kekule form.
+
+        Parameters
+        ----------
+        graph : MicrostateGraph
+            Current supported chemical site.
+
+        Returns
+        -------
+        bool
+            Whether atom identity, boundary valence, skeleton and protonation agree.
+        """
+        return (
+            self.graph.protonation_key() == graph.protonation_key()
+            and tuple((a.name, a.element, a.boundary_order) for a in self.graph.atoms)
+            == tuple((a.name, a.element, a.boundary_order) for a in graph.atoms)
+            and tuple((b.atom_name_1, b.atom_name_2) for b in self.graph.bonds)
+            == tuple((b.atom_name_1, b.atom_name_2) for b in graph.bonds)
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ResidueRestraintTemplate:
-    """Canonical geometry-restraint targets for one residue."""
+    """Canonical static and conditional geometry targets for one residue.
+
+    Parameters
+    ----------
+    component_id : str
+        Canonical dictionary identity.
+    bond_targets : tuple[BondRestraintTarget, ...]
+        Static distances; explicit entries supersede matching variant targets.
+    angle_targets : tuple[AngleRestraintTarget, ...]
+        Static angles with the same precedence.
+    chirality_targets : tuple[ChiralityRestraintTarget, ...]
+        State-independent stereochemical orientation targets.
+    plane_targets : tuple[PlaneRestraintTarget, ...]
+        State-independent planar groups.
+    sidechain_variants : tuple[SidechainRestraintVariant, ...]
+        Conditional targets, selected only after binding chemical evidence.
+
+    Raises
+    ------
+    ValueError
+        Component identity is blank or two variants describe the same state.
+    TypeError
+        A conditional variant has a noncanonical type.
+    """
 
     component_id: str
     bond_targets: tuple[BondRestraintTarget, ...]
     angle_targets: tuple[AngleRestraintTarget, ...]
     chirality_targets: tuple[ChiralityRestraintTarget, ...] = ()
     plane_targets: tuple[PlaneRestraintTarget, ...] = ()
+    sidechain_variants: tuple[SidechainRestraintVariant, ...] = ()
 
     def __post_init__(self) -> None:
         component_id = self.component_id.strip().upper()
@@ -161,6 +250,62 @@ class ResidueRestraintTemplate:
         object.__setattr__(self, "angle_targets", tuple(self.angle_targets))
         object.__setattr__(self, "chirality_targets", tuple(self.chirality_targets))
         object.__setattr__(self, "plane_targets", tuple(self.plane_targets))
+        variants = tuple(self.sidechain_variants)
+        for index, variant in enumerate(variants):
+            if not isinstance(variant, SidechainRestraintVariant):
+                raise TypeError("sidechain restraints require canonical variants")
+            if any(previous.matches(variant.graph) for previous in variants[:index]):
+                raise ValueError("sidechain restraint states must not repeat")
+        object.__setattr__(self, "sidechain_variants", variants)
+
+    def for_sidechain_graph(
+        self, graph: MicrostateGraph | None
+    ) -> "ResidueRestraintTemplate":
+        """Resolve conditional targets without overriding explicit static targets.
+
+        Parameters
+        ----------
+        graph : MicrostateGraph or None
+            Supported current heavy chemistry, or None when unresolved/inapplicable.
+
+        Returns
+        -------
+        ResidueRestraintTemplate
+            Flat targets. Unresolved chemistry retains only static targets.
+        """
+        if not self.sidechain_variants:
+            return self
+        variant = next(
+            (
+                v
+                for v in self.sidechain_variants
+                if graph is not None and v.matches(graph)
+            ),
+            None,
+        )
+        bonds = self.bond_targets
+        angles = self.angle_targets
+        if variant is not None:
+            bonds += tuple(
+                t
+                for t in variant.bond_targets
+                if self.bond_target(t.atom_name_1, t.atom_name_2) is None
+            )
+            angles += tuple(
+                t
+                for t in variant.angle_targets
+                if not any(
+                    s.matches(
+                        atom_name_1=t.atom_name_1,
+                        center_atom_name=t.center_atom_name,
+                        atom_name_2=t.atom_name_2,
+                    )
+                    for s in angles
+                )
+            )
+        return replace(
+            self, bond_targets=bonds, angle_targets=angles, sidechain_variants=()
+        )
 
     def bond_target(
         self,

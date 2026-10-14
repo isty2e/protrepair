@@ -9,6 +9,7 @@ class RepairEventKind(str, Enum):
     ABSENT_RESIDUE_SPAN_RECONSTRUCTED = "absent_residue_span_reconstructed"
     HEAVY_ATOMS_ADDED = "heavy_atoms_added"
     HYDROGENS_ADDED = "hydrogens_added"
+    HYDROGEN_TOPOLOGY_RESOLVED = "hydrogen_topology_resolved"
     POLYMER_MICROSTATE_APPLIED = "polymer_microstate_applied"
     LOCAL_REFINEMENT_APPLIED = "local_refinement_applied"
     C_TERMINAL_OXT_ADDED = "c_terminal_oxt_added"

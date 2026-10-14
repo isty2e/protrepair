@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 
-from protrepair.chemistry.microstate.resolution import AppliedMicrostateOverride
+from protrepair.chemistry.microstate.resolution import AppliedMicrostateChoice
 from protrepair.structure.endpoint import StructureEndpoint
 from protrepair.structure.labels import AtomRef
 from protrepair.structure.observation import StructureObservation
@@ -60,7 +60,7 @@ class StructureIngress:
 
 @dataclass(frozen=True, slots=True)
 class StructureProvenance:
-    """Original observations, lineage and explicitly applied chemistry choices.
+    """Original observations, lineage and applied chemistry choices.
 
     Parameters
     ----------
@@ -68,21 +68,21 @@ class StructureProvenance:
         Immutable original input observations.
     lineage : tuple[StructureEndpoint, ...]
         Source or supporting-structure endpoints, deduplicated in input order.
-    microstate_overrides : tuple[AppliedMicrostateOverride, ...]
-        Disjoint applied site choices. These are not observations and must be
-        rebound to current chemistry before reuse.
+    microstate_choices : tuple[AppliedMicrostateChoice, ...]
+        Disjoint applied site choices with their original authority. Defaults
+        remain preferences, not observations or explicit overrides.
 
     Raises
     ------
     TypeError
-        An ingress, endpoint or override has a noncanonical type.
+        An ingress, endpoint or choice has a noncanonical type.
     ValueError
-        Applied overrides overlap on a residue atom.
+        Applied choices overlap on a residue atom.
     """
 
     ingress: StructureIngress
     lineage: tuple[StructureEndpoint, ...] = ()
-    microstate_overrides: tuple[AppliedMicrostateOverride, ...] = ()
+    microstate_choices: tuple[AppliedMicrostateChoice, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.ingress, StructureIngress):
@@ -98,23 +98,23 @@ class StructureProvenance:
                 lineage_list.append(lineage_scope)
 
         object.__setattr__(self, "lineage", tuple(lineage_list))
-        overrides = tuple(self.microstate_overrides)
+        overrides = tuple(self.microstate_choices)
         occupied: set[AtomRef] = set()
         for override in overrides:
-            if not isinstance(override, AppliedMicrostateOverride):
+            if not isinstance(override, AppliedMicrostateChoice):
                 raise TypeError(
-                    "structure provenance requires applied microstate overrides"
+                    "structure provenance requires applied microstate choices"
                 )
             # Site identity must not depend on atom indices that H edits can remap.
             keys = {
                 AtomRef(override.residue_id, atom.name) for atom in override.graph.atoms
             }
             if occupied & keys:
-                raise ValueError("applied microstate overrides must not overlap")
+                raise ValueError("applied microstate choices must not overlap")
             occupied.update(keys)
         object.__setattr__(
             self,
-            "microstate_overrides",
+            "microstate_choices",
             tuple(
                 sorted(
                     overrides,

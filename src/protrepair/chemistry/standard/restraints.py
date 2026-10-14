@@ -4,6 +4,7 @@ Derived from CCP4 monomer-library CIF entries at:
 https://ftp.ccp4.ac.uk/ccp4/6.3.0/ccp4-6.3.0/lib/data/monomers/<dir>/<RES>.cif
 
 Only heavy-atom bond-length and bond-angle targets are included here.
+HIS uses the protonation-specific dictionary in ``histidine_restraints`` instead.
 """
 
 from functools import lru_cache
@@ -15,6 +16,9 @@ from protrepair.chemistry.restraint.template import (
     ResidueRestraintTemplate,
 )
 from protrepair.chemistry.standard.components import build_standard_component_library
+from protrepair.chemistry.standard.histidine_restraints import (
+    histidine_restraint_template,
+)
 
 STANDARD_RESTRAINT_TEMPLATES: dict[str, ResidueRestraintTemplate] = {
     "ALA": ResidueRestraintTemplate(
@@ -777,157 +781,7 @@ STANDARD_RESTRAINT_TEMPLATES: dict[str, ResidueRestraintTemplate] = {
             ),
         ),
     ),
-    "HIS": ResidueRestraintTemplate(
-        component_id="HIS",
-        bond_targets=(
-            BondRestraintTarget(
-                atom_name_1="N",
-                atom_name_2="CA",
-                target_distance_angstrom=1.458,
-                esd_angstrom=0.019,
-            ),
-            BondRestraintTarget(
-                atom_name_1="CA",
-                atom_name_2="CB",
-                target_distance_angstrom=1.530,
-                esd_angstrom=0.020,
-            ),
-            BondRestraintTarget(
-                atom_name_1="CB",
-                atom_name_2="CG",
-                target_distance_angstrom=1.497,
-                esd_angstrom=0.014,
-            ),
-            BondRestraintTarget(
-                atom_name_1="CG",
-                atom_name_2="CD2",
-                target_distance_angstrom=1.354,
-                esd_angstrom=0.011,
-            ),
-            BondRestraintTarget(
-                atom_name_1="CG",
-                atom_name_2="ND1",
-                target_distance_angstrom=1.378,
-                esd_angstrom=0.011,
-            ),
-            BondRestraintTarget(
-                atom_name_1="ND1",
-                atom_name_2="CE1",
-                target_distance_angstrom=1.321,
-                esd_angstrom=0.010,
-            ),
-            BondRestraintTarget(
-                atom_name_1="CE1",
-                atom_name_2="NE2",
-                target_distance_angstrom=1.321,
-                esd_angstrom=0.010,
-            ),
-            BondRestraintTarget(
-                atom_name_1="NE2",
-                atom_name_2="CD2",
-                target_distance_angstrom=1.374,
-                esd_angstrom=0.011,
-            ),
-            BondRestraintTarget(
-                atom_name_1="CA",
-                atom_name_2="C",
-                target_distance_angstrom=1.525,
-                esd_angstrom=0.021,
-            ),
-            BondRestraintTarget(
-                atom_name_1="C",
-                atom_name_2="O",
-                target_distance_angstrom=1.231,
-                esd_angstrom=0.020,
-            ),
-        ),
-        angle_targets=(
-            AngleRestraintTarget(
-                atom_name_1="CB",
-                center_atom_name="CA",
-                atom_name_2="C",
-                target_angle_degrees=110.100,
-                esd_degrees=1.900,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="N",
-                center_atom_name="CA",
-                atom_name_2="CB",
-                target_angle_degrees=110.500,
-                esd_degrees=1.700,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="CA",
-                center_atom_name="CB",
-                atom_name_2="CG",
-                target_angle_degrees=113.800,
-                esd_degrees=1.000,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="CB",
-                center_atom_name="CG",
-                atom_name_2="CD2",
-                target_angle_degrees=131.200,
-                esd_degrees=1.300,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="ND1",
-                center_atom_name="CG",
-                atom_name_2="CD2",
-                target_angle_degrees=106.100,
-                esd_degrees=1.000,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="CB",
-                center_atom_name="CG",
-                atom_name_2="ND1",
-                target_angle_degrees=122.700,
-                esd_degrees=1.500,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="CG",
-                center_atom_name="ND1",
-                atom_name_2="CE1",
-                target_angle_degrees=109.300,
-                esd_degrees=1.700,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="ND1",
-                center_atom_name="CE1",
-                atom_name_2="NE2",
-                target_angle_degrees=108.400,
-                esd_degrees=1.000,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="CE1",
-                center_atom_name="NE2",
-                atom_name_2="CD2",
-                target_angle_degrees=109.000,
-                esd_degrees=1.000,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="CG",
-                center_atom_name="CD2",
-                atom_name_2="NE2",
-                target_angle_degrees=107.200,
-                esd_degrees=1.000,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="N",
-                center_atom_name="CA",
-                atom_name_2="C",
-                target_angle_degrees=111.200,
-                esd_degrees=2.800,
-            ),
-            AngleRestraintTarget(
-                atom_name_1="CA",
-                center_atom_name="C",
-                atom_name_2="O",
-                target_angle_degrees=120.800,
-                esd_degrees=1.700,
-            ),
-        ),
-    ),
+    "HIS": histidine_restraint_template(),
     "ILE": ResidueRestraintTemplate(
         component_id="ILE",
         bond_targets=(

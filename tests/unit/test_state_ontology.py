@@ -1880,6 +1880,9 @@ def test_atom_domain_state_marks_hydrogen_topology_available_without_clashes() -
             residue_id,
             (
                 ("N", "CA"),
+                ("N", "H1"),
+                ("N", "H2"),
+                ("N", "H3"),
                 ("CA", "C"),
                 ("C", "O"),
                 ("CA", "CB"),
@@ -1940,8 +1943,8 @@ def test_atom_domain_state_marks_hydrogen_topology_available_without_clashes() -
     assert "realized polymer microstates" in blocker
 
 
-def test_atom_domain_state_surfaces_template_resolved_hydrogen_attachments() -> None:
-    """Template-resolved hydrogens should stay distinct from topology truth."""
+def test_atom_domain_state_surfaces_realized_hydrogen_attachments() -> None:
+    """Present supported H bonds should be distinguished from a proposed mapping."""
 
     residue_id = ResidueId("A", 1)
     structure = build_structure(
@@ -2022,13 +2025,13 @@ def test_atom_domain_state_surfaces_template_resolved_hydrogen_attachments() -> 
         state=TopologyAvailabilityState.PRESENT,
     )
     assert domain_state.hydrogen_attachment_resolution.is_uniform(
-        state=HydrogenAttachmentResolutionState.TEMPLATE_RESOLVED,
+        state=HydrogenAttachmentResolutionState.TOPOLOGY_RESOLVED,
     )
     assert not domain_state.hydrogen_attachment_resolution.any_coordinate_inferred()
 
 
-def test_atom_domain_state_surfaces_coordinate_inferred_hydrogen_attachments() -> None:
-    """Coordinate-inferred hydrogens should not be collapsed into topology absence."""
+def test_atom_domain_state_does_not_infer_coordinates_for_realized_h_variants() -> None:
+    """Non-template names with valid canonical bonds need no coordinate inference."""
 
     residue_id = ResidueId("A", 1)
     structure = build_structure(
@@ -2069,6 +2072,9 @@ def test_atom_domain_state_surfaces_coordinate_inferred_hydrogen_attachments() -
             residue_id,
             (
                 ("N", "CA"),
+                ("N", "H1"),
+                ("N", "H2"),
+                ("N", "H3"),
                 ("CA", "C"),
                 ("C", "O"),
                 ("CA", "CB"),
@@ -2122,9 +2128,9 @@ def test_atom_domain_state_surfaces_coordinate_inferred_hydrogen_attachments() -
         state=TopologyAvailabilityState.PRESENT,
     )
     assert domain_state.hydrogen_attachment_resolution.is_uniform(
-        state=HydrogenAttachmentResolutionState.COORDINATE_INFERRED,
+        state=HydrogenAttachmentResolutionState.TOPOLOGY_RESOLVED,
     )
-    assert domain_state.hydrogen_attachment_resolution.any_coordinate_inferred()
+    assert not domain_state.hydrogen_attachment_resolution.any_coordinate_inferred()
     # Available H attachment evidence alone does not certify coupled chemistry.
     assert not atom_scope_facts_supports_continuous_relaxation(domain_facts)
     blocker = atom_scope_facts_continuous_relaxation_error(domain_facts)
@@ -2203,6 +2209,9 @@ def test_atom_domain_state_preserves_hydrogen_topology_on_clashes() -> None:
             ResidueId("A", 1),
             (
                 ("N", "CA"),
+                ("N", "H1"),
+                ("N", "H2"),
+                ("N", "H3"),
                 ("CA", "C"),
                 ("C", "O"),
                 ("CA", "CB"),
@@ -2217,6 +2226,9 @@ def test_atom_domain_state_preserves_hydrogen_topology_on_clashes() -> None:
             ResidueId("B", 1),
             (
                 ("N", "CA"),
+                ("N", "H1"),
+                ("N", "H2"),
+                ("N", "H3"),
                 ("CA", "C"),
                 ("C", "O"),
                 ("CA", "CB"),

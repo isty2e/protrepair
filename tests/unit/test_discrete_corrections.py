@@ -14,6 +14,7 @@ from tests.support.refinement_cases import REFINEMENT_BENCHMARK_CASES
 from tests.support.refinement_contract import build_refinement_inputs
 
 from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.diagnostics.clashes import ClashDetectionBasis
 from protrepair.errors import RefinementError
 from protrepair.geometry import Vec3
@@ -234,7 +235,17 @@ def test_apply_discrete_pre_refinement_corrections_prefers_fixture_his_flip() ->
         if atom_ref.residue_id == ResidueId("A", 42)
     }
     assert {"ND1", "CD2", "CE1", "NE2"} <= moved_atom_names
-    assert "HE2" in moved_atom_names
+    context = PolymerMicrostateContext(structure)
+    ring_n_hydrogens = {
+        ref.atom_name
+        for name in ("ND1", "NE2")
+        for ref in context.covalent_neighbors(AtomRef(ResidueId("A", 42), name))
+        if structure.constitution.atom_site_at(
+            structure.constitution.atom_index(ref)
+        ).is_hydrogen()
+    }
+    assert ring_n_hydrogens
+    assert ring_n_hydrogens <= moved_atom_names
 
 
 def test_discrete_pre_refinement_respects_atomwise_terminal_selection() -> None:

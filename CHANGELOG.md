@@ -2,8 +2,25 @@
 
 ## Unreleased
 
+### Changed
+
+- use local polar contacts by default to choose between source-compatible
+  neutral HIS tautomers; epsilon remains the fallback when there is no
+  preference. This changes some prepared H positions, not the original
+  evidence, and does not estimate pKa
+- retain applied default microstate choices separately from explicit overrides;
+  defaults remain source-compatible preferences, not replacement authority
+
 ### Fixed
 
+- bind HIS ring restraints to the supported realized microstate in geometry
+  diagnostics and FF construction, rather than applying one protonation table
+- resolve preserved polymer H/D/T attachments without replacing their identity,
+  geometry or source evidence, including through a topology-only workflow action
+- reconsider stale default microstate choices after site or linkage changes;
+  incompatible explicit overrides still require reconciliation
+- screen individual unrestrained bond angles with the broad geometry window,
+  including unresolved HIS rings, without assigning a protonation state
 - preserve retained non-polymers on chains with no polymer residues
 - decode quoted CCD atom identifiers without stripping meaningful primes, and
   correct the corresponding HRG, 60F, IEL and YPZ bundled component records

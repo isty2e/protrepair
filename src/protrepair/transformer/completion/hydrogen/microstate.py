@@ -14,7 +14,7 @@ from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.graph import MicrostateGraph
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
-    AppliedMicrostateOverride,
+    AppliedMicrostateChoice,
     MicrostateConstraints,
     MicrostateSelectionBasis,
 )
@@ -39,7 +39,7 @@ def place_polymer_microstate_hydrogens(
     override: MicrostateConstraints | None = None,
     preferences: tuple[MicrostateConstraints, ...] = (),
     rebuild_existing: bool = False,
-    retain_applied_override: bool = True,
+    retain_applied_choice: bool = True,
 ) -> PolymerMicrostatePatch:
     """Construct a complete atomic patch with graph-constrained H coordinates.
 
@@ -59,8 +59,8 @@ def place_polymer_microstate_hydrogens(
         Regenerate selected H coordinates, including original H whose heavy anchors
         have moved. False preserves current or original H coordinates and uses
         them as anchors when adding missing H. Neither mode changes heavy atoms.
-    retain_applied_override : bool
-        Preserve a previous explicit choice without a new constraint. False
+    retain_applied_choice : bool
+        Preserve a previous choice at its original authority. False
         reapplies original evidence and preparation preferences instead.
 
     Returns
@@ -95,7 +95,7 @@ def place_polymer_microstate_hydrogens(
         site,
         override=override,
         preferences=preferences,
-        retain_applied_override=retain_applied_override,
+        retain_applied_choice=retain_applied_choice,
     )
     graph = resolution.graph
     if graph is None:
@@ -153,8 +153,10 @@ def place_polymer_microstate_hydrogens(
         placements += tuple(generated)
 
     applied = (
-        AppliedMicrostateOverride(residue_id, site.template.component_id, graph)
-        if resolution.basis is MicrostateSelectionBasis.OVERRIDE
+        AppliedMicrostateChoice(
+            residue_id, site.template.component_id, graph, resolution.basis
+        )
+        if resolution.basis is not MicrostateSelectionBasis.EVIDENCE
         else None
     )
     return PolymerMicrostatePatch(
@@ -166,7 +168,7 @@ def place_polymer_microstate_hydrogens(
         if rebuild_existing
         else frozenset(),
         override=override,
-        applied_override=applied,
+        applied_choice=applied,
         preferences=preferences,
     )
 

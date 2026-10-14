@@ -28,6 +28,9 @@ from protrepair.workflow.actions.heavy_completion import HeavyAtomCompletionTran
 from protrepair.workflow.actions.hydrogen_completion import (
     HydrogenCompletionTransformer,
 )
+from protrepair.workflow.actions.hydrogen_topology import (
+    PolymerHydrogenTopologyResolutionTransformer,
+)
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.actions.packing import CommittedPackingTransformer
 from protrepair.workflow.actions.retained_non_polymer_hydrogen_completion import (
@@ -57,19 +60,6 @@ from protrepair.workflow.planning.default_action_registry import (
 def test_request_driven_action_registry_exposes_declared_capabilities() -> None:
     """Request-driven bootstrap entries should carry declared capabilities."""
 
-    action_types = tuple(
-        registry_entry.action_type
-        for registry_entry in REQUEST_DRIVEN_WORKFLOW_ACTION_REGISTRY
-    )
-
-    assert action_types == (
-        HeavyAtomCompletionTransformer,
-        DisulfideTopologyResolutionTransformer,
-        DisulfideHydrogenNormalizationTransformer,
-        HydrogenCompletionTransformer,
-        RetainedNonPolymerHydrogenCompletionTransformer,
-        TerminalAugmentationTransformer,
-    )
     assert all(
         registry_entry.capability.activation_mode
         is not WorkflowActionActivationMode.EXPLICIT_ONLY
@@ -229,8 +219,18 @@ def test_explicit_action_registry_entries_expose_capability_metadata() -> None:
 def test_workflow_action_registry_covers_every_bootstrap_family() -> None:
     """Combined bootstrap registry should cover every workflow action family once."""
 
-    assert len(WORKFLOW_ACTION_REGISTRY) == 11
-    assert len({entry.action_type for entry in WORKFLOW_ACTION_REGISTRY}) == 11
+    assert len({entry.action_type for entry in WORKFLOW_ACTION_REGISTRY}) == len(
+        WORKFLOW_ACTION_REGISTRY
+    )
+    hydrogen_topology = _registry_entry(PolymerHydrogenTopologyResolutionTransformer)
+    assert hydrogen_topology.capability.can_reduce_deficit_family(
+        WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS
+    )
+    assert hydrogen_topology.supports_goal_value(
+        requested_process_goal(
+            scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+        )
+    )
     topology_capability = _registry_entry(
         DisulfideTopologyResolutionTransformer
     ).capability

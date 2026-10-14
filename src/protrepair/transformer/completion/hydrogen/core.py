@@ -13,7 +13,6 @@ from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import (
     PolymerMicrostatePreparation,
     PolymerSitePreparation,
-    pras_microstate_preferences,
 )
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.diagnostics.component_support import (
@@ -60,6 +59,9 @@ from protrepair.transformer.completion.hydrogen.protonation import (
 )
 from protrepair.transformer.completion.hydrogen.static_patch import (
     generate_hydrogen_patch,
+)
+from protrepair.transformer.completion.hydrogen.topology import (
+    resolve_fixed_hydrogen_topology,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
@@ -140,6 +142,10 @@ def materialize_hydrogens_core(
         if atom_ref.residue_id in targets
     )
     normalized = structure.without_atom_refs(forbidden) if forbidden else structure
+    topology_result = resolve_fixed_hydrogen_topology(
+        normalized, library, target_residue_ids=targets
+    )
+    normalized = topology_result.structure
     prepared = PolymerMicrostatePreparation(
         PolymerMicrostateContext(normalized),
         library,
@@ -147,6 +153,11 @@ def materialize_hydrogens_core(
     )
     result = _fixed_hydrogens(
         normalized, library, prepared, targets=targets, rebuilding=rebuilding
+    )
+    result = TransformationResult(
+        result.structure,
+        topology_result.repairs + result.repairs,
+        topology_result.issues + result.issues,
     )
     if forbidden:
         result = TransformationResult(
@@ -195,8 +206,8 @@ def materialize_hydrogens_core(
                         residue_id,
                         target.site,
                         override=target.override,
-                        preferences=pras_microstate_preferences(target.site),
-                        retain_applied_override=target.retain_applied_override,
+                        preferences=target.preferences,
+                        retain_applied_choice=target.retain_applied_choice,
                         rebuild_existing=residue_id in rebuilding,
                     )
                 except GeometryPlacementError as error:

@@ -382,7 +382,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:LYS:A:10",
             last_residue="ATOM:PRO:H:136",
-            semantic_digest="5150581a00ed1ce21f594f3e2f9dbc323eba5ace400a25b0a6c8f07914efaca1",
+            semantic_digest="9471cc0fdc8fb626157cea1b38128f827305bd116fb3124d8a87f62c58b7b424",
         ),
     ),
 }

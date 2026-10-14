@@ -23,6 +23,10 @@ from protrepair.chemistry import (
     UnknownElementRadiusError,
     build_default_component_library,
 )
+from protrepair.chemistry.restraint.template import (
+    AngleRestraintTarget,
+    ResidueRestraintTemplate,
+)
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import (
     ValidationIssueKind,
@@ -42,6 +46,57 @@ from protrepair.structure.labels import (
 )
 from protrepair.structure.provenance import FileFormat
 from protrepair.transformer.completion.heavy import repair_heavy_atoms
+
+
+@pytest.mark.parametrize("target_center", (None, "A", "B"))
+def test_angle_fallback_custom_target_preserves_center_identity(target_center):
+    definition = ChemicalComponentDefinition(
+        "ZZZ", ("A", "B", "C"), (BondDefinition("A", "B"), BondDefinition("B", "C"))
+    )
+    components = ComponentLibrary(templates={"ZZZ": ResidueTemplate(definition)})
+    structure = build_structure(
+        (
+            build_residue(
+                component_id="ZZZ",
+                residue_id=ResidueId("A", 1),
+                atoms=(
+                    atom_payload("A", "C", Vec3(-1.0, 0.0, 0.0)),
+                    atom_payload("B", "C", Vec3(0.0, 0.0, 0.0)),
+                    atom_payload("C", "C", Vec3(1.0, 0.0, 0.0)),
+                ),
+            ),
+        )
+    )
+    angles = (
+        ()
+        if target_center is None
+        else (
+            AngleRestraintTarget(
+                "C", target_center, "A" if target_center == "B" else "B", 180.0
+            ),
+        )
+    )
+    restraints = RestraintLibrary(
+        templates={"ZZZ": ResidueRestraintTemplate("ZZZ", (), angles)}
+    )
+    report = detect_heavy_geometry(
+        structure, component_library=components, restraint_library=restraints
+    )
+    centered = tuple(
+        outlier
+        for outlier in report.bond_angle_outliers
+        if outlier.center_atom_name == "B"
+    )
+    assert len(centered) == (0 if target_center == "B" else 1)
+    if centered:
+        (outlier,) = centered
+        assert (outlier.atom_name_1, outlier.center_atom_name, outlier.atom_name_2) == (
+            "A",
+            "B",
+            "C",
+        )
+        assert outlier.observed_angle_degrees == pytest.approx(180.0)
+        assert not outlier.restraint_backed
 
 
 def test_detect_heavy_geometry_accepts_repaired_standard_sidechain() -> None:
@@ -310,8 +365,7 @@ def test_detect_heavy_geometry_does_not_false_flag_mse_c_se_fallback() -> None:
 
     assert not any(
         outlier.component_id == "MSE"
-        and {outlier.atom_name_1, outlier.atom_name_2}
-        in ({"CG", "SE"}, {"SE", "CE"})
+        and {outlier.atom_name_1, outlier.atom_name_2} in ({"CG", "SE"}, {"SE", "CE"})
         for outlier in report.bond_length_outliers
     )
 

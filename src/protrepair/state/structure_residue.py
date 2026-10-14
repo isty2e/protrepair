@@ -8,7 +8,6 @@ from protrepair.chemistry import (
     ComponentLibrary,
     build_default_component_library,
 )
-from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.topology import (
     template_heavy_bond_definitions_for_present_atoms,
 )
@@ -296,13 +295,11 @@ def _polymer_heavy_topology_availability_state(
 
 
 def _polymer_hydrogen_topology_availability_state(
-    structure: ProteinStructure,
     residue: ResidueSite,
     *,
     component_library: ComponentLibrary,
     expected_hydrogen_atom_names: tuple[str, ...],
     preparation: PolymerMicrostatePreparation,
-    covalent_like_endpoint_pairs: Collection[tuple[AtomIndex, AtomIndex]],
 ) -> TopologyAvailabilityState:
     """Check H attachment topology independently of heavy-site conformance."""
 
@@ -311,26 +308,19 @@ def _polymer_hydrogen_topology_availability_state(
         return TopologyAvailabilityState.UNSUPPORTED
     if not expected_hydrogen_atom_names:
         return TopologyAvailabilityState.ABSENT
+    present = {atom.name for atom in residue.atom_sites if atom.is_hydrogen()}
+    if not present.issuperset(expected_hydrogen_atom_names):
+        return TopologyAvailabilityState.ABSENT
 
     try:
-        parents = preparation.context.hydrogen_parents(
+        if preparation.context.hydrogen_topology_updates(
             residue.residue_id,
             PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN),
-        )
+        ):
+            return TopologyAvailabilityState.ABSENT
     except ValueError:
         return TopologyAvailabilityState.ABSENT
-    if any(name not in parents for name in expected_hydrogen_atom_names):
-        return TopologyAvailabilityState.ABSENT
-
-    return residue_bond_topology_availability_state(
-        structure,
-        residue,
-        expected_bond_definitions=tuple(
-            BondDefinition(parents[name], name) for name in expected_hydrogen_atom_names
-        ),
-        empty_state=TopologyAvailabilityState.ABSENT,
-        covalent_like_endpoint_pairs=covalent_like_endpoint_pairs,
-    )
+    return TopologyAvailabilityState.PRESENT
 
 
 def _retained_non_polymer_hydrogen_topology_availability_state(
@@ -544,7 +534,6 @@ class ResidueProjectionFactRuntime:
         elif h_coverage_state is HydrogenCoverageState.COMPLETE:
             try:
                 attachment_state = _polymer_hydrogen_topology_availability_state(
-                    self.context_structure,
                     residue,
                     component_library=self.component_library,
                     expected_hydrogen_atom_names=(
@@ -554,7 +543,6 @@ class ResidueProjectionFactRuntime:
                         )
                     ),
                     preparation=self.hydrogen_expectation_model.polymer_preparation,
-                    covalent_like_endpoint_pairs=self.covalent_like_endpoint_pairs,
                 )
             except ValueError:
                 attachment_state = TopologyAvailabilityState.ABSENT
