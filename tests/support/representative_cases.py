@@ -53,7 +53,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:VAL:A:1",
             last_residue="ATOM:HIS:A:64",
-            semantic_digest="cee3d0729f8661db07944fbc932918308f86a8bd1f31b0d79dbab4d66839d129",
+            semantic_digest="659a2fa8b5a1945ddf4fd5526de86a1bc85f8f667aad99f1d4cf4bab58fc72c7",
         ),
     ),
     "1aho-hydrogen-default": RepresentativeCase(
@@ -92,7 +92,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:VAL:A:1",
             last_residue="ATOM:HIS:A:64",
-            semantic_digest="730c8f26c7e5f76727475adbb918bd7168e943397a2c9110552466ae19f393be",
+            semantic_digest="fa438926271a07cc952fbee0fefac784aacda7620aab3fe2dc5d0103e3473b93",
         ),
         hydrogen_direct_summary=StructureSummary(
             chain_ids=("A",),
@@ -128,7 +128,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:VAL:A:1",
             last_residue="ATOM:HIS:A:64",
-            semantic_digest="965dc0a4d68afe3acf7182fec89671081e412577a1dfaf12440f60d1d66f1790",
+            semantic_digest="f8d8e5ba3d6f7e96b7729e5a66f9025c5583a9bfe8e0dde183ddc84b51ee7a2a",
         ),
     ),
     "1cjc-heavy-keep-ligand": RepresentativeCase(

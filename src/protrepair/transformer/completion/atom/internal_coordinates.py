@@ -2,13 +2,21 @@
 
 from collections.abc import Collection
 from dataclasses import dataclass
+from math import degrees
+
+import numpy as np
 
 from protrepair.chemistry import HeavyAtomSemantics
 from protrepair.chemistry.internal_coordinates import (
     InternalCoordinateExecutionContext,
     InternalCoordinatePlacement,
 )
+from protrepair.chemistry.restraint.template import (
+    AngleRestraintTarget,
+    BondRestraintTarget,
+)
 from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
+from protrepair.geometry.placement_vector import angle_between_vectors_radians_or_none
 from protrepair.structure.peptide import are_peptide_adjacent
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.base import DeterministicContextOperation
@@ -91,9 +99,7 @@ class InternalCoordinateEnvironment(InternalCoordinateExecutionContext):
             else self._psi_degrees(next_nitrogen)
         )
         clash_reference = (
-            self.geometry.position("N")
-            if next_nitrogen is None
-            else next_nitrogen
+            self.geometry.position("N") if next_nitrogen is None else next_nitrogen
         )
 
         position = PeptideCarbonylFrame(
@@ -142,6 +148,105 @@ class InternalCoordinateEnvironment(InternalCoordinateExecutionContext):
         """Project the current working geometry back into deterministic atom order."""
 
         return self.geometry.to_patch(atom_order)
+
+    def place_with_bond_closure(
+        self,
+        placement: InternalCoordinatePlacement,
+        *,
+        closing_atom_name: str,
+        closing_bond_length: float,
+        bond_targets: tuple[BondRestraintTarget, ...],
+        angle_targets: tuple[AngleRestraintTarget, ...],
+    ) -> None:
+        """Place a missing target with a dictionary-constrained closing bond.
+
+        Parameters
+        ----------
+        placement : InternalCoordinatePlacement
+            Parent bond, angle and preferred torsion recipe.
+        closing_atom_name : str
+            Materialized atom forming the second target bond.
+        closing_bond_length : float
+            Dictionary target distance in angstroms.
+        bond_targets : tuple[BondRestraintTarget, ...]
+            Other materialized target bonds used to select a closure solution.
+        angle_targets : tuple[AngleRestraintTarget, ...]
+            Existing dictionary angles for choosing between closure solutions.
+        """
+
+        frame = InternalCoordinateFrame(
+            *(self.geometry.position(name) for name in placement.anchor_atom_names)
+        )
+        candidates = frame.bond_closure_candidates(
+            bond_length=placement.bond_length,
+            bond_angle_degrees=placement.bond_angle,
+            preferred_dihedral_degrees=placement.dihedral.resolve(self),
+            closing_anchor=self.geometry.position(closing_atom_name),
+            closing_bond_length=closing_bond_length,
+        )
+        position = min(
+            candidates,
+            key=lambda candidate: self._placement_geometry_error(
+                placement.target_atom_name, candidate, bond_targets, angle_targets
+            ),
+        )
+        self.geometry.assign(placement.target_atom_name, position)
+
+    def _placement_geometry_error(
+        self,
+        target_name: str,
+        candidate: Vec3,
+        bond_targets: tuple[BondRestraintTarget, ...],
+        angle_targets: tuple[AngleRestraintTarget, ...],
+    ) -> float:
+        error = 0.0
+        for target in bond_targets:
+            if target.atom_name_1 == target_name:
+                neighbor = target.atom_name_2
+            elif target.atom_name_2 == target_name:
+                neighbor = target.atom_name_1
+            else:
+                continue
+            if not self.has_atom(neighbor):
+                continue
+
+            error += (
+                (
+                    candidate.distance_to(self.geometry.position(neighbor))
+                    - target.target_distance_angstrom
+                )
+                / (target.esd_angstrom if target.esd_angstrom is not None else 1.0)
+            ) ** 2
+
+        for target in angle_targets:
+            names = (
+                target.atom_name_1,
+                target.center_atom_name,
+                target.atom_name_2,
+            )
+            if target_name not in names or not all(
+                name == target_name or self.has_atom(name) for name in names
+            ):
+                continue
+
+            points = tuple(
+                (
+                    candidate if name == target_name else self.geometry.position(name)
+                ).to_array()
+                for name in names
+            )
+            angle = angle_between_vectors_radians_or_none(
+                np.asarray(points[0] - points[1], dtype=np.float64),
+                np.asarray(points[2] - points[1], dtype=np.float64),
+            )
+            if angle is None:
+                return float("inf")
+            error += (
+                (degrees(angle) - target.target_angle_degrees)
+                / (target.esd_degrees if target.esd_degrees is not None else 1.0)
+            ) ** 2
+
+        return error
 
     def build_successful_partial_patch(
         self,
@@ -239,9 +344,7 @@ class InternalCoordinatePlacementTransformer(
 
         semantics = self.site.template.heavy_atom_semantics
         residue = self.site.payload(context.source_snapshot)
-        _, next_residue = self.site.neighbor_payloads(
-            context.source_snapshot
-        )
+        _, next_residue = self.site.neighbor_payloads(context.source_snapshot)
         missing_atom_names = self.site.missing_atom_names(context.source_snapshot)
         if (
             not isinstance(semantics, HeavyAtomSemantics)

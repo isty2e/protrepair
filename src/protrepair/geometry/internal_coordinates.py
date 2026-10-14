@@ -1,7 +1,7 @@
 """Pure internal-coordinate geometry primitives."""
 
 from dataclasses import dataclass
-from math import acos, degrees, pi, sqrt
+from math import acos, atan2, degrees, isfinite, pi, sqrt
 
 import numpy as np
 
@@ -60,9 +60,10 @@ class InternalCoordinateFrame:
 
         axis_bc_norm = vector_norm(axis_bc)
         with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-            projected = axis_ba - (
-                np.dot(axis_ba, axis_bc) / (axis_bc_norm * axis_bc_norm)
-            ) * axis_bc
+            projected = (
+                axis_ba
+                - (np.dot(axis_ba, axis_bc) / (axis_bc_norm * axis_bc_norm)) * axis_bc
+            )
         if not np.isfinite(projected).all():
             raise InternalCoordinatePlacementError(
                 "internal-coordinate placement requires a finite anchor basis"
@@ -107,6 +108,162 @@ class InternalCoordinateFrame:
         scaled = _scale_from_origin(point_c, rotated, bond_length)
         return Vec3.from_iterable(scaled)
 
+    def bond_closure_candidates(
+        self,
+        *,
+        bond_length: float,
+        bond_angle_degrees: float,
+        preferred_dihedral_degrees: float,
+        closing_anchor: CoordinateLike,
+        closing_bond_length: float,
+    ) -> tuple[Vec3, ...]:
+        """Close a second bond without moving the materialized anchors.
+
+        Parameters
+        ----------
+        bond_length : float
+            Distance from anchor C to the target, in angstroms.
+        bond_angle_degrees : float
+            Preferred B-C-target angle in degrees.
+        preferred_dihedral_degrees : float
+            Torsion used to order equivalent closure solutions.
+        closing_anchor : CoordinateLike
+            Materialized atom forming the second target bond.
+        closing_bond_length : float
+            Second bond's dictionary distance, in angstroms.
+
+        Returns
+        -------
+        tuple[Vec3, ...]
+            Up to two fixed-angle solutions, ordered by preferred torsion. An
+            infeasible or non-discrete circle intersection instead returns one
+            nearest two-sphere solution.
+
+        Raises
+        ------
+        InternalCoordinatePlacementError
+            The circle/sphere intersection is infeasible or undefined.
+        """
+
+        if (
+            not isfinite(bond_length)
+            or bond_length <= 0.0
+            or not isfinite(bond_angle_degrees)
+            or not 0.0 < bond_angle_degrees <= 180.0
+            or not isfinite(closing_bond_length)
+            or closing_bond_length <= 0.0
+            or not isfinite(preferred_dihedral_degrees)
+        ):
+            raise InternalCoordinatePlacementError(
+                "bond closure requires finite positive lengths and a valid angle"
+            )
+
+        circle_points = tuple(
+            self.place(
+                bond_length=bond_length,
+                bond_angle_degrees=bond_angle_degrees,
+                dihedral_degrees=angle,
+            ).to_array()
+            for angle in (0.0, 90.0, 180.0)
+        )
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            center = 0.5 * circle_points[0] + 0.5 * circle_points[2]
+            cosine_basis = circle_points[0] - center
+            sine_basis = circle_points[1] - center
+            offset = center - Vec3.coerce(closing_anchor).to_array()
+            cosine_coefficient = 2.0 * float(np.dot(offset, cosine_basis))
+            sine_coefficient = 2.0 * float(np.dot(offset, sine_basis))
+            amplitude = float(np.hypot(cosine_coefficient, sine_coefficient))
+            constant = (
+                closing_bond_length * closing_bond_length
+                - float(np.dot(offset, offset))
+                - float(np.dot(cosine_basis, cosine_basis))
+            )
+        if not isfinite(amplitude) or not isfinite(constant):
+            raise InternalCoordinatePlacementError(
+                "bond closure requires a finite non-degenerate torsion circle"
+            )
+
+        ratio = constant / amplitude if amplitude > 0.0 else float("inf")
+        if abs(ratio) > 1.0 + 16.0 * np.finfo(np.float64).eps:
+            return (
+                self._place_on_bond_intersection(
+                    bond_length=bond_length,
+                    bond_angle_degrees=bond_angle_degrees,
+                    preferred_dihedral_degrees=preferred_dihedral_degrees,
+                    closing_anchor=closing_anchor,
+                    closing_bond_length=closing_bond_length,
+                ),
+            )
+
+        phase = atan2(sine_coefficient, cosine_coefficient)
+        separation = acos(max(-1.0, min(1.0, ratio)))
+        solutions = (degrees(phase + separation), degrees(phase - separation))
+        ordered = sorted(
+            solutions,
+            key=lambda angle: abs(
+                (angle - preferred_dihedral_degrees + 180.0) % 360.0 - 180.0
+            ),
+        )
+        return tuple(
+            self.place(
+                bond_length=bond_length,
+                bond_angle_degrees=bond_angle_degrees,
+                dihedral_degrees=angle,
+            )
+            for angle in ordered
+        )
+
+    def _place_on_bond_intersection(
+        self,
+        *,
+        bond_length: float,
+        bond_angle_degrees: float,
+        preferred_dihedral_degrees: float,
+        closing_anchor: CoordinateLike,
+        closing_bond_length: float,
+    ) -> Vec3:
+        parent = Vec3.coerce(self.atom_c).to_array()
+        closing = Vec3.coerce(closing_anchor).to_array()
+        axis = closing - parent
+        unit_axis = normalized_vector_or_none(axis)
+        if unit_axis is None:
+            raise InternalCoordinatePlacementError(
+                "bond closure requires distinct finite bond anchors"
+            )
+
+        distance = vector_norm(axis)
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            axial_distance = (
+                bond_length * bond_length
+                - closing_bond_length * closing_bond_length
+                + distance * distance
+            ) / (2.0 * distance)
+            radius_squared = bond_length * bond_length - axial_distance * axial_distance
+        roundoff = 16.0 * np.finfo(np.float64).eps * bond_length * bond_length
+        if not isfinite(radius_squared) or radius_squared < -roundoff:
+            raise InternalCoordinatePlacementError(
+                "bond closure is incompatible with the materialized anchors"
+            )
+
+        center = parent + axial_distance * unit_axis
+        preferred = self.place(
+            bond_length=bond_length,
+            bond_angle_degrees=bond_angle_degrees,
+            dihedral_degrees=preferred_dihedral_degrees,
+        ).to_array()
+        radial = preferred - center
+        radial -= np.dot(radial, unit_axis) * unit_axis
+        unit_radial = normalized_vector_or_none(radial)
+        if unit_radial is None:
+            unit_radial = deterministic_unit_orthogonal_or_none(unit_axis)
+        if unit_radial is None:
+            raise InternalCoordinatePlacementError(
+                "bond closure requires a finite radial basis"
+            )
+
+        return Vec3.from_iterable(center + sqrt(max(0.0, radius_squared)) * unit_radial)
+
     @staticmethod
     def torsion(
         coord_1: CoordinateLike,
@@ -121,8 +278,7 @@ class InternalCoordinateFrame:
         point_3 = Vec3.coerce(coord_3).to_array()
         point_4 = Vec3.coerce(coord_4).to_array()
         if not all(
-            np.isfinite(point).all()
-            for point in (point_1, point_2, point_3, point_4)
+            np.isfinite(point).all() for point in (point_1, point_2, point_3, point_4)
         ):
             raise InternalCoordinatePlacementError(
                 "internal-coordinate torsion requires finite coordinates"
@@ -146,9 +302,7 @@ class InternalCoordinateFrame:
                 bond_43=bond_43,
             )
 
-        cosine = np.dot(plane_13, plane_24) / sqrt(
-            plane_13_norm_sq * plane_24_norm_sq
-        )
+        cosine = np.dot(plane_13, plane_24) / sqrt(plane_13_norm_sq * plane_24_norm_sq)
         clamped = min(1.0, max(-1.0, float(cosine)))
         angle = acos(clamped)
 

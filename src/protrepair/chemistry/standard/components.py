@@ -1,5 +1,6 @@
 """Built-in standard-component definitions for baseline protein repair."""
 
+from dataclasses import replace
 from functools import lru_cache
 
 from protrepair.chemistry.component.graph import (
@@ -22,6 +23,7 @@ from protrepair.chemistry.standard.forcefield import FORCEFIELD_PARAMETERS
 from protrepair.chemistry.standard.heavy_atom_programs import (
     STANDARD_HEAVY_ATOM_SEMANTICS,
 )
+from protrepair.chemistry.standard.restraint_targets import STANDARD_RESTRAINT_TEMPLATES
 
 STANDARD_COMPONENT_ATOMS: dict[str, tuple[str, ...]] = {
     "ALA": ("N", "CA", "C", "O", "CB", "OXT"),
@@ -349,6 +351,23 @@ def build_standard_component_library() -> ComponentLibrary:
     for component_id, atom_names in STANDARD_COMPONENT_ATOMS.items():
         aliases = HISTIDINE_ALIASES if component_id == "HIS" else ()
         heavy_atom_semantics = STANDARD_HEAVY_ATOM_SEMANTICS.get(component_id)
+        if heavy_atom_semantics is not None:
+            restraint_template = STANDARD_RESTRAINT_TEMPLATES.get(component_id)
+            heavy_atom_semantics = replace(
+                heavy_atom_semantics,
+                program=heavy_atom_semantics.program.as_missing_atom_completion(
+                    bond_targets=(
+                        ()
+                        if restraint_template is None
+                        else restraint_template.bond_targets
+                    ),
+                    angle_targets=(
+                        ()
+                        if restraint_template is None
+                        else restraint_template.angle_targets
+                    ),
+                ),
+            )
         hydrogen_semantics = STANDARD_HYDROGEN_SEMANTICS.get(component_id)
         tetrahedral_centers = STANDARD_TETRAHEDRAL_CENTER_SEMANTICS.get(
             component_id,
