@@ -1,3 +1,4 @@
+from dataclasses import replace
 from itertools import combinations
 from pathlib import Path
 
@@ -40,7 +41,36 @@ def test_bundled_record_matches_frozen_ccd_ingress(component_id: str) -> None:
     ).get(component_id)
     assert source is not None
 
-    assert _bundled_record(component_id) == source
+    bundled = _bundled_record(component_id)
+    # Only coordinate-derived targets allow floating-point recomputation error.
+    assert (
+        replace(
+            bundled,
+            bond_targets=source.bond_targets,
+            angle_targets=source.angle_targets,
+        )
+        == source
+    )
+
+    for actual, expected in zip(bundled.bond_targets, source.bond_targets, strict=True):
+        assert actual.target_distance_angstrom == pytest.approx(
+            expected.target_distance_angstrom, rel=0.0, abs=1e-8
+        )
+        assert (
+            replace(actual, target_distance_angstrom=expected.target_distance_angstrom)
+            == expected
+        )
+
+    for actual, expected in zip(
+        bundled.angle_targets, source.angle_targets, strict=True
+    ):
+        assert actual.target_angle_degrees == pytest.approx(
+            expected.target_angle_degrees, rel=0.0, abs=1e-6
+        )
+        assert (
+            replace(actual, target_angle_degrees=expected.target_angle_degrees)
+            == expected
+        )
 
 
 @pytest.mark.parametrize("component_id", COMPONENT_IDS)
