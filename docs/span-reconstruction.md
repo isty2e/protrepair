@@ -106,17 +106,31 @@ to accept the result. ProtRepair also requires:
 - complete heavy-atom neighborhoods around amide N and planar N-substituents,
   including those on the following source anchor
 - supported component chemistry for every inserted residue
-- residue-local heavy-atom geometry within the accepted template or restraint
-  bounds
 - valid standard alpha-carbon chirality and supported side-chain stereochemistry
 
 On success, constitution, geometry, formal-charge payloads, and topology are
 updated as one aggregate change. Intra-residue bonds come from component
 chemistry, while new peptide C-N bonds are sequence-inferred. Donor hydrogens
 are discarded so hydrogen completion remains a separate workflow action.
+Supported, realized donor sidechain microstates retain their heavy-atom charges
+and bond orders across residue renumbering. The adopted state is saved as a
+preference, not as original source evidence or a transferred override. Source
+chemistry still takes precedence, and donor backbone/terminal choices are not
+copied to the new junctions. This also lets post-graft diagnostics use the
+[matching HIS restraints](histidine-protonation.md#geometry-restraints) before
+H is added again.
 
 On failure, the source structure is returned unchanged for that span and the
 result carries `SPAN_RECONSTRUCTION_FAILED`. No partial span is committed.
+This includes a conflict between adopted donor chemistry and a source override:
+the whole span is rejected, rather than discarding only the donor's chemical state.
+
+Residue-local bond and angle outliers do not, by themselves, discard a completed
+span. The reconstructed structure remains available for state-based planning and
+quality assessment. After branch selection and any further repair, remaining
+outliers in the inserted residues are reported as `INVALID_GEOMETRY` warnings,
+with measured values and reconstruction provenance. These warnings describe the
+returned structure, not an earlier candidate that has since been corrected.
 
 The junction planarity gate accepts both cis and trans families, but rejects a
 torsion more than 30 degrees from either plane. This follows the twisted-peptide
@@ -140,6 +154,12 @@ Ramachandran analysis separately when the reconstructed backbone conformation
 is part of the acceptance decision.
 
 ## Scientific Scope
+
+Component reference ranges, including supported microstate-specific HIS targets,
+are diagnostic evidence rather than a zero-outlier admission requirement.
+A small excess does not establish that a structure is unusable. Reconstruction
+alone also does not establish readiness for a downstream calculation; contacts,
+parser readability, stereochemistry and severe geometry still need assessment.
 
 AlphaFold confidence is useful evidence for choosing a donor, but it does not
 override the source anchors or the geometric acceptance gates. ProtRepair does
