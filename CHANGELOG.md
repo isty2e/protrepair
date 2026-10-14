@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- use aliphatic LYS dictionary geometry for reconstructed CD-CE and CE-NZ
+  bonds and the CD-CE-NZ angle, without changing the fallback torsions
 - bind HIS ring restraints to the supported realized microstate in geometry
   diagnostics and FF construction, rather than applying one protonation table
 - resolve preserved polymer H/D/T attachments without replacing their identity,

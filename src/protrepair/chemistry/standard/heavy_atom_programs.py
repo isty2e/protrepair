@@ -487,15 +487,15 @@ STANDARD_HEAVY_ATOM_SEMANTICS: dict[str, HeavyAtomSemantics] = {
                         InternalCoordinatePlacement.absolute(
                             target_atom_name="CE",
                             anchor_atom_names=("CB", "CG", "CD"),
-                            bond_length=1.46,
+                            bond_length=1.520,
                             bond_angle=111.68,
                             dihedral_degrees=-179.6,
                         ),
                         InternalCoordinatePlacement.absolute(
                             target_atom_name="NZ",
                             anchor_atom_names=("CG", "CD", "CE"),
-                            bond_length=1.33,
-                            bond_angle=124.79,
+                            bond_length=1.489,
+                            bond_angle=111.900,
                             dihedral_degrees=179.6,
                         ),
                     ),
