@@ -64,33 +64,26 @@ from protrepair.transformer.completion.hydrogen.static_patch import (
     generate_hydrogen_patch,
 )
 from protrepair.transformer.completion.retained_non_polymer_hydrogen import (
-    rdkit_evidence,
     rdkit_patch,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 from protrepair.transformer.result import TransformationResult
 
+from .rdkit_evidence import (
+    hydrogenate_retained_non_polymer_payload_with_evidence_result as hydrogenate,
+)
+
 _RDKIT_FALLBACK_VISIBILITY_DETAILS = (
-    "retained non-polymer hydrogens inferred via RDKit "
-    "coordinate/proximity fallback"
+    "retained non-polymer hydrogens inferred via RDKit coordinate/proximity fallback"
 )
 _SOURCE_HYDROGEN_RECONCILIATION_CANDIDATE_LIMIT = 4096
 _SOURCE_HYDROGEN_ANCHOR_DISTANCE_TOLERANCE_ANGSTROM = 0.35
 
 
 @dataclass(frozen=True, slots=True)
-class _RetainedNonPolymerHydrogenStageResult:
-    """One retained non-polymer hydrogenation stage result."""
-
-    structure: ProteinStructure
-    repairs: tuple[RepairEvent, ...]
-    issues: tuple[ValidationIssue, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class _RetainedNonPolymerHydrogenPayloadResult:
-    """One retained non-polymer hydrogenation payload result."""
+    """Admitted residue mutation, or no payload when the source must stay intact."""
 
     payload: CompletionResiduePayload | None
     repairs: tuple[RepairEvent, ...]
@@ -160,6 +153,26 @@ class _SourceHydrogenReconciliationResult:
     payload: CompletionResiduePayload
     atom_name_projection: tuple[tuple[str, str], ...] = ()
 
+    def unpreserved_source_hydrogen_names(
+        self,
+        source: CompletionResiduePayload,
+    ) -> tuple[str, ...]:
+        """Return source H identities whose complete atom payload was not retained."""
+
+        return tuple(
+            atom.name
+            for atom in source.residue_site.atom_sites
+            if atom.is_hydrogen()
+            and (
+                not self.payload.has_atom(atom.name)
+                or self.payload.atom_site(atom.name) != atom
+                or self.payload.atom_geometry(atom.name)
+                != source.atom_geometry(atom.name)
+                or self.payload.formal_charge(atom.name)
+                != source.formal_charge(atom.name)
+            )
+        )
+
     def project_bond_definitions(
         self,
         bond_definitions: tuple[BondDefinition, ...],
@@ -214,12 +227,8 @@ def add_retained_non_polymer_hydrogens(
             issues=(),
         )
 
-    stripped_structure = structure.without_hydrogens_in_residues(
-        active_target_residue_ids
-    )
-    stage_result = _execute_retained_non_polymer_hydrogen_stage(
-        stripped_structure,
-        topology_source_structure=structure,
+    return _execute_retained_non_polymer_hydrogen_stage(
+        structure,
         component_library=library,
         target_residue_ids=active_target_residue_ids,
         chemistry_evidence_by_residue_id=evidence_by_residue_id(chemistry_evidence),
@@ -227,22 +236,11 @@ def add_retained_non_polymer_hydrogens(
             allow_retained_non_polymer_rdkit_fallback
         ),
     )
-    cleaned_structure, cleanup_issues = cleanup_residual_hydrogen_clashes(
-        stage_result.structure,
-        component_library=library,
-        target_residue_ids=active_target_residue_ids,
-    )
-    return TransformationResult(
-        structure=cleaned_structure,
-        repairs=stage_result.repairs,
-        issues=stage_result.issues + cleanup_issues,
-    )
 
 
 def _execute_retained_non_polymer_hydrogen_stage(
     structure: ProteinStructure,
     *,
-    topology_source_structure: ProteinStructure,
     component_library: ComponentLibrary,
     target_residue_ids: frozenset[ResidueId],
     chemistry_evidence_by_residue_id: Mapping[
@@ -250,12 +248,10 @@ def _execute_retained_non_polymer_hydrogen_stage(
         RetainedNonPolymerChemistryEvidence,
     ],
     allow_retained_non_polymer_rdkit_fallback: bool,
-) -> _RetainedNonPolymerHydrogenStageResult:
+) -> TransformationResult:
     """Apply hydrogen patches to targeted retained non-polymer components."""
 
-    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(
-        topology_source_structure
-    )
+    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(structure)
     hydrogenated_payloads: list[CompletionResiduePayload] = []
     topology_plans: list[_RetainedNonPolymerTopologyPlan] = []
     repairs: list[RepairEvent] = []
@@ -264,17 +260,15 @@ def _execute_retained_non_polymer_hydrogen_stage(
         if ligand.residue_id not in target_residue_ids:
             continue
 
+        source_payload = _payload_for_structure(structure, ligand.residue_id)
         result = _hydrogenate_retained_non_polymer_payload(
-            _payload_for_structure(structure, ligand.residue_id),
+            source_payload.without_atom_sites(_hydrogen_atom_names(source_payload)),
             component_library=component_library,
             chemistry_evidence=chemistry_evidence_by_residue_id.get(ligand.residue_id),
-            source_payload=_payload_for_structure(
-                topology_source_structure,
-                ligand.residue_id,
-            ),
+            source_payload=source_payload,
             source_hydrogen_anchor_by_name=(
                 _source_explicit_hydrogen_anchor_by_name(
-                    topology_source_structure,
+                    structure,
                     ligand.residue_id,
                 )
             ),
@@ -304,11 +298,20 @@ def _execute_retained_non_polymer_hydrogen_stage(
     )
     if hydrogenated_payloads:
         updated_structure = _with_retained_non_polymer_topology_bonds(
-            topology_source_structure=topology_source_structure,
+            topology_source_structure=structure,
             target_structure=updated_structure,
             topology_plans=tuple(topology_plans),
         )
-    return _RetainedNonPolymerHydrogenStageResult(
+        updated_structure, cleanup_issues = cleanup_residual_hydrogen_clashes(
+            updated_structure,
+            component_library=component_library,
+            target_residue_ids=frozenset(
+                payload.residue_id for payload in hydrogenated_payloads
+            ),
+        )
+        issues.extend(cleanup_issues)
+
+    return TransformationResult(
         structure=updated_structure,
         repairs=tuple(repairs),
         issues=tuple(issues),
@@ -329,15 +332,13 @@ def _hydrogenate_retained_non_polymer_payload(
 
     if chemistry_evidence is not None:
         try:
-            hydrogenation_result = (
-                rdkit_evidence.hydrogenate_retained_non_polymer_payload_with_evidence_result(
-                    payload,
-                    evidence=chemistry_evidence,
-                )
+            hydrogenation_result = hydrogenate(
+                payload,
+                evidence=chemistry_evidence,
             )
         except (RuntimeError, ValueError) as error:
             return _RetainedNonPolymerHydrogenPayloadResult(
-                payload=source_payload or payload,
+                payload=None,
                 repairs=(),
                 issues=(
                     _retained_non_polymer_evidence_hydrogenation_issue(
@@ -349,14 +350,10 @@ def _hydrogenate_retained_non_polymer_payload(
 
         projection = _HydrogenatedPayloadProjection(
             payload=hydrogenation_result.payload,
-            hydrogen_bond_definitions=(
-                hydrogenation_result.hydrogen_bond_definitions
-            ),
+            hydrogen_bond_definitions=(hydrogenation_result.hydrogen_bond_definitions),
         )
         if is_disulfide_bonded:
-            projection = projection.without_hydrogens_anchored_to(
-                frozenset(("SG",))
-            )
+            projection = projection.without_hydrogens_anchored_to(frozenset(("SG",)))
         hydrogenated_payload = projection.payload
         reconciliation = _reconcile_source_hydrogens(
             hydrogenated_payload,
@@ -423,7 +420,7 @@ def _hydrogenate_retained_non_polymer_payload(
             )
             if hydrogenated_payload is None:
                 return _RetainedNonPolymerHydrogenPayloadResult(
-                    payload=source_payload or payload,
+                    payload=None,
                     repairs=(),
                     issues=contradiction_issues
                     + (
@@ -460,6 +457,39 @@ def _hydrogenate_retained_non_polymer_payload(
                     ordered_payload,
                 ),
             )
+            missing_heavy_atom_names = tuple(
+                atom_name
+                for atom_name in template.expected_heavy_atom_names()
+                if not payload.has_atom(atom_name)
+            )
+            if missing_heavy_atom_names and source_payload is not None:
+                unpreserved_names = reconciliation.unpreserved_source_hydrogen_names(
+                    source_payload
+                )
+                if unpreserved_names:
+                    return _RetainedNonPolymerHydrogenPayloadResult(
+                        payload=None,
+                        repairs=(),
+                        issues=contradiction_issues
+                        + (
+                            ValidationIssue.for_residue(
+                                kind=ValidationIssueKind.UNSUPPORTED_HYDROGENATION,
+                                severity=IssueSeverity.WARNING,
+                                message=(
+                                    f"{payload.residue_id.display_token()} "
+                                    f"{payload.component_id} template-backed hydrogen "
+                                    "placement cannot reconcile all source hydrogens "
+                                    "with an incomplete heavy-atom scaffold "
+                                    f"(missing {', '.join(missing_heavy_atom_names)}); "
+                                    "leaving residue unchanged"
+                                ),
+                                residue_id=payload.residue_id,
+                                component_id=payload.component_id,
+                                atom_names=unpreserved_names,
+                            ),
+                        ),
+                    )
+
             ordered_payload = reconciliation.payload.reordered(
                 _retained_non_polymer_template_atom_order(
                     reconciliation.payload,
@@ -497,7 +527,7 @@ def _hydrogenate_retained_non_polymer_payload(
 
     if not allow_retained_non_polymer_rdkit_fallback:
         return _RetainedNonPolymerHydrogenPayloadResult(
-            payload=source_payload or payload,
+            payload=None,
             repairs=(),
             issues=(
                 _retained_non_polymer_hydrogen_fallback_disabled_issue(
@@ -516,7 +546,7 @@ def _hydrogenate_retained_non_polymer_payload(
         hydrogenated_payload = hydrogenation_result.payload
     except (RuntimeError, ValueError) as error:
         return _RetainedNonPolymerHydrogenPayloadResult(
-            payload=source_payload or payload,
+            payload=None,
             repairs=(),
             issues=(
                 _retained_non_polymer_hydrogen_fallback_issue(
@@ -1095,9 +1125,7 @@ def _apply_retained_non_polymer_hydrogen_directive(
         (payload,),
         templates=(template,),
         disulfide_bonded_residue_ids=(
-            frozenset((payload.residue_id,))
-            if is_disulfide_bonded
-            else frozenset()
+            frozenset((payload.residue_id,)) if is_disulfide_bonded else frozenset()
         ),
     )
     if isinstance(placement_directive, StaticHydrogenPlacementDirective):
@@ -1116,7 +1144,7 @@ def _apply_retained_non_polymer_hydrogen_directive(
                 patch=patch,
                 semantics=placement_directive.semantics,
             )
-        except GeometryPlacementError:
+        except (GeometryPlacementError, KeyError):
             return None
 
         return payload.apply_patch(hydrogen_patch)
@@ -1257,10 +1285,7 @@ def _retained_non_polymer_hydrogen_fallback_visibility_issue(
 def _rdkit_fallback_visibility_details(rdkit_backend_version: str) -> str:
     """Return stable user-facing RDKit fallback provenance details."""
 
-    return (
-        f"{_RDKIT_FALLBACK_VISIBILITY_DETAILS} "
-        f"(RDKit {rdkit_backend_version})"
-    )
+    return f"{_RDKIT_FALLBACK_VISIBILITY_DETAILS} (RDKit {rdkit_backend_version})"
 
 
 def _retained_non_polymer_template_hydrogen_placement_issue(

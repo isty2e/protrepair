@@ -15,6 +15,9 @@
 
 ### Fixed
 
+- preserve retained-ligand source hydrogens when an incomplete template cannot
+  reconcile them. Report unsupported placement without committing partial atoms
+  or moving the failed residue during hydrogen clash cleanup
 - bind shared chemistry observations to the current structure, component library,
   ligand evidence and fallback policy, so readiness and local refinement cannot
   reuse hydrogen expectations from incompatible inputs

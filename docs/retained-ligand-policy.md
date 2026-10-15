@@ -19,6 +19,20 @@ heavy-atom set before workflow execution. Invalid SMILES/evidence mappings or
 mismatched overrides raise `ValueError`; they do not silently fall through to
 another chemistry source.
 
+## Incomplete Templates
+
+A template can place hydrogens on the heavy atoms that are present, even when
+part of the component is missing. That partial placement is not evidence that
+the original hydrogens are wrong. If it cannot preserve all of them, ProtRepair
+leaves the residue unchanged and reports `UNSUPPORTED_HYDROGENATION`, identifying
+the missing heavy atoms and unmatched hydrogens.
+
+Failed hydrogenation leaves the residue out of the subsequent H clash cleanup.
+Other retained components can still be completed. This does not certify the
+unchanged residue as chemically complete or ready for force-field refinement.
+Validated chemistry overrides remain a separate route for replacing incompatible
+source hydrogens.
+
 ## RDKit Fallback
 
 RDKit fallback is enabled by default for retained components without usable
