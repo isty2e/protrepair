@@ -24,7 +24,6 @@ from protrepair.transformer.refinement.local_pipeline.construction import (
 )
 from protrepair.transformer.refinement.local_pipeline.request import (
     LocalRefinementRequest,
-    normalize_local_refinement_request,
 )
 
 
@@ -150,7 +149,7 @@ def execute_local_transformation_profiled(
     """
 
     start = perf_counter()
-    request = normalize_local_refinement_request(
+    request = LocalRefinementRequest.from_context(
         context,
         spec=spec,
         component_library=component_library,

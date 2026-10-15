@@ -36,7 +36,7 @@ from protrepair.geometry import Vec3
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.hydrogen_expectation import (
-    derive_structure_hydrogen_expectation_model,
+    StructureHydrogenExpectationModel,
 )
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
@@ -96,8 +96,8 @@ def test_ready_repair_stage_shares_chemistry_across_all_refinement_phases():
     )
     with patch.object(
         observation_module,
-        "derive_structure_hydrogen_expectation_model",
-        wraps=derive_structure_hydrogen_expectation_model,
+        "StructureHydrogenExpectationModel",
+        wraps=StructureHydrogenExpectationModel,
     ) as derive:
         result = apply_repair_stage_local_refinement(
             ready,

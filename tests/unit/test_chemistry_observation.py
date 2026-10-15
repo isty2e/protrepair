@@ -20,7 +20,7 @@ from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state import SidechainHeavyAtomCompletenessState
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.hydrogen_expectation import (
-    derive_structure_hydrogen_expectation_model,
+    StructureHydrogenExpectationModel,
 )
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
@@ -154,8 +154,8 @@ def test_repeated_queries_share_derivation_but_new_observation_does_not():
     source = _polymer()
     with patch.object(
         observation_module,
-        "derive_structure_hydrogen_expectation_model",
-        wraps=derive_structure_hydrogen_expectation_model,
+        "StructureHydrogenExpectationModel",
+        wraps=StructureHydrogenExpectationModel,
     ) as derive:
         observation = StructureChemistryObservation(source)
         assert derive.call_count == 0
@@ -318,8 +318,8 @@ def test_reused_model_rederives_after_topology_or_provenance_change(
 
     with patch.object(
         observation_module,
-        "derive_structure_hydrogen_expectation_model",
-        wraps=derive_structure_hydrogen_expectation_model,
+        "StructureHydrogenExpectationModel",
+        wraps=StructureHydrogenExpectationModel,
     ) as derive:
         rebound = (
             observation.for_structure(changed)
@@ -361,8 +361,8 @@ def test_rebinding_same_carrier_retains_lazy_chemistry(warm):
     source = _polymer()
     with patch.object(
         observation_module,
-        "derive_structure_hydrogen_expectation_model",
-        wraps=derive_structure_hydrogen_expectation_model,
+        "StructureHydrogenExpectationModel",
+        wraps=StructureHydrogenExpectationModel,
     ) as derive:
         observation = StructureChemistryObservation(source)
         if warm:
@@ -397,8 +397,8 @@ def test_polymer_movement_reuses_valid_expectations_but_not_residue_facts(warm):
 
     with patch.object(
         observation_module,
-        "derive_structure_hydrogen_expectation_model",
-        wraps=derive_structure_hydrogen_expectation_model,
+        "StructureHydrogenExpectationModel",
+        wraps=StructureHydrogenExpectationModel,
     ) as derive:
         rebound = observation.for_structure(moved)
         assert derive.call_count == 0
@@ -505,7 +505,7 @@ def test_unsupported_goal_report_does_not_force_chemistry_derivation():
     )
     with patch.object(
         observation_module,
-        "derive_structure_hydrogen_expectation_model",
+        "StructureHydrogenExpectationModel",
         side_effect=AssertionError("unneeded chemistry derivation"),
     ):
         report = evaluate_requested_goal_report(
@@ -538,8 +538,8 @@ def test_goal_and_score_share_observation_without_changing_values(custom_library
 
     with patch.object(
         observation_module,
-        "derive_structure_hydrogen_expectation_model",
-        wraps=derive_structure_hydrogen_expectation_model,
+        "StructureHydrogenExpectationModel",
+        wraps=StructureHydrogenExpectationModel,
     ) as derive:
         for expected_calls in (1, 2):
             observation = StructureChemistryObservation(

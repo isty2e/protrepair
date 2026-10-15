@@ -27,7 +27,7 @@ from protrepair.state import (
     derive_structure_coverage_and_chemistry_readiness_facts,
 )
 from protrepair.state.hydrogen_expectation import (
-    derive_structure_hydrogen_expectation_model,
+    StructureHydrogenExpectationModel,
 )
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
@@ -86,7 +86,7 @@ def test_hydrogen_expectation_model_adds_polymer_backbone_hydrogens() -> None:
         source_name="polymer-backbone-hydrogen-expectation",
     )
 
-    model = derive_structure_hydrogen_expectation_model(
+    model = StructureHydrogenExpectationModel(
         structure,
         component_library=build_default_component_library(),
     )
@@ -164,7 +164,7 @@ def test_hydrogen_expectation_model_suppresses_disulfide_hg() -> None:
         provenance=structure.provenance,
     )
 
-    model = derive_structure_hydrogen_expectation_model(
+    model = StructureHydrogenExpectationModel(
         structure,
         component_library=build_default_component_library(),
     )
@@ -197,7 +197,7 @@ def test_hydrogen_expectation_model_uses_override_for_unknown_ligand() -> None:
         source_name="override-backed-hydrogen-expectation",
     )
 
-    model = derive_structure_hydrogen_expectation_model(
+    model = StructureHydrogenExpectationModel(
         structure,
         component_library=build_default_component_library(),
         retained_non_polymer_chemistry_evidence=(
@@ -247,7 +247,7 @@ def test_hydrogen_expectation_model_propagates_no_rdkit_override(
     )
 
     with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
-        derive_structure_hydrogen_expectation_model(
+        StructureHydrogenExpectationModel(
             structure,
             component_library=build_default_component_library(),
             retained_non_polymer_chemistry_evidence=(
@@ -291,7 +291,7 @@ def test_hydrogen_expectation_model_propagates_no_rdkit_fallback(
     )
 
     with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
-        derive_structure_hydrogen_expectation_model(
+        StructureHydrogenExpectationModel(
             structure,
             component_library=build_default_component_library(),
         )
@@ -327,7 +327,7 @@ def test_hydrogen_expectation_model_respects_disabled_rdkit_fallback(
         source_name="fallback-disabled-hydrogen-expectation",
     )
 
-    model = derive_structure_hydrogen_expectation_model(
+    model = StructureHydrogenExpectationModel(
         structure,
         component_library=build_default_component_library(),
         allow_retained_non_polymer_rdkit_fallback=False,
@@ -361,7 +361,7 @@ def test_hydrogen_expectation_model_marks_metal_context_not_applicable() -> None
         source_name="metal-not-applicable-hydrogen-expectation",
     )
 
-    model = derive_structure_hydrogen_expectation_model(
+    model = StructureHydrogenExpectationModel(
         structure,
         component_library=component_library,
     )
@@ -393,7 +393,7 @@ def test_retained_fallback_resolution_owns_topology_and_projection_facts() -> No
         source_name="fallback-resolution-topology-facts",
     )
 
-    model = derive_structure_hydrogen_expectation_model(
+    model = StructureHydrogenExpectationModel(
         structure,
         component_library=build_default_component_library(),
     )

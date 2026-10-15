@@ -57,7 +57,6 @@ from protrepair.transformer.refinement.local_pipeline.construction import (
 )
 from protrepair.transformer.refinement.local_pipeline.request import (
     LocalRefinementRequest,
-    normalize_local_refinement_request,
 )
 from protrepair.workflow.contracts.policies import LigandPolicy
 from protrepair.workflow.contracts.request import StructureIngressOptions
@@ -377,7 +376,7 @@ def run_first_parser_cluster_repair_probe(
     ).bind(ContinuousRelaxationMethod.UFF)
     request = _timed(
         "request_normalization",
-        lambda: normalize_local_refinement_request(
+        lambda: LocalRefinementRequest.from_context(
             context,
             spec=settings,
             component_library=component_library,

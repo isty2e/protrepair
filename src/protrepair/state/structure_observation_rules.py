@@ -7,7 +7,7 @@ from protrepair.diagnostics.stereochemistry import (
     detect_residue_stereochemistry_violations,
 )
 from protrepair.state.hydrogen_expectation import (
-    derive_structure_hydrogen_expectation_model,
+    StructureHydrogenExpectationModel,
 )
 from protrepair.state.structure_axes import (
     BackboneHeavyAtomCompletenessState,
@@ -22,17 +22,6 @@ from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import ResidueId
 
 REQUIRED_BACKBONE_ATOM_NAMES = frozenset({"N", "CA", "C", "O"})
-
-__all__ = [
-    "REQUIRED_BACKBONE_ATOM_NAMES",
-    "backbone_heavy_atom_completeness_state",
-    "component_support_state",
-    "hydrogen_applicability_state",
-    "hydrogen_coverage_state",
-    "projection_chain_count",
-    "sidechain_heavy_atom_completeness_state",
-    "stereochemistry_state",
-]
 
 
 def projection_chain_count(
@@ -128,7 +117,7 @@ def hydrogen_applicability_state(
     """Return whether hydrogen coverage applies to one residue collection."""
 
     active_expected_hydrogen_atom_names_by_residue = (
-        derive_structure_hydrogen_expectation_model(
+        StructureHydrogenExpectationModel(
             context_structure,
             component_library=component_library,
         ).expected_hydrogen_atom_names_by_residue
@@ -155,7 +144,7 @@ def hydrogen_coverage_state(
     """Return hydrogen coverage over applicable residues in one collection."""
 
     active_expected_hydrogen_atom_names_by_residue = (
-        derive_structure_hydrogen_expectation_model(
+        StructureHydrogenExpectationModel(
             context_structure,
             component_library=component_library,
         ).expected_hydrogen_atom_names_by_residue
@@ -239,3 +228,15 @@ def stereochemistry_state(
         return StereochemistryState.CONSISTENT
 
     return StereochemistryState.NOT_APPLICABLE
+
+
+__all__ = [
+    "REQUIRED_BACKBONE_ATOM_NAMES",
+    "backbone_heavy_atom_completeness_state",
+    "component_support_state",
+    "hydrogen_applicability_state",
+    "hydrogen_coverage_state",
+    "projection_chain_count",
+    "sidechain_heavy_atom_completeness_state",
+    "stereochemistry_state",
+]

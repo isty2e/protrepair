@@ -11,7 +11,7 @@ from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state.hydrogen_expectation import (
-    derive_structure_hydrogen_expectation_model,
+    StructureHydrogenExpectationModel,
 )
 from protrepair.state.structure_readiness import (
     derive_projection_coverage_and_chemistry_readiness_facts,
@@ -56,7 +56,7 @@ def test_borrowed_hydrogen_expectations_do_not_hide_changed_ligand_evidence():
     )
     assert not prepared.has_errors()
     source = prepared.structure
-    borrowed = derive_structure_hydrogen_expectation_model(
+    borrowed = StructureHydrogenExpectationModel(
         source,
         component_library=library,
         retained_non_polymer_chemistry_evidence=old_evidence,

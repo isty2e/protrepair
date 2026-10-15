@@ -58,8 +58,8 @@ def test_phase_report_derives_joint_facts_once_without_cross_call_reuse() -> Non
     library = build_default_component_library()
     with patch.object(
         chemistry_observation,
-        "derive_structure_hydrogen_expectation_model",
-        wraps=chemistry_observation.derive_structure_hydrogen_expectation_model,
+        "StructureHydrogenExpectationModel",
+        wraps=chemistry_observation.StructureHydrogenExpectationModel,
     ) as derive:
         supported = evaluate_workflow_phase_report(
             source,

@@ -160,26 +160,6 @@ class StructureHydrogenExpectationModel:
         )
 
 
-def derive_structure_hydrogen_expectation_model(
-    structure: ProteinStructure,
-    *,
-    component_library: ComponentLibrary,
-    allow_retained_non_polymer_rdkit_fallback: bool = True,
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
-        ...,
-    ] = (),
-) -> StructureHydrogenExpectationModel:
-    """Derive structure-level hydrogen expectation policy."""
-
-    return StructureHydrogenExpectationModel(
-        structure,
-        component_library=component_library,
-        allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
-        retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
-    )
-
-
 def _polymer_expected_hydrogen_atom_names(
     structure: ProteinStructure,
     *,

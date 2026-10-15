@@ -23,7 +23,6 @@ from protrepair.relation.blueprint import StructureBlueprintCoverage
 from protrepair.scope import ResidueSetScope
 from protrepair.state.hydrogen_expectation import (
     StructureHydrogenExpectationModel,
-    derive_structure_hydrogen_expectation_model,
 )
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
@@ -239,7 +238,7 @@ class StructureChemistryObservation:
         """Return expectations, deriving them on the first chemistry query."""
         model = self._hydrogen_expectation_model
         if model is None:
-            model = derive_structure_hydrogen_expectation_model(
+            model = StructureHydrogenExpectationModel(
                 self.context_structure,
                 component_library=self.component_library,
                 retained_non_polymer_chemistry_evidence=self.retained_non_polymer_chemistry_evidence,
