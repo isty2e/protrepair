@@ -35,6 +35,13 @@ count is not enough: each H needs a compatible local heavy-atom anchor, without
 extra covalent attachments to another H or another residue. Source hydrogen bonds
 and metal coordination records remain separate from covalent H attachments.
 
+Hydrogen correspondence uses compatible local parent groups before comparing
+coordinates. This preserves existing H/D/T identities without considering every
+hydrogen pair in a large ligand. Ambiguous attachments do not become evidence
+of chemical completeness. If a required correspondence cannot be found within
+the per-residue resource bound, the attempt reports the reason and leaves the
+residue unchanged; it does not discard source hydrogens to continue.
+
 If the proposed graph contradicts a source connection, that ligand stays
 unchanged and receives a chemistry diagnostic. Other ligands can still be
 prepared. Local FF readiness reports unresolved chemistry, missing heavy-atom

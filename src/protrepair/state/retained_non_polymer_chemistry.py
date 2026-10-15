@@ -371,6 +371,10 @@ def _resolve_retained_non_polymer_chemistry_source(
                 for atom_site in residue.atom_sites
                 if atom_site.is_hydrogen()
             },
+            hydrogen_anchor_by_name=structure.topology.residue_hydrogen_anchor_by_name(
+                constitution=structure.constitution,
+                residue_index=residue_index,
+            ),
         )
     except (RuntimeError, ValueError) as error:
         return RetainedNonPolymerChemistryResolution(

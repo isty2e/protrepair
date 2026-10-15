@@ -1,5 +1,6 @@
 """RDKit-backed inference for retained non-polymer fallback chemistry."""
 
+from collections import Counter, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -118,8 +119,44 @@ def infer_retained_non_polymer_rdkit_fallback(
     hydrogen_atom_names: tuple[str, ...] | None = None,
     present_hydrogen_atom_names: tuple[str, ...] | None = None,
     hydrogen_position_by_name: Mapping[str, Vec3] | None = None,
+    hydrogen_anchor_by_name: Mapping[str, str] | None = None,
 ) -> RetainedNonPolymerRdkitFallbackInferenceResult:
-    """Return the canonical RDKit fallback inference result for one pose."""
+    """Infer current chemistry and project generated H onto retained identities.
+
+    Parameters
+    ----------
+    residue_site : ResidueSite
+        Current heavy identities and any present H/D/T names.
+    residue_geometry : ResidueGeometry
+        Current pose used to infer the heavy graph and generate H coordinates.
+    formal_charge_by_atom_name : Mapping[str, int or None] or None
+        Current explicit atom charges; None leaves unreported charges unspecified.
+    hydrogen_atom_names : tuple[str, ...] or None
+        Preferred complete H inventory, or None to derive it from the pose.
+    present_hydrogen_atom_names : tuple[str, ...] or None
+        Existing identities to retain when deriving the preferred inventory.
+    hydrogen_position_by_name : Mapping[str, Vec3] or None
+        Existing positions. A complete preferred inventory enables coordinate
+        correspondence; initial placement otherwise uses generated append order.
+    hydrogen_anchor_by_name : Mapping[str, str] or None
+        Current local H connectivity. Coordinate correspondence admits only
+        same-parent pairs compatible with fresh native chemistry. Missing or
+        incompatible parent groups retain unconstrained coordinate matching;
+        current graph conformance is checked independently of this inference.
+
+    Returns
+    -------
+    RetainedNonPolymerRdkitFallbackInferenceResult
+        Fresh inferred chemistry, projected identities and evaluated pair bounds.
+
+    Raises
+    ------
+    RdkitUnavailableError
+        The required RDKit installation is not operational.
+    ValueError
+        Chemistry or correspondence is unresolved, contradictory or over its
+        per-residue candidate bound.
+    """
 
     if Chem is None:
         raise RdkitUnavailableError(
@@ -161,6 +198,7 @@ def infer_retained_non_polymer_rdkit_fallback(
         generated_hydrogen_atom_names=generated_hydrogen_atom_names,
         hydrogen_atom_names=resolved_hydrogen_atom_names,
         hydrogen_position_by_name=hydrogen_position_by_name,
+        hydrogen_anchor_by_name=hydrogen_anchor_by_name,
     )
     return RetainedNonPolymerRdkitFallbackInferenceResult(
         hydrogenated_molecule=hydrogenated_molecule,
@@ -256,9 +294,7 @@ def retained_non_polymer_rdkit_fallback_hydrogen_bond_definitions(
 ) -> tuple[BondDefinition, ...]:
     """Return generated H-heavy bond definitions from an RDKit fallback molecule."""
 
-    atom_names_by_index = _rdkit_fallback_atom_names_by_index(
-        hydrogenated_molecule
-    )
+    atom_names_by_index = _rdkit_fallback_atom_names_by_index(hydrogenated_molecule)
     return tuple(
         BondDefinition(
             atom_name_1=atom_names_by_index[begin_atom.GetIdx()],
@@ -312,12 +348,10 @@ def retained_non_polymer_rdkit_fallback_hydrogen_bond_definitions_for_names(
 ) -> tuple[BondDefinition, ...]:
     """Return fallback H-heavy bonds projected onto preferred H atom names."""
 
-    hydrogen_name_projection = (
-        _retained_non_polymer_hydrogen_name_projection_result(
-            hydrogenated_molecule,
-            hydrogen_atom_names=hydrogen_atom_names,
-            hydrogen_position_by_name=hydrogen_position_by_name,
-        )
+    hydrogen_name_projection = _retained_non_polymer_hydrogen_name_projection_result(
+        hydrogenated_molecule,
+        hydrogen_atom_names=hydrogen_atom_names,
+        hydrogen_position_by_name=hydrogen_position_by_name,
     )
     return _projected_hydrogen_bond_definitions(
         hydrogenated_molecule,
@@ -347,6 +381,7 @@ def _retained_non_polymer_hydrogen_name_projection_result(
     hydrogen_atom_names: tuple[str, ...],
     hydrogen_position_by_name: Mapping[str, Vec3] | None = None,
     generated_hydrogen_atom_names: tuple[str, ...] | None = None,
+    hydrogen_anchor_by_name: Mapping[str, str] | None = None,
 ) -> _HydrogenNameProjectionResult:
     """Return generated fallback H names projected onto final H names."""
 
@@ -360,15 +395,15 @@ def _retained_non_polymer_hydrogen_name_projection_result(
             "preferred hydrogen atom name count"
         )
 
-    if (
-        hydrogen_position_by_name is not None
-        and set(hydrogen_atom_names).issubset(hydrogen_position_by_name)
+    if hydrogen_position_by_name is not None and set(hydrogen_atom_names).issubset(
+        hydrogen_position_by_name
     ):
         return _hydrogen_name_projection_by_nearest_position(
             hydrogenated_molecule,
             generated_hydrogen_atom_names=generated_hydrogen_atom_names,
             hydrogen_atom_names=hydrogen_atom_names,
             hydrogen_position_by_name=hydrogen_position_by_name,
+            hydrogen_anchor_by_name=hydrogen_anchor_by_name,
         )
 
     return _HydrogenNameProjectionResult(
@@ -447,9 +482,7 @@ def preferred_retained_non_polymer_expected_hydrogen_atom_names(
     ):
         return present_hydrogen_atom_names
 
-    return tuple(
-        f"H{index:03d}" for index in range(1, inferred_hydrogen_count + 1)
-    )
+    return tuple(f"H{index:03d}" for index in range(1, inferred_hydrogen_count + 1))
 
 
 def _retained_non_polymer_rdkit_pose_molecule(
@@ -523,8 +556,7 @@ def _add_hydrogens_with_stereo_guard(heavy_atom_molecule: "Mol") -> "Mol":
     stereo_after = _heavy_atom_stereo_signature(hydrogenated_molecule)
     if stereo_before and stereo_after != stereo_before:
         raise ValueError(
-            "retained non-polymer fallback stereochemistry changed during "
-            "hydrogenation"
+            "retained non-polymer fallback stereochemistry changed during hydrogenation"
         )
 
     return hydrogenated_molecule
@@ -573,27 +605,39 @@ def _reject_unsupported_fallback_motifs(
             pose_molecule=pose_molecule,
             residue_geometry=residue_geometry,
         )
-        if element == "N" and sum(
-            bond_length <= _NITRO_N_O_UNSUPPORTED_MAX_ANGSTROM
-            for bond_length in oxygen_bond_lengths
-        ) >= 2:
+        if (
+            element == "N"
+            and sum(
+                bond_length <= _NITRO_N_O_UNSUPPORTED_MAX_ANGSTROM
+                for bond_length in oxygen_bond_lengths
+            )
+            >= 2
+        ):
             raise ValueError(
                 "unsupported retained non-polymer fallback nitro or nitrate motif"
             )
 
-        if element == "S" and atom.GetDegree() >= 2 and any(
-            bond_length <= _SULFUR_OXYGEN_UNSUPPORTED_MAX_ANGSTROM
-            for bond_length in oxygen_bond_lengths
+        if (
+            element == "S"
+            and atom.GetDegree() >= 2
+            and any(
+                bond_length <= _SULFUR_OXYGEN_UNSUPPORTED_MAX_ANGSTROM
+                for bond_length in oxygen_bond_lengths
+            )
         ):
             raise ValueError(
                 "unsupported retained non-polymer fallback sulfoxide, sulfone, "
                 "or sulfate motif"
             )
 
-        if element == "P" and sum(
-            bond_length <= _PHOSPHORUS_OXYGEN_UNSUPPORTED_MAX_ANGSTROM
-            for bond_length in oxygen_bond_lengths
-        ) >= 2:
+        if (
+            element == "P"
+            and sum(
+                bond_length <= _PHOSPHORUS_OXYGEN_UNSUPPORTED_MAX_ANGSTROM
+                for bond_length in oxygen_bond_lengths
+            )
+            >= 2
+        ):
             raise ValueError(
                 "unsupported retained non-polymer fallback phosphate motif"
             )
@@ -770,14 +814,18 @@ def _apply_high_confidence_aromatic_ring_bond_orders(
         ):
             continue
 
-        if len(ring_atom_index_tuple) == _AROMATIC_CARBON_RING_SIZE and all(
-            _AROMATIC_CARBON_RING_BOND_MIN_ANGSTROM
-            <= bond_length
-            <= _AROMATIC_CARBON_RING_BOND_MAX_ANGSTROM
-            for bond_length in ring_bond_lengths
-        ) and all(
-            symbol == "C" and atom.GetFormalCharge() == 0
-            for symbol, atom in zip(ring_atom_symbols, ring_atoms, strict=True)
+        if (
+            len(ring_atom_index_tuple) == _AROMATIC_CARBON_RING_SIZE
+            and all(
+                _AROMATIC_CARBON_RING_BOND_MIN_ANGSTROM
+                <= bond_length
+                <= _AROMATIC_CARBON_RING_BOND_MAX_ANGSTROM
+                for bond_length in ring_bond_lengths
+            )
+            and all(
+                symbol == "C" and atom.GetFormalCharge() == 0
+                for symbol, atom in zip(ring_atom_symbols, ring_atoms, strict=True)
+            )
         ):
             for atom in ring_atoms:
                 atom.SetIsAromatic(True)
@@ -944,10 +992,46 @@ def _hydrogen_name_projection_by_nearest_position(
     generated_hydrogen_atom_names: tuple[str, ...],
     hydrogen_atom_names: tuple[str, ...],
     hydrogen_position_by_name: Mapping[str, Vec3],
+    hydrogen_anchor_by_name: Mapping[str, str] | None = None,
 ) -> _HydrogenNameProjectionResult:
-    """Project generated H names to existing H names by nearest coordinates."""
+    """Match nearest admissible H pairs, retaining distance/name tie ordering."""
 
-    candidate_count = len(generated_hydrogen_atom_names) * len(hydrogen_atom_names)
+    generated_names_by_anchor: dict[str, list[str]] = defaultdict(list)
+    atom_names_by_index = _rdkit_fallback_atom_names_by_index(hydrogenated_molecule)
+    for atom in hydrogenated_molecule.GetAtoms():
+        if atom.GetAtomicNum() != 1:
+            continue
+        parents = tuple(atom.GetNeighbors())
+        if len(parents) != 1 or parents[0].GetAtomicNum() == 1:
+            raise ValueError("generated hydrogen attachment requires one heavy parent")
+        generated_names_by_anchor[_rdkit_atom_name(parents[0])].append(
+            atom_names_by_index[atom.GetIdx()]
+        )
+
+    anchors = hydrogen_anchor_by_name or {}
+    observed_counts = Counter(
+        anchors[name] for name in hydrogen_atom_names if name in anchors
+    )
+    incompatible_anchors = {
+        anchor
+        for anchor, count in observed_counts.items()
+        if count > len(generated_names_by_anchor.get(anchor, ()))
+    }
+    anchors = {
+        name: anchor
+        for name, anchor in anchors.items()
+        if anchor not in incompatible_anchors
+    }
+    candidates_by_name = {
+        name: (
+            generated_names_by_anchor[anchors[name]]
+            if name in anchors
+            else generated_hydrogen_atom_names
+        )
+        for name in hydrogen_atom_names
+    }
+
+    candidate_count = sum(len(names) for names in candidates_by_name.values())
     if candidate_count > _HYDROGEN_NAME_PROJECTION_CANDIDATE_LIMIT:
         raise ValueError(
             "retained non-polymer fallback hydrogen name projection exceeds "
@@ -957,16 +1041,20 @@ def _hydrogen_name_projection_by_nearest_position(
     generated_position_by_name = _generated_hydrogen_position_by_name(
         hydrogenated_molecule
     )
+    # Known parents reserve their slots before unanchored H can consume them.
     candidate_pairs = sorted(
-        (
-            generated_position_by_name[generated_name].distance_to(
-                hydrogen_position_by_name[hydrogen_name]
-            ),
-            generated_name,
-            hydrogen_name,
-        )
-        for generated_name in generated_hydrogen_atom_names
-        for hydrogen_name in hydrogen_atom_names
+        [
+            (
+                generated_position_by_name[generated_name].distance_to(
+                    hydrogen_position_by_name[hydrogen_name]
+                ),
+                generated_name,
+                hydrogen_name,
+            )
+            for hydrogen_name in hydrogen_atom_names
+            for generated_name in candidates_by_name[hydrogen_name]
+        ],
+        key=lambda pair: (pair[2] not in anchors, *pair),
     )
     projection: dict[str, str] = {}
     used_hydrogen_names: set[str] = set()

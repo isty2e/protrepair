@@ -265,23 +265,39 @@ def _execute_retained_non_polymer_hydrogen_stage(
             continue
 
         source_payload = _payload_for_structure(structure, ligand.residue_id)
-        result = _hydrogenate_retained_non_polymer_payload(
-            source_payload.without_atom_sites(_hydrogen_atom_names(source_payload)),
-            component_library=component_library,
-            chemistry_evidence=chemistry_evidence_by_residue_id.get(ligand.residue_id),
-            source_payload=source_payload,
-            source_hydrogen_anchor_by_name=(
-                _source_explicit_hydrogen_anchor_by_name(
-                    structure,
-                    ligand.residue_id,
-                    source_bonds_by_residue.get(ligand.residue_id, ()),
-                )
-            ),
-            is_disulfide_bonded=ligand.residue_id in disulfide_residue_ids,
-            allow_retained_non_polymer_rdkit_fallback=(
-                allow_retained_non_polymer_rdkit_fallback
-            ),
+        source_hydrogen_anchor_by_name = (
+            structure.topology.residue_hydrogen_anchor_by_name(
+                constitution=structure.constitution,
+                residue_index=structure.constitution.residue_index(ligand.residue_id),
+            )
         )
+        try:
+            result = _hydrogenate_retained_non_polymer_payload(
+                source_payload.without_atom_sites(_hydrogen_atom_names(source_payload)),
+                component_library=component_library,
+                chemistry_evidence=chemistry_evidence_by_residue_id.get(
+                    ligand.residue_id
+                ),
+                source_payload=source_payload,
+                source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
+                is_disulfide_bonded=ligand.residue_id in disulfide_residue_ids,
+                allow_retained_non_polymer_rdkit_fallback=(
+                    allow_retained_non_polymer_rdkit_fallback
+                ),
+            )
+        except _SourceHydrogenReconciliationError as error:
+            issues.append(
+                ValidationIssue.for_residue(
+                    kind=ValidationIssueKind.UNSUPPORTED_HYDROGENATION,
+                    severity=IssueSeverity.WARNING,
+                    residue_id=ligand.residue_id,
+                    component_id=ligand.component_id,
+                    atom_names=error.atom_names,
+                    message=f"Retained source H reconciliation failed ({error}); "
+                    "leaving residue unchanged",
+                )
+            )
+            continue
         if result.payload is not None and result.topology_plan is not None:
             try:
                 _require_source_compatible_topology_plan(
@@ -569,20 +585,30 @@ def _hydrogenate_retained_non_polymer_payload(
                     hydrogen_atom_names=generated_hydrogen_atom_names,
                 )
             )
-            reconciliation = _reconcile_source_hydrogens(
-                ordered_payload,
-                source_payload=source_payload,
-                source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
-                generated_hydrogen_anchor_by_name=_hydrogen_anchor_by_name(
-                    template_hydrogen_bond_definitions,
-                    ordered_payload,
-                ),
-            )
             missing_heavy_atom_names = tuple(
                 atom_name
                 for atom_name in template.expected_heavy_atom_names()
                 if not payload.has_atom(atom_name)
             )
+            try:
+                reconciliation = _reconcile_source_hydrogens(
+                    ordered_payload,
+                    source_payload=source_payload,
+                    source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
+                    generated_hydrogen_anchor_by_name=_hydrogen_anchor_by_name(
+                        template_hydrogen_bond_definitions,
+                        ordered_payload,
+                    ),
+                )
+            except _SourceHydrogenReconciliationError as error:
+                if not missing_heavy_atom_names:
+                    raise
+                raise _SourceHydrogenReconciliationError(
+                    "template-backed H reconciliation on an incomplete "
+                    "heavy-atom scaffold "
+                    f"(missing {', '.join(missing_heavy_atom_names)}) failed: {error}",
+                    atom_names=error.atom_names,
+                ) from error
             if missing_heavy_atom_names and source_payload is not None:
                 unpreserved_names = reconciliation.unpreserved_source_hydrogen_names(
                     source_payload
@@ -665,6 +691,7 @@ def _hydrogenate_retained_non_polymer_payload(
             _hydrogenate_retained_non_polymer_payload_with_rdkit_fallback_result(
                 payload,
                 source_payload=source_payload,
+                source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
             )
         )
         hydrogenated_payload = hydrogenation_result.payload
@@ -771,6 +798,7 @@ def _hydrogenate_retained_non_polymer_payload_with_rdkit_fallback_result(
     payload: CompletionResiduePayload,
     *,
     source_payload: CompletionResiduePayload | None = None,
+    source_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
 ) -> _RdkitFallbackHydrogenationResult:
     """Hydrogenate one payload and return fallback-inferred H anchors."""
 
@@ -780,6 +808,7 @@ def _hydrogenate_retained_non_polymer_payload_with_rdkit_fallback_result(
         formal_charge_by_atom_name=dict(payload.formal_charge_by_atom_name),
         present_hydrogen_atom_names=_hydrogen_atom_names(source_payload or payload),
         hydrogen_position_by_name=_hydrogen_position_by_name(source_payload),
+        hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
     )
     return _RdkitFallbackHydrogenationResult(
         payload=payload.apply_patch(
@@ -812,6 +841,14 @@ def _hydrogen_position_by_name(
     }
 
 
+class _SourceHydrogenReconciliationError(ValueError):
+    """Source H cannot be preserved by a coherent bounded correspondence."""
+
+    def __init__(self, message: str, *, atom_names: tuple[str, ...]) -> None:
+        super().__init__(message)
+        self.atom_names = atom_names
+
+
 def _reconcile_source_hydrogens(
     hydrogenated_payload: CompletionResiduePayload,
     *,
@@ -833,12 +870,6 @@ def _reconcile_source_hydrogens(
     ):
         return _SourceHydrogenReconciliationResult(payload=hydrogenated_payload)
 
-    if (
-        len(source_hydrogen_atom_names) * len(generated_hydrogen_atom_names)
-        > _SOURCE_HYDROGEN_RECONCILIATION_CANDIDATE_LIMIT
-    ):
-        return _SourceHydrogenReconciliationResult(payload=hydrogenated_payload)
-
     generated_name_by_source_name = _source_hydrogen_generated_name_assignment(
         hydrogenated_payload,
         source_payload=source_payload,
@@ -847,6 +878,15 @@ def _reconcile_source_hydrogens(
         source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name or {},
         generated_hydrogen_anchor_by_name=generated_hydrogen_anchor_by_name or {},
     )
+    if len(generated_name_by_source_name) != len(source_hydrogen_atom_names):
+        raise _SourceHydrogenReconciliationError(
+            "source connectivity or coordinates cannot be reconciled",
+            atom_names=tuple(
+                name
+                for name in source_hydrogen_atom_names
+                if name not in generated_name_by_source_name
+            ),
+        )
     source_name_by_generated_name = {
         generated_name: source_name
         for source_name, generated_name in generated_name_by_source_name.items()
@@ -900,16 +940,34 @@ def _source_hydrogen_generated_name_assignment(
     """Assign source H names to generated H slots by nearest coordinates."""
 
     candidates: list[tuple[float, int, int, str, str]] = []
+    generated_names_by_anchor: dict[str, list[tuple[int, str]]] = {}
+    for generated_index, generated_name in enumerate(generated_hydrogen_atom_names):
+        anchor = generated_hydrogen_anchor_by_name.get(generated_name)
+        if anchor is not None:
+            generated_names_by_anchor.setdefault(anchor, []).append(
+                (generated_index, generated_name)
+            )
+    all_generated = tuple(enumerate(generated_hydrogen_atom_names))
+    candidates_by_source = {
+        source_name: (
+            generated_names_by_anchor.get(
+                source_hydrogen_anchor_by_name[source_name], ()
+            )
+            if source_name in source_hydrogen_anchor_by_name
+            else all_generated
+        )
+        for source_name in source_hydrogen_atom_names
+    }
+    if sum(len(names) for names in candidates_by_source.values()) > (
+        _SOURCE_HYDROGEN_RECONCILIATION_CANDIDATE_LIMIT
+    ):
+        raise _SourceHydrogenReconciliationError(
+            "source hydrogen reconciliation exceeds the per-residue resource limit",
+            atom_names=source_hydrogen_atom_names,
+        )
     for source_index, source_name in enumerate(source_hydrogen_atom_names):
         source_position = source_payload.position(source_name)
-        for generated_index, generated_name in enumerate(generated_hydrogen_atom_names):
-            if not _source_hydrogen_anchor_is_compatible(
-                source_name,
-                generated_name,
-                source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
-                generated_hydrogen_anchor_by_name=generated_hydrogen_anchor_by_name,
-            ):
-                continue
+        for generated_index, generated_name in candidates_by_source[source_name]:
             if not _source_hydrogen_anchor_distance_is_compatible(
                 source_name,
                 generated_name,
@@ -933,7 +991,9 @@ def _source_hydrogen_generated_name_assignment(
                 )
             )
 
-    candidates.sort()
+    candidates.sort(
+        key=lambda pair: (pair[3] not in source_hydrogen_anchor_by_name, *pair)
+    )
     assignment: dict[str, str] = {}
     used_generated_names: set[str] = set()
     for _, _, _, source_name, generated_name in candidates:
@@ -946,22 +1006,6 @@ def _source_hydrogen_generated_name_assignment(
             break
 
     return assignment
-
-
-def _source_hydrogen_anchor_is_compatible(
-    source_name: str,
-    generated_name: str,
-    *,
-    source_hydrogen_anchor_by_name: Mapping[str, str],
-    generated_hydrogen_anchor_by_name: Mapping[str, str],
-) -> bool:
-    """Return whether source topology agrees with the generated H anchor."""
-
-    source_anchor = source_hydrogen_anchor_by_name.get(source_name)
-    if source_anchor is None:
-        return True
-
-    return generated_hydrogen_anchor_by_name.get(generated_name) == source_anchor
 
 
 def _source_hydrogen_anchor_distance_is_compatible(
@@ -1018,47 +1062,6 @@ def _hydrogen_anchor_by_name(
             anchor_by_hydrogen_name[bond_definition.atom_name_2] = (
                 bond_definition.atom_name_1
             )
-
-    return anchor_by_hydrogen_name
-
-
-def _source_explicit_hydrogen_anchor_by_name(
-    structure: ProteinStructure,
-    residue_id: ResidueId,
-    source_bonds: tuple[TopologyBond, ...],
-) -> Mapping[str, str]:
-    """Return source-explicit retained-ligand H anchors by H atom name."""
-
-    residue = structure.constitution.residue_or_ligand(residue_id)
-    if residue is None:
-        return {}
-
-    residue_atom_names = set(residue.atom_site_names())
-    anchor_by_hydrogen_name: dict[str, str] = {}
-    for bond in source_bonds:
-        if (
-            bond.provenance is not BondProvenance.SOURCE_EXPLICIT
-            or bond.relationship_type
-            not in {BondRelationshipType.COVALENT, BondRelationshipType.UNKNOWN}
-        ):
-            continue
-
-        atom_ref_1 = structure.constitution.atom_ref_at(bond.atom_index_1)
-        atom_ref_2 = structure.constitution.atom_ref_at(bond.atom_index_2)
-        if atom_ref_1.residue_id != residue_id or atom_ref_2.residue_id != residue_id:
-            continue
-        if (
-            atom_ref_1.atom_name not in residue_atom_names
-            or atom_ref_2.atom_name not in residue_atom_names
-        ):
-            continue
-
-        atom_site_1 = structure.constitution.atom_site_at(bond.atom_index_1)
-        atom_site_2 = structure.constitution.atom_site_at(bond.atom_index_2)
-        if atom_site_1.is_hydrogen() and not atom_site_2.is_hydrogen():
-            anchor_by_hydrogen_name[atom_ref_1.atom_name] = atom_ref_2.atom_name
-        elif atom_site_2.is_hydrogen() and not atom_site_1.is_hydrogen():
-            anchor_by_hydrogen_name[atom_ref_2.atom_name] = atom_ref_1.atom_name
 
     return anchor_by_hydrogen_name
 

@@ -1,6 +1,7 @@
 """Structure topology facets aligned to constitution-owned atom slots."""
 
 from bisect import bisect_left
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
 from math import isfinite
@@ -595,6 +596,93 @@ class StructureTopology:
             for atom_topology in (self.atom_topology(atom_index),)
             if atom_topology is not None
         )
+
+    def residue_hydrogen_anchor_by_name(
+        self,
+        *,
+        constitution: StructureConstitution,
+        residue_index: ResidueIndex,
+    ) -> Mapping[str, str]:
+        """Project local H connectivity without inferring missing attachments.
+
+        Parameters
+        ----------
+        constitution : StructureConstitution
+            This topology's atom address space.
+        residue_index : ResidueIndex
+            Residue whose present H/D/T parents are requested.
+
+        Returns
+        -------
+        Mapping[str, str]
+            Unambiguous present H/D/T names mapped to local heavy parents.
+            Missing, conflicting or unsupported attachments remain absent;
+            non-covalent contacts do not count as parents. Connectivity-only
+            source edges constrain identity, not resolved chemistry. This query
+            neither certifies graph completeness nor publishes bonds.
+
+        Raises
+        ------
+        ModelInvariantError
+            The constitution and topology are not aligned.
+        """
+        if not self.is_aligned_to(constitution):
+            raise ModelInvariantError(
+                "hydrogen attachment projection requires matching constitution"
+            )
+        residue = constitution.residue_site_at(residue_index)
+        hydrogen_names = {
+            constitution.atom_index_in_residue(residue_index, atom.name): atom.name
+            for atom in residue.atom_sites
+            if atom.is_hydrogen()
+        }
+        if not hydrogen_names:
+            return {}
+
+        anchors: dict[str, str] = {}
+        unavailable: set[str] = set()
+        for bond in self.bonds:
+            first, second = bond.endpoint_pair()
+            if first not in hydrogen_names and second not in hydrogen_names:
+                continue
+            if bond.relationship_type in {
+                BondRelationshipType.HYDROGEN_BOND,
+                BondRelationshipType.METAL_COORDINATION,
+            }:
+                continue
+            for hydrogen_index, parent_index in (
+                (first, second),
+                (second, first),
+            ):
+                hydrogen_name = hydrogen_names.get(hydrogen_index)
+                if hydrogen_name is None:
+                    continue
+                parent = constitution.atom_ref_at(parent_index)
+                parent_site = constitution.atom_site_at(parent_index)
+                if (
+                    parent.residue_id != residue.residue_id
+                    or parent_site.is_hydrogen()
+                    or bond.aromatic
+                    or bond.relationship_type
+                    not in {BondRelationshipType.COVALENT, BondRelationshipType.UNKNOWN}
+                    or bond.order not in {None, 1}
+                    or (
+                        (
+                            bond.order is None
+                            or bond.relationship_type is BondRelationshipType.UNKNOWN
+                        )
+                        and bond.provenance is not BondProvenance.SOURCE_EXPLICIT
+                    )
+                ):
+                    unavailable.add(hydrogen_name)
+                    continue
+                if hydrogen_name in anchors:
+                    unavailable.add(hydrogen_name)
+                anchors[hydrogen_name] = parent.atom_name
+
+        return {
+            name: anchor for name, anchor in anchors.items() if name not in unavailable
+        }
 
 
 def _canonical_endpoint_pair(

@@ -15,6 +15,9 @@
 
 ### Fixed
 
+- match retained H/D/T identities within compatible parent groups before applying
+  correspondence limits. Unmatched source hydrogens or an exceeded limit leave
+  the residue unchanged with a diagnostic rather than silently replacing them
 - resolve retained-ligand bond chemistry while preserving source connectivity
   metadata and explicitly reported attributes. Complete hydrogen inventories can
   receive topology-only repair without atom replacement or hydrogen clash

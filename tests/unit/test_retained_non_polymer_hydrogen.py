@@ -1196,8 +1196,8 @@ def test_retained_non_polymer_fallback_preserves_partial_source_h_names() -> Non
     )
 
 
-def test_retained_non_polymer_fallback_does_not_preserve_far_source_h() -> None:
-    """Stale source H coordinates should not replace generated fallback Hs."""
+def test_retained_non_polymer_fallback_preserves_unreconcilable_source_h() -> None:
+    """An unmatched source H must not be silently discarded or renamed."""
 
     residue_id = ResidueId("L", 1)
     structure = build_structure(
@@ -1224,8 +1224,10 @@ def test_retained_non_polymer_fallback_does_not_preserve_far_source_h() -> None:
     )
 
     hydrogen_names = _hydrogen_atom_names(result.structure, residue_id)
-    assert "HSRC" not in hydrogen_names
-    assert hydrogen_names == ("H001", "H002", "H003", "H004")
+    assert result.structure is structure
+    assert not result.repairs
+    assert hydrogen_names == ("HSRC",)
+    assert any("cannot be reconciled" in issue.message for issue in result.issues)
     assert not _has_topology_bond(
         result.structure,
         residue_id,
@@ -1238,7 +1240,7 @@ def test_retained_non_polymer_fallback_does_not_preserve_far_source_h() -> None:
 def test_retained_non_polymer_source_h_reconciliation_is_bounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Source-H reconciliation should skip preservation beyond its pair cap."""
+    """A pair bound cannot silently discard original H identity or geometry."""
 
     monkeypatch.setattr(
         retained_non_polymer_repair,
@@ -1270,8 +1272,10 @@ def test_retained_non_polymer_source_h_reconciliation_is_bounded(
     )
 
     hydrogen_names = _hydrogen_atom_names(result.structure, residue_id)
-    assert "HSRC" not in hydrogen_names
-    assert hydrogen_names == ("H001", "H002", "H003", "H004")
+    assert result.structure is structure
+    assert not result.repairs
+    assert hydrogen_names == ("HSRC",)
+    assert any("resource limit" in issue.message for issue in result.issues)
 
 
 def test_strict_retained_non_polymer_mode_blocks_rdkit_fallback_and_preserves_source_h(
