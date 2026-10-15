@@ -76,7 +76,7 @@ alternate fixed-template aromatic forms.
 
 ## Incomplete Templates
 
-A template can place hydrogens on the heavy atoms that are present, even when
+A neutral template can place hydrogens on compatible heavy atoms that are present, even when
 part of the component is missing. That partial placement is not evidence that
 the original hydrogens are wrong. If it cannot preserve all of them, ProtRepair
 leaves the residue unchanged and reports `UNSUPPORTED_HYDROGENATION`, identifying
@@ -87,6 +87,35 @@ Other retained components can still be completed. This does not certify the
 unchanged residue as chemically complete or ready for force-field refinement.
 Validated chemistry overrides remain a separate route for changing the selected
 chemistry, but they do not authorize silently dropping a source connection.
+
+## Formal Charges And Template Admission
+
+Selected chemistry includes formal-charge requirements as well as bonds and H
+inventory. Preparation checks those requirements before publishing a residue's
+changes. A known input charge that disagrees with the selected chemistry leaves
+the residue unchanged with a diagnostic; an unspecified charge is not evidence
+of neutrality.
+
+An explicit mapped SMILES supplies the heavy atoms' formal charges, including
+zero. Successful preparation writes missing assignments into canonical topology,
+and readiness requires them to be present. Bundled templates fill missing
+nonzero charges but leave unspecified neutral atoms unassigned. A template's
+neutral requirement still rejects a contradictory known input charge. PDB and
+mmCIF output use the resulting topology, not a separate writer charge policy.
+
+Non-neutral template preparation requires the complete heavy scaffold with
+matching names and elements. Neutral templates may prepare a compatible subset;
+this does not make a missing-heavy-atom component ready for refinement. Extra
+heavy names and contradictory elements are not accepted as that template.
+
+The bundle includes sulfate (`SO4`), a zero-H component with a selected -2
+graph/charge assignment, not an
+organic fallback or a generic metal/ion exemption. Unspecified ionic charges can
+be resolved without changing its atoms or coordinates. Source H or an external
+covalent attachment conflicts with that isolated zero-H template; typed hydrogen
+bonds and metal coordination are preserved separately. This template does not
+admit covalent derivatives, infer pH-dependent populations or validate a metal
+potential.
 
 ## RDKit Fallback
 

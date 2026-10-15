@@ -4,6 +4,8 @@
 
 ### Changed
 
+- include sulfate chemistry in the retained-component bundle, using the common
+  template preparation path
 - use local polar contacts by default to choose between source-compatible
   neutral HIS tautomers; epsilon remains the fallback when there is no
   preference. This changes some prepared H positions, not the original
@@ -18,6 +20,11 @@
 
 ### Fixed
 
+- publish retained-ligand formal charges with admitted bond chemistry, including
+  explicit neutral SMILES assignments; preserve known source charges and reject
+  conflicting or incompatible scaffolds before applying residue changes
+- distinguish unspecified source charges from declared zero in template
+  diagnostics and report charge-only repairs in mixed ligand batches
 - distinguish declared H attachments from incompatible model-derived parent
   hints during retained-ligand repair, and complete feasible one-to-one H
   correspondences before refusing a residue. Existing distance and candidate
