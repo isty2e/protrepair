@@ -15,6 +15,9 @@ from protrepair.chemistry.microstate.preparation import (
     PolymerSitePreparation,
 )
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
+from protrepair.chemistry.retained_non_polymer.glycosidic import (
+    GlycosidicTemplateBinding,
+)
 from protrepair.diagnostics.component_support import (
     diagnose_component_support,
     missing_component_definition_issue,
@@ -26,7 +29,8 @@ from protrepair.diagnostics.kinds import (
     RepairEventKind,
     ValidationIssueKind,
 )
-from protrepair.geometry import GeometryPlacementError
+from protrepair.geometry import GeometryPlacementError, Vec3
+from protrepair.geometry.placement_vector import normalized_vector_or_none
 from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
@@ -323,6 +327,24 @@ def _fixed_hydrogens(
                     )
                 )
                 continue
+            isolated_template = template
+            try:
+                binding = prepared.fixed_template_binding(payload.residue_id)
+                if binding is not None:
+                    template = binding.template
+            except ValueError as error:
+                issues.append(
+                    ValidationIssue.for_residue(
+                        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+                        severity=IssueSeverity.WARNING,
+                        residue_id=payload.residue_id,
+                        component_id=payload.component_id,
+                        message=(
+                            f"linked polymer fixed-H chemistry left unchanged: {error}"
+                        ),
+                    )
+                )
+                continue
             site_targets = prepared.targets_for(payload.residue_id)
             controlled = frozenset(
                 name
@@ -342,20 +364,31 @@ def _fixed_hydrogens(
             )
             semantics = template.hydrogen_semantics
             assert semantics is not None
+            static_names = fixed_template_names
+            if binding is not None and binding.amide_partner is not None:
+                static_names = static_names.difference(
+                    name
+                    for name, parent in template.template_hydrogen_anchor_by_name(
+                        template.expected_hydrogen_atom_names()
+                    ).items()
+                    if parent == "ND2"
+                )
             try:
                 fixed_identities = prepared.fixed_hydrogen_atom_sites(
                     payload.residue_id
                 )
                 named = prepared.context.hydrogen_parents(
                     payload.residue_id,
-                    PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN),
+                    PolymerMicrostateSite(
+                        isolated_template, PolymerChemicalSite.SIDECHAIN
+                    ),
                 )
                 if isinstance(semantics, IdealGeometryHydrogenSemantics):
                     generated = generate_component_hydrogen_patch(
                         residue=heavy[offset],
                         patch=patch,
                         semantics=semantics,
-                        selected_hydrogen_names=fixed_template_names,
+                        selected_hydrogen_names=static_names,
                     )
                     if generated is None:
                         raise GeometryPlacementError("insufficient heavy-atom anchors")
@@ -368,7 +401,11 @@ def _fixed_hydrogens(
                         ),
                         patch=patch,
                         semantics=semantics,
-                        selected_hydrogen_names=fixed_template_names,
+                        selected_hydrogen_names=static_names,
+                    )
+                if binding is not None and binding.amide_partner is not None:
+                    generated = _secondary_amide_patch(
+                        structure, payload, binding, generated
                     )
             except (GeometryPlacementError, KeyError, ValueError) as error:
                 issues.append(
@@ -580,6 +617,40 @@ def _restore_preparation_hydrogens(
         provenance=result.provenance,
         polymer_blueprint=result.polymer_blueprint,
     )
+
+
+def _secondary_amide_patch(
+    structure: ProteinStructure,
+    payload: CompletionResiduePayload,
+    binding: GlycosidicTemplateBinding,
+    patch: OrderedAtomPatch,
+) -> OrderedAtomPatch:
+    partner = binding.amide_partner
+    assert partner is not None
+    center = payload.position("ND2").to_array()
+    carbonyl = normalized_vector_or_none(payload.position("CG").to_array() - center)
+    external = normalized_vector_or_none(
+        structure.geometry.position(
+            structure.constitution.atom_index(partner)
+        ).to_array()
+        - center
+    )
+    if carbonyl is None or external is None:
+        raise GeometryPlacementError("secondary amide has a degenerate heavy bond")
+    remaining = normalized_vector_or_none(-(carbonyl + external))
+    if remaining is None:
+        raise GeometryPlacementError(
+            "secondary amide has no remaining planar direction"
+        )
+    position = Vec3.from_iterable(center + 1.01 * remaining)
+    names = {
+        name
+        for name, anchor in binding.template.template_hydrogen_anchor_by_name(
+            binding.template.expected_hydrogen_atom_names()
+        ).items()
+        if anchor == "ND2"
+    }
+    return patch.append_atoms(tuple(sorted(names)), tuple(position for _ in names))
 
 
 def _heavy_anchors_changed(

@@ -123,8 +123,8 @@ def test_template_backed_linked_glycan_hydrogenation_skips_absent_anchor_only() 
     assert not any(fact.requires_hydrogen_completion() for fact in after_facts.values())
 
 
-def test_linked_glycans_need_contextual_chemistry_without_source_mutation() -> None:
-    """Isolated chemistry cannot prepare a covalently attached glycan."""
+def test_linked_glycans_use_contextual_chemistry_without_source_mutation() -> None:
+    """Deposited links select coupled inventories without altering source atoms."""
     component_library = build_default_component_library()
     structure = read_structure(
         WHOLE_STRUCTURE_CORPUS_SOURCES["2z62-whole-structure"].output_path
@@ -138,9 +138,9 @@ def test_linked_glycans_need_contextual_chemistry_without_source_mutation() -> N
         {"NAG": 6, "BMA": 1, "FUL": 2}
     )
     assert all(
-        fact.hydrogen_expectation_source.value == "unresolved"
-        and "external" in fact.chemistry_failure_reason
-        and not fact.requires_hydrogen_completion()
+        fact.hydrogen_expectation_source.value == "template"
+        and not fact.chemistry_failure_reason
+        and fact.requires_hydrogen_completion()
         for fact in before_facts.values()
     )
     result = add_retained_non_polymer_hydrogens(
@@ -148,13 +148,33 @@ def test_linked_glycans_need_contextual_chemistry_without_source_mutation() -> N
         component_library=component_library,
         target_residue_ids=frozenset(before_facts),
     )
-    assert result.structure is structure
-    assert not result.repairs
-    assert {issue.residue_id for issue in result.issues} == set(before_facts)
+    assert not result.issues
+    assert {repair.residue_id for repair in result.repairs} == set(before_facts)
+    for old, _ in structure.geometry.iter_positions():
+        ref = structure.constitution.atom_ref_at(old)
+        current = result.structure.constitution.atom_index(ref)
+        assert result.structure.constitution.atom_site_at(
+            current
+        ) == structure.constitution.atom_site_at(old)
+        assert result.structure.geometry.atom_geometry(
+            current
+        ) == structure.geometry.atom_geometry(old)
+        if structure.topology.formal_charge(old) is not None:
+            assert result.structure.topology.formal_charge(
+                current
+            ) == structure.topology.formal_charge(old)
+    after_facts = _retained_non_polymer_facts_by_residue_id(
+        result.structure,
+        component_library=component_library,
+        component_ids=frozenset({"NAG", "BMA", "FUL"}),
+    )
     assert all(
-        issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
-        and "external" in issue.message
-        for issue in result.issues
+        fact.hydrogen_coverage_state.value == "complete"
+        and fact.heavy_atom_topology_availability_state
+        is TopologyAvailabilityState.PRESENT
+        and fact.hydrogen_topology_availability_state
+        is TopologyAvailabilityState.PRESENT
+        for fact in after_facts.values()
     )
 
 

@@ -87,6 +87,36 @@ class PolymerMicrostateContext:
             ),
         )
 
+    def external_heavy_bonds(self, atom_ref: AtomRef) -> tuple[TopologyBond, ...]:
+        """Read inter-residue heavy relationships from this snapshot's adjacency.
+
+        Parameters
+        ----------
+        atom_ref : AtomRef
+            Stable identity of a present polymer atom.
+
+        Returns
+        -------
+        tuple[TopologyBond, ...]
+            External heavy edges, including unresolved and non-covalent links.
+            Chemistry admission belongs to the caller.
+
+        Raises
+        ------
+        AtomNotFoundError
+            The atom is absent from this snapshot.
+        """
+        constitution = self.source.constitution
+        index = constitution.atom_index(atom_ref)
+        return tuple(
+            bond
+            for bond in self._bonds_by_atom.get(index, ())
+            for other in bond.endpoint_pair()
+            if other != index
+            and constitution.atom_ref_at(other).residue_id != atom_ref.residue_id
+            and not constitution.atom_site_at(other).is_hydrogen()
+        )
+
     def resolve(
         self,
         residue_id: ResidueId,

@@ -568,16 +568,19 @@ class StructureChemistryObservation:
         elif template is not None:
             heavy_topology_source = RetainedNonPolymerChemistryEvidenceSource.TEMPLATE
             scaffold_matches = template.has_complete_heavy_scaffold(residue)
+            expected_bonds = template_heavy_bond_definitions_for_present_atoms(
+                residue, template=template
+            )
+            if hydrogen_expectation_resolution.expected_heavy_atom_names:
+                scaffold_matches = (
+                    hydrogen_expectation_resolution.has_expected_heavy_scaffold(residue)
+                )
+                expected_bonds = hydrogen_expectation_resolution.heavy_bond_definitions
             heavy_atom_topology_availability_state = (
                 _retained_heavy_bond_topology_availability_state(
                     self.context_structure,
                     residue,
-                    expected_bond_definitions=(
-                        template_heavy_bond_definitions_for_present_atoms(
-                            residue,
-                            template=template,
-                        )
-                    ),
+                    expected_bond_definitions=expected_bonds,
                     empty_state=TopologyAvailabilityState.PRESENT,
                     covalent_like_endpoint_pairs=self.covalent_like_endpoint_pairs,
                 )

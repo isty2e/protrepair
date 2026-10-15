@@ -4,11 +4,15 @@ SUPPORTED_BUNDLED_RETAINED_NON_POLYMER_HYDROGENATION_COMPONENT_IDS: frozenset[st
     frozenset(
         {
             "ACE",
+            "BMA",
             "CMP",
             "COA",
             "FAD",
             "FMN",
+            "FUL",
+            "GNX",
             "HEM",
+            "IDY",
             "MAN",
             "NAD",
             "NAG",

@@ -84,10 +84,37 @@ Both sulfur endpoints must have compatible source charges and no competing
 external covalent or untyped attachment at SG. Links at another atom on the
 partner residue do not consume the sulfur's attachment site.
 
-Other linked chemistry, including glycosidic and covalent-adduct preparation,
-is unsupported by this resolver. Connected glycans previously treated as
-isolated components can now remain unprepared; this avoids filling occupied
-valences without a contextual chemical model.
+### Glycosidic Links
+
+An explicit single covalent link can select a pyranose product inventory.
+The selected component graph must contain one saturated six-membered sugar
+ring and an aldose-like anomeric carbon with declared stereochemistry.
+The donor's leaving hydroxyl is replaced by the deposited partner: a neutral
+alcohol oxygen on another supported pyranose, or polymer ASN ND2. An occupied
+acceptor oxygen receives no hydroxyl H; linked ASN receives one amide H rather
+than two. Methyl glycosides can act as acceptors, but not as donors through
+their anomeric O--methyl group.
+
+These roles come from the selected graph, not the component ID or atom names.
+The bundle includes NAG, MAN, BMA, FUL, GNX and IDY; a compatible user template
+uses the same path. The isolated templates retain their original inventories.
+Both preparation and readiness use the linked product's heavy atoms, H,
+charges and bonds. Local FF context retains covalently connected partners as
+fixed atoms even when they lie outside the spatial shell; it does not enlarge
+the requested motion.
+
+Admission checks the connected glycan, including the actual 3D orientation of
+declared ring centers and the donor's substituted partner. New stereocenter H
+is checked before publication. Original leaving atoms, excess source H/D/T,
+incompatible charges or contradictory geometry are not removed or moved to
+make a link fit. Only neutral, non-source H on a newly occupied hydroxyl can
+be removed. A contradictory partner prevents preparation of that connected
+glycan; independent components can still be prepared.
+
+This is not general carbohydrate reconstruction. Missing heavy atoms, absent
+or untyped links, furanose/ketose donors, ambiguous rings and other acceptor
+families remain unsupported. Proximity alone does not establish a glycosidic
+link. Covalent-adduct preparation also remains unsupported by this resolver.
 
 ### Stereochemistry In RDKit Placement
 

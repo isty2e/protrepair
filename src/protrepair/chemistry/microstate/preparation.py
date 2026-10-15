@@ -19,11 +19,14 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateResolution,
     MicrostateResolutionStatus,
 )
+from protrepair.chemistry.retained_non_polymer.glycosidic import (
+    GlycosidicTemplateBinding,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
-from protrepair.structure.labels import ResidueId
-from protrepair.structure.topology import TopologyBond
+from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.topology import BondRelationshipType, TopologyBond
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,8 +166,9 @@ class PolymerMicrostatePreparation:
     -----
     Charge defaults are resolved together before local neutral-HIS preferences.
     Ambiguous neighboring rings supply no polar support, so residue iteration
-    order cannot act as an implicit H-bond network optimizer. Geometry-dependent
-    targets cannot be reused after coordinate edits until a choice is applied.
+    order cannot act as an implicit H-bond network optimizer. Unselected HIS
+    preferences and linked ASN fixed-H admission depend on coordinates; those
+    preparations cannot be reused after coordinate edits.
 
     Raises
     ------
@@ -266,7 +270,27 @@ class PolymerMicrostatePreparation:
                     updated if entry is target else entry
                     for entry in targets[target.residue_id]
                 )
-        object.__setattr__(self, "_coordinate_dependent", bool(unresolved_histidines))
+        linked_asparagine = any(
+            residue.component_id == "ASN"
+            and residue.has_atom_site("ND2")
+            and any(
+                bond.relationship_type
+                not in (
+                    BondRelationshipType.HYDROGEN_BOND,
+                    BondRelationshipType.METAL_COORDINATION,
+                )
+                for bond in context.external_heavy_bonds(
+                    AtomRef(residue.residue_id, "ND2")
+                )
+            )
+            for chain in context.source.constitution.chains
+            for residue in chain.residues
+        )
+        object.__setattr__(
+            self,
+            "_coordinate_dependent",
+            bool(unresolved_histidines) or linked_asparagine,
+        )
         object.__setattr__(self, "_targets", MappingProxyType(targets))
         object.__setattr__(self, "context", context)
         object.__setattr__(self, "component_library", component_library)
@@ -293,6 +317,45 @@ class PolymerMicrostatePreparation:
             )
         )
 
+    def fixed_template_binding(
+        self, residue_id: ResidueId
+    ) -> GlycosidicTemplateBinding | None:
+        """Interpret fixed ASN H in its current glycosidic context.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Polymer identity in the preparation snapshot.
+
+        Returns
+        -------
+        GlycosidicTemplateBinding or None
+            Selected ASN product inventory, without placing H or changing bonds.
+
+        Raises
+        ------
+        ValueError
+            The connected chemistry is unsupported or contradictory.
+        """
+        residue = self.context.source.constitution.residue_or_ligand(residue_id)
+        if residue is None or residue.component_id != "ASN":
+            return None
+        if not residue.has_atom_site("ND2") or not any(
+            bond.relationship_type
+            not in (
+                BondRelationshipType.HYDROGEN_BOND,
+                BondRelationshipType.METAL_COORDINATION,
+            )
+            for bond in self.context.external_heavy_bonds(AtomRef(residue_id, "ND2"))
+        ):
+            return None
+        template = self.component_library.get(residue.component_id)
+        if template is None:
+            return None
+        return GlycosidicTemplateBinding(
+            self.context.source, residue, template, self.component_library
+        )
+
     def fixed_hydrogen_atom_sites(
         self, residue_id: ResidueId
     ) -> tuple[tuple[AtomSite, str], ...]:
@@ -313,7 +376,8 @@ class PolymerMicrostatePreparation:
         ------
         ValueError
             Original fixed-parent H exceed the template inventory, or a required
-            identity collides with another atom.
+            identity collides with another atom. Linked ASN also requires
+            compatible partner chemistry and mapped stereochemistry.
         """
         residue = self.context.source.constitution.residue_or_ligand(residue_id)
         if residue is None:
@@ -321,6 +385,10 @@ class PolymerMicrostatePreparation:
         template = self.component_library.get(residue.component_id)
         if template is None or not template.can_add_hydrogens():
             return ()
+        isolated = template
+        binding = self.fixed_template_binding(residue_id)
+        if binding is not None:
+            template = binding.template
         controlled = frozenset(
             name
             for target in self.targets_for(residue_id)
@@ -343,7 +411,7 @@ class PolymerMicrostatePreparation:
             if observation is None
             else observation.constitution.residue_or_ligand(residue_id)
         )
-        grammar = PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN)
+        grammar = PolymerMicrostateSite(isolated, PolymerChemicalSite.SIDECHAIN)
         selected: dict[str, list[AtomSite]] = {parent: [] for parent in names_by_parent}
         for candidate in (original, residue):
             if candidate is None or candidate.component_id != residue.component_id:

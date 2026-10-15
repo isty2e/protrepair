@@ -4,6 +4,10 @@
 
 ### Changed
 
+- prepare graph-qualified pyranose links to alcohol acceptors or polymer ASN
+  using the coupled product inventory, with source-preserving stereo checks;
+  add BMA, FUL, GNX and IDY component data. Unsupported glycans remain unchanged
+  with diagnostics
 - require selected chemistry to explain external covalent-like and untyped
   attachments before retained H/topology preparation. Unsupported connected
   components, including glycans without a contextual model, remain unchanged
@@ -24,6 +28,10 @@
 
 ### Fixed
 
+- retain non-peptide covalent partners of local FF context as fixed atoms,
+  without expanding the requested motion or spatial shell
+- use selected component elements, rather than mapped atom-name spelling, for
+  generated ideal-geometry hydrogens
 - validate both ends of retained covalent preparation: refuse caps on already
   occupied backbone nitrogens and disulfides with charged or multiply attached
   sulfur partners, without changing the source structure

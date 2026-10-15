@@ -1,4 +1,4 @@
-"""Bind isolated component chemistry to deposited acyl-amide attachments."""
+"""Bind isolated retained chemistry to supported covalent attachments."""
 
 from dataclasses import dataclass, replace
 
@@ -10,6 +10,9 @@ from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
+)
+from protrepair.chemistry.retained_non_polymer.glycosidic import (
+    GlycosidicTemplateBinding,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
@@ -35,9 +38,11 @@ class RetainedTemplateBinding:
     Notes
     -----
     Neutral aldehyde templates support one deposited carbonyl C--polymer N
-    substitution, using the canonical backbone atom names C and N. Other
-    templates require an isolated covalent context, except canonical CYS SG--SG
-    disulfides. Typed hydrogen bonds and metal coordination are not substitutions.
+    substitution, using the canonical backbone atom names C and N.
+    Graph-qualified pyranoses use substituted anomeric carbons and occupied
+    hydroxyl valences. Remaining templates require an isolated covalent context,
+    except canonical CYS SG--SG disulfides. Typed hydrogen bonds and metal
+    coordination are not substitutions.
     This binding does not mutate source atoms or resolve a deposited bond.
 
     Raises
@@ -48,6 +53,7 @@ class RetainedTemplateBinding:
 
     template: ResidueTemplate
     external_bonds: tuple[tuple[AtomRef, AtomRef], ...]
+    glycosidic: GlycosidicTemplateBinding
 
     def __init__(
         self,
@@ -56,8 +62,13 @@ class RetainedTemplateBinding:
         template: ResidueTemplate,
         component_library: ComponentLibrary,
     ) -> None:
+        glycosidic = GlycosidicTemplateBinding(
+            structure, residue, template, component_library
+        )
+        object.__setattr__(self, "glycosidic", glycosidic)
+        template = glycosidic.template
         object.__setattr__(self, "template", template)
-        object.__setattr__(self, "external_bonds", ())
+        object.__setattr__(self, "external_bonds", glycosidic.external_bonds)
         context = RetainedCovalentContext(structure, residue.residue_id)
         if not context.attachments:
             return
