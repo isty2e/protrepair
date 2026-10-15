@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from itertools import chain
 
 from protrepair.chemistry import (
     ComponentLibrary,
@@ -348,41 +349,20 @@ def _execute_retained_non_polymer_hydrogen_stage(
             target_structure=updated_structure,
             topology_plans=tuple(topology_plans),
         )
-    if not hydrogenated_payloads and updated_structure is not structure:
-        changed_pairs = {
-            bond.endpoint_pair()
-            for bond in (*structure.topology.bonds, *updated_structure.topology.bonds)
-            if structure.topology.bond_between(*bond.endpoint_pair())
-            != updated_structure.topology.bond_between(*bond.endpoint_pair())
-        }
-        for plan in topology_plans:
-            if any(
-                structure.constitution.atom_ref_at(pair[0]).residue_id
-                == plan.residue_id
-                for pair in changed_pairs
-            ):
-                repairs.append(
-                    RepairEvent.for_residue(
-                        kind=RepairEventKind.RETAINED_NON_POLYMER_TOPOLOGY_RESOLVED,
-                        residue_id=plan.residue_id,
-                        component_id=structure.constitution.residue_site_at(
-                            structure.constitution.residue_index(plan.residue_id)
-                        ).component_id,
-                        atom_names=tuple(
-                            sorted(
-                                {
-                                    structure.constitution.atom_ref_at(index).atom_name
-                                    for pair in changed_pairs
-                                    for index in pair
-                                    if structure.constitution.atom_ref_at(
-                                        index
-                                    ).residue_id
-                                    == plan.residue_id
-                                }
-                            )
-                        ),
-                    )
-                )
+    changed_payload_ids = {payload.residue_id for payload in hydrogenated_payloads}
+    graph_only_residue_ids = tuple(
+        plan.residue_id
+        for plan in topology_plans
+        if plan.residue_id not in changed_payload_ids
+    )
+    if graph_only_residue_ids and updated_structure is not structure:
+        repairs.extend(
+            _retained_topology_resolution_repairs(
+                structure,
+                updated_structure,
+                residue_ids=graph_only_residue_ids,
+            )
+        )
     if hydrogenated_payloads:
         updated_structure, cleanup_issues = cleanup_residual_hydrogen_clashes(
             updated_structure,
@@ -397,6 +377,50 @@ def _execute_retained_non_polymer_hydrogen_stage(
         structure=updated_structure,
         repairs=tuple(repairs),
         issues=tuple(issues),
+    )
+
+
+def _retained_topology_resolution_repairs(
+    source: ProteinStructure,
+    target: ProteinStructure,
+    *,
+    residue_ids: tuple[ResidueId, ...],
+) -> tuple[RepairEvent, ...]:
+    """Attribute graph-only edits after neighboring atom inventories change."""
+
+    previous_bonds = (
+        source.topology.bonds
+        if source.constitution is target.constitution
+        else source.topology.bonds_for_constitution(
+            source_constitution=source.constitution,
+            target_constitution=target.constitution,
+        )
+    )
+    previous_by_pair = {bond.endpoint_pair(): bond for bond in previous_bonds}
+    changed_names_by_residue: dict[ResidueId, set[str]] = {
+        residue_id: set() for residue_id in residue_ids
+    }
+    for bond in chain(previous_bonds, target.topology.bonds):
+        pair = bond.endpoint_pair()
+        if previous_by_pair.get(pair) == target.topology.bond_between(*pair):
+            continue
+        for index in pair:
+            reference = target.constitution.atom_ref_at(index)
+            names = changed_names_by_residue.get(reference.residue_id)
+            if names is not None:
+                names.add(reference.atom_name)
+
+    return tuple(
+        RepairEvent.for_residue(
+            kind=RepairEventKind.RETAINED_NON_POLYMER_TOPOLOGY_RESOLVED,
+            residue_id=residue_id,
+            component_id=target.constitution.residue_site_at(
+                target.constitution.residue_index(residue_id)
+            ).component_id,
+            atom_names=tuple(sorted(names)),
+        )
+        for residue_id, names in changed_names_by_residue.items()
+        if names
     )
 
 
