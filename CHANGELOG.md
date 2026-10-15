@@ -18,6 +18,10 @@
 
 ### Fixed
 
+- distinguish declared H attachments from incompatible model-derived parent
+  hints during retained-ligand repair, and complete feasible one-to-one H
+  correspondences before refusing a residue. Existing distance and candidate
+  limits, source atom payloads and declared-connection guards are unchanged
 - report graph-only retained-ligand repairs even when another ligand receives
   hydrogens in the same call, without treating shifted atom slots as bond changes
 - match retained H/D/T identities within compatible parent groups before applying

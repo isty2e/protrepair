@@ -1,5 +1,6 @@
 """Hydrogen completion over retained non-polymer components."""
 
+from collections import Counter, deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import chain
@@ -272,6 +273,13 @@ def _execute_retained_non_polymer_hydrogen_stage(
                 residue_index=structure.constitution.residue_index(ligand.residue_id),
             )
         )
+        source_explicit_hydrogen_anchor_by_name = (
+            structure.topology.residue_hydrogen_anchor_by_name(
+                constitution=structure.constitution,
+                residue_index=structure.constitution.residue_index(ligand.residue_id),
+                provenance=BondProvenance.SOURCE_EXPLICIT,
+            )
+        )
         try:
             result = _hydrogenate_retained_non_polymer_payload(
                 source_payload.without_atom_sites(_hydrogen_atom_names(source_payload)),
@@ -281,6 +289,9 @@ def _execute_retained_non_polymer_hydrogen_stage(
                 ),
                 source_payload=source_payload,
                 source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
+                source_explicit_hydrogen_anchor_by_name=(
+                    source_explicit_hydrogen_anchor_by_name
+                ),
                 is_disulfide_bonded=ligand.residue_id in disulfide_residue_ids,
                 allow_retained_non_polymer_rdkit_fallback=(
                     allow_retained_non_polymer_rdkit_fallback
@@ -486,6 +497,7 @@ def _hydrogenate_retained_non_polymer_payload(
     chemistry_evidence: RetainedNonPolymerChemistryEvidence | None = None,
     source_payload: CompletionResiduePayload | None = None,
     source_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
+    source_explicit_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
     is_disulfide_bonded: bool,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
 ) -> _RetainedNonPolymerHydrogenPayloadResult:
@@ -520,6 +532,9 @@ def _hydrogenate_retained_non_polymer_payload(
             hydrogenated_payload,
             source_payload=source_payload,
             source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
+            source_explicit_hydrogen_anchor_by_name=(
+                source_explicit_hydrogen_anchor_by_name
+            ),
             generated_hydrogen_anchor_by_name=_hydrogen_anchor_by_name(
                 projection.hydrogen_bond_definitions,
                 hydrogenated_payload,
@@ -619,6 +634,9 @@ def _hydrogenate_retained_non_polymer_payload(
                     ordered_payload,
                     source_payload=source_payload,
                     source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
+                    source_explicit_hydrogen_anchor_by_name=(
+                        source_explicit_hydrogen_anchor_by_name
+                    ),
                     generated_hydrogen_anchor_by_name=_hydrogen_anchor_by_name(
                         template_hydrogen_bond_definitions,
                         ordered_payload,
@@ -743,6 +761,9 @@ def _hydrogenate_retained_non_polymer_payload(
         ordered_payload,
         source_payload=source_payload,
         source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
+        source_explicit_hydrogen_anchor_by_name=(
+            source_explicit_hydrogen_anchor_by_name
+        ),
         generated_hydrogen_anchor_by_name=_hydrogen_anchor_by_name(
             projection.hydrogen_bond_definitions,
             ordered_payload,
@@ -878,6 +899,7 @@ def _reconcile_source_hydrogens(
     *,
     source_payload: CompletionResiduePayload | None,
     source_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
+    source_explicit_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
     generated_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
 ) -> _SourceHydrogenReconciliationResult:
     """Return hydrogenated payload with compatible source H atoms preserved."""
@@ -900,6 +922,9 @@ def _reconcile_source_hydrogens(
         source_hydrogen_atom_names=source_hydrogen_atom_names,
         generated_hydrogen_atom_names=generated_hydrogen_atom_names,
         source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name or {},
+        source_explicit_hydrogen_anchor_by_name=(
+            source_explicit_hydrogen_anchor_by_name or {}
+        ),
         generated_hydrogen_anchor_by_name=generated_hydrogen_anchor_by_name or {},
     )
     if len(generated_name_by_source_name) != len(source_hydrogen_atom_names):
@@ -959,11 +984,26 @@ def _source_hydrogen_generated_name_assignment(
     source_hydrogen_atom_names: tuple[str, ...],
     generated_hydrogen_atom_names: tuple[str, ...],
     source_hydrogen_anchor_by_name: Mapping[str, str],
+    source_explicit_hydrogen_anchor_by_name: Mapping[str, str],
     generated_hydrogen_anchor_by_name: Mapping[str, str],
 ) -> Mapping[str, str]:
-    """Assign source H names to generated H slots by nearest coordinates."""
+    """Match compatible H slots without promoting model hints to source authority."""
 
     candidates: list[tuple[float, int, int, str, str]] = []
+    current_anchors = dict(source_hydrogen_anchor_by_name)
+    current_anchors.update(source_explicit_hydrogen_anchor_by_name)
+    observed_counts = Counter(
+        current_anchors[name]
+        for name in source_hydrogen_atom_names
+        if name in current_anchors
+    )
+    generated_counts = Counter(generated_hydrogen_anchor_by_name.values())
+    source_hydrogen_anchor_by_name = {
+        name: parent
+        for name, parent in current_anchors.items()
+        if name in source_explicit_hydrogen_anchor_by_name
+        or observed_counts[parent] <= generated_counts[parent]
+    }
     generated_names_by_anchor: dict[str, list[tuple[int, str]]] = {}
     for generated_index, generated_name in enumerate(generated_hydrogen_atom_names):
         anchor = generated_hydrogen_anchor_by_name.get(generated_name)
@@ -1018,15 +1058,66 @@ def _source_hydrogen_generated_name_assignment(
     candidates.sort(
         key=lambda pair: (pair[3] not in source_hydrogen_anchor_by_name, *pair)
     )
+    return _maximum_hydrogen_assignment(
+        source_hydrogen_atom_names,
+        tuple((source, generated) for _, _, _, source, generated in candidates),
+    )
+
+
+def _maximum_hydrogen_assignment(
+    source_names: tuple[str, ...],
+    candidate_pairs: tuple[tuple[str, str], ...],
+) -> Mapping[str, str]:
+    """Preserve complete greedy matches; otherwise augment without recursion."""
+
     assignment: dict[str, str] = {}
-    used_generated_names: set[str] = set()
-    for _, _, _, source_name, generated_name in candidates:
-        if source_name in assignment or generated_name in used_generated_names:
+    source_by_generated: dict[str, str] = {}
+    for source_name, generated_name in candidate_pairs:
+        if source_name in assignment or generated_name in source_by_generated:
             continue
 
         assignment[source_name] = generated_name
-        used_generated_names.add(generated_name)
-        if len(assignment) == len(source_hydrogen_atom_names):
+        source_by_generated[generated_name] = source_name
+        if len(assignment) == len(source_names):
+            return assignment
+
+    if len(assignment) == len(source_names):
+        return assignment
+
+    candidates_by_source: dict[str, list[str]] = {}
+    for source_name, generated_name in candidate_pairs:
+        candidates_by_source.setdefault(source_name, []).append(generated_name)
+
+    for source_name in source_names:
+        if source_name in assignment:
+            continue
+        pending = deque((source_name,))
+        predecessor_by_generated: dict[str, str] = {}
+        available_name: str | None = None
+        while pending and available_name is None:
+            current = pending.popleft()
+            for generated_name in candidates_by_source.get(current, ()):
+                if generated_name in predecessor_by_generated:
+                    continue
+                predecessor_by_generated[generated_name] = current
+                occupant = source_by_generated.get(generated_name)
+                if occupant is None:
+                    available_name = generated_name
+                    break
+                pending.append(occupant)
+        if available_name is None:
+            continue
+
+        while True:
+            current = predecessor_by_generated[available_name]
+            previous_name = assignment.get(current)
+            assignment[current] = available_name
+            source_by_generated[available_name] = current
+            if previous_name is None:
+                break
+            available_name = previous_name
+
+        if len(assignment) == len(source_names):
             break
 
     return assignment

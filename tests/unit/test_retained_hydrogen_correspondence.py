@@ -301,6 +301,69 @@ def test_reobservation_separates_chemistry_from_attachment_multiplicity_conflict
     assert prepared.topology != changed.topology
 
 
+@pytest.mark.parametrize("use_override", (False, True))
+@pytest.mark.parametrize("topology_only", (False, True))
+@pytest.mark.parametrize(
+    "provenance",
+    (
+        BondProvenance.SOURCE_EXPLICIT,
+        BondProvenance.TEMPLATE_RESOLVED,
+        BondProvenance.REPAIR_INFERRED,
+    ),
+)
+def test_native_preparation_can_revise_stale_model_h_parent(
+    use_override: bool,
+    topology_only: bool,
+    provenance: BondProvenance,
+) -> None:
+    prepared = _prepared_alkane(2)
+    anchors = _hydrogen_anchors(prepared)
+    hydrogen = next(name for name, parent in anchors.items() if parent == "C00")
+    hydrogen_index = prepared.constitution.atom_index(AtomRef(LIGAND_ID, hydrogen))
+    source = _with_bonds(
+        prepared,
+        tuple(
+            bond
+            for bond in prepared.topology.bonds
+            if not bond.involves(hydrogen_index)
+        )
+        + (
+            TopologyBond(
+                hydrogen_index,
+                prepared.constitution.atom_index(AtomRef(LIGAND_ID, "C01")),
+                provenance=provenance,
+            ),
+        ),
+    )
+    evidence = (
+        (
+            RetainedNonPolymerChemistryOverride(
+                LIGAND_ID, "CC", ("C00", "C01")
+            ).to_evidence(),
+        )
+        if use_override
+        else ()
+    )
+    transform = (
+        resolve_retained_non_polymer_topology
+        if topology_only
+        else add_retained_non_polymer_hydrogens
+    )
+    result = transform(source, ComponentLibrary({}), chemistry_evidence=evidence)
+    assert result.structure.constitution == source.constitution
+    assert result.structure.geometry == source.geometry
+    if provenance is BondProvenance.SOURCE_EXPLICIT:
+        assert result.structure is source
+        assert not result.repairs
+        assert result.issues
+    else:
+        assert result.repairs
+        assert _hydrogen_anchors(result.structure) == anchors
+        assert not transform(
+            result.structure, ComponentLibrary({}), chemistry_evidence=evidence
+        ).repairs
+
+
 @pytest.mark.corpus
 def test_actual_1kgb_long_ligands_remain_chemically_observable_after_public_h():
     source = read_structure(Path("tests/fixtures/corpus/pdb1kgb.ent"))

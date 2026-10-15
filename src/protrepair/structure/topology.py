@@ -602,6 +602,7 @@ class StructureTopology:
         *,
         constitution: StructureConstitution,
         residue_index: ResidueIndex,
+        provenance: BondProvenance | None = None,
     ) -> Mapping[str, str]:
         """Project local H connectivity without inferring missing attachments.
 
@@ -611,6 +612,8 @@ class StructureTopology:
             This topology's atom address space.
         residue_index : ResidueIndex
             Residue whose present H/D/T parents are requested.
+        provenance : BondProvenance or None
+            Restrict the projection to this origin, or include all origins.
 
         Returns
         -------
@@ -642,6 +645,8 @@ class StructureTopology:
         anchors: dict[str, str] = {}
         unavailable: set[str] = set()
         for bond in self.bonds:
+            if provenance is not None and bond.provenance is not provenance:
+                continue
             first, second = bond.endpoint_pair()
             if first not in hydrogen_names and second not in hydrogen_names:
                 continue

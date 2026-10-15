@@ -42,6 +42,13 @@ of chemical completeness. If a required correspondence cannot be found within
 the per-residue resource bound, the attempt reports the reason and leaves the
 residue unchanged; it does not discard source hydrogens to continue.
 
+Declared source H attachments remain preservation constraints. Model-derived
+parents can guide correspondence when their H counts fit the admitted chemistry;
+incompatible model groups can be reassigned without replacing source atoms. If
+nearest-pair matching is incomplete, bounded augmenting paths look for a complete
+compatible assignment before refusing the residue. This is identity matching,
+not a protonation selector or a global geometry optimization.
+
 If the proposed graph contradicts a source connection, that ligand stays
 unchanged and receives a chemistry diagnostic. Other ligands can still be
 prepared. Local FF readiness reports unresolved chemistry, missing heavy-atom
