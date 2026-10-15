@@ -2,7 +2,7 @@
 
 from bisect import bisect_left
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from math import isfinite
 from numbers import Real
@@ -397,6 +397,9 @@ class StructureTopology:
     atom_topologies: tuple[AtomTopology | None, ...]
     bonds: tuple[TopologyBond, ...]
     _address_space_key: StructureAddressSpaceKey
+    _inter_residue_bonds_by_residue: (
+        dict[ResidueIndex, tuple[TopologyBond, ...]] | None
+    ) = field(init=False, repr=False, compare=False)
 
     def __init__(
         self,
@@ -417,6 +420,7 @@ class StructureTopology:
             "_address_space_key",
             structure_topology._address_space_key,
         )
+        object.__setattr__(self, "_inter_residue_bonds_by_residue", None)
 
     @classmethod
     def _from_address_space_key(
@@ -449,12 +453,16 @@ class StructureTopology:
             bonds, atom_slot_count=atom_slot_count
         )
         object.__setattr__(structure_topology, "bonds", deduplicated_bonds)
+        object.__setattr__(structure_topology, "_inter_residue_bonds_by_residue", None)
         return structure_topology
 
     def is_aligned_to(self, constitution: StructureConstitution) -> bool:
         """Return whether this topology payload matches one constitution."""
 
-        return self._address_space_key == constitution.address_space_key
+        return (
+            self._address_space_key is constitution.address_space_key
+            or self._address_space_key == constitution.address_space_key
+        )
 
     @classmethod
     def empty(
@@ -541,6 +549,51 @@ class StructureTopology:
             for bond in self.bonds
             if is_covalent_like_relationship(bond)
         )
+
+    def inter_residue_bonds_for_residue(
+        self,
+        *,
+        constitution: StructureConstitution,
+        residue_index: ResidueIndex,
+    ) -> tuple[TopologyBond, ...]:
+        """Return a residue's bonds to other residues in canonical bond order.
+
+        Parameters
+        ----------
+        constitution : StructureConstitution
+            Constitution aligned with this topology's address space.
+        residue_index : ResidueIndex
+            Residue whose external relationships are requested.
+
+        Returns
+        -------
+        tuple[TopologyBond, ...]
+            Original bonds of every relationship and provenance. Chemical
+            admission remains the caller's responsibility. The immutable graph
+            is indexed on first use, then reused for subsequent residue queries.
+
+        Raises
+        ------
+        ModelInvariantError
+            The constitution does not match this topology's address space.
+        """
+        if not self.is_aligned_to(constitution):
+            raise ModelInvariantError(
+                "inter-residue bond projection requires matching constitution"
+            )
+        by_residue = self._inter_residue_bonds_by_residue
+        if by_residue is None:
+            grouped: dict[ResidueIndex, list[TopologyBond]] = {}
+            for bond in self.bonds:
+                first = constitution.residue_index_for_atom_index(bond.atom_index_1)
+                second = constitution.residue_index_for_atom_index(bond.atom_index_2)
+                if first == second:
+                    continue
+                grouped.setdefault(first, []).append(bond)
+                grouped.setdefault(second, []).append(bond)
+            by_residue = {index: tuple(bonds) for index, bonds in grouped.items()}
+            object.__setattr__(self, "_inter_residue_bonds_by_residue", by_residue)
+        return by_residue.get(residue_index, ())
 
     def atom_count(self) -> int:
         """Return the number of stored atom-topology slots."""

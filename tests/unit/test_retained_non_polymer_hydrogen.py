@@ -123,9 +123,8 @@ def test_template_backed_linked_glycan_hydrogenation_skips_absent_anchor_only() 
     assert not any(fact.requires_hydrogen_completion() for fact in after_facts.values())
 
 
-def test_mixed_glycan_template_and_rdkit_fallback_hydrogenation_resolves_2z62() -> None:
-    """2Z62 glycans should resolve template and RDKit-fallback hydrogen needs."""
-
+def test_linked_glycans_need_contextual_chemistry_without_source_mutation() -> None:
+    """Isolated chemistry cannot prepare a covalently attached glycan."""
     component_library = build_default_component_library()
     structure = read_structure(
         WHOLE_STRUCTURE_CORPUS_SOURCES["2z62-whole-structure"].output_path
@@ -135,57 +134,27 @@ def test_mixed_glycan_template_and_rdkit_fallback_hydrogenation_resolves_2z62() 
         component_library=component_library,
         component_ids=frozenset({"NAG", "BMA", "FUL"}),
     )
-    target_residue_ids = frozenset(before_facts)
-
-    assert Counter(
-        (
-            fact.component_id,
-            fact.hydrogen_expectation_source.value,
-            fact.requires_hydrogen_completion(),
-        )
-        for fact in before_facts.values()
-    ) == Counter(
-        {
-            ("NAG", "template", True): 6,
-            ("BMA", "rdkit_fallback", True): 1,
-            ("FUL", "rdkit_fallback", True): 2,
-        }
+    assert Counter(fact.component_id for fact in before_facts.values()) == Counter(
+        {"NAG": 6, "BMA": 1, "FUL": 2}
     )
-
+    assert all(
+        fact.hydrogen_expectation_source.value == "unresolved"
+        and "external" in fact.chemistry_failure_reason
+        and not fact.requires_hydrogen_completion()
+        for fact in before_facts.values()
+    )
     result = add_retained_non_polymer_hydrogens(
         structure,
         component_library=component_library,
-        target_residue_ids=target_residue_ids,
+        target_residue_ids=frozenset(before_facts),
     )
-
-    assert len(result.repairs) == len(target_residue_ids)
-    fallback_issues = _fallback_used_issues(result.issues)
-    assert Counter(issue.residue_id for issue in fallback_issues) == Counter(
-        {
-            residue_id: 1
-            for residue_id, fact in before_facts.items()
-            if fact.hydrogen_expectation_source.value == "rdkit_fallback"
-        }
-    )
-    after_facts = _retained_non_polymer_facts_by_residue_id(
-        result.structure,
-        component_library=component_library,
-        component_ids=frozenset({"NAG", "BMA", "FUL"}),
-    )
-    assert Counter(
-        (
-            fact.component_id,
-            fact.hydrogen_expectation_source.value,
-            fact.hydrogen_coverage_state.value,
-            fact.requires_hydrogen_completion(),
-        )
-        for fact in after_facts.values()
-    ) == Counter(
-        {
-            ("NAG", "template", "complete", False): 6,
-            ("BMA", "rdkit_fallback", "complete", False): 1,
-            ("FUL", "rdkit_fallback", "complete", False): 2,
-        }
+    assert result.structure is structure
+    assert not result.repairs
+    assert {issue.residue_id for issue in result.issues} == set(before_facts)
+    assert all(
+        issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
+        and "external" in issue.message
+        for issue in result.issues
     )
 
 

@@ -54,6 +54,41 @@ unchanged and receives a chemistry diagnostic. Other ligands can still be
 prepared. Local FF readiness reports unresolved chemistry, missing heavy-atom
 topology and missing H topology separately.
 
+### Connected Components
+
+An isolated template or residue-local SMILES does not describe a covalent
+adduct. Every external covalent-like or untyped edge must be explained by
+the selected chemistry, regardless of its provenance. Unsupported attachments
+leave the residue unchanged with a diagnostic rather than adding the isolated
+component's H inventory. Typed hydrogen bonds and metal coordination are not
+covalent substitutions; preserving them does not certify a coordination site.
+These connection checks inspect relationships already present in canonical
+topology; they do not infer missing external bonds from spatial proximity.
+
+For a complete neutral aldehyde scaffold, one deposited carbonyl `C`--polymer
+backbone `N` single link can select an acyl-amide application. The carbonyl H
+is absent from that application; the methyl H inventory is retained. Existing
+carbonyl H, conflicting charges, ambiguous links or unsupported partners are
+not removed to make it fit. The original isolated template remains available
+when there is no covalent attachment.
+The polymer N must have no other external covalent or untyped attachment;
+an existing peptide bond is not displaced to admit a cap.
+
+The topology/H transformer realizes the admitted external order and preserves
+the source link metadata. Readiness requires that realized graph, and polymer
+N chemistry recognizes the cap only after its neutral acyl-amide graph exists.
+An unresolved deposited link alone is not enough. Canonical CYS SG--SG
+disulfides retain their no-thiol-H inventory; mapped evidence must describe a
+compatible neutral terminal-thiol precursor.
+Both sulfur endpoints must have compatible source charges and no competing
+external covalent or untyped attachment at SG. Links at another atom on the
+partner residue do not consume the sulfur's attachment site.
+
+Other linked chemistry, including glycosidic and covalent-adduct preparation,
+is unsupported by this resolver. Connected glycans previously treated as
+isolated components can now remain unprepared; this avoids filling occupied
+valences without a contextual chemical model.
+
 ### Stereochemistry In RDKit Placement
 
 For mapped SMILES, preparation and readiness compare declared stereochemistry
@@ -152,6 +187,14 @@ fragment is a complete chemical species.
 Retained components use the full component inventory. For example, SAH and SAM
 contain an atom named `OXT`; it is not removed by the polymer free-terminal
 projection.
+
+The bundle also includes standalone sulfanilamide (`SAN`) and cyclic AMP
+(`CMP`), using their neutral CCD graphs and ideal references. These are
+preparation defaults, not physiological protonation predictions. Explicit
+source-compatible overrides can select other chemistry. Their standalone
+support does not imply covalent-adduct or coordination support. CCD `ACE`
+is stored as its full isolated acetaldehyde graph; the linked acyl application
+above is selected from graph and context, not the component identifier.
 
 The bundle includes sulfate (`SO4`), a zero-H component with a selected -2
 graph/charge assignment, not an organic fallback or a generic metal/ion exemption.

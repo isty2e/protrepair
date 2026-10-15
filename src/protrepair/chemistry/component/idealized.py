@@ -1,6 +1,7 @@
 """Idealized component models built from chemistry ingress sources."""
 
-from dataclasses import dataclass
+from collections.abc import Collection
+from dataclasses import dataclass, replace
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.structure.element import ElementIdentity
@@ -168,3 +169,69 @@ class IdealizedComponent:
             return None
 
         return heavy_neighbors[0]
+
+    def neutral_aldehyde_carbonyl_atom_names(self) -> tuple[str, ...]:
+        """Find neutral C(=O)(C)H centers eligible for acyl substitution.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Carbonyl atom names with exactly one O double bond, one C single
+            bond and one H single bond. This describes the isolated graph, not
+            evidence that a substitution has occurred.
+        """
+        names = []
+        atoms_by_name = {atom.atom_name: atom for atom in self.atoms}
+        for atom in self.heavy_atoms():
+            if atom.element != "C" or atom.formal_charge != 0:
+                continue
+            neighbors = []
+            for bond in self.bonds:
+                if atom.atom_name not in (bond.atom_name_1, bond.atom_name_2):
+                    continue
+                other_name = (
+                    bond.atom_name_2
+                    if bond.atom_name_1 == atom.atom_name
+                    else bond.atom_name_1
+                )
+                other = atoms_by_name.get(other_name)
+                if other is None or other.formal_charge != 0 or bond.aromatic:
+                    neighbors = []
+                    break
+                neighbors.append((other.element, bond.order))
+            if sorted(neighbors) == [("C", 1), ("H", 1), ("O", 2)]:
+                names.append(atom.atom_name)
+        return tuple(names)
+
+    def without_hydrogens_anchored_to(
+        self, anchor_atom_names: Collection[str]
+    ) -> "IdealizedComponent":
+        """Project the component inventory without H on selected anchors.
+
+        Parameters
+        ----------
+        anchor_atom_names : Collection[str]
+            Canonical heavy anchors whose H inventory is excluded.
+
+        Returns
+        -------
+        IdealizedComponent
+            Pure graph projection. It neither deletes deposited atoms nor
+            establishes the external chemistry occupying the freed valence.
+        """
+        excluded = {
+            atom.atom_name
+            for atom in self.hydrogen_atoms()
+            if self.hydrogen_anchor_atom_name(atom.atom_name) in anchor_atom_names
+        }
+        if not excluded:
+            return self
+        return replace(
+            self,
+            atoms=tuple(atom for atom in self.atoms if atom.atom_name not in excluded),
+            bonds=tuple(
+                bond
+                for bond in self.bonds
+                if bond.atom_name_1 not in excluded and bond.atom_name_2 not in excluded
+            ),
+        )
