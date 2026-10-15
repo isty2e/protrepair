@@ -1,8 +1,10 @@
 """Retained non-polymer chemistry resolution facts."""
 
+from collections import Counter
 from collections.abc import Collection
 from dataclasses import dataclass, replace
 from enum import Enum
+from itertools import combinations
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.library import ComponentLibrary
@@ -28,6 +30,7 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.labels import ResidueId
+from protrepair.structure.topology import BondRelationshipType
 
 
 class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
@@ -57,6 +60,86 @@ class RetainedNonPolymerChemistryResolution:
     rdkit_backend_version: str | None = None
     hydrogen_name_projection_candidate_count: int = 0
     hydrogen_name_projection_candidate_limit: int = 0
+
+    def has_hydrogen_topology(
+        self, structure: ProteinStructure, residue: ResidueSite
+    ) -> bool:
+        """Compare H attachments without treating source names as chemistry.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Current canonical graph, observed without mutation.
+        residue : ResidueSite
+            Retained residue on that graph.
+
+        Returns
+        -------
+        bool
+            Whether each present H has exactly one resolved local heavy anchor
+            and the anchor multiplicities match admitted chemistry. Equivalent H
+            names may differ, but matching a total H count alone is insufficient.
+        """
+        if not self.source.is_resolved():
+            return False
+        heavy_names = {
+            atom.name for atom in residue.atom_sites if not atom.is_hydrogen()
+        }
+        expected_anchors: Counter[str] = Counter()
+        for bond in self.hydrogen_bond_definitions:
+            heavy_endpoints = heavy_names.intersection(
+                (bond.atom_name_1, bond.atom_name_2)
+            )
+            if len(heavy_endpoints) != 1:
+                return False
+            expected_anchors.update(heavy_endpoints)
+        hydrogens = tuple(
+            atom.name for atom in residue.atom_sites if atom.is_hydrogen()
+        )
+        if len(hydrogens) != len(self.expected_hydrogen_atom_names):
+            return False
+        if sum(expected_anchors.values()) != len(hydrogens):
+            return False
+
+        residue_index = structure.constitution.residue_index(residue.residue_id)
+        hydrogen_indices = tuple(
+            structure.constitution.atom_index_in_residue(residue_index, name)
+            for name in hydrogens
+        )
+        for first, second in combinations(hydrogen_indices, 2):
+            bond = structure.topology.bond_between(first, second)
+            if bond is not None and bond.relationship_type in {
+                BondRelationshipType.UNKNOWN,
+                BondRelationshipType.COVALENT,
+                BondRelationshipType.DISULFIDE,
+            }:
+                return False
+
+        observed_anchors: Counter[str] = Counter()
+        for hydrogen_index in hydrogen_indices:
+            anchors = []
+            for heavy_name in heavy_names:
+                heavy_index = structure.constitution.atom_index_in_residue(
+                    residue_index, heavy_name
+                )
+                bond = structure.topology.bond_between(hydrogen_index, heavy_index)
+                if bond is None or bond.relationship_type not in {
+                    BondRelationshipType.UNKNOWN,
+                    BondRelationshipType.COVALENT,
+                    BondRelationshipType.DISULFIDE,
+                }:
+                    continue
+                if (
+                    bond.relationship_type is not BondRelationshipType.COVALENT
+                    or bond.order != 1
+                    or bond.aromatic
+                ):
+                    return False
+                anchors.append(heavy_name)
+            if len(anchors) != 1:
+                return False
+            observed_anchors.update(anchors)
+        return observed_anchors == expected_anchors
 
     def __post_init__(self) -> None:
         rdkit_backend_version = self.rdkit_backend_version
@@ -264,7 +347,9 @@ def _resolve_retained_non_polymer_chemistry_source(
             ),
             hydrogen_bond_definitions=template_hydrogen_bond_definitions_for_names(
                 template,
-                hydrogen_atom_names=expected_hydrogen_atom_names,
+                hydrogen_atom_names=_materializable_retained_non_polymer_template_hydrogen_atom_names(
+                    residue, template=template
+                ),
             ),
         )
 
@@ -286,6 +371,10 @@ def _resolve_retained_non_polymer_chemistry_source(
                 for atom_site in residue.atom_sites
                 if atom_site.is_hydrogen()
             },
+            hydrogen_anchor_by_name=structure.topology.residue_hydrogen_anchor_by_name(
+                constitution=structure.constitution,
+                residue_index=residue_index,
+            ),
         )
     except (RuntimeError, ValueError) as error:
         return RetainedNonPolymerChemistryResolution(
@@ -296,13 +385,9 @@ def _resolve_retained_non_polymer_chemistry_source(
     return RetainedNonPolymerChemistryResolution(
         source=RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK,
         rdkit_backend_version=fallback_inference_result.rdkit_backend_version,
-        expected_hydrogen_atom_names=(
-            fallback_inference_result.hydrogen_atom_names
-        ),
+        expected_hydrogen_atom_names=(fallback_inference_result.hydrogen_atom_names),
         heavy_bond_definitions=fallback_inference_result.heavy_bond_definitions,
-        hydrogen_bond_definitions=(
-            fallback_inference_result.hydrogen_bond_definitions
-        ),
+        hydrogen_bond_definitions=(fallback_inference_result.hydrogen_bond_definitions),
         hydrogen_name_projection_candidate_count=(
             fallback_inference_result.hydrogen_name_projection_candidate_count
         ),

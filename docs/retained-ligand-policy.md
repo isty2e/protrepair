@@ -19,6 +19,75 @@ heavy-atom set before workflow execution. Invalid SMILES/evidence mappings or
 mismatched overrides raise `ValueError`; they do not silently fall through to
 another chemistry source.
 
+## Connectivity And Existing Hydrogens
+
+A source CONECT record can identify two connected atoms without declaring a bond
+order. After validating the ligand chemistry, ProtRepair fills missing bond
+attributes from the selected template, override or RDKit inference. The source
+record and its reported attributes remain separate from the resolved graph.
+An explicitly reported order or relationship is not silently replaced.
+
+A complete H inventory does not necessarily have a complete bond graph. In that
+case, the planner can select a topology-only transformer. It checks H attachment
+against the admitted chemistry and publishes compatible bonds without moving,
+renaming or replacing atoms, including source H isotopes. Matching the total H
+count is not enough: each H needs a compatible local heavy-atom anchor, without
+extra covalent attachments to another H or another residue. Source hydrogen bonds
+and metal coordination records remain separate from covalent H attachments.
+
+Hydrogen correspondence uses compatible local parent groups before comparing
+coordinates. This preserves existing H/D/T identities without considering every
+hydrogen pair in a large ligand. Ambiguous attachments do not become evidence
+of chemical completeness. If a required correspondence cannot be found within
+the per-residue resource bound, the attempt reports the reason and leaves the
+residue unchanged; it does not discard source hydrogens to continue.
+
+Declared source H attachments remain preservation constraints. Model-derived
+parents can guide correspondence when their H counts fit the admitted chemistry;
+incompatible model groups can be reassigned without replacing source atoms. If
+nearest-pair matching is incomplete, bounded augmenting paths look for a complete
+compatible assignment before refusing the residue. This is identity matching,
+not a protonation selector or a global geometry optimization.
+
+If the proposed graph contradicts a source connection, that ligand stays
+unchanged and receives a chemistry diagnostic. Other ligands can still be
+prepared. Local FF readiness reports unresolved chemistry, missing heavy-atom
+topology and missing H topology separately.
+
+### Fixed-Template Aromatic Bond Orders
+
+Fixed-template preparation currently requires reported bond orders to match the
+template's particular Kekule form. A chemically equivalent alternative can pass
+ingress but still be refused during preparation. For example, FMN with repeated
+CONECT records selecting the opposite aromatic-ring double bonds receives
+`CHEMISTRY_CONTRADICTION`, even though the difference need not be a chemical
+contradiction. The ligand's atoms and bonds remain unchanged.
+
+This also affects inputs with complete hydrogens: topology-only repair cannot
+resolve that representation, and local force-field readiness remains blocked.
+Connectivity-only records and orders matching the template do not have this
+limitation.
+
+Fixed-template resonance selection is deferred rather than handled by ignoring
+reported orders. It needs a shared resolution rule for the template graph,
+hydrogen inventory, charges and stereochemistry, used by both preparation and
+readiness. Revisit this limitation before extending the resolver's support to
+alternate fixed-template aromatic forms.
+
+## Incomplete Templates
+
+A template can place hydrogens on the heavy atoms that are present, even when
+part of the component is missing. That partial placement is not evidence that
+the original hydrogens are wrong. If it cannot preserve all of them, ProtRepair
+leaves the residue unchanged and reports `UNSUPPORTED_HYDROGENATION`, identifying
+the missing heavy atoms and unmatched hydrogens.
+
+Failed hydrogenation leaves the residue out of the subsequent H clash cleanup.
+Other retained components can still be completed. This does not certify the
+unchanged residue as chemically complete or ready for force-field refinement.
+Validated chemistry overrides remain a separate route for changing the selected
+chemistry, but they do not authorize silently dropping a source connection.
+
 ## RDKit Fallback
 
 RDKit fallback is enabled by default for retained components without usable

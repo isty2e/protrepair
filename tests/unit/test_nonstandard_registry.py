@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from tests.support.canonical_builders import (
     atom_payload,
     build_structure,
@@ -78,8 +79,7 @@ def test_default_component_library_includes_bundled_nonstandard_templates() -> N
     assert default_library.normalize_component_id("HSE") == "HIS"
 
 
-def test_default_component_library_includes_bundled_retained_non_polymer_templates(
-) -> None:
+def test_default_library_includes_bundled_retained_templates() -> None:
     """The internal default library should include bundled cofactor templates."""
 
     default_library = build_default_component_library()
@@ -147,6 +147,28 @@ def test_bundled_retained_non_polymer_registry_exposes_curated_cofactor() -> Non
     assert record.component_id == "HEM"
     assert any(atom.is_hydrogen() for atom in record.atoms)
     assert record.to_restraint_template().bond_targets
+
+
+@pytest.mark.parametrize(
+    ("component_id", "first", "second", "hydrogen"),
+    (
+        ("FAD", "C1'", "C2'", "H1'1"),
+        ("FMN", "C1'", "C2'", "H1'1"),
+        ("SAH", "C5'", "C4'", "H5'1"),
+        ("SAM", "C5'", "C4'", "H5'1"),
+    ),
+)
+def test_bundled_cofactor_prime_atom_names_resolve_connectivity_and_restraints(
+    component_id: str, first: str, second: str, hydrogen: str
+) -> None:
+    record = build_bundled_retained_non_polymer_registry().get(component_id)
+    assert record is not None
+    component = record.to_idealized_component()
+
+    assert component.atom_with_ideal_position(first) is not None
+    assert second in component.bonded_atom_names(first)
+    assert component.hydrogen_anchor_atom_name(hydrogen) == first
+    assert record.to_restraint_template().bond_target(first, second) is not None
 
 
 def test_bundled_retained_non_polymer_asset_is_packaged_in_source_tree() -> None:

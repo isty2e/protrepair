@@ -1,6 +1,8 @@
 """Structure topology facets aligned to constitution-owned atom slots."""
 
-from dataclasses import dataclass
+from bisect import bisect_left
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from enum import Enum
 from math import isfinite
 from numbers import Real
@@ -223,6 +225,58 @@ class TopologyBond:
         """Return whether this bond references one atom slot."""
 
         return atom_index in (self.atom_index_1, self.atom_index_2)
+
+    def with_resolved_chemistry(self, expected: "TopologyBond") -> "TopologyBond":
+        """Resolve effective chemistry while preserving source declarations.
+
+        Parameters
+        ----------
+        expected : TopologyBond
+            Admitted covalent-like chemistry for these same endpoints.
+            An inferred order may change, but a reported source order may not.
+
+        Returns
+        -------
+        TopologyBond
+            Resolved chemistry with this bond's provenance and source metadata.
+
+        Raises
+        ------
+        ValueError
+            Endpoints differ, expected chemistry is unresolved, or an existing
+            protected order, relationship, or aromatic assignment conflicts.
+        """
+        if self.endpoint_pair() != expected.endpoint_pair():
+            raise ValueError("resolved chemistry requires matching endpoints")
+        if not is_covalent_like_relationship(expected) or expected.order is None:
+            raise ValueError("expected bond chemistry must be resolved")
+        if self.relationship_type not in {
+            BondRelationshipType.UNKNOWN,
+            expected.relationship_type,
+        }:
+            raise ValueError("resolved chemistry conflicts with bond relationship")
+        preserved_order = (
+            self.source_metadata.reported_order
+            if self.source_metadata is not None
+            else self.order
+        )
+        if preserved_order is not None and preserved_order != expected.order:
+            raise ValueError("resolved chemistry conflicts with bond order")
+        if (
+            self.source_metadata is not None
+            and self.source_metadata.reported_relationship_type
+            not in {BondRelationshipType.UNKNOWN, expected.relationship_type}
+        ):
+            raise ValueError("resolved chemistry conflicts with source relationship")
+        if self.source_metadata is None and self.aromatic and not expected.aromatic:
+            raise ValueError("resolved chemistry conflicts with aromatic assignment")
+
+        return replace(
+            self,
+            relationship_type=expected.relationship_type,
+            order=expected.order,
+            aromatic=expected.aromatic,
+        )
 
 
 _COVALENT_LIKE_RELATIONSHIP_TYPES: frozenset[BondRelationshipType] = frozenset(
@@ -467,7 +521,13 @@ class StructureTopology:
             return None
 
         endpoint_pair = _canonical_endpoint_pair(atom_index_1, atom_index_2)
-        for bond in self.bonds:
+        position = bisect_left(
+            self.bonds,
+            (endpoint_pair[0].value, endpoint_pair[1].value),
+            key=_bond_endpoint_values,
+        )
+        if position < len(self.bonds):
+            bond = self.bonds[position]
             if bond.endpoint_pair() == endpoint_pair:
                 return bond
 
@@ -537,6 +597,98 @@ class StructureTopology:
             if atom_topology is not None
         )
 
+    def residue_hydrogen_anchor_by_name(
+        self,
+        *,
+        constitution: StructureConstitution,
+        residue_index: ResidueIndex,
+        provenance: BondProvenance | None = None,
+    ) -> Mapping[str, str]:
+        """Project local H connectivity without inferring missing attachments.
+
+        Parameters
+        ----------
+        constitution : StructureConstitution
+            This topology's atom address space.
+        residue_index : ResidueIndex
+            Residue whose present H/D/T parents are requested.
+        provenance : BondProvenance or None
+            Restrict the projection to this origin, or include all origins.
+
+        Returns
+        -------
+        Mapping[str, str]
+            Unambiguous present H/D/T names mapped to local heavy parents.
+            Missing, conflicting or unsupported attachments remain absent;
+            non-covalent contacts do not count as parents. Connectivity-only
+            source edges constrain identity, not resolved chemistry. This query
+            neither certifies graph completeness nor publishes bonds.
+
+        Raises
+        ------
+        ModelInvariantError
+            The constitution and topology are not aligned.
+        """
+        if not self.is_aligned_to(constitution):
+            raise ModelInvariantError(
+                "hydrogen attachment projection requires matching constitution"
+            )
+        residue = constitution.residue_site_at(residue_index)
+        hydrogen_names = {
+            constitution.atom_index_in_residue(residue_index, atom.name): atom.name
+            for atom in residue.atom_sites
+            if atom.is_hydrogen()
+        }
+        if not hydrogen_names:
+            return {}
+
+        anchors: dict[str, str] = {}
+        unavailable: set[str] = set()
+        for bond in self.bonds:
+            if provenance is not None and bond.provenance is not provenance:
+                continue
+            first, second = bond.endpoint_pair()
+            if first not in hydrogen_names and second not in hydrogen_names:
+                continue
+            if bond.relationship_type in {
+                BondRelationshipType.HYDROGEN_BOND,
+                BondRelationshipType.METAL_COORDINATION,
+            }:
+                continue
+            for hydrogen_index, parent_index in (
+                (first, second),
+                (second, first),
+            ):
+                hydrogen_name = hydrogen_names.get(hydrogen_index)
+                if hydrogen_name is None:
+                    continue
+                parent = constitution.atom_ref_at(parent_index)
+                parent_site = constitution.atom_site_at(parent_index)
+                if (
+                    parent.residue_id != residue.residue_id
+                    or parent_site.is_hydrogen()
+                    or bond.aromatic
+                    or bond.relationship_type
+                    not in {BondRelationshipType.COVALENT, BondRelationshipType.UNKNOWN}
+                    or bond.order not in {None, 1}
+                    or (
+                        (
+                            bond.order is None
+                            or bond.relationship_type is BondRelationshipType.UNKNOWN
+                        )
+                        and bond.provenance is not BondProvenance.SOURCE_EXPLICIT
+                    )
+                ):
+                    unavailable.add(hydrogen_name)
+                    continue
+                if hydrogen_name in anchors:
+                    unavailable.add(hydrogen_name)
+                anchors[hydrogen_name] = parent.atom_name
+
+        return {
+            name: anchor for name, anchor in anchors.items() if name not in unavailable
+        }
+
 
 def _canonical_endpoint_pair(
     atom_index_1: AtomIndex,
@@ -548,6 +700,10 @@ def _canonical_endpoint_pair(
         return (atom_index_2, atom_index_1)
 
     return (atom_index_1, atom_index_2)
+
+
+def _bond_endpoint_values(bond: TopologyBond) -> tuple[int, int]:
+    return (bond.atom_index_1.value, bond.atom_index_2.value)
 
 
 def _deduplicate_topology_bonds(
@@ -579,10 +735,4 @@ def _deduplicate_topology_bonds(
             f"endpoint pair ({endpoints[0].value}, {endpoints[1].value}): "
             "caller must resolve conflicts before constructing topology"
         )
-    return tuple(
-        bond
-        for bond in sorted(
-            seen.values(),
-            key=lambda b: (b.atom_index_1.value, b.atom_index_2.value),
-        )
-    )
+    return tuple(sorted(seen.values(), key=_bond_endpoint_values))

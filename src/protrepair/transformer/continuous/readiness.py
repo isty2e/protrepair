@@ -129,9 +129,20 @@ class ContinuousRelaxationReadinessPolicy:
         coverage_facts = continuous_region_facts.coverage_facts
 
         if not chemistry_facts.component_support_state.is_fully_supported():
+            retained_failures = tuple(
+                f"{fact.residue_id.display_token()} {fact.component_id}: "
+                f"{fact.chemistry_failure_reason}"
+                for fact in chemistry_facts.retained_non_polymer_facts
+                if fact.chemistry_failure_reason
+            )
             return ContinuousRelaxationReadinessAssessment(
                 "continuous relaxation requires fully supported components before "
                 "any force field can be bound"
+                + (
+                    "; retained chemistry unresolved: " + "; ".join(retained_failures)
+                    if retained_failures
+                    else ""
+                )
             )
 
         if (
@@ -170,7 +181,7 @@ class ContinuousRelaxationReadinessPolicy:
                 "stereochemistry to be consistent before any force field can be bound"
             )
 
-        retained_non_polymer_blocker = self.retained_non_polymer_hydrogen_blocker(
+        retained_non_polymer_blocker = self.retained_non_polymer_readiness_blocker(
             chemistry_facts.retained_non_polymer_facts
         )
         if retained_non_polymer_blocker is not None:
@@ -225,14 +236,38 @@ class ContinuousRelaxationReadinessPolicy:
 
         return facts.state is ContinuousBondRealizabilityState.REALIZABLE
 
-    def retained_non_polymer_hydrogen_blocker(
+    def retained_non_polymer_readiness_blocker(
         self,
         retained_non_polymer_facts: tuple[
             RetainedNonPolymerChemistryReadinessFact,
             ...,
         ],
     ) -> str | None:
-        """Return the retained non-polymer hydrogen blocker, if present."""
+        """Check retained heavy graphs, H inventories and H attachment graphs.
+
+        Parameters
+        ----------
+        retained_non_polymer_facts : tuple
+            Current RetainedNonPolymerChemistryReadinessFact instances for the
+            retained residues in the local region.
+
+        Returns
+        -------
+        str or None
+            The first graph or H-preparation blocker, otherwise None. Unresolved
+            chemistry support is assessed separately before this query.
+        """
+
+        if any(
+            fact.is_supported()
+            and fact.heavy_atom_topology_availability_state.is_unavailable()
+            for fact in retained_non_polymer_facts
+        ):
+            return (
+                "continuous relaxation requires retained non-polymer heavy-atom "
+                "topology to agree with admitted chemistry before any force field "
+                "can be bound"
+            )
 
         if any(
             retained_fact.requires_hydrogen_completion()
@@ -621,15 +656,6 @@ def atom_scope_facts_continuous_relaxation_error(
     return DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY.assess_atom_scope_facts(
         facts
     ).blocker_message
-
-
-def retained_non_polymer_hydrogen_readiness_error(
-    retained_non_polymer_facts: tuple[RetainedNonPolymerChemistryReadinessFact, ...],
-) -> str | None:
-    """Return the retained non-polymer hydrogen blocker for one local region."""
-
-    policy = DEFAULT_CONTINUOUS_RELAXATION_READINESS_POLICY
-    return policy.retained_non_polymer_hydrogen_blocker(retained_non_polymer_facts)
 
 
 def atom_scope_facts_supports_continuous_relaxation(

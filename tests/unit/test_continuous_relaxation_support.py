@@ -455,8 +455,11 @@ def test_plan_continuous_region_bonds_preserves_source_h_anchor() -> None:
     assert frozenset({"O1", "HSRC"}) not in planned_bond_names
 
 
-def test_continuous_readiness_requires_retained_ligand_h_topology() -> None:
-    """Complete retained-ligand H coordinates do not substitute for H topology."""
+@pytest.mark.parametrize("has_heavy_topology", (False, True))
+def test_continuous_readiness_identifies_missing_retained_ligand_topology(
+    has_heavy_topology: bool,
+) -> None:
+    """Complete H coordinates do not replace either heavy or H graph evidence."""
 
     ligand_residue_id = ResidueId("L", 1)
     structure = build_ser_with_template_less_ligand_structure(
@@ -470,6 +473,27 @@ def test_continuous_readiness_requires_retained_ligand_h_topology() -> None:
         ),
         source_name="retained-ligand-complete-h-without-h-topology",
     )
+    if has_heavy_topology:
+        structure = type(structure).from_payload(
+            constitution=structure.constitution,
+            geometry=structure.geometry,
+            topology=StructureTopology(
+                constitution=structure.constitution,
+                atom_topologies=structure.topology.atom_topologies,
+                bonds=(
+                    *structure.topology.bonds,
+                    TopologyBond(
+                        structure.constitution.atom_index(
+                            AtomRef(ligand_residue_id, "C1")
+                        ),
+                        structure.constitution.atom_index(
+                            AtomRef(ligand_residue_id, "O1")
+                        ),
+                    ),
+                ),
+            ),
+            provenance=structure.provenance,
+        )
     snapshot = ProteinStructureSnapshot.from_structure(structure)
     atom_scope = AtomSetScope(
         atom_refs=(AtomRef(ResidueId("A", 1), "OG"),),
@@ -490,7 +514,10 @@ def test_continuous_readiness_requires_retained_ligand_h_topology() -> None:
         retained_non_polymer_chemistry_evidence=evidence,
     )
 
-    with pytest.raises(RefinementError, match="retained non-polymer hydrogen topology"):
+    aspect = "hydrogen" if has_heavy_topology else "heavy-atom"
+    with pytest.raises(
+        RefinementError, match=f"retained non-polymer {aspect} topology"
+    ):
         require_atom_scope_continuous_relaxation_execution(atom_scope_facts)
 
 

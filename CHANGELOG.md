@@ -12,9 +12,30 @@
   defaults remain source-compatible preferences, not replacement authority
 - retain fitted spans with residue-local reference outliers and report remaining
   geometry warnings on the selected result, after any follow-up repair
+- refuse fixed-template aromatic inputs whose reported orders use a different
+  Kekule form, leaving the ligand unchanged. This conservative representation
+  limit can reject chemically equivalent inputs; see the retained-ligand policy
 
 ### Fixed
 
+- distinguish declared H attachments from incompatible model-derived parent
+  hints during retained-ligand repair, and complete feasible one-to-one H
+  correspondences before refusing a residue. Existing distance and candidate
+  limits, source atom payloads and declared-connection guards are unchanged
+- report graph-only retained-ligand repairs even when another ligand receives
+  hydrogens in the same call, without treating shifted atom slots as bond changes
+- match retained H/D/T identities within compatible parent groups before applying
+  correspondence limits. Unmatched source hydrogens or an exceeded limit leave
+  the residue unchanged with a diagnostic rather than silently replacing them
+- resolve retained-ligand bond chemistry while preserving source connectivity
+  metadata and explicitly reported attributes. Complete hydrogen inventories can
+  receive topology-only repair without atom replacement or hydrogen clash
+  cleanup; conflicting source connections leave the ligand unchanged
+- restore primed atom coordinates and restraints in the bundled FAD, FMN, SAH and
+  SAM templates. FAD hydrogen completion now covers the full template inventory
+- preserve retained-ligand source hydrogens when an incomplete template cannot
+  reconcile them. Report unsupported placement without committing partial atoms
+  or moving the failed residue during hydrogen clash cleanup
 - bind shared chemistry observations to the current structure, component library,
   ligand evidence and fallback policy, so readiness and local refinement cannot
   reuse hydrogen expectations from incompatible inputs

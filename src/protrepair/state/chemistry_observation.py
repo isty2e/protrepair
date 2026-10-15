@@ -2,11 +2,13 @@
 
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
+from itertools import combinations
 
 from protrepair.chemistry import (
     ComponentLibrary,
     build_default_component_library,
 )
+from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.topology import (
     template_heavy_bond_definitions_for_present_atoms,
 )
@@ -26,7 +28,6 @@ from protrepair.state.hydrogen_expectation import (
 )
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
-    RetainedNonPolymerChemistryResolution,
 )
 from protrepair.state.scoped import CarrierScopedState
 from protrepair.state.structure_axes import (
@@ -64,6 +65,7 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import AtomIndex
+from protrepair.structure.topology import BondRelationshipType
 
 
 @dataclass(frozen=True, slots=True, init=False, eq=False)
@@ -104,6 +106,7 @@ class StructureChemistryObservation:
     _whole_facts: tuple[StructureCoverageFacts, StructureChemistryReadinessFacts] | None
     _residue_facts: dict[ResidueId, ResidueCompletionStateFacts]
     _retained_facts: dict[ResidueId, RetainedNonPolymerChemistryReadinessFact]
+    _external_hydrogen_attachment_residue_ids: frozenset[ResidueId] | None
 
     def __init__(
         self,
@@ -158,6 +161,7 @@ class StructureChemistryObservation:
         object.__setattr__(self, "_whole_facts", None)
         object.__setattr__(self, "_residue_facts", {})
         object.__setattr__(self, "_retained_facts", {})
+        object.__setattr__(self, "_external_hydrogen_attachment_residue_ids", None)
 
     def for_structure(
         self, structure: ProteinStructure
@@ -344,6 +348,37 @@ class StructureChemistryObservation:
             self._retained_facts[residue.residue_id] = cached
         return cached
 
+    def _has_external_hydrogen_attachment(self, residue: ResidueSite) -> bool:
+        attached_residue_ids = self._external_hydrogen_attachment_residue_ids
+        if attached_residue_ids is None:
+            residue_ids: set[ResidueId] = set()
+            constitution = self.context_structure.constitution
+            for bond in self.context_structure.topology.bonds:
+                if bond.relationship_type not in {
+                    BondRelationshipType.UNKNOWN,
+                    BondRelationshipType.COVALENT,
+                    BondRelationshipType.DISULFIDE,
+                }:
+                    continue
+                endpoints = bond.endpoint_pair()
+                references = tuple(
+                    constitution.atom_ref_at(index) for index in endpoints
+                )
+                if references[0].residue_id == references[1].residue_id:
+                    continue
+                residue_ids.update(
+                    reference.residue_id
+                    for index, reference in zip(endpoints, references, strict=True)
+                    if constitution.atom_site_at(index).is_hydrogen()
+                )
+            attached_residue_ids = frozenset(residue_ids)
+            object.__setattr__(
+                self,
+                "_external_hydrogen_attachment_residue_ids",
+                attached_residue_ids,
+            )
+        return residue.residue_id in attached_residue_ids
+
     def _derive_residue_coverage_facts(
         self,
         residue: ResidueSite,
@@ -512,7 +547,7 @@ class StructureChemistryObservation:
                 if residue.has_atom_site(atom_name)
             )
             heavy_atom_topology_availability_state = (
-                residue_bond_topology_availability_state(
+                _retained_heavy_bond_topology_availability_state(
                     self.context_structure,
                     residue,
                     expected_bond_definitions=(
@@ -537,7 +572,7 @@ class StructureChemistryObservation:
             }
             expected_heavy_atom_names = set(template.expected_heavy_atom_names())
             heavy_atom_topology_availability_state = (
-                residue_bond_topology_availability_state(
+                _retained_heavy_bond_topology_availability_state(
                     self.context_structure,
                     residue,
                     expected_bond_definitions=(
@@ -560,7 +595,7 @@ class StructureChemistryObservation:
                 RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
             )
             heavy_atom_topology_availability_state = (
-                residue_bond_topology_availability_state(
+                _retained_heavy_bond_topology_availability_state(
                     self.context_structure,
                     residue,
                     expected_bond_definitions=(
@@ -594,14 +629,12 @@ class StructureChemistryObservation:
                 )
             elif h_coverage_state is HydrogenCoverageState.COMPLETE:
                 hydrogen_topology_availability_state = (
-                    _retained_non_polymer_hydrogen_topology_availability_state(
-                        self.context_structure,
-                        residue,
-                        chemistry_resolution=hydrogen_expectation_resolution,
-                        covalent_like_endpoint_pairs=(
-                            self.covalent_like_endpoint_pairs
-                        ),
+                    TopologyAvailabilityState.PRESENT
+                    if hydrogen_expectation_resolution.has_hydrogen_topology(
+                        self.context_structure, residue
                     )
+                    and not self._has_external_hydrogen_attachment(residue)
+                    else TopologyAvailabilityState.ABSENT
                 )
             else:
                 hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
@@ -618,6 +651,7 @@ class StructureChemistryObservation:
             hydrogen_topology_availability_state=(hydrogen_topology_availability_state),
             hydrogen_applicability_state=h_applicability_state,
             hydrogen_coverage_state=h_coverage_state,
+            chemistry_failure_reason=hydrogen_expectation_resolution.failure_reason,
         )
 
     def residue_completion_facts(
@@ -906,22 +940,62 @@ def _polymer_hydrogen_topology_availability_state(
     return TopologyAvailabilityState.PRESENT
 
 
-def _retained_non_polymer_hydrogen_topology_availability_state(
+def _retained_heavy_bond_topology_availability_state(
     structure: ProteinStructure,
     residue: ResidueSite,
     *,
-    chemistry_resolution: RetainedNonPolymerChemistryResolution,
+    expected_bond_definitions: tuple[BondDefinition, ...],
+    empty_state: TopologyAvailabilityState,
     covalent_like_endpoint_pairs: Collection[tuple[AtomIndex, AtomIndex]],
 ) -> TopologyAvailabilityState:
-    """Return retained ligand H topology availability from expected anchors."""
-
-    return residue_bond_topology_availability_state(
+    state = residue_bond_topology_availability_state(
         structure,
         residue,
-        expected_bond_definitions=chemistry_resolution.hydrogen_bond_definitions,
-        empty_state=TopologyAvailabilityState.ABSENT,
+        expected_bond_definitions=expected_bond_definitions,
+        empty_state=empty_state,
         covalent_like_endpoint_pairs=covalent_like_endpoint_pairs,
     )
+    if state is not TopologyAvailabilityState.PRESENT:
+        return state
+    residue_index = structure.constitution.residue_index(residue.residue_id)
+    expected_pairs: set[tuple[AtomIndex, AtomIndex]] = set()
+    for expected in expected_bond_definitions:
+        bond = structure.topology.bond_between(
+            structure.constitution.atom_index_in_residue(
+                residue_index, expected.atom_name_1
+            ),
+            structure.constitution.atom_index_in_residue(
+                residue_index, expected.atom_name_2
+            ),
+        )
+        if (
+            bond is None
+            or bond.relationship_type is not BondRelationshipType.COVALENT
+            or bond.order != expected.order
+            or bond.aromatic != expected.aromatic
+        ):
+            return TopologyAvailabilityState.ABSENT
+        expected_pairs.add(bond.endpoint_pair())
+
+    heavy_indices = tuple(
+        structure.constitution.atom_index_in_residue(residue_index, atom.name)
+        for atom in residue.atom_sites
+        if not atom.is_hydrogen()
+    )
+    for atom_index_1, atom_index_2 in combinations(heavy_indices, 2):
+        bond = structure.topology.bond_between(atom_index_1, atom_index_2)
+        if (
+            bond is not None
+            and bond.endpoint_pair() not in expected_pairs
+            and bond.relationship_type
+            in {
+                BondRelationshipType.COVALENT,
+                BondRelationshipType.DISULFIDE,
+                BondRelationshipType.UNKNOWN,
+            }
+        ):
+            return TopologyAvailabilityState.ABSENT
+    return TopologyAvailabilityState.PRESENT
 
 
 def _structure_blueprint_coverages(

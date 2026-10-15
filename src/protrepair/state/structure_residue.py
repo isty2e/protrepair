@@ -224,6 +224,7 @@ class RetainedNonPolymerChemistryReadinessFact:
     hydrogen_topology_availability_state: TopologyAvailabilityState
     hydrogen_applicability_state: HydrogenApplicabilityState
     hydrogen_coverage_state: HydrogenCoverageState
+    chemistry_failure_reason: str = ""
 
     def is_supported(self) -> bool:
         """Return whether canonical chemistry support is available."""
@@ -253,6 +254,24 @@ class RetainedNonPolymerChemistryReadinessFact:
             and self.hydrogen_applicability_state
             is HydrogenApplicabilityState.APPLICABLE
             and self.needs_hydrogenation()
+        )
+
+    def requires_topology_resolution(self) -> bool:
+        """Select graph-only repair when supported chemistry needs no new H.
+
+        Returns
+        -------
+        bool
+            Whether absent graph facts remain despite a complete or inapplicable
+            H inventory. Chemistry conflicts still require transformer validation.
+        """
+        return (
+            self.is_supported()
+            and not self.needs_hydrogenation()
+            and (
+                self.heavy_atom_topology_availability_state.is_unavailable()
+                or self.hydrogen_topology_availability_state.is_unavailable()
+            )
         )
 
 
