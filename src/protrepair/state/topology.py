@@ -155,7 +155,11 @@ class TopologyAvailabilityFacts:
                 for atom_site in residue.atom_sites
                 if not atom_site.is_hydrogen()
             }
-            expected_heavy_atom_names = set(template.expected_heavy_atom_names())
+            expected_heavy_atom_names = set(
+                template.expected_heavy_atom_names()
+                if residue.is_hetero
+                else template.expected_polymer_heavy_atom_names()
+            )
             if not expected_heavy_atom_names.issubset(present_heavy_atom_names):
                 for aspect in TopologyAvailabilityAspect:
                     residue_facts_by_key[(residue.residue_id, aspect)] = (

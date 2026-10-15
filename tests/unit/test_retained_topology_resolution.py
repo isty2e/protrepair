@@ -292,7 +292,13 @@ def test_hydrogenation_rejects_conflicting_source_chemistry_atomically(
 
     assert result.structure is source
     assert not result.repairs
-    assert any("source connectivity" in issue.message for issue in result.issues)
+    expected_reason = "bond order" if order == 2 else "relationship"
+    assert any(
+        issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
+        and issue.residue_id == LIGAND_ID
+        and expected_reason in issue.message
+        for issue in result.issues
+    )
 
 
 @pytest.mark.parametrize("order", (None, 1))
@@ -704,7 +710,9 @@ def test_source_conflict_keeps_residue_while_neighbor_completes():
     assert any(event.residue_id == neighbor_id for event in result.repairs)
     assert not any(event.residue_id == LIGAND_ID for event in result.repairs)
     assert any(
-        issue.residue_id == LIGAND_ID and "source connectivity" in issue.message
+        issue.residue_id == LIGAND_ID
+        and issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
+        and "bond order" in issue.message
         for issue in result.issues
     )
 

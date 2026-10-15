@@ -464,8 +464,8 @@ def test_continuous_readiness_identifies_missing_retained_ligand_topology(
     ligand_residue_id = ResidueId("L", 1)
     structure = build_ser_with_template_less_ligand_structure(
         ligand_atoms=(
-            atom_payload("C1", "C", Vec3(1.7, 1.4, 0.0)),
-            atom_payload("O1", "O", Vec3(2.7, 1.4, 0.0)),
+            atom_payload("C1", "C", Vec3(1.7, 1.4, 0.0), formal_charge=0),
+            atom_payload("O1", "O", Vec3(2.7, 1.4, 0.0), formal_charge=0),
             atom_payload("H001", "H", Vec3(1.5, 0.7, 0.0)),
             atom_payload("H002", "H", Vec3(1.7, -0.7, 0.0)),
             atom_payload("H003", "H", Vec3(1.9, 0.7, 0.0)),
@@ -527,8 +527,8 @@ def test_continuous_readiness_accepts_present_retained_ligand_h_topology() -> No
     ligand_residue_id = ResidueId("L", 1)
     structure = build_ser_with_template_less_ligand_structure(
         ligand_atoms=(
-            atom_payload("C1", "C", Vec3(1.7, 1.4, 0.0)),
-            atom_payload("O1", "O", Vec3(2.7, 1.4, 0.0)),
+            atom_payload("C1", "C", Vec3(1.7, 1.4, 0.0), formal_charge=0),
+            atom_payload("O1", "O", Vec3(2.7, 1.4, 0.0), formal_charge=0),
             atom_payload("H001", "H", Vec3(1.5, 0.7, 0.0)),
             atom_payload("H002", "H", Vec3(1.7, -0.7, 0.0)),
             atom_payload("H003", "H", Vec3(1.9, 0.7, 0.0)),

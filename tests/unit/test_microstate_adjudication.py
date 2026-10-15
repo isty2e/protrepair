@@ -607,6 +607,6 @@ def test_collect_microstate_evidence_keeps_multi_atom_sulfate_out_of_metal_famil
     )
     assert (
         evidence.classification.chemistry_support_mode
-        is MicrostateChemistrySupportMode.TEMPLATELESS_RDKIT_FALLBACK
+        is MicrostateChemistrySupportMode.CURATED_COMPONENT_TEMPLATE
     )
     assert evidence.classification.applicability is MicrostateApplicability.APPLICABLE

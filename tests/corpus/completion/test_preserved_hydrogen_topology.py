@@ -348,7 +348,7 @@ def test_branched_carbon_h_names_are_resolved_without_a_distance_cutoff(name):
     template = library.require("ILE")
     heavy = tuple(
         atom_payload(name=heavy_name, element=heavy_name[0], position=Vec3(i, 0, 0))
-        for i, heavy_name in enumerate(template.expected_heavy_atom_names())
+        for i, heavy_name in enumerate(template.expected_polymer_heavy_atom_names())
     )
     residue = residue_payload(
         component_id="ILE",

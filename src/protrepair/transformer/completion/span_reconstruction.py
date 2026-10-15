@@ -1768,7 +1768,9 @@ def _validate_materialized_peptide_junctions(
                 SpanReconstructionFailureKind.UNSUPPORTED_COMPONENT_CHEMISTRY,
                 f"component {following.component_id} lacks amide-N chemistry",
             )
-        heavy_names = frozenset(template.expected_heavy_atom_names()) | frozenset(
+        heavy_names = frozenset(
+            template.expected_polymer_heavy_atom_names()
+        ) | frozenset(
             atom.name for atom in following.atom_sites if not atom.is_hydrogen()
         )
         neighbor_names = template.definition.bonded_atom_names("N") & heavy_names

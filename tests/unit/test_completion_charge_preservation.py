@@ -217,9 +217,12 @@ def test_retained_ligand_hydrogenation_does_not_copy_the_first_atom_charge(
     assert sum(atom.is_hydrogen() for atom in result.constitution.atom_slots) == (
         expected_hydrogens
     )
-    assert dict(result.residue_formal_charge_by_atom_name(ResidueIndex(0))) == {
-        charged_atom_name: charge
-    }
+    expected_charges = {charged_atom_name: charge}
+    if use_override:
+        expected_charges["C1"] = 0
+    assert dict(result.residue_formal_charge_by_atom_name(ResidueIndex(0))) == (
+        expected_charges
+    )
     for atom_name in (charged_atom_name, "C1"):
         assert result.residue_geometry(ResidueIndex(0)).position(atom_name) == (
             source.residue_geometry(ResidueIndex(0)).position(atom_name)

@@ -69,7 +69,8 @@ def _site(source: ProteinStructure, component: str):
         for chain in source.constitution.chains
         for entry in chain.residues
         if entry.component_id == component
-        and set(template.expected_heavy_atom_names()) <= set(entry.atom_site_names())
+        and set(template.expected_polymer_heavy_atom_names())
+        <= set(entry.atom_site_names())
     )
     return residue.residue_id, PolymerMicrostateSite(
         template, PolymerChemicalSite.SIDECHAIN

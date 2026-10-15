@@ -169,7 +169,11 @@ def collect_microstate_evidence(
         template = component_library.get(residue_site.component_id)
         if template is not None:
             template_charge_mismatch_descriptors = _curated_template_charge_mismatches(
-                source_nonzero_formal_charges,
+                {
+                    name.strip().upper(): charge
+                    for name, charge in source_formal_charge_by_atom_name.items()
+                    if charge is not None
+                },
                 template_nonzero_formal_charges=_normalized_nonzero_charge_payload(
                     template.definition.formal_charges
                 ),
@@ -269,7 +273,7 @@ def validation_issue_from_microstate_decision(
                 f"{residue_token} carries "
                 "contradictory chemistry evidence for template-backed hydrogenation; "
                 + "; ".join(decision_record.issue_details)
-                + ". Hydrogen placement follows template chemistry."
+                + ". Template and source chemistry require reconciliation."
             ),
             residue_id=decision_record.residue_site.residue_id,
         )
@@ -551,35 +555,19 @@ def _normalized_nonzero_charge_payload(
 
 
 def _curated_template_charge_mismatches(
-    source_nonzero_formal_charges: Mapping[str, int],
+    reported_formal_charges: Mapping[str, int],
     *,
     template_nonzero_formal_charges: Mapping[str, int],
 ) -> tuple[str, ...]:
     """Return compact charge mismatch descriptors for one curated component."""
 
     return tuple(
-        _charge_mismatch_descriptor(
-            atom_name,
-            source_charge=source_nonzero_formal_charges.get(atom_name, 0),
-            template_charge=template_nonzero_formal_charges.get(atom_name, 0),
-        )
-        for atom_name in sorted(
-            set(source_nonzero_formal_charges) | set(template_nonzero_formal_charges)
-        )
-        if source_nonzero_formal_charges.get(atom_name, 0)
+        f"{atom_name} source {reported_formal_charges[atom_name]:+d} vs template "
+        f"{template_nonzero_formal_charges.get(atom_name, 0):+d}"
+        for atom_name in sorted(reported_formal_charges)
+        if reported_formal_charges[atom_name]
         != template_nonzero_formal_charges.get(atom_name, 0)
     )
-
-
-def _charge_mismatch_descriptor(
-    atom_name: str,
-    *,
-    source_charge: int,
-    template_charge: int,
-) -> str:
-    """Return one compact charge mismatch descriptor."""
-
-    return f"{atom_name} source {source_charge:+d} vs template {template_charge:+d}"
 
 
 def _geometry_bond_mismatch_descriptors(

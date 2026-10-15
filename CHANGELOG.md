@@ -4,6 +4,8 @@
 
 ### Changed
 
+- include sulfate chemistry in the retained-component bundle, using the common
+  template preparation path
 - use local polar contacts by default to choose between source-compatible
   neutral HIS tautomers; epsilon remains the fallback when there is no
   preference. This changes some prepared H positions, not the original
@@ -18,6 +20,21 @@
 
 ### Fixed
 
+- check existing external covalent-like and untyped bonds across all provenances
+  before preparing an isolated zero-H component; preserve typed noncovalent context
+- preserve full retained-component inventories, including SAH/SAM OXT, separately
+  from polymer scaffold projections; restore their H placement, topology readiness
+  and SAM OXT charge requirements
+- retain supported partial H preparation for charged cofactors and assign new
+  template charges only at locally complete heavy-atom neighborhoods; incomplete
+  components remain unready for refinement
+- apply template name/declared-element checks regardless of charge declarations,
+  and report scaffold/charge failures without mislabeling them as source connectivity
+- publish retained-ligand formal charges with admitted bond chemistry, including
+  explicit neutral SMILES assignments; preserve known source charges and reject
+  conflicting or incompatible scaffolds before applying residue changes
+- distinguish unspecified source charges from declared zero in template
+  diagnostics and report charge-only repairs in mixed ligand batches
 - distinguish declared H attachments from incompatible model-derived parent
   hints during retained-ligand repair, and complete feasible one-to-one H
   correspondences before refusing a residue. Existing distance and candidate

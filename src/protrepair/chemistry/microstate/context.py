@@ -295,7 +295,7 @@ class PolymerMicrostateContext:
         bonds_by_atom = self._bonds_by_atom
         constitution = self.source.constitution
         site_names = {atom.name for atom in graph.atoms}
-        template_heavy_names = set(site.template.expected_heavy_atom_names())
+        template_heavy_names = set(site.template.expected_polymer_heavy_atom_names())
         boundary_pairs = {
             frozenset((bond.atom_name_1, bond.atom_name_2)): bond.order
             for bond in site.template.definition.bonds

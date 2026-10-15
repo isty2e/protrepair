@@ -168,7 +168,7 @@ class PolymerMicrostateSite:
             else:
                 preferences = (applied_choice.constraints(), *preferences)
         required = {atom.name for atom in reference.atoms}
-        heavy_names = set(stock.expected_heavy_atom_names())
+        heavy_names = set(stock.expected_polymer_heavy_atom_names())
         if self.kind is PolymerChemicalSite.SIDECHAIN:
             required.update(heavy_names)
         else:
@@ -539,7 +539,7 @@ class PolymerMicrostateSite:
         # PDB suffix numbering and PRAS prefix numbering describe the same
         # carbon-bound H families. Keep ambiguous families unresolved.
         carbon_parents: dict[str, set[str]] = {}
-        for atom_name in self.template.expected_heavy_atom_names():
+        for atom_name in self.template.expected_polymer_heavy_atom_names():
             if not atom_name.startswith("C"):
                 continue
             stem = "H" + atom_name[1:]
