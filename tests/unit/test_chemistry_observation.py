@@ -15,7 +15,7 @@ import protrepair.state.chemistry_observation as observation_module
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
-from protrepair.scope import WholeStructureScope
+from protrepair.scope import AtomSetScope, WholeStructureScope
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state import SidechainHeavyAtomCompletenessState
 from protrepair.state.chemistry_observation import StructureChemistryObservation
@@ -25,10 +25,18 @@ from protrepair.state.hydrogen_expectation import (
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
 )
+from protrepair.state.structure_projection import StructureProjectionStateFacts
+from protrepair.state.structure_readiness import (
+    derive_projection_coverage_and_chemistry_readiness_facts,
+)
 from protrepair.structure import ProteinStructure
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
-from protrepair.structure.topology import StructureTopology, TopologyBond
+from protrepair.structure.snapshot import ProteinStructureSnapshot
+from protrepair.structure.topology import AtomTopology, StructureTopology, TopologyBond
+from protrepair.transformer.continuous.readiness import (
+    derive_atom_scope_continuous_relaxation_facts,
+)
 from protrepair.transformer.result import TransformationResult
 from protrepair.workflow.contracts import (
     RequestedGoalStatus,
@@ -233,7 +241,10 @@ def test_reused_model_rebinds_changed_fallback_permission(old_permission):
     assert resolution.source is expected
 
 
-def test_geometry_dependent_ligand_expectations_are_not_reused_after_movement():
+@pytest.mark.parametrize("rebind_observation", [False, True])
+def test_geometry_dependent_ligand_expectations_are_not_reused_after_movement(
+    rebind_observation,
+):
     source = _ligand()
     rid = ResidueId("L", 1)
     geometry = source.residue_geometry(source.constitution.residue_index(rid))
@@ -247,9 +258,14 @@ def test_geometry_dependent_ligand_expectations_are_not_reused_after_movement():
             ),
         )
     )
-    original = StructureChemistryObservation(source).hydrogen_expectation_model
+    observation = StructureChemistryObservation(source)
+    original = observation.hydrogen_expectation_model
     assert original.polymer_preparation.matches_chemistry(moved)
-    changed = StructureChemistryObservation(moved, hydrogen_expectation_model=original)
+    changed = (
+        observation.for_structure(moved)
+        if rebind_observation
+        else StructureChemistryObservation(moved, hydrogen_expectation_model=original)
+    )
     fresh = StructureChemistryObservation(moved)
     observed = changed.hydrogen_expectation_model.resolution_for_retained_non_polymer(
         rid
@@ -261,10 +277,15 @@ def test_geometry_dependent_ligand_expectations_are_not_reused_after_movement():
     assert observed != original.resolution_for_retained_non_polymer(rid)
 
 
-@pytest.mark.parametrize("change", ["topology", "provenance"])
-def test_reused_model_rederives_after_topology_or_provenance_change(change):
+@pytest.mark.parametrize("change", ["topology", "charge", "provenance"])
+@pytest.mark.parametrize("rebind_observation", [False, True])
+def test_reused_model_rederives_after_topology_or_provenance_change(
+    change,
+    rebind_observation,
+):
     source = _ligand()
-    original = StructureChemistryObservation(source).hydrogen_expectation_model
+    observation = StructureChemistryObservation(source)
+    original = observation.hydrogen_expectation_model
     topology = source.topology
     provenance = source.provenance
     if change == "topology":
@@ -272,6 +293,15 @@ def test_reused_model_rederives_after_topology_or_provenance_change(change):
             constitution=source.constitution,
             atom_topologies=source.topology.atom_topologies,
             bonds=(TopologyBond(AtomIndex(0), AtomIndex(1), order=2),),
+        )
+    elif change == "charge":
+        topology = StructureTopology(
+            constitution=source.constitution,
+            atom_topologies=(
+                source.topology.atom_topologies[0],
+                AtomTopology(formal_charge=-1),
+            ),
+            bonds=source.topology.bonds,
         )
     else:
         provenance = replace(
@@ -291,8 +321,12 @@ def test_reused_model_rederives_after_topology_or_provenance_change(change):
         "derive_structure_hydrogen_expectation_model",
         wraps=derive_structure_hydrogen_expectation_model,
     ) as derive:
-        rebound = StructureChemistryObservation(
-            changed, hydrogen_expectation_model=original
+        rebound = (
+            observation.for_structure(changed)
+            if rebind_observation
+            else StructureChemistryObservation(
+                changed, hydrogen_expectation_model=original
+            )
         ).hydrogen_expectation_model
         assert derive.call_count == 1
     fresh = StructureChemistryObservation(changed).hydrogen_expectation_model
@@ -320,6 +354,109 @@ def test_consumer_cannot_mix_observation_with_different_inputs(change):
             else (),
             allow_retained_non_polymer_rdkit_fallback=change != "policy",
         )
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_rebinding_same_carrier_retains_lazy_chemistry(warm):
+    source = _polymer()
+    with patch.object(
+        observation_module,
+        "derive_structure_hydrogen_expectation_model",
+        wraps=derive_structure_hydrogen_expectation_model,
+    ) as derive:
+        observation = StructureChemistryObservation(source)
+        if warm:
+            observation.whole_structure_facts()
+        rebound = observation.for_structure(source)
+        assert derive.call_count == int(warm)
+        assert rebound is observation
+        rebound.projected_facts((ResidueId("A", 1),))
+        observation.whole_structure_facts()
+        assert derive.call_count == 1
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_polymer_movement_reuses_valid_expectations_but_not_residue_facts(warm):
+    source = _polymer()
+    rid = ResidueId("A", 1)
+    geometry = source.residue_geometry(source.constitution.residue_index(rid))
+    moved = source.with_updated_residue_geometries(
+        (
+            (
+                rid,
+                geometry.with_atom_geometry(
+                    "CB",
+                    replace(geometry.atom_geometry("CB"), position=Vec3(1.5, 1.5, 1)),
+                ),
+            ),
+        )
+    )
+    observation = StructureChemistryObservation(source)
+    if warm:
+        observation.whole_structure_facts()
+
+    with patch.object(
+        observation_module,
+        "derive_structure_hydrogen_expectation_model",
+        wraps=derive_structure_hydrogen_expectation_model,
+    ) as derive:
+        rebound = observation.for_structure(moved)
+        assert derive.call_count == 0
+        coverage, readiness = rebound.whole_structure_facts()
+        assert derive.call_count == int(not warm)
+    fresh_coverage, fresh_readiness = StructureChemistryObservation(
+        moved
+    ).whole_structure_facts()
+    assert coverage == fresh_coverage
+    assert readiness.hydrogen_coverage_state == fresh_readiness.hydrogen_coverage_state
+    assert (
+        readiness.heavy_atom_topology_availability_state
+        == fresh_readiness.heavy_atom_topology_availability_state
+    )
+    assert rebound.residue_completion_facts(
+        rid
+    ) is not observation.residue_completion_facts(rid)
+    assert coverage is not observation.whole_structure_facts()[0]
+    if warm:
+        assert (
+            rebound.hydrogen_expectation_model is observation.hydrogen_expectation_model
+        )
+
+
+@pytest.mark.parametrize("consumer", ["projection", "coverage", "continuous"])
+@pytest.mark.parametrize("change", ["carrier", "library", "evidence", "policy"])
+def test_refinement_projection_consumers_enforce_exact_input_binding(consumer, change):
+    source = _ligand()
+    library = build_default_component_library()
+    observation = StructureChemistryObservation(source, component_library=library)
+    active_structure = _ligand() if change == "carrier" else source
+    active_library = ComponentLibrary() if change == "library" else library
+    evidence = _evidence("CO") if change == "evidence" else ()
+    with pytest.raises(ValueError, match="interpretation"):
+        if consumer == "continuous":
+            derive_atom_scope_continuous_relaxation_facts(
+                ProteinStructureSnapshot.from_structure(active_structure),
+                AtomSetScope(atom_refs=(AtomRef(ResidueId("L", 1), "C1"),)),
+                component_library=active_library,
+                retained_non_polymer_chemistry_evidence=evidence,
+                allow_retained_non_polymer_rdkit_fallback=change != "policy",
+                chemistry_observation=observation,
+            )
+        else:
+            project = (
+                StructureProjectionStateFacts.from_projection
+                if consumer == "projection"
+                else derive_projection_coverage_and_chemistry_readiness_facts
+            )
+            project(
+                context_structure=active_structure,
+                residues=(),
+                ligands=active_structure.constitution.ligands,
+                component_library=active_library,
+                retained_non_polymer_chemistry_evidence=evidence,
+                allow_retained_non_polymer_rdkit_fallback=change != "policy",
+                chemistry_observation=observation,
+            )
 
 
 @pytest.mark.parametrize("consumer", ["initial_goals", "goal_report", "score"])

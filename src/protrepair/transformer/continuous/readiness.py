@@ -24,6 +24,7 @@ from protrepair.state import (
     StructureProjectionStateFacts,
     derive_projection_coverage_and_chemistry_readiness_facts,
 )
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.domain import (
     AtomScopeObservation,
     AtomScopeStateFacts,
@@ -38,7 +39,6 @@ from protrepair.state.domain import (
 )
 from protrepair.state.hydrogen_expectation import (
     StructureHydrogenExpectationModel,
-    derive_structure_hydrogen_expectation_model,
 )
 from protrepair.state.scoped import CarrierScopedState
 from protrepair.structure.constitution import ResidueSite
@@ -276,8 +276,39 @@ def derive_atom_scope_continuous_relaxation_facts(
         ...,
     ] = (),
     hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
+    chemistry_observation: StructureChemistryObservation | None = None,
 ) -> AtomScopeStateFacts:
-    """Derive atom-scope facts needed for continuous-relaxation readiness."""
+    """Derive selected-scope and execution-region readiness independently.
+
+    Parameters
+    ----------
+    snapshot : ProteinStructureSnapshot
+        Complete source snapshot.
+    atom_scope : AtomSetScope
+        Selected atoms; context residues remain a separate projection.
+    component_library : ComponentLibrary or None
+        Active chemistry definitions, or defaults.
+    context_radius_angstrom : float
+        Radius used to construct the continuous execution region.
+    allow_retained_non_polymer_rdkit_fallback : bool
+        Whether retained-component inference is permitted.
+    retained_non_polymer_chemistry_evidence : tuple
+        Explicit retained-component evidence.
+    hydrogen_expectation_model : StructureHydrogenExpectationModel or None
+        Validated reuse hint when constructing a new observation.
+    chemistry_observation : StructureChemistryObservation or None
+        Shared chemistry under the exact snapshot, library, evidence and policy.
+
+    Returns
+    -------
+    AtomScopeStateFacts
+        Current facts; clash, region and bond checks are evaluated on every call.
+
+    Raises
+    ------
+    ValueError
+        A supplied observation has different derivation inputs.
+    """
 
     referenced_residue_ids = tuple(
         dict.fromkeys(atom_ref.residue_id for atom_ref in atom_scope.atom_refs)
@@ -287,8 +318,9 @@ def derive_atom_scope_continuous_relaxation_facts(
         if component_library is None
         else component_library
     )
-    active_hydrogen_expectation_model = (
-        derive_structure_hydrogen_expectation_model(
+    observation = chemistry_observation
+    if observation is None:
+        observation = StructureChemistryObservation(
             snapshot.structure,
             component_library=active_component_library,
             allow_retained_non_polymer_rdkit_fallback=(
@@ -297,16 +329,15 @@ def derive_atom_scope_continuous_relaxation_facts(
             retained_non_polymer_chemistry_evidence=(
                 retained_non_polymer_chemistry_evidence
             ),
+            hydrogen_expectation_model=hydrogen_expectation_model,
         )
-        if hydrogen_expectation_model is None
-        or not hydrogen_expectation_model.matches_inputs(
+    else:
+        observation.require_context(
             snapshot.structure,
             component_library=active_component_library,
             allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        else hydrogen_expectation_model
-    )
     atom_input = AtomInput(
         atom_indices=tuple(
             snapshot.structure.constitution.atom_index(atom_ref)
@@ -335,7 +366,7 @@ def derive_atom_scope_continuous_relaxation_facts(
         retained_non_polymer_chemistry_evidence=(
             retained_non_polymer_chemistry_evidence
         ),
-        hydrogen_expectation_model=active_hydrogen_expectation_model,
+        chemistry_observation=observation,
         allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
     )
     (
@@ -353,7 +384,7 @@ def derive_atom_scope_continuous_relaxation_facts(
         retained_non_polymer_chemistry_evidence=(
             retained_non_polymer_chemistry_evidence
         ),
-        hydrogen_expectation_model=active_hydrogen_expectation_model,
+        chemistry_observation=observation,
     )
     hydrogen_atom_count = sum(
         1
@@ -426,7 +457,7 @@ def _derive_execution_region_readiness_facts(
         RetainedNonPolymerChemistryEvidence,
         ...,
     ] = (),
-    hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
+    chemistry_observation: StructureChemistryObservation,
 ) -> tuple[ContinuousRegionReadinessFacts, ContinuousBondRealizabilityFacts]:
     """Derive facts by projecting through the continuous execution-region model."""
 
@@ -456,7 +487,7 @@ def _derive_execution_region_readiness_facts(
         retained_non_polymer_chemistry_evidence=(
             retained_non_polymer_chemistry_evidence
         ),
-        hydrogen_expectation_model=hydrogen_expectation_model,
+        chemistry_observation=chemistry_observation,
         allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
     )
     continuous_bond_realizability_blocker = None
@@ -468,11 +499,7 @@ def _derive_execution_region_readiness_facts(
             allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
             retained_non_polymer_chemistry_resolution_by_residue_id=(
-                None
-                if hydrogen_expectation_model is None
-                else (
-                    hydrogen_expectation_model.retained_non_polymer_resolution_by_residue_id
-                )
+                chemistry_observation.hydrogen_expectation_model.retained_non_polymer_resolution_by_residue_id
             ),
         )
         bonds = plan_continuous_region_bonds(

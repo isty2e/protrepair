@@ -19,6 +19,7 @@ from protrepair.chemistry.radii import (
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure_string, write_structure_string
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
@@ -388,6 +389,38 @@ def test_coordinate_change_invalidates_environment_but_not_applied_choice():
     assert _selected(_preparation(stripped)) == (1, 0)
     request = {(ResidueId("A", 1), PolymerChemicalSite.SIDECHAIN): None}
     assert _selected(_preparation(stripped, request)) == (0, 1)
+
+
+def test_observation_rebinding_tracks_histidine_environment_and_applied_choice():
+    source = _source(contacts=(("ND1", 2.8, 0, "carbonyl"),))
+    observation = StructureChemistryObservation(source)
+    original = observation.hydrogen_expectation_model
+    assert _selected(original.polymer_preparation) == (1, 0)
+
+    ref = AtomRef(ResidueId("B", 1), "O")
+    moved = _move(source, ref, Vec3(20, 20, 20))
+    rebound = observation.for_structure(moved).hydrogen_expectation_model
+    assert rebound is not original
+    assert _selected(rebound.polymer_preparation) == (0, 1)
+    assert _selected(observation.hydrogen_expectation_model.polymer_preparation) == (
+        1,
+        0,
+    )
+
+    prepared = add_hydrogens(
+        source,
+        prepare_heavy_atoms=False,
+        target_residue_ids=frozenset({ResidueId("A", 1)}),
+    ).structure
+    prepared_observation = observation.for_structure(prepared)
+    prepared_model = prepared_observation.hydrogen_expectation_model
+    assert prepared_model is not original
+    stripped = _move(prepared, ref, Vec3(20, 20, 20)).without_hydrogens()
+    stripped_model = prepared_observation.for_structure(
+        stripped
+    ).hydrogen_expectation_model
+    assert stripped_model is not prepared_model
+    assert _selected(stripped_model.polymer_preparation) == (1, 0)
 
 
 def test_written_atoms_preserve_tautomer_on_reingress():

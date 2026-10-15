@@ -160,6 +160,34 @@ class StructureChemistryObservation:
         object.__setattr__(self, "_residue_facts", {})
         object.__setattr__(self, "_retained_facts", {})
 
+    def for_structure(
+        self, structure: ProteinStructure
+    ) -> "StructureChemistryObservation":
+        """Observe a carrier under the same library, evidence and policy.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Exact carrier whose facts will be queried.
+
+        Returns
+        -------
+        StructureChemistryObservation
+            This observation for the same carrier; otherwise a new observation.
+            Residue facts are never transferred. Existing H expectations are only
+            reused after their complete derivation inputs have been checked.
+        """
+        if structure is self.context_structure:
+            return self
+
+        return StructureChemistryObservation(
+            structure,
+            component_library=self.component_library,
+            retained_non_polymer_chemistry_evidence=self.retained_non_polymer_chemistry_evidence,
+            allow_retained_non_polymer_rdkit_fallback=self.allow_retained_non_polymer_rdkit_fallback,
+            hydrogen_expectation_model=self._hydrogen_expectation_model,
+        )
+
     def require_context(
         self,
         structure: ProteinStructure,

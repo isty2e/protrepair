@@ -7,6 +7,7 @@ from protrepair.chemistry import ComponentLibrary, RestraintLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.transformer.artifacts import RegionTransformationResult
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.settings import ContinuousRelaxationSettings
@@ -53,8 +54,39 @@ def execute_local_transformation(
         RetainedNonPolymerChemistryEvidence,
         ...,
     ] = (),
+    chemistry_observation: StructureChemistryObservation | None = None,
 ) -> RegionTransformationResult:
-    """Run one canonical selected-region local-refinement transformation."""
+    """Run a selected-region local refinement.
+
+    Parameters
+    ----------
+    context : ProteinTransformationContext
+        Source carrier and selected atom domain.
+    spec : ContinuousRelaxationSettings
+        Force field, execution region and search settings.
+    component_library : ComponentLibrary or None
+        Active chemistry definitions, or defaults.
+    restraint_library : RestraintLibrary or None
+        Active geometric restraints, or defaults.
+    allow_retained_non_polymer_rdkit_fallback : bool
+        Whether retained-component inference is permitted.
+    retained_non_polymer_chemistry_evidence : tuple
+        Explicit retained-component evidence.
+    chemistry_observation : StructureChemistryObservation or None
+        Chemistry reuse bound to the exact source and chemistry inputs.
+
+    Returns
+    -------
+    RegionTransformationResult
+        Selected result after candidate execution and assessment.
+
+    Raises
+    ------
+    RefinementError
+        Readiness, execution or candidate selection fails.
+    ValueError
+        A supplied observation has different derivation inputs.
+    """
 
     result, _ = execute_local_transformation_profiled(
         context,
@@ -67,6 +99,7 @@ def execute_local_transformation(
         retained_non_polymer_chemistry_evidence=(
             retained_non_polymer_chemistry_evidence
         ),
+        chemistry_observation=chemistry_observation,
     )
     return result
 
@@ -82,8 +115,39 @@ def execute_local_transformation_profiled(
         RetainedNonPolymerChemistryEvidence,
         ...,
     ] = (),
+    chemistry_observation: StructureChemistryObservation | None = None,
 ) -> tuple[RegionTransformationResult, LocalRefinementRuntimeProfile]:
-    """Run one canonical local-refinement transformation with stage timings."""
+    """Run local refinement and measure its stages.
+
+    Parameters
+    ----------
+    context : ProteinTransformationContext
+        Source carrier and selected atom domain.
+    spec : ContinuousRelaxationSettings
+        Force field, execution region and search settings.
+    component_library : ComponentLibrary or None
+        Active chemistry definitions, or defaults.
+    restraint_library : RestraintLibrary or None
+        Active geometric restraints, or defaults.
+    allow_retained_non_polymer_rdkit_fallback : bool
+        Whether retained-component inference is permitted.
+    retained_non_polymer_chemistry_evidence : tuple
+        Explicit retained-component evidence.
+    chemistry_observation : StructureChemistryObservation or None
+        Chemistry reuse bound to the exact source and chemistry inputs.
+
+    Returns
+    -------
+    tuple[RegionTransformationResult, LocalRefinementRuntimeProfile]
+        Selected result, elapsed stage times and candidate counts.
+
+    Raises
+    ------
+    RefinementError
+        Readiness, execution or candidate selection fails.
+    ValueError
+        A supplied observation has different derivation inputs.
+    """
 
     start = perf_counter()
     request = normalize_local_refinement_request(
@@ -97,6 +161,7 @@ def execute_local_transformation_profiled(
         retained_non_polymer_chemistry_evidence=(
             retained_non_polymer_chemistry_evidence
         ),
+        chemistry_observation=chemistry_observation,
     )
     request_normalization_runtime_ms = (perf_counter() - start) * 1000.0
 

@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
@@ -27,6 +28,9 @@ from protrepair.state.structure_residue import (
 from protrepair.state.topology import TopologyAvailabilityState
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
+
+if TYPE_CHECKING:
+    from protrepair.state.chemistry_observation import StructureChemistryObservation
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +133,7 @@ def derive_projection_coverage_and_chemistry_readiness_facts(
     ] = (),
     hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
+    chemistry_observation: "StructureChemistryObservation | None" = None,
 ) -> tuple[StructureCoverageFacts, StructureChemistryReadinessFacts]:
     """Observe context-bound residue identities, using validated expectations.
 
@@ -148,6 +153,9 @@ def derive_projection_coverage_and_chemistry_readiness_facts(
         Expectations reused only when all derivation inputs match.
     allow_retained_non_polymer_rdkit_fallback : bool
         Whether retained chemistry inference is permitted.
+    chemistry_observation : StructureChemistryObservation or None
+        Shared observation requiring the exact context and interpretation inputs.
+        When supplied, it owns expectations instead of the optional model hint.
 
     Returns
     -------
@@ -159,17 +167,29 @@ def derive_projection_coverage_and_chemistry_readiness_facts(
     KeyError
         A selected identity is missing from the context.
     ValueError
-        A selected identity is repeated.
+        A selected identity is repeated or the observation inputs do not match.
     """
     from protrepair.state.chemistry_observation import StructureChemistryObservation
 
-    return StructureChemistryObservation(
-        context_structure,
-        component_library=component_library,
-        retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
-        hydrogen_expectation_model=hydrogen_expectation_model,
-        allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
-    ).projected_facts(tuple(residue.residue_id for residue in (*residues, *ligands)))
+    observation = chemistry_observation
+    if observation is None:
+        observation = StructureChemistryObservation(
+            context_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+            hydrogen_expectation_model=hydrogen_expectation_model,
+            allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+        )
+    else:
+        observation.require_context(
+            context_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+            allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+        )
+    return observation.projected_facts(
+        tuple(residue.residue_id for residue in (*residues, *ligands))
+    )
 
 
 def aggregate_topology_availability_state(

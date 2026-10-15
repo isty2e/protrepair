@@ -296,6 +296,7 @@ class StructureProjectionStateFacts:
         ] = (),
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
         allow_retained_non_polymer_rdkit_fallback: bool = True,
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> "StructureProjectionStateFacts":
         """Derive facts for selected residues within their chemical context.
 
@@ -315,11 +316,20 @@ class StructureProjectionStateFacts:
             Expectations reused only when their complete inputs match.
         allow_retained_non_polymer_rdkit_fallback : bool
             Whether retained-component inference is permitted.
+        chemistry_observation : StructureChemistryObservation or None
+            Shared observation requiring the exact context and interpretation inputs.
+            It owns expectations when supplied; the model argument is only a hint
+            for constructing a new observation.
 
         Returns
         -------
         StructureProjectionStateFacts
             Projected state with context-bound polymer site targets.
+
+        Raises
+        ------
+        ValueError
+            The supplied observation belongs to another context or interpretation.
         """
 
         projected_residue_ids = tuple(
@@ -341,6 +351,7 @@ class StructureProjectionStateFacts:
             ),
             hydrogen_expectation_model=hydrogen_expectation_model,
             allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            chemistry_observation=chemistry_observation,
         )
 
     @classmethod
@@ -358,18 +369,28 @@ class StructureProjectionStateFacts:
         ],
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None,
         allow_retained_non_polymer_rdkit_fallback: bool,
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> "StructureProjectionStateFacts":
         """Derive scoped facts over one explicit projection and semantic scope."""
 
-        observation = StructureChemistryObservation(
-            context_structure,
-            component_library=component_library,
-            retained_non_polymer_chemistry_evidence=(
-                retained_non_polymer_chemistry_evidence
-            ),
-            hydrogen_expectation_model=hydrogen_expectation_model,
-            allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
-        )
+        observation = chemistry_observation
+        if observation is None:
+            observation = StructureChemistryObservation(
+                context_structure,
+                component_library=component_library,
+                retained_non_polymer_chemistry_evidence=(
+                    retained_non_polymer_chemistry_evidence
+                ),
+                hydrogen_expectation_model=hydrogen_expectation_model,
+                allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            )
+        else:
+            observation.require_context(
+                context_structure,
+                component_library=component_library,
+                retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+                allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            )
         residue_facts = tuple(
             observation.residue_facts(residue.residue_id) for residue in residues
         )

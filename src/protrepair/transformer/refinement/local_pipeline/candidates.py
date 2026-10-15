@@ -84,6 +84,9 @@ class RefinementExecutionCandidate:
         atom_scope = self.context.atom_input.observed_atom_scope(
             self.context.source_snapshot
         )
+        observation = request.chemistry_observation.for_structure(
+            self.context.source_snapshot.structure
+        )
         require_atom_scope_continuous_relaxation_execution(
             derive_atom_scope_continuous_relaxation_facts(
                 self.context.source_snapshot,
@@ -96,7 +99,7 @@ class RefinementExecutionCandidate:
                 retained_non_polymer_chemistry_evidence=(
                     request.retained_non_polymer_chemistry_evidence
                 ),
-                hydrogen_expectation_model=request.hydrogen_expectation_model,
+                chemistry_observation=observation,
             )
         )
 
@@ -112,11 +115,7 @@ class RefinementExecutionCandidate:
                 request.retained_non_polymer_chemistry_evidence
             ),
             retained_non_polymer_chemistry_resolution_by_residue_id=(
-                None
-                if request.hydrogen_expectation_model is None
-                else (
-                    request.hydrogen_expectation_model.retained_non_polymer_resolution_by_residue_id
-                )
+                observation.hydrogen_expectation_model.retained_non_polymer_resolution_by_residue_id
             ),
         )
         return SpeculativeExecution(
