@@ -22,7 +22,6 @@ from protrepair.state.structure_axes import (
 from protrepair.state.structure_residue import (
     ResidueChemistryReadinessFacts,
     ResidueCoverageFacts,
-    ResidueProjectionFactRuntime,
     RetainedNonPolymerChemistryReadinessFact,
 )
 from protrepair.state.topology import TopologyAvailabilityState
@@ -106,24 +105,17 @@ def derive_structure_coverage_and_chemistry_readiness_facts(
     *,
     component_library: ComponentLibrary | None = None,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
-        ...,
+        RetainedNonPolymerChemistryEvidence, ...
     ] = (),
 ) -> tuple[StructureCoverageFacts, StructureChemistryReadinessFacts]:
-    """Derive split workflow facts from one shared structure pass."""
+    """Derive split workflow facts from one shared structure observation."""
+    from protrepair.state.chemistry_observation import StructureChemistryObservation
 
-    blueprint_coverages = _structure_blueprint_coverages(structure)
-    return _derive_projection_coverage_and_chemistry_readiness_facts(
-        context_structure=structure,
-        residues=tuple(structure.constitution.iter_residues(include_ligands=False)),
-        ligands=structure.constitution.ligands,
+    return StructureChemistryObservation(
+        structure,
         component_library=component_library,
-        retained_non_polymer_chemistry_evidence=(
-            retained_non_polymer_chemistry_evidence
-        ),
-        hydrogen_expectation_model=None,
-        blueprint_coverages=blueprint_coverages,
-    )
+        retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+    ).whole_structure_facts()
 
 
 def derive_projection_coverage_and_chemistry_readiness_facts(
@@ -133,160 +125,51 @@ def derive_projection_coverage_and_chemistry_readiness_facts(
     ligands: tuple[ResidueSite, ...] = (),
     component_library: ComponentLibrary | None = None,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
-        ...,
+        RetainedNonPolymerChemistryEvidence, ...
     ] = (),
     hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
+    allow_retained_non_polymer_rdkit_fallback: bool = True,
 ) -> tuple[StructureCoverageFacts, StructureChemistryReadinessFacts]:
-    """Derive coverage and chemistry-readiness facts over one explicit projection."""
+    """Observe context-bound residue identities, using validated expectations.
 
-    return _derive_projection_coverage_and_chemistry_readiness_facts(
-        context_structure=context_structure,
-        residues=residues,
-        ligands=ligands,
-        component_library=component_library,
-        retained_non_polymer_chemistry_evidence=(
-            retained_non_polymer_chemistry_evidence
-        ),
-        hydrogen_expectation_model=hydrogen_expectation_model,
-        blueprint_coverages=(),
-    )
+    Parameters
+    ----------
+    context_structure : ProteinStructure
+        Complete chemical context.
+    residues : tuple[ResidueSite, ...]
+        Polymer selections; identities resolve against the context.
+    ligands : tuple[ResidueSite, ...]
+        Retained-component selections.
+    component_library : ComponentLibrary or None
+        Active library, or defaults.
+    retained_non_polymer_chemistry_evidence : tuple
+        Explicit chemistry evidence.
+    hydrogen_expectation_model : StructureHydrogenExpectationModel or None
+        Expectations reused only when all derivation inputs match.
+    allow_retained_non_polymer_rdkit_fallback : bool
+        Whether retained chemistry inference is permitted.
 
+    Returns
+    -------
+    tuple[StructureCoverageFacts, StructureChemistryReadinessFacts]
+        Observations for the selected identities.
 
-def _derive_projection_coverage_and_chemistry_readiness_facts(
-    *,
-    context_structure: ProteinStructure,
-    residues: tuple[ResidueSite, ...],
-    ligands: tuple[ResidueSite, ...],
-    component_library: ComponentLibrary | None,
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
-        ...,
-    ],
-    hydrogen_expectation_model: StructureHydrogenExpectationModel | None,
-    blueprint_coverages: tuple[StructureBlueprintCoverage, ...],
-) -> tuple[StructureCoverageFacts, StructureChemistryReadinessFacts]:
-    """Derive split workflow facts over one explicit residue and ligand projection."""
+    Raises
+    ------
+    KeyError
+        A selected identity is missing from the context.
+    ValueError
+        A selected identity is repeated.
+    """
+    from protrepair.state.chemistry_observation import StructureChemistryObservation
 
-    runtime = ResidueProjectionFactRuntime.from_context(
+    return StructureChemistryObservation(
         context_structure,
         component_library=component_library,
-        retained_non_polymer_chemistry_evidence=(
-            retained_non_polymer_chemistry_evidence
-        ),
+        retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         hydrogen_expectation_model=hydrogen_expectation_model,
-    )
-    residue_coverage_facts: list[ResidueCoverageFacts] = []
-    residue_chemistry_readiness_facts: list[ResidueChemistryReadinessFacts] = []
-    retained_non_polymer_chemistry_readiness_facts: list[
-        RetainedNonPolymerChemistryReadinessFact
-    ] = []
-    for residue in residues:
-        coverage_facts = runtime.derive_residue_coverage_facts(residue)
-        residue_coverage_facts.append(coverage_facts)
-        residue_chemistry_readiness_facts.append(
-            runtime.derive_residue_chemistry_readiness_facts(
-                residue,
-                coverage_facts=coverage_facts,
-            )
-        )
-    for retained_non_polymer in ligands:
-        retained_non_polymer_chemistry_readiness_facts.append(
-            runtime.derive_retained_non_polymer_chemistry_readiness_fact(
-                retained_non_polymer
-            )
-        )
-
-    coverage_residue_facts = tuple(residue_coverage_facts)
-    chemistry_residue_facts = tuple(residue_chemistry_readiness_facts)
-    coverage_facts = StructureCoverageFacts(
-        carrier=context_structure,
-        residue_facts=coverage_residue_facts,
-        blueprint_coverages=blueprint_coverages,
-        coverage_gaps=tuple(
-            coverage_gap
-            for coverage in blueprint_coverages
-            for coverage_gap in coverage.coverage_gaps
-        ),
-        backbone_heavy_atom_completeness_state=(
-            BackboneHeavyAtomCompletenessState.INCOMPLETE
-            if any(
-                residue_fact.requires_backbone_completion()
-                for residue_fact in coverage_residue_facts
-            )
-            else BackboneHeavyAtomCompletenessState.COMPLETE
-        ),
-        sidechain_heavy_atom_completeness_state=(
-            SidechainHeavyAtomCompletenessState.INCOMPLETE
-            if any(
-                residue_fact.requires_sidechain_completion()
-                for residue_fact in coverage_residue_facts
-            )
-            else SidechainHeavyAtomCompletenessState.COMPLETE
-        ),
-    )
-
-    component_support = (
-        ComponentSupportState.UNSUPPORTED_COMPONENTS_PRESENT
-        if any(
-            not residue_fact.is_supported() for residue_fact in chemistry_residue_facts
-        )
-        else ComponentSupportState.ALL_SUPPORTED
-    )
-    heavy_atom_topology_availability_state = aggregate_topology_availability_state(
-        residue_fact.heavy_atom_topology_availability_state
-        for residue_fact in chemistry_residue_facts
-    )
-    h_applicability_state = (
-        HydrogenApplicabilityState.APPLICABLE
-        if any(
-            residue_fact.hydrogen_applicability_state
-            is HydrogenApplicabilityState.APPLICABLE
-            for residue_fact in chemistry_residue_facts
-        )
-        else HydrogenApplicabilityState.NOT_APPLICABLE
-    )
-    applicable_residue_facts = tuple(
-        residue_fact
-        for residue_fact in chemistry_residue_facts
-        if residue_fact.hydrogen_applicability_state
-        is HydrogenApplicabilityState.APPLICABLE
-    )
-    if not applicable_residue_facts:
-        h_coverage_state = HydrogenCoverageState.COMPLETE
-        hydrogen_topology_availability_state = TopologyAvailabilityState.NOT_APPLICABLE
-    else:
-        if all(
-            residue_fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
-            for residue_fact in applicable_residue_facts
-        ):
-            h_coverage_state = HydrogenCoverageState.COMPLETE
-        elif all(
-            residue_fact.hydrogen_coverage_state is HydrogenCoverageState.NONE
-            for residue_fact in applicable_residue_facts
-        ):
-            h_coverage_state = HydrogenCoverageState.NONE
-        else:
-            h_coverage_state = HydrogenCoverageState.PARTIAL
-
-        hydrogen_topology_availability_state = aggregate_topology_availability_state(
-            residue_fact.hydrogen_topology_availability_state
-            for residue_fact in applicable_residue_facts
-        )
-
-    chemistry_readiness_facts = StructureChemistryReadinessFacts(
-        carrier=context_structure,
-        residue_facts=chemistry_residue_facts,
-        retained_non_polymer_facts=tuple(
-            retained_non_polymer_chemistry_readiness_facts
-        ),
-        component_support_state=component_support,
-        heavy_atom_topology_availability_state=(heavy_atom_topology_availability_state),
-        hydrogen_topology_availability_state=(hydrogen_topology_availability_state),
-        hydrogen_applicability_state=h_applicability_state,
-        hydrogen_coverage_state=h_coverage_state,
-    )
-    return coverage_facts, chemistry_readiness_facts
+        allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+    ).projected_facts(tuple(residue.residue_id for residue in (*residues, *ligands)))
 
 
 def aggregate_topology_availability_state(
@@ -318,29 +201,6 @@ def aggregate_topology_availability_state(
     if all(state is TopologyAvailabilityState.PRESENT for state in applicable_states):
         return TopologyAvailabilityState.PRESENT
     return TopologyAvailabilityState.ABSENT
-
-
-def _structure_blueprint_coverages(
-    structure: ProteinStructure,
-) -> tuple[StructureBlueprintCoverage, ...]:
-    """Return structure-local blueprint coverages for attached blueprint chains."""
-
-    if structure.polymer_blueprint is None:
-        return ()
-
-    coverages: list[StructureBlueprintCoverage] = []
-    for chain in structure.constitution.chains:
-        try:
-            coverages.append(
-                StructureBlueprintCoverage.from_structure(
-                    structure,
-                    chain.chain_id,
-                )
-            )
-        except KeyError:
-            continue
-
-    return tuple(coverages)
 
 
 __all__ = [

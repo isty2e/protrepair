@@ -26,6 +26,7 @@ from protrepair.state import (
     StructureIntrinsicGeometryFacts,
     StructureParserCompatibilityFacts,
 )
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.snapshot import ProteinStructureSnapshot
@@ -150,14 +151,10 @@ def evaluate_workflow_phase_outcomes(
 ) -> tuple[WorkflowPhaseOutcome, ...]:
     """Evaluate phase outcomes from narrow fact owners and blocker families."""
 
-    coverage_facts = StructureCoverageFacts.from_structure(
-        structure,
-        component_library=component_library,
+    observation = StructureChemistryObservation(
+        structure, component_library=component_library
     )
-    chemistry_readiness_facts = StructureChemistryReadinessFacts.from_structure(
-        structure,
-        component_library=component_library,
-    )
+    coverage_facts, chemistry_readiness_facts = observation.whole_structure_facts()
     disulfide_hydrogen_facts = StructureDisulfideHydrogenFacts.from_structure(structure)
     intrinsic_geometry_facts = derive_structure_intrinsic_geometry_facts(
         structure,
@@ -215,16 +212,51 @@ def evaluate_requested_goal_report(
         ...,
     ] = (),
     already_satisfied_requested_goals: tuple[WorkflowGoal, ...] = (),
+    chemistry_observation: StructureChemistryObservation | None = None,
 ) -> RequestedGoalReport:
-    """Evaluate requested-goal outcomes against one final structure."""
+    """Evaluate requested-goal outcomes against one final structure.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Snapshot being observed.
+    requested_goals : tuple[WorkflowGoal, ...]
+        Goals in reporting order.
+    component_library : ComponentLibrary or None
+        Active definitions, or the default library.
+    unsupported_requested_goals : tuple[WorkflowGoal, ...]
+        Goals to report as unsupported without observing their state.
+    blocked_requested_goal_blockers : tuple
+        Goals blocked by the listed scopes and phases.
+    already_satisfied_requested_goals : tuple[WorkflowGoal, ...]
+        Initially satisfied goals, still checked against the final state.
+    chemistry_observation : StructureChemistryObservation or None
+        Shared observation with matching snapshot, library and default evidence policy.
+
+    Returns
+    -------
+    RequestedGoalReport
+        Observed outcomes with blocker and initial-satisfaction distinctions.
+
+    Raises
+    ------
+    ValueError
+        The observation has different interpretation inputs.
+    """
+
+    observation = chemistry_observation
+    if observation is None:
+        observation = StructureChemistryObservation(
+            structure, component_library=component_library
+        )
+    else:
+        observation.require_context(structure, component_library=component_library)
 
     unsupported_goal_set = set(unsupported_requested_goals)
     blockers_by_goal = {
         goal: blockers for goal, blockers in blocked_requested_goal_blockers
     }
     already_satisfied_goal_set = set(already_satisfied_requested_goals)
-    coverage_facts: StructureCoverageFacts | None = None
-    chemistry_readiness_facts: StructureChemistryReadinessFacts | None = None
     boundary_facts: StructureBoundaryStateFacts | None = None
     snapshot: ProteinStructureSnapshot | None = None
 
@@ -253,20 +285,11 @@ def evaluate_requested_goal_report(
             )
             continue
 
-        (
-            observed_state,
-            snapshot,
-            coverage_facts,
-            chemistry_readiness_facts,
-            boundary_facts,
-        ) = observed_requested_goal_value(
-            structure,
+        observed_state, snapshot, boundary_facts = observed_requested_goal_value(
+            observation,
             snapshot=snapshot,
-            coverage_facts=coverage_facts,
-            chemistry_readiness_facts=chemistry_readiness_facts,
             boundary_facts=boundary_facts,
             goal=goal,
-            component_library=component_library,
         )
         satisfied = requested_goal_is_satisfied(goal, observed_state=observed_state)
         if satisfied and goal in already_satisfied_goal_set:
@@ -329,18 +352,51 @@ def evaluate_workflow_branch_quality_score(
     planning_context: WorkflowPlanningContext,
     component_library: ComponentLibrary | None,
     search_depth: int = 0,
+    chemistry_observation: StructureChemistryObservation | None = None,
 ) -> WorkflowBranchQualityScore:
-    """Return the canonical branch score projection for one workflow result."""
+    """Return the canonical branch score projection for one workflow result.
+
+    Parameters
+    ----------
+    result : TransformationResult
+        Result whose structure and diagnostics are scored.
+    requested_goal_report : RequestedGoalReport
+        Goal observations for this result.
+    planning_context : WorkflowPlanningContext
+        Interaction context for assessment.
+    component_library : ComponentLibrary or None
+        Active definitions, or the default library.
+    search_depth : int
+        Branch depth used by the preference policy.
+    chemistry_observation : StructureChemistryObservation or None
+        Shared observation with matching snapshot, library and default evidence policy.
+
+    Returns
+    -------
+    WorkflowBranchQualityScore
+        Policy-independent quality axes.
+
+    Raises
+    ------
+    ValueError
+        The observation has different interpretation inputs.
+    """
 
     active_component_library = (
         build_default_component_library()
         if component_library is None
         else component_library
     )
-    chemistry_readiness_facts = StructureChemistryReadinessFacts.from_structure(
-        result.structure,
-        component_library=active_component_library,
-    )
+    observation = chemistry_observation
+    if observation is None:
+        observation = StructureChemistryObservation(
+            result.structure, component_library=active_component_library
+        )
+    else:
+        observation.require_context(
+            result.structure, component_library=active_component_library
+        )
+    _, chemistry_readiness_facts = observation.whole_structure_facts()
     intrinsic_facts = derive_structure_intrinsic_geometry_facts(
         result.structure,
         component_library=active_component_library,

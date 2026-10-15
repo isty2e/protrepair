@@ -1,5 +1,7 @@
 """Workflow reporting tests over narrow fact owners and phase reports."""
 
+from unittest.mock import patch
+
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
@@ -12,6 +14,7 @@ from tests.support.refinement_benchmarks import load_case_structure
 from tests.support.refinement_cases import REFINEMENT_BENCHMARK_CASES
 from tests.support.scenario_fixture_matrix import SCENARIO_FIXTURE_MATRIX
 
+import protrepair.state.chemistry_observation as chemistry_observation
 from protrepair.api import process_structure
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.geometry import Vec3
@@ -44,13 +47,55 @@ from protrepair.workflow.contracts import (
     requested_process_goal,
 )
 from protrepair.workflow.contracts.result import WorkflowBranchQualityScore
-from protrepair.workflow.engine.reporting import evaluate_requested_goal_report
+from protrepair.workflow.engine.reporting import (
+    evaluate_requested_goal_report,
+    evaluate_workflow_phase_report,
+)
 
 
-def test_requested_goal_report_uses_coverage_facts_only_for_heavy_requests(
+def test_phase_report_derives_joint_facts_once_without_cross_call_reuse() -> None:
+    source = load_case_structure(REFINEMENT_BENCHMARK_CASES["3g8l-asn182"])
+    library = build_default_component_library()
+    with patch.object(
+        chemistry_observation,
+        "derive_structure_hydrogen_expectation_model",
+        wraps=chemistry_observation.derive_structure_hydrogen_expectation_model,
+    ) as derive:
+        supported = evaluate_workflow_phase_report(
+            source,
+            component_library=library,
+            planning_context=WorkflowPlanningContext(),
+            blockers=(),
+        )
+        assert derive.call_count == 1
+        unsupported = evaluate_workflow_phase_report(
+            source,
+            component_library=ComponentLibrary(),
+            planning_context=WorkflowPlanningContext(),
+            blockers=(),
+        )
+        assert derive.call_count == 2
+        repeated = evaluate_workflow_phase_report(
+            source,
+            component_library=library,
+            planning_context=WorkflowPlanningContext(),
+            blockers=(),
+        )
+        assert derive.call_count == 3
+
+    assert supported.outcomes == repeated.outcomes
+    phase = WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION
+    supported_chemistry = supported.outcome_for(phase)
+    unsupported_chemistry = unsupported.outcome_for(phase)
+    assert supported_chemistry is not None and unsupported_chemistry is not None
+    assert unsupported_chemistry.status is WorkflowPhaseStatus.UNRESOLVED
+    assert supported_chemistry != unsupported_chemistry
+
+
+def test_whole_heavy_goal_report_does_not_build_boundary_or_atom_scope_views(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Whole-structure heavy requests should not build unrelated fact families."""
+    """Whole-structure heavy goals need no boundary or atom-scope observation."""
 
     requested_state = requested_process_goal(
         scope=WholeStructureScope(),
@@ -82,10 +127,6 @@ def test_requested_goal_report_uses_coverage_facts_only_for_heavy_requests(
         raise AssertionError("unrelated fact family should not be built")
 
     monkeypatch.setattr(
-        "protrepair.workflow.planning.assessment.goal_support.StructureChemistryReadinessFacts.from_structure",
-        _fail,
-    )
-    monkeypatch.setattr(
         "protrepair.workflow.planning.assessment.goal_support.StructureBoundaryStateFacts.from_structure",
         _fail,
     )
@@ -104,10 +145,10 @@ def test_requested_goal_report_uses_coverage_facts_only_for_heavy_requests(
     assert outcome.status is RequestedGoalStatus.UNMET
 
 
-def test_requested_goal_report_uses_chemistry_facts_only_for_hydrogen_requests(
+def test_whole_hydrogen_goal_report_does_not_build_boundary_or_atom_scope_views(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Whole-structure hydrogen requests should not build unrelated fact families."""
+    """Whole-structure H goals need no boundary or atom-scope observation."""
 
     requested_state = requested_process_goal(
         scope=WholeStructureScope(),
@@ -138,10 +179,6 @@ def test_requested_goal_report_uses_chemistry_facts_only_for_hydrogen_requests(
     def _fail(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("unrelated fact family should not be built")
 
-    monkeypatch.setattr(
-        "protrepair.workflow.planning.assessment.goal_support.StructureCoverageFacts.from_structure",
-        _fail,
-    )
     monkeypatch.setattr(
         "protrepair.workflow.planning.assessment.goal_support.StructureBoundaryStateFacts.from_structure",
         _fail,

@@ -22,9 +22,21 @@ from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.labels import ResidueId
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False, eq=False)
 class StructureHydrogenExpectationModel:
-    """Hydrogen expectation policy derived for one observed structure."""
+    """Hydrogen expectations with their complete derivation inputs.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Observed structure, including source provenance and realized chemistry.
+    component_library : ComponentLibrary
+        Component definitions used for expectations.
+    allow_retained_non_polymer_rdkit_fallback : bool
+        Whether retained-component inference is permitted.
+    retained_non_polymer_chemistry_evidence : tuple
+        Explicit retained-component chemistry evidence.
+    """
 
     expected_hydrogen_atom_names_by_residue: Mapping[ResidueId, tuple[str, ...]]
     polymer_preparation: PolymerMicrostatePreparation
@@ -32,6 +44,107 @@ class StructureHydrogenExpectationModel:
         ResidueId,
         RetainedNonPolymerChemistryResolution,
     ]
+    _retained_evidence: tuple[RetainedNonPolymerChemistryEvidence, ...]
+    _allow_rdkit_fallback: bool
+
+    def __init__(
+        self,
+        structure: ProteinStructure,
+        *,
+        component_library: ComponentLibrary,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        retained_non_polymer_chemistry_evidence: tuple[
+            RetainedNonPolymerChemistryEvidence, ...
+        ] = (),
+    ) -> None:
+        evidence_map = evidence_by_residue_id(retained_non_polymer_chemistry_evidence)
+        disulfides = disulfide_bonded_cysteine_residue_ids(structure)
+        preparation = PolymerMicrostatePreparation(
+            PolymerMicrostateContext(structure), component_library
+        )
+        names = _polymer_expected_hydrogen_atom_names(
+            structure,
+            component_library=component_library,
+            disulfide_bonded_residue_ids=disulfides,
+            preparation=preparation,
+        )
+        resolutions = {}
+        for ligand in structure.constitution.ligands:
+            resolution = resolve_retained_non_polymer_chemistry(
+                structure,
+                ligand,
+                component_library=component_library,
+                evidence=evidence_map.get(ligand.residue_id),
+                allow_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+                disulfide_residue_ids=disulfides,
+            )
+            resolutions[ligand.residue_id] = resolution
+            if resolution.expected_hydrogen_atom_names:
+                names[ligand.residue_id] = resolution.expected_hydrogen_atom_names
+
+        object.__setattr__(self, "polymer_preparation", preparation)
+        object.__setattr__(
+            self, "expected_hydrogen_atom_names_by_residue", MappingProxyType(names)
+        )
+        object.__setattr__(
+            self,
+            "retained_non_polymer_resolution_by_residue_id",
+            MappingProxyType(resolutions),
+        )
+        object.__setattr__(self, "_retained_evidence", tuple(evidence_map.values()))
+        object.__setattr__(
+            self, "_allow_rdkit_fallback", allow_retained_non_polymer_rdkit_fallback
+        )
+
+    def matches_inputs(
+        self,
+        structure: ProteinStructure,
+        *,
+        component_library: ComponentLibrary,
+        retained_non_polymer_chemistry_evidence: tuple[
+            RetainedNonPolymerChemistryEvidence, ...
+        ] = (),
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+    ) -> bool:
+        """Check the complete derivation inputs before reusing expectations.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Candidate observation snapshot.
+        component_library : ComponentLibrary
+            Active library; another instance conservatively requires derivation.
+        retained_non_polymer_chemistry_evidence : tuple
+            Explicit retained-component chemistry evidence.
+        allow_retained_non_polymer_rdkit_fallback : bool
+            Whether inference without a template or override is permitted.
+
+        Returns
+        -------
+        bool
+            Whether reuse preserves the hydrogen and topology expectations.
+            This does not authorize reusing placed coordinates or an FF problem.
+        """
+        if (
+            self.polymer_preparation.component_library is not component_library
+            or self._retained_evidence != retained_non_polymer_chemistry_evidence
+            or self._allow_rdkit_fallback != allow_retained_non_polymer_rdkit_fallback
+            or not self.polymer_preparation.matches_chemistry(structure)
+        ):
+            return False
+
+        source = self.polymer_preparation.context.source
+        # Ligand inference and source-H name projection can depend on geometry
+        # even when polymer identity selection does not.
+        return source.geometry is structure.geometry or all(
+            source.residue_geometry(
+                source.constitution.residue_index(ligand.residue_id)
+            )
+            == structure.residue_geometry(
+                structure.constitution.residue_index(ligand.residue_id)
+            )
+            for ligand in structure.constitution.ligands
+        )
 
     def resolution_for_retained_non_polymer(
         self,
@@ -59,44 +172,11 @@ def derive_structure_hydrogen_expectation_model(
 ) -> StructureHydrogenExpectationModel:
     """Derive structure-level hydrogen expectation policy."""
 
-    disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(structure)
-    polymer_preparation = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(structure), component_library
-    )
-    expected_hydrogen_atom_names_by_residue = _polymer_expected_hydrogen_atom_names(
+    return StructureHydrogenExpectationModel(
         structure,
         component_library=component_library,
-        disulfide_bonded_residue_ids=disulfide_residue_ids,
-        preparation=polymer_preparation,
-    )
-    evidence_map = evidence_by_residue_id(retained_non_polymer_chemistry_evidence)
-    retained_non_polymer_resolution_by_residue_id: dict[
-        ResidueId,
-        RetainedNonPolymerChemistryResolution,
-    ] = {}
-    for ligand in structure.constitution.ligands:
-        resolution = resolve_retained_non_polymer_chemistry(
-            structure,
-            ligand,
-            component_library=component_library,
-            evidence=evidence_map.get(ligand.residue_id),
-            allow_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
-            disulfide_residue_ids=disulfide_residue_ids,
-        )
-        retained_non_polymer_resolution_by_residue_id[ligand.residue_id] = resolution
-        if resolution.expected_hydrogen_atom_names:
-            expected_hydrogen_atom_names_by_residue[ligand.residue_id] = (
-                resolution.expected_hydrogen_atom_names
-            )
-
-    return StructureHydrogenExpectationModel(
-        polymer_preparation=polymer_preparation,
-        expected_hydrogen_atom_names_by_residue=MappingProxyType(
-            expected_hydrogen_atom_names_by_residue
-        ),
-        retained_non_polymer_resolution_by_residue_id=MappingProxyType(
-            retained_non_polymer_resolution_by_residue_id
-        ),
+        allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+        retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
     )
 
 

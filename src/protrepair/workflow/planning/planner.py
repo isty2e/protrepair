@@ -17,8 +17,8 @@ from protrepair.state import (
     StructureInteractionFacts,
     StructureIntrinsicGeometryFacts,
     StructureParserCompatibilityFacts,
-    derive_structure_coverage_and_chemistry_readiness_facts,
 )
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.structure_topology import (
     StructureDisulfideHydrogenFacts,
     StructureDisulfideTopologyFacts,
@@ -379,14 +379,13 @@ def plan_workflow_actions(
             "when explicit external span reconstructions are requested"
         )
 
+    chemistry_observation = StructureChemistryObservation(
+        structure,
+        component_library=active_component_library,
+        retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+    )
     coverage_facts, chemistry_readiness_facts = (
-        derive_structure_coverage_and_chemistry_readiness_facts(
-            structure,
-            component_library=active_component_library,
-            retained_non_polymer_chemistry_evidence=(
-                retained_non_polymer_chemistry_evidence
-            ),
-        )
+        chemistry_observation.whole_structure_facts()
     )
     boundary_facts = StructureBoundaryStateFacts.from_structure(structure)
     disulfide_topology_facts = StructureDisulfideTopologyFacts.from_structure(structure)
@@ -527,6 +526,13 @@ def plan_workflow_actions(
             structure,
             requested_goals=tuple(requested_goals),
             component_library=active_component_library,
+            # Goal reporting currently observes without explicit retained evidence.
+            # Share only when its interpretation matches the planning observation.
+            chemistry_observation=(
+                None
+                if retained_non_polymer_chemistry_evidence
+                else chemistry_observation
+            ),
         ),
         state_deficit=state_deficit,
     )

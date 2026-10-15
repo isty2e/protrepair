@@ -23,6 +23,7 @@ from protrepair.state import (
     StructureInteractionFacts,
     StructureIntrinsicGeometryFacts,
 )
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.continuous.readiness import (
@@ -194,158 +195,126 @@ def already_satisfied_requested_goals(
     *,
     requested_goals: tuple[WorkflowGoal, ...],
     component_library: ComponentLibrary | None = None,
+    chemistry_observation: StructureChemistryObservation | None = None,
 ) -> tuple[WorkflowGoal, ...]:
-    """Return requested goals already satisfied by the current structure."""
+    """Return requested goals satisfied by the current structure.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Snapshot being observed.
+    requested_goals : tuple[WorkflowGoal, ...]
+        Goals in reporting order.
+    component_library : ComponentLibrary or None
+        Active definitions, or defaults.
+    chemistry_observation : StructureChemistryObservation or None
+        Shared observation with the same carrier/library and default evidence policy.
+
+    Returns
+    -------
+    tuple[WorkflowGoal, ...]
+        Goals whose observed state meets their target.
+
+    Raises
+    ------
+    ValueError
+        The supplied observation has different interpretation inputs.
+    """
+    observation = chemistry_observation
+    if observation is None:
+        observation = StructureChemistryObservation(
+            structure, component_library=component_library
+        )
+    else:
+        observation.require_context(structure, component_library=component_library)
 
     snapshot: ProteinStructureSnapshot | None = None
-    coverage_facts: StructureCoverageFacts | None = None
-    chemistry_readiness_facts: StructureChemistryReadinessFacts | None = None
     boundary_facts: StructureBoundaryStateFacts | None = None
     satisfied_goals: list[WorkflowGoal] = []
     for goal in requested_goals:
-        (
-            observed_state,
-            snapshot,
-            coverage_facts,
-            chemistry_readiness_facts,
-            boundary_facts,
-        ) = observed_requested_goal_value(
-            structure,
+        observed_state, snapshot, boundary_facts = observed_requested_goal_value(
+            observation,
             snapshot=snapshot,
-            coverage_facts=coverage_facts,
-            chemistry_readiness_facts=chemistry_readiness_facts,
             boundary_facts=boundary_facts,
             goal=goal,
-            component_library=component_library,
         )
-        if requested_goal_is_satisfied(
-            goal,
-            observed_state=observed_state,
-        ):
+        if requested_goal_is_satisfied(goal, observed_state=observed_state):
             satisfied_goals.append(goal)
-
     return tuple(satisfied_goals)
 
 
 def observed_requested_goal_value(
-    structure: ProteinStructure,
+    observation: StructureChemistryObservation,
     *,
     snapshot: ProteinStructureSnapshot | None,
-    coverage_facts: StructureCoverageFacts | None,
-    chemistry_readiness_facts: StructureChemistryReadinessFacts | None,
     boundary_facts: StructureBoundaryStateFacts | None,
     goal: WorkflowGoal,
-    component_library: ComponentLibrary | None = None,
 ) -> tuple[
     WorkflowGoalStateValue | None,
     ProteinStructureSnapshot | None,
-    StructureCoverageFacts | None,
-    StructureChemistryReadinessFacts | None,
     StructureBoundaryStateFacts | None,
 ]:
-    """Return the observed value for one requested goal when evaluable."""
+    """Observe a goal using one bound chemistry interpretation.
 
+    Parameters
+    ----------
+    observation : StructureChemistryObservation
+        Shared snapshot and interpretation owner.
+    snapshot : ProteinStructureSnapshot or None
+        Optional atom-scope lowering view of the same structure.
+    boundary_facts : StructureBoundaryStateFacts or None
+        Optional boundary observations for this structure.
+    goal : WorkflowGoal
+        Scope and target value to observe.
+
+    Returns
+    -------
+    tuple
+        Observed value and reusable snapshot/boundary derivations.
+    """
+    structure = observation.context_structure
     scope = goal.scope
     value = goal.value
-    if scope == WholeStructureScope():
-        active_coverage_facts = coverage_facts
-        active_chemistry_readiness_facts = chemistry_readiness_facts
-        if (
-            isinstance(
-                value,
-                (
-                    BackboneHeavyAtomCompletenessState,
-                    SidechainHeavyAtomCompletenessState,
-                ),
-            )
-            and active_coverage_facts is None
-        ):
-            active_coverage_facts = StructureCoverageFacts.from_structure(
-                structure,
-                component_library=component_library,
-            )
-        if (
-            isinstance(value, HydrogenCoverageState)
-            and active_chemistry_readiness_facts is None
-        ):
-            active_chemistry_readiness_facts = (
-                StructureChemistryReadinessFacts.from_structure(
-                    structure,
-                    component_library=component_library,
-                )
-            )
-        if (
-            isinstance(
-                value,
-                (
-                    BackboneHeavyAtomCompletenessState,
-                    SidechainHeavyAtomCompletenessState,
-                    HydrogenCoverageState,
-                    ClashPresenceState,
-                ),
-            )
-        ):
-            if (
-                isinstance(value, ClashPresenceState)
-                and active_chemistry_readiness_facts is None
-            ):
-                active_chemistry_readiness_facts = (
-                    StructureChemistryReadinessFacts.from_structure(
-                        structure,
-                        component_library=component_library,
-                    )
-                )
-            return (
-                _whole_structure_goal_observed_state_value(
-                    structure=structure,
-                    coverage_facts=active_coverage_facts,
-                    chemistry_readiness_facts=active_chemistry_readiness_facts,
-                    goal_state_value=value,
-                    component_library=component_library,
-                ),
-                snapshot,
-                active_coverage_facts,
-                active_chemistry_readiness_facts,
-                boundary_facts,
-            )
-    if isinstance(value, OxtPresenceState):
-        if not isinstance(scope, ResidueBoundaryScope):
-            return (
-                None,
-                snapshot,
-                coverage_facts,
-                chemistry_readiness_facts,
-                boundary_facts,
-            )
-
-        active_boundary_facts = boundary_facts
-        if active_boundary_facts is None:
-            active_boundary_facts = StructureBoundaryStateFacts.from_structure(
-                structure,
-            )
+    if scope == WholeStructureScope() and isinstance(
+        value,
+        (
+            BackboneHeavyAtomCompletenessState,
+            SidechainHeavyAtomCompletenessState,
+            HydrogenCoverageState,
+            ClashPresenceState,
+        ),
+    ):
+        coverage_facts, readiness_facts = observation.whole_structure_facts()
         return (
-            active_boundary_facts.terminal_boundary_observation.oxt_presence_for_scope(
-                scope
+            _whole_structure_goal_observed_state_value(
+                structure=structure,
+                coverage_facts=coverage_facts,
+                chemistry_readiness_facts=readiness_facts,
+                goal_state_value=value,
+                component_library=observation.component_library,
             ),
             snapshot,
-            coverage_facts,
-            chemistry_readiness_facts,
-            active_boundary_facts,
+            boundary_facts,
+        )
+
+    if isinstance(value, OxtPresenceState):
+        if not isinstance(scope, ResidueBoundaryScope):
+            return None, snapshot, boundary_facts
+        if boundary_facts is None:
+            boundary_facts = StructureBoundaryStateFacts.from_structure(structure)
+        return (
+            boundary_facts.terminal_boundary_observation.oxt_presence_for_scope(scope),
+            snapshot,
+            boundary_facts,
         )
 
     observed_state, active_snapshot = _lowered_scope_observed_state_value(
         structure,
         snapshot=snapshot,
         goal=goal,
-        component_library=component_library,
+        component_library=observation.component_library,
     )
-    return (
-        observed_state,
-        active_snapshot,
-        coverage_facts,
-        chemistry_readiness_facts,
-        boundary_facts,
-    )
+    return observed_state, active_snapshot, boundary_facts
 
 
 def requested_goal_is_satisfied(
@@ -445,9 +414,7 @@ def _whole_structure_goal_observed_state_value(
     if isinstance(goal_state_value, HydrogenCoverageState):
         if chemistry_readiness_facts is None:
             return None
-        return _whole_structure_hydrogen_goal_observed_state(
-            chemistry_readiness_facts
-        )
+        return _whole_structure_hydrogen_goal_observed_state(chemistry_readiness_facts)
 
     if isinstance(goal_state_value, ClashPresenceState):
         if chemistry_readiness_facts is None:
@@ -474,10 +441,7 @@ def _whole_structure_clash_goal_observed_state(
         component_library=component_library,
         chemistry_readiness_facts=chemistry_readiness_facts,
     )
-    if (
-        intrinsic_geometry_facts.protein_self_clash_state
-        is ClashPresenceState.PRESENT
-    ):
+    if intrinsic_geometry_facts.protein_self_clash_state is ClashPresenceState.PRESENT:
         return ClashPresenceState.PRESENT
 
     if not structure.constitution.ligands:

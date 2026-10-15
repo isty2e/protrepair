@@ -299,8 +299,11 @@ def derive_atom_scope_continuous_relaxation_facts(
             ),
         )
         if hydrogen_expectation_model is None
-        or not hydrogen_expectation_model.polymer_preparation.matches_chemistry(
-            snapshot.structure
+        or not hydrogen_expectation_model.matches_inputs(
+            snapshot.structure,
+            component_library=active_component_library,
+            allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
         else hydrogen_expectation_model
     )
@@ -333,6 +336,7 @@ def derive_atom_scope_continuous_relaxation_facts(
             retained_non_polymer_chemistry_evidence
         ),
         hydrogen_expectation_model=active_hydrogen_expectation_model,
+        allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
     )
     (
         continuous_region_readiness_facts,
@@ -453,6 +457,7 @@ def _derive_execution_region_readiness_facts(
             retained_non_polymer_chemistry_evidence
         ),
         hydrogen_expectation_model=hydrogen_expectation_model,
+        allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
     )
     continuous_bond_realizability_blocker = None
     peptide_boundary_blocker = None
