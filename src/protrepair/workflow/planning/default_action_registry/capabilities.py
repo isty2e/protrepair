@@ -83,6 +83,15 @@ RETAINED_NON_POLYMER_HYDROGEN_COMPLETION_CAPABILITY = WorkflowActionCapability(
     supported_goals=(whole_structure_goal_descriptor(HydrogenCoverageState.COMPLETE),),
 )
 
+RETAINED_NON_POLYMER_TOPOLOGY_RESOLUTION_CAPABILITY = WorkflowActionCapability(
+    reducible_deficit_families=(WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,),
+    read_fact_families=(WorkflowCapabilityFactFamily.CHEMISTRY_READINESS,),
+    activation_mode=WorkflowActionActivationMode.AUTOMATIC_OR_GOAL_DRIVEN,
+    effect_class=WorkflowActionEffectClass.REVISES_CHEMISTRY,
+    supported_localities=(WorkflowActionLocality.RESIDUE_SET,),
+    supported_goals=(whole_structure_goal_descriptor(HydrogenCoverageState.COMPLETE),),
+)
+
 TERMINAL_AUGMENTATION_CAPABILITY = WorkflowActionCapability(
     reducible_deficit_families=(WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,),
     read_fact_families=(

@@ -47,6 +47,7 @@ class _LocalRefinementPrerequisiteTargets:
     terminal_residue_ids: tuple[ResidueId, ...] = ()
     hydrogen_residue_ids: tuple[ResidueId, ...] = ()
     retained_non_polymer_hydrogen_residue_ids: tuple[ResidueId, ...] = ()
+    retained_non_polymer_topology_residue_ids: tuple[ResidueId, ...] = ()
 
     def is_empty(self) -> bool:
         """Return whether no prerequisite completion remains."""
@@ -56,6 +57,7 @@ class _LocalRefinementPrerequisiteTargets:
             and not self.terminal_residue_ids
             and not self.hydrogen_residue_ids
             and not self.retained_non_polymer_hydrogen_residue_ids
+            and not self.retained_non_polymer_topology_residue_ids
         )
 
 
@@ -286,7 +288,8 @@ def _apply_local_refinement_prerequisites(
         allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
         retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
     )
-    for _ in range(4):
+    # Heavy, terminal, polymer H, retained H, and retained topology prerequisites.
+    for _ in range(5):
         observation = observation.for_structure(staged_result.structure)
         prerequisite_targets = _local_refinement_prerequisite_targets(
             staged_result.structure,
@@ -383,6 +386,27 @@ def _apply_local_refinement_prerequisites(
                 return staged_result, observation.for_structure(staged_result.structure)
             continue
 
+        if prerequisite_targets.retained_non_polymer_topology_residue_ids:
+            from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (  # noqa: E501
+                resolve_retained_non_polymer_topology,
+            )
+
+            topology_result = resolve_retained_non_polymer_topology(
+                staged_result.structure,
+                component_library,
+                target_residue_ids=frozenset(
+                    prerequisite_targets.retained_non_polymer_topology_residue_ids
+                ),
+                chemistry_evidence=retained_non_polymer_chemistry_evidence,
+                allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            )
+            previous_structure = staged_result.structure
+            staged_result = _merge_completion_stage_result(
+                staged_result, stage_result=topology_result
+            )
+            if staged_result.structure is previous_structure:
+                break
+
     return staged_result, observation.for_structure(staged_result.structure)
 
 
@@ -457,7 +481,11 @@ def _local_refinement_prerequisite_targets(
         ):
             hydrogen_residue_ids.append(coverage_facts.residue_id)
 
+    retained_non_polymer_topology_residue_ids = []
     for retained_fact in region_chemistry.retained_non_polymer_facts:
+        if retained_fact.requires_topology_resolution():
+            retained_non_polymer_topology_residue_ids.append(retained_fact.residue_id)
+            continue
         if not (
             retained_fact.requires_hydrogen_completion()
             or _strict_policy_blocks_retained_non_polymer_hydrogen_prerequisite(
@@ -474,6 +502,9 @@ def _local_refinement_prerequisite_targets(
         retained_non_polymer_hydrogen_residue_ids.append(retained_fact.residue_id)
 
     return _LocalRefinementPrerequisiteTargets(
+        retained_non_polymer_topology_residue_ids=tuple(
+            retained_non_polymer_topology_residue_ids
+        ),
         heavy_residue_ids=tuple(heavy_residue_ids),
         terminal_residue_ids=tuple(terminal_residue_ids),
         hydrogen_residue_ids=tuple(hydrogen_residue_ids),

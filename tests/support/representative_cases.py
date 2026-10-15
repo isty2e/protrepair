@@ -217,8 +217,8 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             chain_summaries=(ChainSummary("A", 455, 7043),),
             residue_count=455,
             ligand_count=1,
-            atom_count=7119,
-            hydrogen_atom_count=3561,
+            atom_count=7129,
+            hydrogen_atom_count=3571,
             component_counts=tuple(
                 sorted(
                     {
@@ -248,7 +248,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:THR:A:6",
             last_residue="ATOM:HIS:A:460",
-            semantic_digest="8d13ae546bb92b42d86f8142c6116a0ce042f27a73097fed2dd2a81b2cc3ca3b",
+            semantic_digest="791920e436e5626a000f87afd63c7725383d840a546bff32f6e24c1117352f8c",
         ),
         hydrogen_direct_summary=StructureSummary(
             chain_ids=("A",),

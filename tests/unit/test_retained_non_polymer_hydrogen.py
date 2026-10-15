@@ -78,9 +78,7 @@ except ImportError:  # pragma: no cover - required dependency import guard
 RDKIT_AVAILABLE = Chem is not None
 
 
-def test_template_backed_linked_glycan_hydrogenation_skips_absent_anchor_only() -> (
-    None
-):
+def test_template_backed_linked_glycan_hydrogenation_skips_absent_anchor_only() -> None:
     """Template-backed linked glycans should materialize remaining anchored Hs."""
 
     component_library = build_default_component_library()
@@ -101,9 +99,7 @@ def test_template_backed_linked_glycan_hydrogenation_skips_absent_anchor_only() 
     assert {
         fact.heavy_atom_topology_availability_state.value
         for fact in before_facts.values()
-    } == {
-        "absent"
-    }
+    } == {"absent"}
 
     result = add_retained_non_polymer_hydrogens(
         structure,
@@ -121,17 +117,13 @@ def test_template_backed_linked_glycan_hydrogenation_skips_absent_anchor_only() 
         result.structure,
         component_library=component_library,
     )
-    assert {
-        fact.hydrogen_coverage_state.value for fact in after_facts.values()
-    } == {"complete"}
-    assert not any(
-        fact.requires_hydrogen_completion() for fact in after_facts.values()
-    )
+    assert {fact.hydrogen_coverage_state.value for fact in after_facts.values()} == {
+        "complete"
+    }
+    assert not any(fact.requires_hydrogen_completion() for fact in after_facts.values())
 
 
-def test_mixed_glycan_template_and_rdkit_fallback_hydrogenation_resolves_2z62() -> (
-    None
-):
+def test_mixed_glycan_template_and_rdkit_fallback_hydrogenation_resolves_2z62() -> None:
     """2Z62 glycans should resolve template and RDKit-fallback hydrogen needs."""
 
     component_library = build_default_component_library()
@@ -300,10 +292,15 @@ def test_template_backed_retained_non_polymer_completion_preserves_source_h() ->
         "N1",
         "HSRC",
     )
-    assert result.structure.residue_geometry(
-        result.structure.constitution.residue_index(residue_id)
-    ).position("HSRC") == source_h_position
-    assert result.repairs == ()
+    assert (
+        result.structure.residue_geometry(
+            result.structure.constitution.residue_index(residue_id)
+        ).position("HSRC")
+        == source_h_position
+    )
+    assert tuple(repair.kind for repair in result.repairs) == (
+        RepairEventKind.RETAINED_NON_POLYMER_TOPOLOGY_RESOLVED,
+    )
     assert _has_topology_bond(
         result.structure,
         residue_id,
@@ -559,8 +556,7 @@ def test_add_retained_non_polymer_hydrogens_updates_ligand_on_polymer_chain_id()
     )
 
 
-def test_retained_non_polymer_charge_contradiction_detector_is_quiet_when_charges_match(
-) -> None:
+def test_retained_charge_detector_is_quiet_when_charges_match() -> None:
     """Contradiction diagnostics should stay quiet when charges agree."""
 
     payload = completion_payload(
@@ -597,8 +593,7 @@ def test_retained_non_polymer_charge_contradiction_detector_is_quiet_when_charge
     )
 
 
-def test_add_retained_non_polymer_hydrogens_uses_override_for_unsupported_component(
-) -> None:
+def test_retained_hydrogens_use_override_for_unsupported_component() -> None:
     """Unsupported retained non-polymers should hydrogenate from override chemistry."""
 
     structure = build_structure(
@@ -696,9 +691,7 @@ def test_add_retained_non_polymer_hydrogens_uses_override_for_unsupported_compon
     assert not _fallback_used_issues(result.issues)
 
 
-def test_retained_non_polymer_fallback_rejects_unsupported_motif_with_warning() -> (
-    None
-):
+def test_retained_non_polymer_fallback_rejects_unsupported_motif_with_warning() -> None:
     """Fallback-only unsupported chemistry should leave the ligand unchanged."""
 
     residue_id = ResidueId("L", 1)
@@ -840,9 +833,12 @@ def test_retained_non_polymer_evidence_preserves_partial_source_h_names() -> Non
     hydrogen_names = _hydrogen_atom_names(result.structure, residue_id)
     assert "HSRC" in hydrogen_names
     assert len(hydrogen_names) == 4
-    assert result.structure.residue_geometry(
-        result.structure.constitution.residue_index(residue_id)
-    ).position("HSRC") == source_h_position
+    assert (
+        result.structure.residue_geometry(
+            result.structure.constitution.residue_index(residue_id)
+        ).position("HSRC")
+        == source_h_position
+    )
     assert _has_topology_bond(
         result.structure,
         residue_id,
@@ -859,8 +855,9 @@ def test_retained_non_polymer_evidence_preserves_partial_source_h_names() -> Non
     )
 
 
-def test_retained_non_polymer_evidence_does_not_preserve_overpopulated_source_h(
-) -> None:
+def test_retained_non_polymer_evidence_does_not_preserve_overpopulated_source_h() -> (
+    None
+):
     """Incompatible source H overpopulation should not be preserved."""
 
     residue_id = ResidueId("L", 1)
@@ -994,8 +991,9 @@ def test_retained_non_polymer_evidence_geometry_reports_unknown_radii_once(
     assert "C1" in message
 
 
-def test_retained_non_polymer_override_topology_takes_precedence_over_template(
-) -> None:
+def test_retained_non_polymer_override_topology_takes_precedence_over_template() -> (
+    None
+):
     """Explicit evidence should own topology even when a component template exists."""
 
     structure = build_structure(
@@ -1176,9 +1174,12 @@ def test_retained_non_polymer_fallback_preserves_partial_source_h_names() -> Non
     hydrogen_names = _hydrogen_atom_names(result.structure, residue_id)
     assert "HSRC" in hydrogen_names
     assert len(hydrogen_names) == 4
-    assert result.structure.residue_geometry(
-        result.structure.constitution.residue_index(residue_id)
-    ).position("HSRC") == source_h_position
+    assert (
+        result.structure.residue_geometry(
+            result.structure.constitution.residue_index(residue_id)
+        ).position("HSRC")
+        == source_h_position
+    )
     assert _has_topology_bond(
         result.structure,
         residue_id,
@@ -1398,8 +1399,9 @@ def test_retained_non_polymer_evidence_rdkit_unavailable_raises_capability_error
         )
 
 
-def test_retained_non_polymer_fallback_failure_stays_unsupported_hydrogenation(
-) -> None:
+def test_retained_non_polymer_fallback_failure_stays_unsupported_hydrogenation() -> (
+    None
+):
     """Failed fallback should not look like successful fallback provenance."""
 
     structure = build_structure(
@@ -1531,8 +1533,8 @@ def test_retained_non_polymer_hydrogen_topology_preserves_source_h_bond() -> Non
     assert fallback_issues[0].residue_id == residue_id
 
 
-def test_retained_non_polymer_topology_conflict_skips_source_h_preservation() -> None:
-    """Source H topology and generated H anchor must agree before preservation."""
+def test_retained_non_polymer_topology_conflict_preserves_source_residue() -> None:
+    """Conflicting source attachments cannot disappear through H replacement."""
 
     residue_id = ResidueId("L", 1)
     structure = build_structure(
@@ -1577,23 +1579,9 @@ def test_retained_non_polymer_topology_conflict_skips_source_h_preservation() ->
         component_library=build_retained_non_polymer_component_library(),
     )
 
-    assert "HSRC" not in _hydrogen_atom_names(result.structure, residue_id)
-    assert _topology_bond_between(result.structure, residue_id, "C1", "HSRC") is None
-    assert not _has_topology_bond(
-        result.structure,
-        residue_id,
-        "O1",
-        "HSRC",
-        provenance=BondProvenance.REPAIR_INFERRED,
-    )
-    assert _has_topology_bond(
-        result.structure,
-        residue_id,
-        "O1",
-        "H004",
-        provenance=BondProvenance.REPAIR_INFERRED,
-    )
-    assert "HSRC" not in write_structure_string(result.structure, FileFormat.PDB)
+    assert result.structure is structure
+    assert not result.repairs
+    assert any("source connectivity" in issue.message for issue in result.issues)
 
 
 def test_retained_non_polymer_fallback_projects_existing_h_names_by_geometry() -> None:

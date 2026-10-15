@@ -19,6 +19,27 @@ heavy-atom set before workflow execution. Invalid SMILES/evidence mappings or
 mismatched overrides raise `ValueError`; they do not silently fall through to
 another chemistry source.
 
+## Connectivity And Existing Hydrogens
+
+A source CONECT record can identify two connected atoms without declaring a bond
+order. After validating the ligand chemistry, ProtRepair fills missing bond
+attributes from the selected template, override or RDKit inference. The source
+record and its reported attributes remain separate from the resolved graph.
+An explicitly reported order or relationship is not silently replaced.
+
+A complete H inventory does not necessarily have a complete bond graph. In that
+case, the planner can select a topology-only transformer. It checks H attachment
+against the admitted chemistry and publishes compatible bonds without moving,
+renaming or replacing atoms, including source H isotopes. Matching the total H
+count is not enough: each H needs a compatible local heavy-atom anchor, without
+extra covalent attachments to another H or another residue. Source hydrogen bonds
+and metal coordination records remain separate from covalent H attachments.
+
+If the proposed graph contradicts a source connection, that ligand stays
+unchanged and receives a chemistry diagnostic. Other ligands can still be
+prepared. Local FF readiness reports unresolved chemistry, missing heavy-atom
+topology and missing H topology separately.
+
 ## Incomplete Templates
 
 A template can place hydrogens on the heavy atoms that are present, even when
@@ -30,8 +51,8 @@ the missing heavy atoms and unmatched hydrogens.
 Failed hydrogenation leaves the residue out of the subsequent H clash cleanup.
 Other retained components can still be completed. This does not certify the
 unchanged residue as chemically complete or ready for force-field refinement.
-Validated chemistry overrides remain a separate route for replacing incompatible
-source hydrogens.
+Validated chemistry overrides remain a separate route for changing the selected
+chemistry, but they do not authorize silently dropping a source connection.
 
 ## RDKit Fallback
 

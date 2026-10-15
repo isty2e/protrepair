@@ -13,13 +13,54 @@ from protrepair.workflow.actions.disulfide_topology import (
 from protrepair.workflow.actions.hydrogen_topology import (
     PolymerHydrogenTopologyResolutionTransformer,
 )
+from protrepair.workflow.actions.retained_non_polymer_topology import (
+    RetainedNonPolymerTopologyResolutionTransformer,
+)
 from protrepair.workflow.planning.action.domain import WorkflowActionDomain
 from protrepair.workflow.planning.action.proposals import WorkflowActionProposal
 from protrepair.workflow.planning.default_action_registry.capabilities import (
     DISULFIDE_HYDROGEN_NORMALIZATION_CAPABILITY,
     DISULFIDE_TOPOLOGY_RESOLUTION_CAPABILITY,
     POLYMER_HYDROGEN_TOPOLOGY_RESOLUTION_CAPABILITY,
+    RETAINED_NON_POLYMER_TOPOLOGY_RESOLUTION_CAPABILITY,
 )
+
+
+def retained_non_polymer_topology_resolution_proposals(
+    domain: WorkflowActionDomain,
+) -> tuple[WorkflowActionProposal, ...]:
+    """Select topology-only ligand prerequisites from owned readiness facts.
+
+    Parameters
+    ----------
+    domain : WorkflowActionDomain
+        Current chemistry facts and requested completion/refinement goals.
+
+    Returns
+    -------
+    tuple[WorkflowActionProposal, ...]
+        A batch of graph-only edits, or no proposal if none is required.
+    """
+    whole_structure = (
+        domain.requested_goals.requests_whole_structure_hydrogen_population()
+    )
+    required = domain.explicit_repair.prerequisite_residue_ids()
+    selected = tuple(
+        fact.residue_id
+        for fact in domain.chemistry_readiness_facts.retained_non_polymer_facts
+        if (whole_structure or fact.residue_id in required)
+        and fact.requires_topology_resolution()
+    )
+    if not selected:
+        return ()
+    return (
+        WorkflowActionProposal(
+            transformer=RetainedNonPolymerTopologyResolutionTransformer(
+                scope=ResidueSetScope(residue_ids=selected)
+            ),
+            capability=RETAINED_NON_POLYMER_TOPOLOGY_RESOLUTION_CAPABILITY,
+        ),
+    )
 
 
 def polymer_hydrogen_topology_resolution_is_admissible(

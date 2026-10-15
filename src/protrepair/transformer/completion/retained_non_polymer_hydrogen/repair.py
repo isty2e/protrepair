@@ -11,6 +11,7 @@ from protrepair.chemistry import (
 )
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.topology import (
+    template_heavy_bond_definitions_for_present_atoms,
     template_hydrogen_bond_definitions_for_names,
 )
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
@@ -44,6 +45,7 @@ from protrepair.structure.topology import (
     BondRelationshipType,
     StructureTopology,
     TopologyBond,
+    is_covalent_like_relationship,
 )
 from protrepair.transformer.completion.hydrogen.cleanup import (
     cleanup_residual_hydrogen_clashes,
@@ -248,14 +250,16 @@ def _execute_retained_non_polymer_hydrogen_stage(
         RetainedNonPolymerChemistryEvidence,
     ],
     allow_retained_non_polymer_rdkit_fallback: bool,
+    topology_only: bool = False,
 ) -> TransformationResult:
-    """Apply hydrogen patches to targeted retained non-polymer components."""
+    """Validate retained chemistry, then publish atoms or only their graph."""
 
     disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(structure)
     hydrogenated_payloads: list[CompletionResiduePayload] = []
     topology_plans: list[_RetainedNonPolymerTopologyPlan] = []
     repairs: list[RepairEvent] = []
     issues: list[ValidationIssue] = []
+    source_bonds_by_residue = _source_bonds_by_residue(structure)
     for ligand in structure.constitution.ligands:
         if ligand.residue_id not in target_residue_ids:
             continue
@@ -270,6 +274,7 @@ def _execute_retained_non_polymer_hydrogen_stage(
                 _source_explicit_hydrogen_anchor_by_name(
                     structure,
                     ligand.residue_id,
+                    source_bonds_by_residue.get(ligand.residue_id, ()),
                 )
             ),
             is_disulfide_bonded=ligand.residue_id in disulfide_residue_ids,
@@ -277,7 +282,32 @@ def _execute_retained_non_polymer_hydrogen_stage(
                 allow_retained_non_polymer_rdkit_fallback
             ),
         )
-        if result.payload is not None:
+        if result.payload is not None and result.topology_plan is not None:
+            try:
+                _require_source_compatible_topology_plan(
+                    structure,
+                    result.topology_plan,
+                    source_bonds=source_bonds_by_residue.get(ligand.residue_id, ()),
+                )
+            except ValueError as error:
+                issues.extend(result.issues)
+                issues.append(_source_connectivity_conflict_issue(ligand, error))
+                continue
+        if topology_only and result.payload is not None:
+            if not _preserves_atom_payload(source_payload, result.payload):
+                issues.extend(result.issues)
+                issues.append(
+                    _source_connectivity_conflict_issue(
+                        ligand,
+                        ValueError(
+                            "topology-only resolution would change atom payload"
+                        ),
+                    )
+                )
+                continue
+        elif result.payload is not None and not _preserves_atom_payload(
+            source_payload, result.payload
+        ):
             hydrogenated_payloads.append(result.payload)
         if result.topology_plan is not None:
             topology_plans.append(result.topology_plan)
@@ -296,12 +326,48 @@ def _execute_retained_non_polymer_hydrogen_stage(
         if hydrogenated_payloads
         else structure
     )
-    if hydrogenated_payloads:
+    if topology_plans:
         updated_structure = _with_retained_non_polymer_topology_bonds(
             topology_source_structure=structure,
             target_structure=updated_structure,
             topology_plans=tuple(topology_plans),
         )
+    if not hydrogenated_payloads and updated_structure is not structure:
+        changed_pairs = {
+            bond.endpoint_pair()
+            for bond in (*structure.topology.bonds, *updated_structure.topology.bonds)
+            if structure.topology.bond_between(*bond.endpoint_pair())
+            != updated_structure.topology.bond_between(*bond.endpoint_pair())
+        }
+        for plan in topology_plans:
+            if any(
+                structure.constitution.atom_ref_at(pair[0]).residue_id
+                == plan.residue_id
+                for pair in changed_pairs
+            ):
+                repairs.append(
+                    RepairEvent.for_residue(
+                        kind=RepairEventKind.RETAINED_NON_POLYMER_TOPOLOGY_RESOLVED,
+                        residue_id=plan.residue_id,
+                        component_id=structure.constitution.residue_site_at(
+                            structure.constitution.residue_index(plan.residue_id)
+                        ).component_id,
+                        atom_names=tuple(
+                            sorted(
+                                {
+                                    structure.constitution.atom_ref_at(index).atom_name
+                                    for pair in changed_pairs
+                                    for index in pair
+                                    if structure.constitution.atom_ref_at(
+                                        index
+                                    ).residue_id
+                                    == plan.residue_id
+                                }
+                            )
+                        ),
+                    )
+                )
+    if hydrogenated_payloads:
         updated_structure, cleanup_issues = cleanup_residual_hydrogen_clashes(
             updated_structure,
             component_library=component_library,
@@ -315,6 +381,61 @@ def _execute_retained_non_polymer_hydrogen_stage(
         structure=updated_structure,
         repairs=tuple(repairs),
         issues=tuple(issues),
+    )
+
+
+def resolve_retained_non_polymer_topology(
+    structure: ProteinStructure,
+    component_library: ComponentLibrary,
+    *,
+    target_residue_ids: frozenset[ResidueId] | None = None,
+    chemistry_evidence: tuple[RetainedNonPolymerChemistryEvidence, ...] = (),
+    allow_retained_non_polymer_rdkit_fallback: bool = True,
+) -> TransformationResult:
+    """Publish admitted retained chemistry without changing any atom payload.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Structure whose existing atoms must remain unchanged.
+    component_library : ComponentLibrary
+        Active component definitions.
+    target_residue_ids : frozenset[ResidueId] or None
+        Selected retained residues; None selects all retained residues.
+    chemistry_evidence : tuple[RetainedNonPolymerChemistryEvidence, ...]
+        Explicit chemistry overrides, validated against the current pose.
+    allow_retained_non_polymer_rdkit_fallback : bool, default=True
+        Whether coordinate-based inference is allowed without template/evidence.
+
+    Returns
+    -------
+    TransformationResult
+        Topology-only changes. Failed or atom-changing proposals leave their
+        residue unchanged and report a diagnostic. Placement is used to validate
+        source H correspondence, never to replace its coordinates in this path.
+    """
+    return _execute_retained_non_polymer_hydrogen_stage(
+        structure,
+        component_library=component_library,
+        target_residue_ids=(
+            frozenset(ligand.residue_id for ligand in structure.constitution.ligands)
+            if target_residue_ids is None
+            else target_residue_ids
+        ),
+        chemistry_evidence_by_residue_id=evidence_by_residue_id(chemistry_evidence),
+        allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+        topology_only=True,
+    )
+
+
+def _preserves_atom_payload(
+    source: CompletionResiduePayload, candidate: CompletionResiduePayload
+) -> bool:
+    return set(source.atom_names()) == set(candidate.atom_names()) and all(
+        candidate.atom_site(name) == source.atom_site(name)
+        and candidate.atom_geometry(name) == source.atom_geometry(name)
+        and candidate.formal_charge(name) == source.formal_charge(name)
+        for name in source.atom_names()
     )
 
 
@@ -519,7 +640,10 @@ def _hydrogenate_retained_non_polymer_payload(
                 topology_plan=_topology_plan_for_bond_definitions(
                     residue_id=payload.residue_id,
                     bond_definitions=reconciliation.project_bond_definitions(
-                        template_hydrogen_bond_definitions
+                        template_heavy_bond_definitions_for_present_atoms(
+                            payload.residue_site, template=template
+                        )
+                        + template_hydrogen_bond_definitions
                     ),
                     provenance=BondProvenance.TEMPLATE_RESOLVED,
                 ),
@@ -901,6 +1025,7 @@ def _hydrogen_anchor_by_name(
 def _source_explicit_hydrogen_anchor_by_name(
     structure: ProteinStructure,
     residue_id: ResidueId,
+    source_bonds: tuple[TopologyBond, ...],
 ) -> Mapping[str, str]:
     """Return source-explicit retained-ligand H anchors by H atom name."""
 
@@ -910,10 +1035,11 @@ def _source_explicit_hydrogen_anchor_by_name(
 
     residue_atom_names = set(residue.atom_site_names())
     anchor_by_hydrogen_name: dict[str, str] = {}
-    for bond in structure.topology.bonds:
+    for bond in source_bonds:
         if (
             bond.provenance is not BondProvenance.SOURCE_EXPLICIT
-            or bond.relationship_type is not BondRelationshipType.COVALENT
+            or bond.relationship_type
+            not in {BondRelationshipType.COVALENT, BondRelationshipType.UNKNOWN}
         ):
             continue
 
@@ -970,6 +1096,24 @@ def _with_retained_non_polymer_topology_bonds(
         source_constitution=topology_source_structure.constitution,
         target_constitution=target_structure.constitution,
     )
+    planned_residue_ids = {plan.residue_id for plan in topology_plans}
+    retained_source_bonds = []
+    for bond in source_bonds:
+        residue_ids = {
+            target_structure.constitution.atom_ref_at(index).residue_id
+            for index in bond.endpoint_pair()
+        }
+        if (
+            bond.provenance is not BondProvenance.SOURCE_EXPLICIT
+            and len(residue_ids) == 1
+            and residue_ids.issubset(planned_residue_ids)
+            and (
+                is_covalent_like_relationship(bond)
+                or bond.relationship_type is BondRelationshipType.UNKNOWN
+            )
+        ):
+            continue
+        retained_source_bonds.append(bond)
     generated_bonds = tuple(
         topology_bond
         for plan in topology_plans
@@ -982,11 +1126,13 @@ def _with_retained_non_polymer_topology_bonds(
         constitution=target_structure.constitution,
         atom_topologies=target_structure.topology.atom_topologies,
         bonds=_merge_source_first_topology_bonds(
-            source_bonds,
+            tuple(retained_source_bonds),
             generated_bonds,
             target_structure=target_structure,
         ),
     )
+    if topology == target_structure.topology:
+        return target_structure
     return type(target_structure).from_payload(
         constitution=target_structure.constitution,
         geometry=target_structure.geometry,
@@ -1039,25 +1185,22 @@ def _merge_source_first_topology_bonds(
     *,
     target_structure: ProteinStructure,
 ) -> tuple[TopologyBond, ...]:
-    """Return topology bonds with source endpoint pairs taking precedence."""
+    """Publish admitted chemistry while preserving explicit endpoint evidence."""
 
-    merged: list[TopologyBond] = []
-    seen_endpoint_pairs = set()
+    merged = {bond.endpoint_pair(): bond for bond in source_bonds}
     source_anchored_hydrogen_indices = _source_explicit_hydrogen_anchor_indices(
         source_bonds,
         target_structure=target_structure,
     )
-    for bond in source_bonds:
-        endpoint_pair = bond.endpoint_pair()
-        if endpoint_pair in seen_endpoint_pairs:
-            continue
-
-        seen_endpoint_pairs.add(endpoint_pair)
-        merged.append(bond)
-
     for bond in generated_bonds:
         endpoint_pair = bond.endpoint_pair()
-        if endpoint_pair in seen_endpoint_pairs:
+        existing = merged.get(endpoint_pair)
+        if existing is not None:
+            merged[endpoint_pair] = (
+                existing.with_resolved_chemistry(bond)
+                if existing.provenance is BondProvenance.SOURCE_EXPLICIT
+                else bond
+            )
             continue
         if (
             bond.atom_index_1 in source_anchored_hydrogen_indices
@@ -1065,10 +1208,86 @@ def _merge_source_first_topology_bonds(
         ):
             continue
 
-        seen_endpoint_pairs.add(endpoint_pair)
-        merged.append(bond)
+        merged[endpoint_pair] = bond
 
-    return tuple(merged)
+    return tuple(merged.values())
+
+
+def _source_bonds_by_residue(
+    structure: ProteinStructure,
+) -> dict[ResidueId, tuple[TopologyBond, ...]]:
+    by_residue: dict[ResidueId, list[TopologyBond]] = {}
+    for bond in structure.topology.bonds:
+        if bond.provenance is not BondProvenance.SOURCE_EXPLICIT:
+            continue
+        for residue_id in {
+            structure.constitution.atom_ref_at(index).residue_id
+            for index in bond.endpoint_pair()
+        }:
+            by_residue.setdefault(residue_id, []).append(bond)
+    return {key: tuple(value) for key, value in by_residue.items()}
+
+
+def _require_source_compatible_topology_plan(
+    structure: ProteinStructure,
+    plan: _RetainedNonPolymerTopologyPlan,
+    *,
+    source_bonds: tuple[TopologyBond, ...],
+) -> None:
+    definitions = {
+        frozenset((bond.atom_name_1, bond.atom_name_2)): bond
+        for bond in plan.bond_definitions
+    }
+    for source_bond in source_bonds:
+        references = tuple(
+            structure.constitution.atom_ref_at(index)
+            for index in source_bond.endpoint_pair()
+        )
+        if any(ref.residue_id != plan.residue_id for ref in references):
+            # External source attachments cannot be redirected to local parents.
+            if any(
+                ref.residue_id == plan.residue_id
+                and structure.constitution.atom_site_at(index).is_hydrogen()
+                for ref, index in zip(
+                    references, source_bond.endpoint_pair(), strict=True
+                )
+            ) and (
+                is_covalent_like_relationship(source_bond)
+                or source_bond.relationship_type is BondRelationshipType.UNKNOWN
+            ):
+                raise ValueError("source hydrogen has an external attachment")
+            continue
+        expected = definitions.get(frozenset(ref.atom_name for ref in references))
+        if expected is None:
+            if is_covalent_like_relationship(source_bond) or (
+                source_bond.relationship_type is BondRelationshipType.UNKNOWN
+            ):
+                raise ValueError(
+                    "source edge is absent from admitted chemistry: "
+                    + "-".join(ref.atom_name for ref in references)
+                )
+            continue
+        source_bond.with_resolved_chemistry(
+            TopologyBond(
+                *source_bond.endpoint_pair(),
+                order=expected.order,
+                aromatic=expected.aromatic,
+                provenance=plan.provenance,
+            )
+        )
+
+
+def _source_connectivity_conflict_issue(
+    residue: ResidueSite, error: ValueError
+) -> ValidationIssue:
+    return ValidationIssue.for_residue(
+        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+        severity=IssueSeverity.WARNING,
+        residue_id=residue.residue_id,
+        component_id=residue.component_id,
+        message=f"Retained chemistry conflicts with source connectivity ({error}); "
+        "leaving residue unchanged",
+    )
 
 
 def _source_explicit_hydrogen_anchor_indices(
@@ -1081,6 +1300,11 @@ def _source_explicit_hydrogen_anchor_indices(
     source_anchored_hydrogen_indices: set[AtomIndex] = set()
     for bond in source_bonds:
         if bond.provenance is not BondProvenance.SOURCE_EXPLICIT:
+            continue
+        if bond.relationship_type not in {
+            BondRelationshipType.COVALENT,
+            BondRelationshipType.UNKNOWN,
+        }:
             continue
 
         atom_site_1 = target_structure.constitution.atom_site_at(bond.atom_index_1)

@@ -15,6 +15,12 @@
 
 ### Fixed
 
+- resolve retained-ligand bond chemistry while preserving source connectivity
+  metadata and explicitly reported attributes. Complete hydrogen inventories can
+  receive topology-only repair without atom replacement or hydrogen clash
+  cleanup; conflicting source connections leave the ligand unchanged
+- restore primed atom coordinates and restraints in the bundled FAD, FMN, SAH and
+  SAM templates. FAD hydrogen completion now covers the full template inventory
 - preserve retained-ligand source hydrogens when an incomplete template cannot
   reconcile them. Report unsupported placement without committing partial atoms
   or moving the failed residue during hydrogen clash cleanup
