@@ -198,6 +198,21 @@ named `N` or `OXT` share polymer-only exclusions. This leaves SAH/SAM amine H an
 SAH HXT unplaced even on complete heavy scaffolds. Full component-specific H
 coverage needs those exclusions separated from retained-component chemistry.
 
+## Native RDKit Handoff
+
+`protrepair.io.to_rdkit_molecule()` copies selected canonical chemistry without
+PDB parsing. It retains explicit H/D/T, assigned charges and full-precision
+coordinates, and directs typed coordination from donor to metal. Unknown metal
+charge is refused, not interpreted as a neutral metal.
+
+This is representation, not a method for assigning oxidation, spin or
+protonation states, and it does not establish metal-site FF support. Unresolved
+chemical bonds, unselected H/radicals and sanitation that changes the selected
+chemistry are refused. Noncovalent hydrogen-bond interactions are omitted with
+an explicit count. The [API reference](public-api.md#native-rdkit-export)
+describes the native properties and provisional representation of unknown
+nonmetal charges.
+
 ## Component Dictionaries
 
 Coordinate files and chemical-component dictionaries have different roles.
