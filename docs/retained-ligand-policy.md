@@ -123,7 +123,8 @@ The bundle includes sulfate (`SO4`), a zero-H component with a selected -2
 graph/charge assignment, not an organic fallback or a generic metal/ion exemption.
 Unspecified ionic charges can be resolved without changing its atoms or
 coordinates. The isolated zero-H template cannot admit source H, external
-covalent attachments or untyped external connections. Typed hydrogen bonds and
+covalent attachments or untyped external connections, whether those connections
+come from the source or an earlier transformation. Typed hydrogen bonds and
 metal coordination are preserved separately. This template does not
 admit covalent derivatives, infer pH-dependent populations or validate a metal
 potential.

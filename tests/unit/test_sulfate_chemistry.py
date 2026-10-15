@@ -375,14 +375,17 @@ def test_reported_sulfate_bond_order_conflict_does_not_publish_charges():
     "relationship,admitted",
     (
         (BondRelationshipType.COVALENT, False),
+        (BondRelationshipType.DISULFIDE, False),
         (BondRelationshipType.UNKNOWN, False),
         (BondRelationshipType.METAL_COORDINATION, True),
         (BondRelationshipType.HYDROGEN_BOND, True),
     ),
 )
 @pytest.mark.parametrize("partial", (False, True))
+@pytest.mark.parametrize("provenance", tuple(BondProvenance))
+@pytest.mark.parametrize("topology_only", (False, True))
 def test_sulfate_external_relationships_are_not_reinterpreted(
-    relationship, admitted, partial
+    relationship, admitted, partial, provenance, topology_only
 ):
     sulfate = _sulfate(missing=("O1",) if partial else ())
     source = build_structure(
@@ -407,14 +410,23 @@ def test_sulfate_external_relationships_are_not_reinterpreted(
         source.constitution.atom_index(AtomRef(ResidueId("Z", 2), "ZN")),
         order=None,
         relationship_type=relationship,
-        provenance=BondProvenance.SOURCE_EXPLICIT,
-        source_metadata=SourceBondMetadata(
-            record_type=SourceBondRecordType.MMCIF_STRUCT_CONN,
-            reported_relationship_type=relationship,
+        provenance=provenance,
+        source_metadata=(
+            SourceBondMetadata(
+                record_type=SourceBondRecordType.MMCIF_STRUCT_CONN,
+                reported_relationship_type=relationship,
+            )
+            if provenance is BondProvenance.SOURCE_EXPLICIT
+            else None
         ),
     )
     source = _with_bonds(source, (bond,))
-    result = resolve_retained_non_polymer_topology(
+    execute = (
+        resolve_retained_non_polymer_topology
+        if topology_only
+        else add_retained_non_polymer_hydrogens
+    )
+    result = execute(
         source,
         build_default_component_library(),
         target_residue_ids=frozenset((SULFATE_ID,)),

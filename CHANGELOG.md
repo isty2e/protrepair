@@ -20,6 +20,8 @@
 
 ### Fixed
 
+- check existing external covalent-like and untyped bonds across all provenances
+  before preparing an isolated zero-H component; preserve typed noncovalent context
 - preserve full retained-component inventories, including SAH/SAM OXT, separately
   from polymer scaffold projections; restore their H placement, topology readiness
   and SAM OXT charge requirements

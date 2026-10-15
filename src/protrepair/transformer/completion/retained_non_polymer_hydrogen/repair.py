@@ -274,7 +274,9 @@ def _execute_retained_non_polymer_hydrogen_stage(
     topology_plans: list[_RetainedNonPolymerTopologyPlan] = []
     repairs: list[RepairEvent] = []
     issues: list[ValidationIssue] = []
-    source_bonds_by_residue = _source_bonds_by_residue(structure)
+    bonds_by_residue = _bonds_by_residue(
+        structure, target_residue_ids=target_residue_ids
+    )
     for ligand in structure.constitution.ligands:
         if ligand.residue_id not in target_residue_ids:
             continue
@@ -325,10 +327,10 @@ def _execute_retained_non_polymer_hydrogen_stage(
             continue
         if result.payload is not None and result.topology_plan is not None:
             try:
-                _require_source_compatible_topology_plan(
+                _require_compatible_topology_plan(
                     structure,
                     result.topology_plan,
-                    source_bonds=source_bonds_by_residue.get(ligand.residue_id, ()),
+                    existing_bonds=bonds_by_residue.get(ligand.residue_id, ()),
                 )
             except ValueError as error:
                 issues.extend(result.issues)
@@ -1414,26 +1416,27 @@ def _merge_source_first_topology_bonds(
     return tuple(merged.values())
 
 
-def _source_bonds_by_residue(
+def _bonds_by_residue(
     structure: ProteinStructure,
+    *,
+    target_residue_ids: frozenset[ResidueId],
 ) -> dict[ResidueId, tuple[TopologyBond, ...]]:
     by_residue: dict[ResidueId, list[TopologyBond]] = {}
     for bond in structure.topology.bonds:
-        if bond.provenance is not BondProvenance.SOURCE_EXPLICIT:
-            continue
         for residue_id in {
             structure.constitution.atom_ref_at(index).residue_id
             for index in bond.endpoint_pair()
         }:
-            by_residue.setdefault(residue_id, []).append(bond)
+            if residue_id in target_residue_ids:
+                by_residue.setdefault(residue_id, []).append(bond)
     return {key: tuple(value) for key, value in by_residue.items()}
 
 
-def _require_source_compatible_topology_plan(
+def _require_compatible_topology_plan(
     structure: ProteinStructure,
     plan: _RetainedNonPolymerTopologyPlan,
     *,
-    source_bonds: tuple[TopologyBond, ...],
+    existing_bonds: tuple[TopologyBond, ...],
 ) -> None:
     residue_index = structure.constitution.residue_index(plan.residue_id)
     _require_compatible_formal_charges(
@@ -1448,46 +1451,51 @@ def _require_source_compatible_topology_plan(
         frozenset((bond.atom_name_1, bond.atom_name_2)): bond
         for bond in plan.bond_definitions
     }
-    for source_bond in source_bonds:
+    for bond in existing_bonds:
         references = tuple(
-            structure.constitution.atom_ref_at(index)
-            for index in source_bond.endpoint_pair()
+            structure.constitution.atom_ref_at(index) for index in bond.endpoint_pair()
         )
-        if any(ref.residue_id != plan.residue_id for ref in references):
-            if requires_unlinked_scaffold and (
-                is_covalent_like_relationship(source_bond)
-                or source_bond.relationship_type is BondRelationshipType.UNKNOWN
-            ):
-                raise ValueError(
-                    "zero-H chemistry cannot admit an external "
-                    f"{source_bond.relationship_type.value} relationship"
-                )
+        external = any(ref.residue_id != plan.residue_id for ref in references)
+        if (
+            external
+            and requires_unlinked_scaffold
+            and (
+                is_covalent_like_relationship(bond)
+                or bond.relationship_type is BondRelationshipType.UNKNOWN
+            )
+        ):
+            raise ValueError(
+                "zero-H chemistry cannot admit an external "
+                f"{bond.relationship_type.value} relationship"
+            )
+        if bond.provenance is not BondProvenance.SOURCE_EXPLICIT:
+            continue
+
+        if external:
             # External source attachments cannot be redirected to local parents.
             if any(
                 ref.residue_id == plan.residue_id
                 and structure.constitution.atom_site_at(index).is_hydrogen()
-                for ref, index in zip(
-                    references, source_bond.endpoint_pair(), strict=True
-                )
+                for ref, index in zip(references, bond.endpoint_pair(), strict=True)
             ) and (
-                is_covalent_like_relationship(source_bond)
-                or source_bond.relationship_type is BondRelationshipType.UNKNOWN
+                is_covalent_like_relationship(bond)
+                or bond.relationship_type is BondRelationshipType.UNKNOWN
             ):
                 raise ValueError("source hydrogen has an external attachment")
             continue
         expected = definitions.get(frozenset(ref.atom_name for ref in references))
         if expected is None:
-            if is_covalent_like_relationship(source_bond) or (
-                source_bond.relationship_type is BondRelationshipType.UNKNOWN
+            if is_covalent_like_relationship(bond) or (
+                bond.relationship_type is BondRelationshipType.UNKNOWN
             ):
                 raise ValueError(
                     "source edge is absent from admitted chemistry: "
                     + "-".join(ref.atom_name for ref in references)
                 )
             continue
-        source_bond.with_resolved_chemistry(
+        bond.with_resolved_chemistry(
             TopologyBond(
-                *source_bond.endpoint_pair(),
+                *bond.endpoint_pair(),
                 order=expected.order,
                 aromatic=expected.aromatic,
                 provenance=plan.provenance,
