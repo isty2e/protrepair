@@ -80,6 +80,11 @@ Retained-H completion keeps existing H/D/T fixed during its clash cleanup,
 including on the template path, not only with overrides. Newly generated eligible
 H can still undergo cleanup.
 
+The final cleanup in `add_hydrogens` also keeps its input ligand H/D/T fixed,
+including when retained completion runs as a local-refinement prerequisite.
+An explicitly requested FF stage may move those atoms within its declared domain;
+cleanup preserves that resulting pose rather than restoring earlier coordinates.
+
 These are placement and source-preservation checks, not an optimized-geometry
 certificate or a general validation of template-reference stereochemistry.
 

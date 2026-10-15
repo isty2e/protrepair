@@ -28,6 +28,9 @@
 - recheck native configuration after retained H/D/T correspondence; this does not
   independently validate each source H's geometry. Keep their coordinates
   fixed during subsequent H clash cleanup, including with chemistry overrides
+- retain input ligand H/D/T custody through the final `add_hydrogens` cleanup,
+  including after retained prerequisites or rejected local refinement. Explicit
+  FF motion is unchanged and its resulting positions are not restored
 - check existing external covalent-like and untyped bonds across all provenances
   before preparing an isolated zero-H component; preserve typed noncovalent context
 - preserve full retained-component inventories, including SAH/SAM OXT, separately

@@ -46,6 +46,7 @@ from protrepair.structure.topology import (
     StructureTopology,
     TopologyBond,
 )
+from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
     add_retained_non_polymer_hydrogens,
     resolve_retained_non_polymer_topology,
@@ -487,6 +488,10 @@ def test_retained_cleanup_cannot_move_source_h_using_an_overridden_template_name
     assert any(event.residue_id == residue_id for event in result.repairs)
     assert result.structure.geometry.atom_geometry(
         after
+    ) == source.geometry.atom_geometry(before)
+    outer = add_hydrogens(result.structure, prepare_heavy_atoms=False)
+    assert outer.structure.geometry.atom_geometry(
+        outer.structure.constitution.atom_index(AtomRef(residue_id, "HG"))
     ) == source.geometry.atom_geometry(before)
 
 
