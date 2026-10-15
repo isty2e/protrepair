@@ -30,6 +30,7 @@ from protrepair.chemistry import (
 )
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.restraint.defaults import build_default_restraint_library
+from protrepair.diagnostics.kinds import RepairEventKind, ValidationIssueKind
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure_string, write_structure_string
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
@@ -65,7 +66,7 @@ from protrepair.transformer.continuous.settings import (
 from protrepair.transformer.local import LocalScopeSpec
 from protrepair.transformer.refinement.directive import RepairLocalRefinementDirective
 from protrepair.transformer.refinement.repair_stage import (
-    _apply_local_refinement_prerequisites,
+    apply_repair_stage_local_refinement,
 )
 from protrepair.transformer.result import TransformationResult
 from protrepair.workflow.contracts import LigandPolicy
@@ -136,18 +137,29 @@ def test_local_prerequisites_finish_all_five_preparation_families():
             ),
         ),
     )
-    library = build_default_component_library()
+    library = build_default_component_library().with_template(
+        ResidueTemplate(
+            ChemicalComponentDefinition(
+                "UNK",
+                atom_names=("C1", "O1"),
+                bonds=(BondDefinition("C1", "O1"),),
+            )
+        )
+    )
     directive = RepairLocalRefinementDirective.from_residue_ids(
         (polymer_id, LIGAND_ID, complete_id),
         config=ContinuousRelaxationConfig(),
         binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.UFF),
     )
-    prepared, observation = _apply_local_refinement_prerequisites(
+    prepared = apply_repair_stage_local_refinement(
         TransformationResult(structure=source, repairs=(), issues=()),
         local_refinement=directive,
         component_library=library,
         allow_retained_non_polymer_rdkit_fallback=True,
         retained_non_polymer_chemistry_evidence=(),
+    )
+    observation = StructureChemistryObservation(
+        prepared.structure, component_library=library
     )
     polymer = prepared.structure.constitution.residue_or_ligand(polymer_id)
     assert polymer is not None
@@ -158,6 +170,16 @@ def test_local_prerequisites_finish_all_five_preparation_families():
     assert len(facts) == 2
     assert all(not fact.requires_hydrogen_completion() for fact in facts)
     assert all(not fact.requires_topology_resolution() for fact in facts)
+    rejections = tuple(
+        issue.message
+        for issue in prepared.issues
+        if issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
+    )
+    assert not rejections, rejections
+    assert any(
+        repair.kind is RepairEventKind.LOCAL_REFINEMENT_APPLIED
+        for repair in prepared.repairs
+    )
 
 
 def _methanol() -> ProteinStructure:
