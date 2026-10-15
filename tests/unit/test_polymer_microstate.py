@@ -57,7 +57,7 @@ def _source(
     extra_pdb: str = "",
 ) -> ProteinStructure:
     template = build_standard_component_library().require(component)
-    atoms = [(name, name[0]) for name in template.expected_heavy_atom_names()]
+    atoms = [(name, name[0]) for name in template.expected_polymer_heavy_atom_names()]
     if terminal:
         atoms.append(("OXT", "O"))
     atoms.extend(hydrogens)

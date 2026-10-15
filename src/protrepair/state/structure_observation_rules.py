@@ -68,7 +68,7 @@ def backbone_heavy_atom_completeness_state(
         missing_backbone_atom_names = tuple(
             atom_name
             for atom_name in REQUIRED_BACKBONE_ATOM_NAMES
-            if atom_name in template.expected_heavy_atom_names()
+            if atom_name in template.expected_polymer_heavy_atom_names()
             and atom_name not in present_heavy_atom_names
         )
         if missing_backbone_atom_names:
@@ -96,7 +96,7 @@ def sidechain_heavy_atom_completeness_state(
         }
         missing_sidechain_heavy_atom_names = tuple(
             atom_name
-            for atom_name in template.expected_heavy_atom_names()
+            for atom_name in template.expected_polymer_heavy_atom_names()
             if atom_name not in present_heavy_atom_names
             and atom_name not in REQUIRED_BACKBONE_ATOM_NAMES
         )

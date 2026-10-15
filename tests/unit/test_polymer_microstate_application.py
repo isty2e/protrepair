@@ -62,7 +62,7 @@ def _structure(
             continue
         atoms = [
             (name, name[0])
-            for name in library.require(comp).expected_heavy_atom_names()
+            for name in library.require(comp).expected_polymer_heavy_atom_names()
         ]
         if terminal:
             atoms.append(("OXT", "O"))
@@ -166,7 +166,7 @@ def test_applies_h_charge_and_orders_preserving_heavy_geometry(component: str) -
     assert source.constitution.residue_site_at(ResidueIndex(0)).atom_site_names() == (
         build_standard_component_library()
         .require(component)
-        .expected_heavy_atom_names()
+        .expected_polymer_heavy_atom_names()
     )
     for index, geometry in source.geometry.iter_positions():
         ref = source.constitution.atom_ref_at(index)
@@ -817,7 +817,7 @@ def test_current_retained_cap_prevents_free_terminal_assumption() -> None:
 
 def test_removed_current_link_does_not_erase_contrary_original_connectivity() -> None:
     template = build_standard_component_library().require("ALA")
-    names = template.expected_heavy_atom_names()
+    names = template.expected_polymer_heavy_atom_names()
     n_serial = names.index("N") + 1
     c_serial = len(names) + names.index("C") + 1
     source = _structure(
@@ -1044,7 +1044,9 @@ def test_native_guanidinium_uses_changed_uff_parameters_not_only_sanitizability(
 
 def test_original_bond_metadata_survives_effective_order_override() -> None:
     heavy = (
-        build_standard_component_library().require("ARG").expected_heavy_atom_names()
+        build_standard_component_library()
+        .require("ARG")
+        .expected_polymer_heavy_atom_names()
     )
     cz, nh1 = (heavy.index(name) + 1 for name in ("CZ", "NH1"))
     source = _structure(
@@ -1067,7 +1069,9 @@ def test_original_bond_metadata_survives_effective_order_override() -> None:
 @pytest.mark.parametrize("strip", (False, True))
 def test_source_h_preserves_connectivity_metadata(strip: bool) -> None:
     heavy = (
-        build_standard_component_library().require("HIS").expected_heavy_atom_names()
+        build_standard_component_library()
+        .require("HIS")
+        .expected_polymer_heavy_atom_names()
     )
     nd1, hd1 = heavy.index("ND1") + 1, len(heavy) + 1
     original = _structure(

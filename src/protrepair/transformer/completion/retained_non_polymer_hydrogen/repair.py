@@ -1,7 +1,7 @@
 """Hydrogen completion over retained non-polymer components."""
 
 from collections import Counter, deque
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from itertools import chain
 
@@ -108,10 +108,10 @@ class _RetainedNonPolymerTopologyPlan:
     provenance: BondProvenance
     formal_charge_requirements: tuple[tuple[str, int], ...] = ()
 
-    def requires_unlinked_scaffold(self) -> bool:
+    def requires_unlinked_scaffold(self, heavy_atom_names: Collection[str]) -> bool:
         """An admitted zero-H graph cannot acquire extra covalent bonds."""
-        heavy_names = {name for name, _ in self.formal_charge_requirements}
-        return bool(heavy_names) and all(
+        heavy_names = frozenset(heavy_atom_names)
+        return bool(self.formal_charge_requirements) and all(
             bond.atom_name_1 in heavy_names and bond.atom_name_2 in heavy_names
             for bond in self.bond_definitions
         )
@@ -332,13 +332,13 @@ def _execute_retained_non_polymer_hydrogen_stage(
                 )
             except ValueError as error:
                 issues.extend(result.issues)
-                issues.append(_source_connectivity_conflict_issue(ligand, error))
+                issues.append(_retained_chemistry_conflict_issue(ligand, error))
                 continue
         if topology_only and result.payload is not None:
             if not _preserves_atom_payload(source_payload, result.payload):
                 issues.extend(result.issues)
                 issues.append(
-                    _source_connectivity_conflict_issue(
+                    _retained_chemistry_conflict_issue(
                         ligand,
                         ValueError(
                             "topology-only resolution would change atom payload"
@@ -603,27 +603,37 @@ def _hydrogenate_retained_non_polymer_payload(
 
     template = component_library.get(payload.component_id)
     if template is not None:
-        charge_requirements = template.heavy_atom_charge_requirements()
-        if charge_requirements and (
-            not template.has_compatible_heavy_scaffold(payload.residue_site)
-            or (
-                any(charge for _, charge in charge_requirements)
-                and not template.has_complete_heavy_scaffold(payload.residue_site)
-            )
-        ):
+        if not template.has_compatible_heavy_scaffold(payload.residue_site):
             return _RetainedNonPolymerHydrogenPayloadResult(
                 payload=None,
                 repairs=(),
                 issues=(
-                    _source_connectivity_conflict_issue(
+                    _retained_chemistry_conflict_issue(
                         payload.residue_site,
                         ValueError(
-                            "template requires compatible heavy names and elements; "
-                            "non-neutral chemistry also requires a complete scaffold"
+                            "template requires compatible present heavy names "
+                            "and elements"
                         ),
                     ),
                 ),
             )
+
+        try:
+            _require_compatible_formal_charges(
+                dict(payload.formal_charge_by_atom_name),
+                template.heavy_atom_charge_requirements(),
+            )
+        except ValueError as error:
+            return _RetainedNonPolymerHydrogenPayloadResult(
+                payload=None,
+                repairs=(),
+                issues=(
+                    _retained_chemistry_conflict_issue(payload.residue_site, error),
+                ),
+            )
+        charge_requirements = template.applicable_heavy_atom_charge_requirements(
+            payload.residue_site
+        )
         if (
             template.can_add_hydrogens()
             and not template.expected_hydrogen_atom_names()
@@ -775,11 +785,7 @@ def _hydrogenate_retained_non_polymer_payload(
                         + template_hydrogen_bond_definitions
                     ),
                     provenance=BondProvenance.TEMPLATE_RESOLVED,
-                    formal_charge_requirements=tuple(
-                        (name, charge)
-                        for name, charge in charge_requirements
-                        if payload.has_atom(name)
-                    ),
+                    formal_charge_requirements=charge_requirements,
                 ),
             )
 
@@ -1430,14 +1436,14 @@ def _require_source_compatible_topology_plan(
     source_bonds: tuple[TopologyBond, ...],
 ) -> None:
     residue_index = structure.constitution.residue_index(plan.residue_id)
-    for name, charge in plan.formal_charge_requirements:
-        index = structure.constitution.atom_index_in_residue(residue_index, name)
-        reported = structure.topology.formal_charge(index)
-        if reported is not None and reported != charge:
-            raise ValueError(
-                f"{name} charge {reported:+d} conflicts with "
-                f"admitted chemistry {charge:+d}"
-            )
+    _require_compatible_formal_charges(
+        dict(structure.residue_formal_charge_by_atom_name(residue_index)),
+        plan.formal_charge_requirements,
+    )
+    residue = structure.constitution.residue_site_at(residue_index)
+    requires_unlinked_scaffold = plan.requires_unlinked_scaffold(
+        tuple(atom.name for atom in residue.atom_sites if not atom.is_hydrogen())
+    )
     definitions = {
         frozenset((bond.atom_name_1, bond.atom_name_2)): bond
         for bond in plan.bond_definitions
@@ -1448,11 +1454,14 @@ def _require_source_compatible_topology_plan(
             for index in source_bond.endpoint_pair()
         )
         if any(ref.residue_id != plan.residue_id for ref in references):
-            if plan.requires_unlinked_scaffold() and (
+            if requires_unlinked_scaffold and (
                 is_covalent_like_relationship(source_bond)
                 or source_bond.relationship_type is BondRelationshipType.UNKNOWN
             ):
-                raise ValueError("zero-H chemistry has an external covalent attachment")
+                raise ValueError(
+                    "zero-H chemistry cannot admit an external "
+                    f"{source_bond.relationship_type.value} relationship"
+                )
             # External source attachments cannot be redirected to local parents.
             if any(
                 ref.residue_id == plan.residue_id
@@ -1486,7 +1495,20 @@ def _require_source_compatible_topology_plan(
         )
 
 
-def _source_connectivity_conflict_issue(
+def _require_compatible_formal_charges(
+    reported_charges: Mapping[str, int | None],
+    requirements: tuple[tuple[str, int], ...],
+) -> None:
+    for name, charge in requirements:
+        reported = reported_charges.get(name)
+        if reported is not None and reported != charge:
+            raise ValueError(
+                f"{name} charge {reported:+d} conflicts with "
+                f"admitted chemistry {charge:+d}"
+            )
+
+
+def _retained_chemistry_conflict_issue(
     residue: ResidueSite, error: ValueError
 ) -> ValidationIssue:
     return ValidationIssue.for_residue(
@@ -1494,7 +1516,7 @@ def _source_connectivity_conflict_issue(
         severity=IssueSeverity.WARNING,
         residue_id=residue.residue_id,
         component_id=residue.component_id,
-        message=f"Retained chemistry conflicts with source connectivity ({error}); "
+        message=f"Retained chemistry preparation failed ({error}); "
         "leaving residue unchanged",
     )
 

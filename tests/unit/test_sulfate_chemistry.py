@@ -199,12 +199,9 @@ def test_sulfate_explicit_charge_conflict_leaves_entire_residue_unchanged(name, 
 
 @pytest.mark.parametrize(
     "kwargs",
-    (
-        {"missing": ("O4",)},
-        {"elements": (("O4", "N"),)},
-    ),
+    ({"elements": (("O4", "N"),)},),
 )
-def test_sulfate_incomplete_or_wrong_element_scaffold_is_not_published(kwargs):
+def test_sulfate_wrong_element_scaffold_is_not_published(kwargs):
     source = _sulfate(**kwargs)
     result = resolve_retained_non_polymer_topology(
         source, build_default_component_library()
@@ -213,6 +210,32 @@ def test_sulfate_incomplete_or_wrong_element_scaffold_is_not_published(kwargs):
     assert (
         _fact(source).heavy_atom_topology_availability_state
         is TopologyAvailabilityState.ABSENT
+    )
+
+
+def test_partial_sulfate_publishes_only_local_charge_without_claiming_readiness():
+    source = _sulfate(missing=("O4",))
+    result = resolve_retained_non_polymer_topology(
+        source, build_default_component_library()
+    )
+    assert not result.issues
+    assert result.structure.constitution is source.constitution
+    assert result.structure.geometry is source.geometry
+    assert dict(
+        result.structure.residue_formal_charge_by_atom_name(ResidueIndex(0))
+    ) == {"O3": -1}
+    assert len(result.structure.topology.bonds) == 3
+    assert (
+        _fact(result.structure).heavy_atom_topology_availability_state
+        is TopologyAvailabilityState.ABSENT
+    )
+    repeated = resolve_retained_non_polymer_topology(
+        result.structure, build_default_component_library()
+    )
+    assert (
+        repeated.structure is result.structure
+        and not repeated.repairs
+        and not repeated.issues
     )
 
 
@@ -357,8 +380,11 @@ def test_reported_sulfate_bond_order_conflict_does_not_publish_charges():
         (BondRelationshipType.HYDROGEN_BOND, True),
     ),
 )
-def test_sulfate_external_relationships_are_not_reinterpreted(relationship, admitted):
-    sulfate = _sulfate()
+@pytest.mark.parametrize("partial", (False, True))
+def test_sulfate_external_relationships_are_not_reinterpreted(
+    relationship, admitted, partial
+):
+    sulfate = _sulfate(missing=("O1",) if partial else ())
     source = build_structure(
         chains=(),
         ligands=(
@@ -377,8 +403,8 @@ def test_sulfate_external_relationships_are_not_reinterpreted(relationship, admi
         source_format=FileFormat.PDB,
     )
     bond = TopologyBond(
-        AtomIndex(3),
-        AtomIndex(5),
+        source.constitution.atom_index(AtomRef(SULFATE_ID, "O3")),
+        source.constitution.atom_index(AtomRef(ResidueId("Z", 2), "ZN")),
         order=None,
         relationship_type=relationship,
         provenance=BondProvenance.SOURCE_EXPLICIT,
@@ -396,12 +422,14 @@ def test_sulfate_external_relationships_are_not_reinterpreted(relationship, admi
     assert result.structure.topology.bond_between(*bond.endpoint_pair()) == bond
     if admitted:
         assert result.structure.geometry is source.geometry and not result.issues
-        assert (
-            _fact(result.structure).heavy_atom_topology_availability_state
-            is TopologyAvailabilityState.PRESENT
+        assert _fact(result.structure).heavy_atom_topology_availability_state is (
+            TopologyAvailabilityState.ABSENT
+            if partial
+            else TopologyAvailabilityState.PRESENT
         )
     else:
         assert result.structure is source and result.issues
+        assert f"external {relationship.value} relationship" in result.issues[0].message
         assert (
             _fact(source).heavy_atom_topology_availability_state
             is TopologyAvailabilityState.ABSENT

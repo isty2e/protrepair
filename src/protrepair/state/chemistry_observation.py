@@ -567,20 +567,7 @@ class StructureChemistryObservation:
             hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
         elif template is not None:
             heavy_topology_source = RetainedNonPolymerChemistryEvidenceSource.TEMPLATE
-            present_heavy_atom_names = {
-                atom_site.name
-                for atom_site in residue.atom_sites
-                if not atom_site.is_hydrogen()
-            }
-            expected_heavy_atom_names = set(template.expected_heavy_atom_names())
-            charge_requirements = (
-                hydrogen_expectation_resolution.formal_charge_requirements
-            )
-            scaffold_matches = expected_heavy_atom_names.issubset(
-                present_heavy_atom_names
-            ) and (
-                not charge_requirements or template.has_complete_heavy_scaffold(residue)
-            )
+            scaffold_matches = template.has_complete_heavy_scaffold(residue)
             heavy_atom_topology_availability_state = (
                 _retained_heavy_bond_topology_availability_state(
                     self.context_structure,

@@ -101,10 +101,14 @@ class ResidueTemplate:
         return self.definition.expected_atom_names()
 
     def expected_heavy_atom_names(self) -> tuple[str, ...]:
-        """Return expected heavy atoms for completeness-sensitive workflows."""
+        """Return the complete component heavy inventory, including ligand OXT.
 
-        if isinstance(self.heavy_atom_semantics, HeavyAtomSemantics):
-            return self.heavy_atom_semantics.atom_order
+        Returns
+        -------
+        tuple[str, ...]
+            Declared heavy atoms independent of polymer context or which atoms
+            a placement program can reconstruct.
+        """
 
         if isinstance(
             self.heavy_atom_semantics,
@@ -112,9 +116,27 @@ class ResidueTemplate:
         ):
             return self.heavy_atom_semantics.component.heavy_atom_names()
 
+        if isinstance(self.hydrogen_semantics, IdealGeometryHydrogenSemantics):
+            return self.hydrogen_semantics.component.heavy_atom_names()
+
+        hydrogen_names = frozenset(self.expected_hydrogen_atom_names())
         return tuple(
-            atom_name for atom_name in self.expected_atom_names() if atom_name != "OXT"
+            atom_name
+            for atom_name in self.expected_atom_names()
+            if atom_name not in hydrogen_names
         )
+
+    def expected_polymer_heavy_atom_names(self) -> tuple[str, ...]:
+        """Project polymer scaffold atoms without a free-terminal oxygen.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Component heavy inventory excluding OXT. A selected free-carbonyl
+            microstate separately requires its terminal oxygen; retained
+            components must use the complete component inventory instead.
+        """
+        return tuple(name for name in self.expected_heavy_atom_names() if name != "OXT")
 
     def expected_hydrogen_atom_names(self) -> tuple[str, ...]:
         """Return expected hydrogen atoms for hydrogen-completeness workflows."""
@@ -166,6 +188,39 @@ class ResidueTemplate:
             atom.atom_name not in present_names
             or residue.atom_site(atom.atom_name).element == atom.element
             for atom in semantics.component.heavy_atoms()
+        )
+
+    def applicable_heavy_atom_charge_requirements(
+        self, residue: ResidueSite
+    ) -> tuple[tuple[str, int], ...]:
+        """Project charge assignments supported by the present local scaffold.
+
+        Parameters
+        ----------
+        residue : ResidueSite
+            Compatible materialized component, possibly missing heavy atoms.
+
+        Returns
+        -------
+        tuple[tuple[str, int], ...]
+            Requirements for present atoms. A nonzero charge also requires all
+            declared heavy neighbors. This structural applicability check does
+            not certify a fragment's chemistry. Known source charges must still
+            be checked against the complete selected requirements.
+        """
+        present = frozenset(
+            atom.name for atom in residue.atom_sites if not atom.is_hydrogen()
+        )
+        heavy_names = frozenset(self.expected_heavy_atom_names())
+        return tuple(
+            (name, charge)
+            for name, charge in self.heavy_atom_charge_requirements()
+            if name in present
+            and (
+                charge == 0
+                or self.definition.bonded_atom_names(name).intersection(heavy_names)
+                <= present
+            )
         )
 
     def has_complete_heavy_scaffold(self, residue: ResidueSite) -> bool:

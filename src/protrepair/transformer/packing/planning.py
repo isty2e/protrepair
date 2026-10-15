@@ -5,9 +5,7 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.packing.spec import PackingScope, PackingSpec
 
-PACKING_REQUIRED_BACKBONE_ATOM_NAMES: frozenset[str] = frozenset(
-    {"N", "CA", "C", "O"}
-)
+PACKING_REQUIRED_BACKBONE_ATOM_NAMES: frozenset[str] = frozenset({"N", "CA", "C", "O"})
 
 
 def _missing_heavy_atom_names(
@@ -76,7 +74,7 @@ def committed_packing_target_residue_ids(
 
             missing_heavy_atom_names = _missing_heavy_atom_names(
                 present_atom_names,
-                expected_heavy_atom_names=template.expected_heavy_atom_names(),
+                expected_heavy_atom_names=template.expected_polymer_heavy_atom_names(),
             )
             if not missing_heavy_atom_names:
                 continue

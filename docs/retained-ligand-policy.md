@@ -76,9 +76,10 @@ alternate fixed-template aromatic forms.
 
 ## Incomplete Templates
 
-A neutral template can place hydrogens on compatible heavy atoms that are present, even when
-part of the component is missing. That partial placement is not evidence that
-the original hydrogens are wrong. If it cannot preserve all of them, ProtRepair
+A template can place hydrogens on compatible heavy atoms that are present, even
+when part of the component is missing. This applies to templates with nonzero
+formal charges as well as neutral templates. Partial placement is not evidence
+that the original hydrogens are wrong. If it cannot preserve all of them, ProtRepair
 leaves the residue unchanged and reports `UNSUPPORTED_HYDROGENATION`, identifying
 the missing heavy atoms and unmatched hydrogens.
 
@@ -99,21 +100,31 @@ of neutrality.
 An explicit mapped SMILES supplies the heavy atoms' formal charges, including
 zero. Successful preparation writes missing assignments into canonical topology,
 and readiness requires them to be present. Bundled templates fill missing
-nonzero charges but leave unspecified neutral atoms unassigned. A template's
+nonzero charges only when the charged atom and its template heavy-atom neighbors
+are present. Other parts of an incomplete component can still receive H. A missing
+local neighbor leaves a new charge unassigned; it does not erase a reported charge.
+Templates leave unspecified neutral atoms unassigned. A template's
 neutral requirement still rejects a contradictory known input charge. PDB and
 mmCIF output use the resulting topology, not a separate writer charge policy.
 
-Non-neutral template preparation requires the complete heavy scaffold with
-matching names and elements. Neutral templates may prepare a compatible subset;
-this does not make a missing-heavy-atom component ready for refinement. Extra
-heavy names and contradictory elements are not accepted as that template.
+All templates require compatible present heavy-atom names and, where the template
+declares elements, matching elements. A partial scaffold can receive supported H
+and charge assignments, but is not considered complete or ready for refinement.
+Extra heavy names and contradictory declared elements are rejected even when the
+template does not declare formal charges. The local-neighbor charge rule is a
+structural applicability check, not a protonation prediction or a claim that a
+fragment is a complete chemical species.
+
+Retained components use the full component inventory. For example, SAH and SAM
+contain an atom named `OXT`; it is not removed by the polymer free-terminal
+projection.
 
 The bundle includes sulfate (`SO4`), a zero-H component with a selected -2
-graph/charge assignment, not an
-organic fallback or a generic metal/ion exemption. Unspecified ionic charges can
-be resolved without changing its atoms or coordinates. Source H or an external
-covalent attachment conflicts with that isolated zero-H template; typed hydrogen
-bonds and metal coordination are preserved separately. This template does not
+graph/charge assignment, not an organic fallback or a generic metal/ion exemption.
+Unspecified ionic charges can be resolved without changing its atoms or
+coordinates. The isolated zero-H template cannot admit source H, external
+covalent attachments or untyped external connections. Typed hydrogen bonds and
+metal coordination are preserved separately. This template does not
 admit covalent derivatives, infer pH-dependent populations or validate a metal
 potential.
 
@@ -146,6 +157,11 @@ The fallback infers chemistry for the heavy atoms already present. It is not a
 general heavy-atom completion mechanism for arbitrary nonstandard components.
 Single-atom metals and ions are retained as not-applicable chemistry rather
 than passed through organic-molecule hydrogenation.
+
+Template H coverage still has a separate limitation: hydrogens anchored to atoms
+named `N` or `OXT` share polymer-only exclusions. This leaves SAH/SAM amine H and
+SAH HXT unplaced even on complete heavy scaffolds. Full component-specific H
+coverage needs those exclusions separated from retained-component chemistry.
 
 ## Component Dictionaries
 

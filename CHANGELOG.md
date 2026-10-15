@@ -20,6 +20,14 @@
 
 ### Fixed
 
+- preserve full retained-component inventories, including SAH/SAM OXT, separately
+  from polymer scaffold projections; restore their H placement, topology readiness
+  and SAM OXT charge requirements
+- retain supported partial H preparation for charged cofactors and assign new
+  template charges only at locally complete heavy-atom neighborhoods; incomplete
+  components remain unready for refinement
+- apply template name/declared-element checks regardless of charge declarations,
+  and report scaffold/charge failures without mislabeling them as source connectivity
 - publish retained-ligand formal charges with admitted bond chemistry, including
   explicit neutral SMILES assignments; preserve known source charges and reject
   conflicting or incompatible scaffolds before applying residue changes
