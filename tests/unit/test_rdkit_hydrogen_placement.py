@@ -37,6 +37,7 @@ from protrepair.state.retained_non_polymer_chemistry import (
 )
 from protrepair.state.topology import TopologyAvailabilityState
 from protrepair.structure import ProteinStructure
+from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.topology import (
@@ -215,6 +216,127 @@ def test_tetrahedral_placement_respects_native_atom_permutations(order):
     require_compatible_pose_stereochemistry(result)
     assert np.array_equal(result.GetConformer().GetPositions()[: len(indices)], before)
     assert np.array_equal(molecule.GetConformer().GetPositions(), before)
+
+
+@pytest.mark.parametrize("side", (-1, 0, 1))
+@pytest.mark.parametrize("invert", (False, True))
+@pytest.mark.parametrize("order", ("identity", "reverse", "rotate", "interleave"))
+def test_unassigned_center_uses_declared_stereo_on_either_side_of_anchor_plane(
+    side, invert, order
+):
+    pose = _pose(1)
+    conformer = pose.GetConformer()
+    center = np.array(conformer.GetAtomPosition(7))
+    anchors = np.array(
+        [
+            conformer.GetAtomPosition(a.GetIdx())
+            for a in pose.GetAtomWithIdx(7).GetNeighbors()
+        ]
+    )
+    normal = np.cross(anchors[1] - anchors[0], anchors[2] - anchors[0])
+    normal /= np.linalg.norm(normal)
+    displacement = np.dot(center - anchors[0], normal)
+    conformer.SetAtomPosition(7, tuple(center + (side - 1) * displacement * normal))
+    if invert:
+        pose.GetAtomWithIdx(7).InvertChirality()
+    indices = list(range(pose.GetNumAtoms()))
+    if order == "reverse":
+        indices.reverse()
+    elif order == "rotate":
+        indices = indices[3:] + indices[:3]
+    elif order == "interleave":
+        indices = indices[::2] + indices[1::2]
+    pose = Chem.RenumberAtoms(pose, indices)
+    index = indices.index(7)
+    expected = pose.GetAtomWithIdx(index).GetChiralTag()
+    assert (
+        molecule_with_pose_stereochemistry(pose).GetAtomWithIdx(index).GetChiralTag()
+        == Chem.ChiralType.CHI_UNSPECIFIED
+    )
+    original_positions = pose.GetConformer().GetPositions().copy()
+    raw = Chem.AddHs(pose, addCoords=True)
+    result = add_hydrogens_preserving_stereochemistry(pose)
+    assert (
+        molecule_with_pose_stereochemistry(result).GetAtomWithIdx(index).GetChiralTag()
+        == expected
+    )
+    assert np.array_equal(pose.GetConformer().GetPositions(), original_positions)
+    assert np.array_equal(
+        result.GetConformer().GetPositions()[: len(indices)], original_positions
+    )
+    atom = result.GetAtomWithIdx(index)
+    hydrogen = next(
+        a.GetIdx() for a in atom.GetNeighbors() if a.GetIdx() >= len(indices)
+    )
+    geometry = result.GetConformer()
+    point = np.array(geometry.GetAtomPosition(hydrogen))
+    fixed = np.array(
+        [
+            geometry.GetAtomPosition(a.GetIdx())
+            for a in atom.GetNeighbors()
+            if a.GetIdx() != hydrogen
+        ]
+    )
+    volume = np.linalg.det(fixed - point)
+    expected_sign = -1 if expected == Chem.ChiralType.CHI_TETRAHEDRAL_CW else 1
+    assert expected_sign * volume > 0
+    parent = np.array(geometry.GetAtomPosition(index))
+    native_point = np.array(raw.GetConformer().GetAtomPosition(hydrogen))
+    assert np.linalg.norm(point - parent) == pytest.approx(
+        np.linalg.norm(native_point - parent)
+    )
+
+
+@pytest.mark.parametrize("index", (0, 1, 2))
+@pytest.mark.parametrize("name", ("C4'", "C1'", "C2'", "C3'"))
+def test_source_h_geometry_damage_is_not_always_a_native_configuration_change(
+    index, name
+):
+    pose = _pose(index)
+    source = add_hydrogens_preserving_stereochemistry(pose)
+    center_index = NAMES.index(name)
+    atom = source.GetAtomWithIdx(center_index)
+    hydrogen = next(a.GetIdx() for a in atom.GetNeighbors() if a.GetIdx() >= len(NAMES))
+    conformer = source.GetConformer()
+    center = np.array(conformer.GetAtomPosition(center_index))
+    before = np.array(conformer.GetAtomPosition(hydrogen))
+    after = 2 * center - before
+    anchors = np.array(
+        [
+            conformer.GetAtomPosition(a.GetIdx())
+            for a in atom.GetNeighbors()
+            if a.GetIdx() != hydrogen
+        ]
+    )
+    assert np.linalg.det(anchors - before) * np.linalg.det(anchors - after) < 0
+    geometry = ResidueGeometry(
+        {
+            **{
+                atom_name: AtomGeometry(
+                    Vec3.from_iterable(conformer.GetAtomPosition(i))
+                )
+                for i, atom_name in enumerate(NAMES)
+            },
+            "OBSERVED": AtomGeometry(Vec3.from_iterable(after)),
+        }
+    )
+    evidence = RetainedNonPolymerChemistryEvidence(ResidueId("L", 1), SMILES, NAMES)
+    heavy_tag = (
+        molecule_with_pose_stereochemistry(pose)
+        .GetAtomWithIdx(center_index)
+        .GetChiralTag()
+    )
+    if heavy_tag == Chem.ChiralType.CHI_UNSPECIFIED:
+        with pytest.raises(ValueError, match="stereo"):
+            require_retained_non_polymer_evidence_stereochemistry(
+                evidence, geometry, hydrogen_attachments=(("OBSERVED", name),)
+            )
+    else:
+        assert heavy_tag == atom.GetChiralTag()
+        require_retained_non_polymer_evidence_stereochemistry(
+            evidence, geometry, hydrogen_attachments=(("OBSERVED", name),)
+        )
+    assert geometry.position("OBSERVED") == Vec3.from_iterable(after)
 
 
 @pytest.mark.parametrize("isotope", (0, 2, 3))

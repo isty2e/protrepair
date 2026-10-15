@@ -62,6 +62,8 @@ def require_compatible_pose_stereochemistry(molecule: "Mol") -> None:
     -----
     Undefined graph stereo imposes no constraint. An unassigned geometric
     result is not treated as opposite stereo. The molecule is not mutated.
+    RDKit can assign tetrahedral configuration from the heavy neighbors without
+    using an attached H position; this is not an independent H-geometry check.
     """
     chem = Chem
     if chem is None:

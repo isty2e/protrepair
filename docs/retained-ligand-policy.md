@@ -64,14 +64,21 @@ This check does not choose a protonation state.
 
 RDKit fallback uses stereochemistry observed from the input pose. Both placement
 paths recheck the generated coordinates. If a new tetrahedral H is on the wrong
-side, ProtRepair can reposition that H at its native parent distance while keeping
-the original atoms fixed. A mismatch that cannot be corrected this way is refused;
+side, ProtRepair tests both normals of the three fixed neighbors' plane and selects
+the side consistent with the declaration, retaining the native parent distance.
+It does not use an unassigned center's small displacement to choose that side.
+A mismatch that cannot be corrected with the original atoms fixed is refused;
 the operation does not move source atoms to make them agree with the selected graph.
 
-Existing H/D/T atoms are checked again after correspondence restores their original
-names and coordinates. Subsequent H clash cleanup also keeps these source atoms
-fixed, even when their names overlap a component's rotatable-H program. Newly
-generated eligible H can still undergo cleanup.
+After correspondence restores original H/D/T names and coordinates, native
+configuration is checked again. This is not a separate H-geometry test: when
+heavy neighbors already determine the configuration, RDKit may not use the H
+position. A displaced or reflected source H can therefore pass this check.
+See the [native tetrahedral observer](https://github.com/rdkit/rdkit/blob/Release_2026_03_2/Code/GraphMol/Chirality.cpp#L3282-L3308).
+
+Retained-H completion keeps existing H/D/T fixed during its clash cleanup,
+including on the template path, not only with overrides. Newly generated eligible
+H can still undergo cleanup.
 
 These are placement and source-preservation checks, not an optimized-geometry
 certificate or a general validation of template-reference stereochemistry.

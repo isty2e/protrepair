@@ -23,7 +23,10 @@
 - preserve tetrahedral stereochemistry during RDKit retained-ligand H placement
   by correcting only newly generated H, without moving original atoms; reject
   confirmed pose conflicts with mapped SMILES in preparation and readiness
-- recheck retained source H/D/T after correspondence, and keep their coordinates
+- choose a corrected H's side from the declared stereo and fixed-neighbor plane,
+  rather than a near-planar center's unassigned signed displacement
+- recheck native configuration after retained H/D/T correspondence; this does not
+  independently validate each source H's geometry. Keep their coordinates
   fixed during subsequent H clash cleanup, including with chemistry overrides
 - check existing external covalent-like and untyped bonds across all provenances
   before preparing an isolated zero-H component; preserve typed noncovalent context

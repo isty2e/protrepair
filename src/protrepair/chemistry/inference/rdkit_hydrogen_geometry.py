@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 try:
     from rdkit import Chem
 except ImportError:  # pragma: no cover - exercised by availability checks
@@ -14,7 +16,10 @@ from protrepair.chemistry.inference.rdkit_graph import (
 )
 from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import Vec3
-from protrepair.geometry.placement_vector import scaled_point_from_origin_or_none
+from protrepair.geometry.placement_vector import (
+    normalized_vector_or_none,
+    scaled_point_from_origin_or_none,
+)
 
 if TYPE_CHECKING:
     from rdkit.Chem.rdchem import Mol
@@ -86,15 +91,34 @@ def add_hydrogens_preserving_stereochemistry(molecule: "Mol") -> "Mol":
             for neighbor in atom.GetNeighbors()
             if neighbor.GetIdx() != hydrogen.GetIdx()
         )
-        centroid = (anchors[0] / 3) + (anchors[1] / 3) + (anchors[2] / 3)
-        point = scaled_point_from_origin_or_none(
-            center.to_array(),
-            center.to_array() + (center.to_array() - centroid),
-            center.distance_to(old_h),
-        )
-        if point is None:
-            raise ValueError("stereochemistry-preserving H direction is undefined")
-        conformer.SetAtomPosition(hydrogen.GetIdx(), tuple(point))
-        observed = molecule_with_pose_stereochemistry(result)
+        with np.errstate(over="ignore", invalid="ignore"):
+            normal = normalized_vector_or_none(
+                np.asarray(
+                    np.cross(anchors[1] - anchors[0], anchors[2] - anchors[0]),
+                    dtype=np.float64,
+                )
+            )
+        if normal is None:
+            raise ValueError("stereochemistry-preserving H plane is undefined")
+
+        # An unassigned center's displacement cannot choose the declared side.
+        for direction in (normal, -normal):
+            point = scaled_point_from_origin_or_none(
+                center.to_array(),
+                center.to_array() + direction,
+                center.distance_to(old_h),
+            )
+            if point is None:
+                continue
+            conformer.SetAtomPosition(hydrogen.GetIdx(), tuple(point))
+            candidate = molecule_with_pose_stereochemistry(result)
+            if (
+                candidate.GetAtomWithIdx(atom.GetIdx()).GetChiralTag()
+                == atom.GetChiralTag()
+            ):
+                observed = candidate
+                break
+        else:
+            raise ValueError("new H stereo cannot be resolved with the fixed anchors")
     require_compatible_pose_stereochemistry(result)
     return result
