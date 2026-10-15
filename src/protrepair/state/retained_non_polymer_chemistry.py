@@ -15,6 +15,7 @@ from protrepair.chemistry.component.topology import (
 )
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_expected_hydrogen_atom_names,
+    retained_non_polymer_evidence_formal_charge_requirements,
     retained_non_polymer_evidence_heavy_atom_elements,
     retained_non_polymer_evidence_heavy_bond_definitions,
     retained_non_polymer_evidence_hydrogen_bond_definitions,
@@ -56,10 +57,48 @@ class RetainedNonPolymerChemistryResolution:
     heavy_bond_definitions: tuple[BondDefinition, ...] = ()
     hydrogen_bond_definitions: tuple[BondDefinition, ...] = ()
     heavy_atom_elements: tuple[str, ...] = ()
+    formal_charge_requirements: tuple[tuple[str, int], ...] = ()
     failure_reason: str = ""
     rdkit_backend_version: str | None = None
     hydrogen_name_projection_candidate_count: int = 0
     hydrogen_name_projection_candidate_limit: int = 0
+
+    def has_formal_charge_topology(
+        self, structure: ProteinStructure, residue: ResidueSite
+    ) -> bool:
+        """Compare realized atom charges with the resolved chemistry.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Current canonical topology, observed without mutation.
+        residue : ResidueSite
+            Retained residue being checked.
+
+        Returns
+        -------
+        bool
+            Whether all selected charges are realized. Explicit SMILES requires
+            an assignment even for zero; a neutral template permits an unknown
+            charge but not a contradictory known charge.
+        """
+        residue_index = structure.constitution.residue_index(residue.residue_id)
+        for name, charge in self.formal_charge_requirements:
+            if not residue.has_atom_site(name):
+                return False
+            realized = structure.topology.formal_charge(
+                structure.constitution.atom_index_in_residue(residue_index, name)
+            )
+            if realized == charge:
+                continue
+            if (
+                realized is None
+                and charge == 0
+                and self.source is RetainedNonPolymerChemistryEvidenceSource.TEMPLATE
+            ):
+                continue
+            return False
+        return True
 
     def has_hydrogen_topology(
         self, structure: ProteinStructure, residue: ResidueSite
@@ -164,6 +203,7 @@ class RetainedNonPolymerChemistryResolution:
             self.heavy_bond_definitions
             or self.hydrogen_bond_definitions
             or self.heavy_atom_elements
+            or self.formal_charge_requirements
         ):
             raise ValueError(
                 "unresolved retained non-polymer chemistry must not carry "
@@ -311,6 +351,9 @@ def _resolve_retained_non_polymer_chemistry_source(
             heavy_atom_elements = retained_non_polymer_evidence_heavy_atom_elements(
                 evidence
             )
+            charge_requirements = (
+                retained_non_polymer_evidence_formal_charge_requirements(evidence)
+            )
         except (RuntimeError, ValueError) as error:
             return RetainedNonPolymerChemistryResolution(
                 source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
@@ -325,6 +368,7 @@ def _resolve_retained_non_polymer_chemistry_source(
             heavy_bond_definitions=heavy_bond_definitions,
             hydrogen_bond_definitions=hydrogen_bond_definitions,
             heavy_atom_elements=heavy_atom_elements,
+            formal_charge_requirements=charge_requirements,
         )
 
     template = component_library.get(residue.component_id)
@@ -351,6 +395,7 @@ def _resolve_retained_non_polymer_chemistry_source(
                     residue, template=template
                 ),
             ),
+            formal_charge_requirements=template.heavy_atom_charge_requirements(),
         )
 
     if not allow_rdkit_fallback:

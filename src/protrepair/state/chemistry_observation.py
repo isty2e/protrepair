@@ -63,7 +63,7 @@ from protrepair.state.topology import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import BondRelationshipType
 
@@ -106,7 +106,7 @@ class StructureChemistryObservation:
     _whole_facts: tuple[StructureCoverageFacts, StructureChemistryReadinessFacts] | None
     _residue_facts: dict[ResidueId, ResidueCompletionStateFacts]
     _retained_facts: dict[ResidueId, RetainedNonPolymerChemistryReadinessFact]
-    _external_hydrogen_attachment_residue_ids: frozenset[ResidueId] | None
+    _external_covalent_attachment_atom_refs: frozenset[AtomRef] | None
 
     def __init__(
         self,
@@ -161,7 +161,7 @@ class StructureChemistryObservation:
         object.__setattr__(self, "_whole_facts", None)
         object.__setattr__(self, "_residue_facts", {})
         object.__setattr__(self, "_retained_facts", {})
-        object.__setattr__(self, "_external_hydrogen_attachment_residue_ids", None)
+        object.__setattr__(self, "_external_covalent_attachment_atom_refs", None)
 
     def for_structure(
         self, structure: ProteinStructure
@@ -348,10 +348,12 @@ class StructureChemistryObservation:
             self._retained_facts[residue.residue_id] = cached
         return cached
 
-    def _has_external_hydrogen_attachment(self, residue: ResidueSite) -> bool:
-        attached_residue_ids = self._external_hydrogen_attachment_residue_ids
-        if attached_residue_ids is None:
-            residue_ids: set[ResidueId] = set()
+    def _has_external_covalent_attachment(
+        self, residue: ResidueSite, *, hydrogens_only: bool
+    ) -> bool:
+        attached_atom_refs = self._external_covalent_attachment_atom_refs
+        if attached_atom_refs is None:
+            atom_refs: set[AtomRef] = set()
             constitution = self.context_structure.constitution
             for bond in self.context_structure.topology.bonds:
                 if bond.relationship_type not in {
@@ -366,18 +368,18 @@ class StructureChemistryObservation:
                 )
                 if references[0].residue_id == references[1].residue_id:
                     continue
-                residue_ids.update(
-                    reference.residue_id
-                    for index, reference in zip(endpoints, references, strict=True)
-                    if constitution.atom_site_at(index).is_hydrogen()
-                )
-            attached_residue_ids = frozenset(residue_ids)
+                atom_refs.update(references)
+            attached_atom_refs = frozenset(atom_refs)
             object.__setattr__(
                 self,
-                "_external_hydrogen_attachment_residue_ids",
-                attached_residue_ids,
+                "_external_covalent_attachment_atom_refs",
+                attached_atom_refs,
             )
-        return residue.residue_id in attached_residue_ids
+        return any(
+            AtomRef(residue.residue_id, atom.name) in attached_atom_refs
+            for atom in residue.atom_sites
+            if not hydrogens_only or atom.is_hydrogen()
+        )
 
     def _derive_residue_coverage_facts(
         self,
@@ -571,6 +573,14 @@ class StructureChemistryObservation:
                 if not atom_site.is_hydrogen()
             }
             expected_heavy_atom_names = set(template.expected_heavy_atom_names())
+            charge_requirements = (
+                hydrogen_expectation_resolution.formal_charge_requirements
+            )
+            scaffold_matches = expected_heavy_atom_names.issubset(
+                present_heavy_atom_names
+            ) and (
+                not charge_requirements or template.has_complete_heavy_scaffold(residue)
+            )
             heavy_atom_topology_availability_state = (
                 _retained_heavy_bond_topology_availability_state(
                     self.context_structure,
@@ -584,7 +594,7 @@ class StructureChemistryObservation:
                     empty_state=TopologyAvailabilityState.PRESENT,
                     covalent_like_endpoint_pairs=self.covalent_like_endpoint_pairs,
                 )
-                if expected_heavy_atom_names.issubset(present_heavy_atom_names)
+                if scaffold_matches
                 else TopologyAvailabilityState.ABSENT
             )
         elif (
@@ -610,6 +620,21 @@ class StructureChemistryObservation:
             heavy_atom_topology_availability_state = TopologyAvailabilityState.ABSENT
             hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
 
+        if (
+            heavy_atom_topology_availability_state is TopologyAvailabilityState.PRESENT
+            and not hydrogen_expectation_resolution.has_formal_charge_topology(
+                self.context_structure, residue
+            )
+        ):
+            heavy_atom_topology_availability_state = TopologyAvailabilityState.ABSENT
+
+        if (
+            hydrogen_expectation_resolution.formal_charge_requirements
+            and not selected_expected_hydrogen_atom_names
+            and self._has_external_covalent_attachment(residue, hydrogens_only=False)
+        ):
+            heavy_atom_topology_availability_state = TopologyAvailabilityState.ABSENT
+
         h_source_resolved = hydrogen_expectation_source.is_resolved()
         heavy_source_resolved = heavy_topology_source.is_resolved()
         support_state = (
@@ -626,6 +651,10 @@ class StructureChemistryObservation:
             elif h_applicability_state is HydrogenApplicabilityState.NOT_APPLICABLE:
                 hydrogen_topology_availability_state = (
                     TopologyAvailabilityState.NOT_APPLICABLE
+                    if hydrogen_expectation_resolution.has_hydrogen_topology(
+                        self.context_structure, residue
+                    )
+                    else TopologyAvailabilityState.ABSENT
                 )
             elif h_coverage_state is HydrogenCoverageState.COMPLETE:
                 hydrogen_topology_availability_state = (
@@ -633,7 +662,9 @@ class StructureChemistryObservation:
                     if hydrogen_expectation_resolution.has_hydrogen_topology(
                         self.context_structure, residue
                     )
-                    and not self._has_external_hydrogen_attachment(residue)
+                    and not self._has_external_covalent_attachment(
+                        residue, hydrogens_only=True
+                    )
                     else TopologyAvailabilityState.ABSENT
                 )
             else:

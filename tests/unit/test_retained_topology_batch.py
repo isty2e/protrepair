@@ -12,6 +12,7 @@ from tests.support.canonical_builders import (
 from protrepair.chemistry import ComponentLibrary
 from protrepair.diagnostics.kinds import RepairEventKind
 from protrepair.geometry import Vec3
+from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
@@ -176,3 +177,55 @@ def test_mixed_ligand_batch_reports_only_selected_repairs(
     assert source.residue_geometry(original_index) == (
         result.structure.residue_geometry(final_index)
     )
+
+
+@pytest.mark.parametrize("complete_first", (False, True))
+@pytest.mark.parametrize("isotope", ("H", "D", "T"))
+def test_mixed_batch_reports_charge_only_repair_after_neighbor_insertion(
+    complete_first: bool, isotope: str
+) -> None:
+    source, complete_id, incomplete_id = _benzene_batch(
+        complete_first=complete_first, isotope=isotope
+    )
+    source = resolve_retained_non_polymer_topology(
+        source, ComponentLibrary({}), target_residue_ids=frozenset((complete_id,))
+    ).structure
+    evidence = tuple(
+        RetainedNonPolymerChemistryOverride(
+            residue_id, "c1ccccc1", tuple(f"C{i}" for i in range(1, 7))
+        ).to_evidence()
+        for residue_id in (complete_id, incomplete_id)
+    )
+    result = add_retained_non_polymer_hydrogens(
+        source, ComponentLibrary({}), chemistry_evidence=evidence
+    )
+    assert not result.issues
+    events = tuple(
+        event
+        for event in result.repairs
+        if event.kind is RepairEventKind.RETAINED_NON_POLYMER_TOPOLOGY_RESOLVED
+    )
+    assert len(events) == 1
+    assert events[0].scope.residue_ids == (complete_id,)
+    assert events[0].atom_names == tuple(f"C{i}" for i in range(1, 7))
+    residue = source.constitution.residue_site_at(
+        source.constitution.residue_index(complete_id)
+    )
+    for atom in residue.atom_sites:
+        ref = AtomRef(complete_id, atom.name)
+        old = source.constitution.atom_index(ref)
+        new = result.structure.constitution.atom_index(ref)
+        assert result.structure.geometry.atom_geometry(
+            new
+        ) == source.geometry.atom_geometry(old)
+        assert result.structure.constitution.atom_site_at(
+            new
+        ) == source.constitution.atom_site_at(old)
+        assert result.structure.topology.formal_charge(new) == (
+            None if atom.is_hydrogen() else 0
+        )
+    repeated = add_retained_non_polymer_hydrogens(
+        result.structure, ComponentLibrary({}), chemistry_evidence=evidence
+    )
+    assert repeated.structure is result.structure
+    assert not repeated.repairs and not repeated.issues

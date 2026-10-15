@@ -47,6 +47,37 @@ def retained_non_polymer_evidence_expected_hydrogen_atom_names(
     return tuple(f"H{index:03d}" for index in range(1, hydrogen_count + 1))
 
 
+def retained_non_polymer_evidence_formal_charge_requirements(
+    evidence: RetainedNonPolymerChemistryEvidence,
+) -> tuple[tuple[str, int], ...]:
+    """Project the explicit SMILES heavy-atom charge assignment.
+
+    Parameters
+    ----------
+    evidence : RetainedNonPolymerChemistryEvidence
+        SMILES and its ordered canonical heavy atom identities.
+
+    Returns
+    -------
+    tuple[tuple[str, int], ...]
+        Charge requirements paired with the supplied heavy atom names.
+
+    Raises
+    ------
+    ValueError
+        The atom mapping or SMILES cannot be interpreted.
+    RdkitUnavailableError
+        RDKit is not operational.
+    """
+    template = template_without_hydrogens(evidence.smiles)
+    names = _evidence_heavy_atom_names_by_index(
+        template, heavy_atom_names=evidence.heavy_atom_names
+    )
+    return tuple(
+        (names[atom.GetIdx()], atom.GetFormalCharge()) for atom in template.GetAtoms()
+    )
+
+
 def retained_non_polymer_evidence_heavy_bond_definitions(
     evidence: RetainedNonPolymerChemistryEvidence,
 ) -> tuple[BondDefinition, ...]:

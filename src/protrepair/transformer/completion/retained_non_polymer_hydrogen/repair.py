@@ -16,6 +16,9 @@ from protrepair.chemistry.component.topology import (
     template_heavy_bond_definitions_for_present_atoms,
     template_hydrogen_bond_definitions_for_names,
 )
+from protrepair.chemistry.inference.retained_non_polymer_evidence import (
+    retained_non_polymer_evidence_formal_charge_requirements,
+)
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
 )
@@ -43,6 +46,7 @@ from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.topology import (
+    AtomTopology,
     BondProvenance,
     BondRelationshipType,
     StructureTopology,
@@ -102,6 +106,15 @@ class _RetainedNonPolymerTopologyPlan:
     residue_id: ResidueId
     bond_definitions: tuple[BondDefinition, ...]
     provenance: BondProvenance
+    formal_charge_requirements: tuple[tuple[str, int], ...] = ()
+
+    def requires_unlinked_scaffold(self) -> bool:
+        """An admitted zero-H graph cannot acquire extra covalent bonds."""
+        heavy_names = {name for name, _ in self.formal_charge_requirements}
+        return bool(heavy_names) and all(
+            bond.atom_name_1 in heavy_names and bond.atom_name_2 in heavy_names
+            for bond in self.bond_definitions
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,7 +410,7 @@ def _retained_topology_resolution_repairs(
     *,
     residue_ids: tuple[ResidueId, ...],
 ) -> tuple[RepairEvent, ...]:
-    """Attribute graph-only edits after neighboring atom inventories change."""
+    """Attribute graph/charge-only edits across neighboring inventory changes."""
 
     previous_bonds = (
         source.topology.bonds
@@ -421,6 +434,19 @@ def _retained_topology_resolution_repairs(
             if names is not None:
                 names.add(reference.atom_name)
 
+    for residue_id, names in changed_names_by_residue.items():
+        source_index = source.constitution.residue_index(residue_id)
+        target_index = target.constitution.residue_index(residue_id)
+        for atom in source.constitution.residue_site_at(source_index).atom_sites:
+            previous = source.constitution.atom_index_in_residue(
+                source_index, atom.name
+            )
+            current = target.constitution.atom_index_in_residue(target_index, atom.name)
+            if source.topology.formal_charge(previous) != target.topology.formal_charge(
+                current
+            ):
+                names.add(atom.name)
+
     return tuple(
         RepairEvent.for_residue(
             kind=RepairEventKind.RETAINED_NON_POLYMER_TOPOLOGY_RESOLVED,
@@ -443,12 +469,12 @@ def resolve_retained_non_polymer_topology(
     chemistry_evidence: tuple[RetainedNonPolymerChemistryEvidence, ...] = (),
     allow_retained_non_polymer_rdkit_fallback: bool = True,
 ) -> TransformationResult:
-    """Publish admitted retained chemistry without changing any atom payload.
+    """Publish admitted bonds and missing charges without replacing atoms.
 
     Parameters
     ----------
     structure : ProteinStructure
-        Structure whose existing atoms must remain unchanged.
+        Structure whose atom identities, geometry and reported charges are preserved.
     component_library : ComponentLibrary
         Active component definitions.
     target_residue_ids : frozenset[ResidueId] or None
@@ -461,7 +487,8 @@ def resolve_retained_non_polymer_topology(
     Returns
     -------
     TransformationResult
-        Topology-only changes. Failed or atom-changing proposals leave their
+        Topology-only changes, including previously unspecified ionic charges.
+        Failed or atom-changing proposals leave their
         residue unchanged and report a diagnostic. Placement is used to validate
         source H correspondence, never to replace its coordinates in this path.
     """
@@ -568,11 +595,45 @@ def _hydrogenate_retained_non_polymer_payload(
                     + projection.hydrogen_bond_definitions,
                 ),
                 provenance=BondProvenance.EVIDENCE_RESOLVED,
+                formal_charge_requirements=retained_non_polymer_evidence_formal_charge_requirements(
+                    chemistry_evidence
+                ),
             ),
         )
 
     template = component_library.get(payload.component_id)
     if template is not None:
+        charge_requirements = template.heavy_atom_charge_requirements()
+        if charge_requirements and (
+            not template.has_compatible_heavy_scaffold(payload.residue_site)
+            or (
+                any(charge for _, charge in charge_requirements)
+                and not template.has_complete_heavy_scaffold(payload.residue_site)
+            )
+        ):
+            return _RetainedNonPolymerHydrogenPayloadResult(
+                payload=None,
+                repairs=(),
+                issues=(
+                    _source_connectivity_conflict_issue(
+                        payload.residue_site,
+                        ValueError(
+                            "template requires compatible heavy names and elements; "
+                            "non-neutral chemistry also requires a complete scaffold"
+                        ),
+                    ),
+                ),
+            )
+        if (
+            template.can_add_hydrogens()
+            and not template.expected_hydrogen_atom_names()
+            and source_payload is not None
+            and _hydrogen_atom_names(source_payload)
+        ):
+            raise _SourceHydrogenReconciliationError(
+                "source H conflicts with the selected zero-H template",
+                atom_names=_hydrogen_atom_names(source_payload),
+            )
         contradiction_issues = (
             diagnose_retained_non_polymer_template_chemistry_contradictions(
                 payload.residue_site,
@@ -714,6 +775,11 @@ def _hydrogenate_retained_non_polymer_payload(
                         + template_hydrogen_bond_definitions
                     ),
                     provenance=BondProvenance.TEMPLATE_RESOLVED,
+                    formal_charge_requirements=tuple(
+                        (name, charge)
+                        for name, charge in charge_requirements
+                        if payload.has_atom(name)
+                    ),
                 ),
             )
 
@@ -1240,9 +1306,20 @@ def _with_retained_non_polymer_topology_bonds(
             plan,
         )
     )
+    atom_topologies = list(target_structure.topology.atom_topologies)
+    for plan in topology_plans:
+        residue_index = target_structure.constitution.residue_index(plan.residue_id)
+        for name, charge in plan.formal_charge_requirements:
+            index = target_structure.constitution.atom_index_in_residue(
+                residue_index, name
+            )
+            if (
+                charge != 0 or plan.provenance is BondProvenance.EVIDENCE_RESOLVED
+            ) and target_structure.topology.formal_charge(index) is None:
+                atom_topologies[index.value] = AtomTopology(formal_charge=charge)
     topology = StructureTopology(
         constitution=target_structure.constitution,
-        atom_topologies=target_structure.topology.atom_topologies,
+        atom_topologies=tuple(atom_topologies),
         bonds=_merge_source_first_topology_bonds(
             tuple(retained_source_bonds),
             generated_bonds,
@@ -1352,6 +1429,15 @@ def _require_source_compatible_topology_plan(
     *,
     source_bonds: tuple[TopologyBond, ...],
 ) -> None:
+    residue_index = structure.constitution.residue_index(plan.residue_id)
+    for name, charge in plan.formal_charge_requirements:
+        index = structure.constitution.atom_index_in_residue(residue_index, name)
+        reported = structure.topology.formal_charge(index)
+        if reported is not None and reported != charge:
+            raise ValueError(
+                f"{name} charge {reported:+d} conflicts with "
+                f"admitted chemistry {charge:+d}"
+            )
     definitions = {
         frozenset((bond.atom_name_1, bond.atom_name_2)): bond
         for bond in plan.bond_definitions
@@ -1362,6 +1448,11 @@ def _require_source_compatible_topology_plan(
             for index in source_bond.endpoint_pair()
         )
         if any(ref.residue_id != plan.residue_id for ref in references):
+            if plan.requires_unlinked_scaffold() and (
+                is_covalent_like_relationship(source_bond)
+                or source_bond.relationship_type is BondRelationshipType.UNKNOWN
+            ):
+                raise ValueError("zero-H chemistry has an external covalent attachment")
             # External source attachments cannot be redirected to local parents.
             if any(
                 ref.residue_id == plan.residue_id
@@ -1440,16 +1531,18 @@ def _topology_plan_for_bond_definitions(
     residue_id: ResidueId,
     bond_definitions: tuple[BondDefinition, ...],
     provenance: BondProvenance,
+    formal_charge_requirements: tuple[tuple[str, int], ...] = (),
 ) -> _RetainedNonPolymerTopologyPlan | None:
     """Return retained ligand topology plan for validated bond definitions."""
 
-    if not bond_definitions:
+    if not bond_definitions and not formal_charge_requirements:
         return None
 
     return _RetainedNonPolymerTopologyPlan(
         residue_id=residue_id,
         bond_definitions=bond_definitions,
         provenance=provenance,
+        formal_charge_requirements=formal_charge_requirements,
     )
 
 

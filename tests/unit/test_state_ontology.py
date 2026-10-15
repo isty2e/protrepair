@@ -884,8 +884,8 @@ def test_readiness_supports_override_backed_retained_non_polymer() -> None:
                 component_id="UNK",
                 residue_id=ligand_residue_id,
                 atoms=(
-                    atom_payload("C1", "C", Vec3(3.0, 0.0, 0.0)),
-                    atom_payload("O1", "O", Vec3(4.4, 0.0, 0.0)),
+                    atom_payload("C1", "C", Vec3(3.0, 0.0, 0.0), formal_charge=0),
+                    atom_payload("O1", "O", Vec3(4.4, 0.0, 0.0), formal_charge=0),
                 ),
                 is_hetero=True,
             ),

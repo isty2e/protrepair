@@ -16,6 +16,7 @@ from protrepair.chemistry.component.semantics import (
     IdealGeometryHeavyAtomSemantics,
     IdealGeometryHydrogenSemantics,
 )
+from protrepair.structure.constitution import ResidueSite
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +124,67 @@ class ResidueTemplate:
             return ()
 
         return hydrogen_semantics.expected_hydrogen_atom_names()
+
+    def heavy_atom_charge_requirements(self) -> tuple[tuple[str, int], ...]:
+        """Return the component's declared heavy-atom charge assignment.
+
+        Returns
+        -------
+        tuple[tuple[str, int], ...]
+            Heavy atom names and integral formal charges, including neutral atoms
+            in a template with charge declarations. Empty when it declares none;
+            that absence is not evidence overriding a source microstate.
+        """
+        if not self.definition.formal_charges:
+            return ()
+        return tuple(
+            (name, self.definition.formal_charges.get(name, 0))
+            for name in self.expected_heavy_atom_names()
+        )
+
+    def has_compatible_heavy_scaffold(self, residue: ResidueSite) -> bool:
+        """Check present heavy atoms without certifying completeness.
+
+        Parameters
+        ----------
+        residue : ResidueSite
+            Materialized residue being compared with this template.
+
+        Returns
+        -------
+        bool
+            Whether present heavy atoms are a subset of the expected inventory
+            with compatible ideal-component elements, when available.
+        """
+        present_names = {
+            atom.name for atom in residue.atom_sites if not atom.is_hydrogen()
+        }
+        if not present_names.issubset(self.expected_heavy_atom_names()):
+            return False
+        semantics = self.hydrogen_semantics
+        return not isinstance(semantics, IdealGeometryHydrogenSemantics) or all(
+            atom.atom_name not in present_names
+            or residue.atom_site(atom.atom_name).element == atom.element
+            for atom in semantics.component.heavy_atoms()
+        )
+
+    def has_complete_heavy_scaffold(self, residue: ResidueSite) -> bool:
+        """Check exact heavy inventory and available element evidence.
+
+        Parameters
+        ----------
+        residue : ResidueSite
+            Materialized residue being compared with this template.
+
+        Returns
+        -------
+        bool
+            Whether all and only the expected heavy atoms are present with
+            compatible ideal-component elements, when available.
+        """
+        return sum(not atom.is_hydrogen() for atom in residue.atom_sites) == len(
+            self.expected_heavy_atom_names()
+        ) and self.has_compatible_heavy_scaffold(residue)
 
     def missing_atom_names(
         self,

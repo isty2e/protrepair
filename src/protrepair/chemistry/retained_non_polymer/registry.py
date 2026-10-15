@@ -72,9 +72,7 @@ def retained_non_polymer_record_to_template(
     idealized_component = record.to_idealized_component()
     heavy_atom_names = idealized_component.heavy_atom_names()
     formal_charges = {
-        atom.atom_name: atom.formal_charge
-        for atom in idealized_component.heavy_atoms()
-        if atom.formal_charge != 0
+        atom.atom_name: atom.formal_charge for atom in idealized_component.heavy_atoms()
     }
     hydrogen_semantics = None
     if supports_bundled_retained_non_polymer_hydrogenation(record.component_id):
@@ -90,9 +88,7 @@ def retained_non_polymer_record_to_template(
             formal_charges=formal_charges,
         ),
         lineage_parent_component_id=record.parent_standard_id,
-        backbone_family_component_id=(
-            record.parent_standard_id or record.component_id
-        ),
+        backbone_family_component_id=(record.parent_standard_id or record.component_id),
         preferred_atom_order=heavy_atom_names,
         heavy_atom_semantics=None,
         hydrogen_semantics=hydrogen_semantics,
@@ -110,8 +106,7 @@ def bundled_retained_non_polymer_asset_path() -> str:
 
 
 @lru_cache(maxsize=1)
-def build_bundled_retained_non_polymer_registry(
-) -> BundledRetainedNonPolymerRegistry:
+def build_bundled_retained_non_polymer_registry() -> BundledRetainedNonPolymerRegistry:
     """Return the bundled retained non-polymer registry."""
 
     asset_path = files("protrepair.chemistry.resources").joinpath(
