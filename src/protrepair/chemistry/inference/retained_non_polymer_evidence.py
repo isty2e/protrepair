@@ -9,15 +9,82 @@ except ImportError:  # pragma: no cover - exercised by availability checks
     Chem = None
 
 from protrepair.chemistry.component.graph import BondDefinition
+from protrepair.chemistry.inference.rdkit_graph import (
+    has_declared_stereochemistry,
+    require_compatible_pose_stereochemistry,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
 from protrepair.errors import RdkitUnavailableError
+from protrepair.structure.geometry import ResidueGeometry
 
 if TYPE_CHECKING:
     from rdkit.Chem.rdchem import Mol
 
 _EVIDENCE_TEMPLATE_CACHE_MAXSIZE = 256
+
+
+def require_retained_non_polymer_evidence_stereochemistry(
+    evidence: RetainedNonPolymerChemistryEvidence,
+    geometry: ResidueGeometry,
+    *,
+    hydrogen_attachments: tuple[tuple[str, str], ...] = (),
+) -> None:
+    """Compare declared mapped stereo with confirmed source geometry.
+
+    Parameters
+    ----------
+    evidence : RetainedNonPolymerChemistryEvidence
+        Selected chemical graph and its ordered heavy-atom names.
+    geometry : ResidueGeometry
+        Current named coordinates, without inferred connectivity.
+    hydrogen_attachments : tuple[tuple[str, str], ...], optional
+        Actual H-name/parent-name pairs. Complete observed parent H sets are
+        included in the pose rather than replaced by implicit H geometry.
+
+    Raises
+    ------
+    ValueError
+        Mapping or confirmed geometric stereo contradicts the evidence.
+    RdkitUnavailableError
+        Native interpretation is unavailable.
+    """
+    template = template_without_hydrogens(evidence.smiles)
+    if not has_declared_stereochemistry(template):
+        return
+    names = _evidence_heavy_atom_names_by_index(
+        template, heavy_atom_names=evidence.heavy_atom_names
+    )
+    assert Chem is not None
+    hydrogens_by_parent: dict[str, list[str]] = {}
+    for hydrogen, parent in hydrogen_attachments:
+        hydrogens_by_parent.setdefault(parent, []).append(hydrogen)
+    complete_parents = tuple(
+        index
+        for index, name in names.items()
+        if name in hydrogens_by_parent
+        and len(hydrogens_by_parent[name])
+        == template.GetAtomWithIdx(index).GetTotalNumHs()
+    )
+    if complete_parents:
+        template = Chem.AddHs(template, onlyOnAtoms=complete_parents)
+        for atom in template.GetAtoms():
+            if atom.GetIdx() not in names:
+                parent = names[atom.GetNeighbors()[0].GetIdx()]
+                names[atom.GetIdx()] = hydrogens_by_parent[parent].pop(0)
+    conformer = Chem.Conformer(template.GetNumAtoms())
+    conformer.Set3D(True)
+    for index, name in names.items():
+        if not geometry.has_atom(name):
+            raise ValueError(
+                "retained non-polymer evidence mapping has no coordinate "
+                f"for atom {name}"
+            )
+        conformer.SetAtomPosition(index, tuple(geometry.position(name)))
+    template.RemoveAllConformers()
+    template.AddConformer(conformer, assignId=True)
+    require_compatible_pose_stereochemistry(template)
 
 
 def retained_non_polymer_evidence_heavy_atom_elements(

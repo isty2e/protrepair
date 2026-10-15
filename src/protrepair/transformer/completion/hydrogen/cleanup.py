@@ -24,7 +24,7 @@ from protrepair.diagnostics.events import ValidationIssue
 from protrepair.errors import ResidueNotFoundError
 from protrepair.geometry import Vec3
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.transformer.completion.hydrogen.cleanup_planning import (
     RotatableHydrogenCleanupTarget,
     cleanup_targets_from_report,
@@ -44,8 +44,27 @@ def cleanup_residual_hydrogen_clashes(
     *,
     component_library: ComponentLibrary,
     target_residue_ids: frozenset[ResidueId] | None = None,
+    fixed_hydrogen_atom_refs: frozenset[AtomRef] = frozenset(),
 ) -> tuple[ProteinStructure, tuple[ValidationIssue, ...]]:
-    """Reorient unresolved rotatable hydrogens and report remaining clashes."""
+    """Reorient eligible rotatable H without moving explicitly fixed atoms.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Current canonical coordinates and chemistry.
+    component_library : ComponentLibrary
+        Placement programs for supported rotatable hydrogens.
+    target_residue_ids : frozenset[ResidueId] or None, optional
+        Restrict cleanup to these residues; None includes every supported residue.
+    fixed_hydrogen_atom_refs : frozenset[AtomRef], optional
+        Hydrogens whose original coordinates must remain unchanged, even when a
+        component placement program otherwise selects their names.
+
+    Returns
+    -------
+    tuple[ProteinStructure, tuple[ValidationIssue, ...]]
+        Updated structure and diagnostics for unresolved eligible H clashes.
+    """
 
     include_ligands = bool(structure.constitution.ligands)
     policy = ClashPolicy(include_ligands=include_ligands)
@@ -63,12 +82,13 @@ def cleanup_residual_hydrogen_clashes(
         component_library=component_library,
         report=initial_report,
     )
-    if target_residue_ids is not None:
-        cleanup_targets = tuple(
-            target
-            for target in cleanup_targets
-            if target.residue_id in target_residue_ids
-        )
+    cleanup_targets = tuple(
+        target
+        for target in cleanup_targets
+        if (target_residue_ids is None or target.residue_id in target_residue_ids)
+        and AtomRef(target.residue_id, target.hydrogen_atom_name)
+        not in fixed_hydrogen_atom_refs
+    )
     if not cleanup_targets:
         return structure, ()
 
@@ -238,9 +258,7 @@ class _TargetedHydrogenClashScorer:
             element=self.hydrogen_site.element,
             geometry=self.hydrogen_site.geometry.with_position(candidate_position),
             context=self.hydrogen_site.context,
-            grid_cell_size_angstrom=(
-                self.clash_runtime.candidate_cell_size_angstrom
-            ),
+            grid_cell_size_angstrom=(self.clash_runtime.candidate_cell_size_angstrom),
         )
         overlaps: list[float] = []
         for other_site in self.clash_runtime.neighboring_atom_sites(
@@ -276,9 +294,7 @@ class _TargetedHydrogenClashScorer:
             hydrogen_radius = self.clash_runtime.van_der_waals_radius(
                 candidate_hydrogen_site.element
             )
-            other_radius = self.clash_runtime.van_der_waals_radius(
-                other_site.element
-            )
+            other_radius = self.clash_runtime.van_der_waals_radius(other_site.element)
             allowed_distance = self.clash_runtime.policy.allowed_distance_angstrom(
                 left_van_der_waals_radius_angstrom=hydrogen_radius,
                 right_van_der_waals_radius_angstrom=other_radius,

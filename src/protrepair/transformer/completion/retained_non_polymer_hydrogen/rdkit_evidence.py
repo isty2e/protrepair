@@ -9,7 +9,11 @@ except ImportError:  # pragma: no cover - exercised by availability checks
     Chem = None
 
 from protrepair.chemistry.component.graph import BondDefinition
+from protrepair.chemistry.inference.rdkit_hydrogen_geometry import (
+    add_hydrogens_preserving_stereochemistry,
+)
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
+    require_retained_non_polymer_evidence_stereochemistry,
     retained_non_polymer_evidence_heavy_atom_elements,
     retained_non_polymer_evidence_heavy_bond_definitions,
     retained_non_polymer_evidence_hydrogen_bond_definitions,
@@ -74,12 +78,11 @@ def hydrogenate_retained_non_polymer_payload_with_evidence_result(
         payload,
         evidence=evidence,
     )
-    hydrogenated_molecule = Chem.AddHs(
+    hydrogenated_molecule = add_hydrogens_preserving_stereochemistry(
         _rdkit_pose_molecule(
             payload,
             evidence=evidence,
         ),
-        addCoords=True,
     )
     return EvidenceHydrogenationResult(
         payload=payload.apply_patch(
@@ -137,6 +140,9 @@ def _validate_evidence_alignment(
                 f"observed {observed_element}, expected {expected_element}"
             )
 
+    require_retained_non_polymer_evidence_stereochemistry(
+        evidence, payload.residue_geometry
+    )
     _validate_evidence_bond_geometry(payload, evidence=evidence)
 
 

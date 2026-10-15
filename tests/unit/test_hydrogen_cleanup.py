@@ -3,6 +3,7 @@
 from math import sqrt
 from pathlib import Path
 
+import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     CanonicalResiduePayload,
@@ -42,7 +43,10 @@ from protrepair.workflow.contracts import StructureIngressOptions
 SERINE_RESIDUE_ID = ResidueId(chain_id="A", seq_num=17)
 
 
-def test_cleanup_reorients_ligand_clashing_serine_hydrogen() -> None:
+@pytest.mark.parametrize("fixed", (False, True))
+def test_cleanup_reorients_only_movable_ligand_clashing_serine_hydrogen(
+    fixed: bool,
+) -> None:
     """Cleanup should reorient one rotatable hydrogen away from a ligand clash."""
 
     library = build_standard_component_library()
@@ -80,6 +84,9 @@ def test_cleanup_reorients_ligand_clashing_serine_hydrogen() -> None:
     cleaned_structure, issues = cleanup_residual_hydrogen_clashes(
         hydrogenated_holo,
         component_library=library,
+        fixed_hydrogen_atom_refs=(
+            frozenset((AtomRef(SERINE_RESIDUE_ID, "HG"),)) if fixed else frozenset()
+        ),
     )
     cleaned_hydrogen = cleaned_structure.geometry.atom_geometry(
         cleaned_structure.constitution.atom_index(
@@ -93,6 +100,12 @@ def test_cleanup_reorients_ligand_clashing_serine_hydrogen() -> None:
     )
 
     assert cleaned_hydrogen is not None
+    if fixed:
+        assert cleaned_structure is hydrogenated_holo
+        assert cleaned_hydrogen.position == original_hydrogen
+        assert final_report == initial_report
+        return
+
     assert cleaned_hydrogen.position != original_hydrogen
     assert not any(
         clash.left_atom_name == "HG" or clash.right_atom_name == "HG"

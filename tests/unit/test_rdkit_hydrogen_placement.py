@@ -5,7 +5,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 from rdkit import Chem
+from rdkit.Chem.rdDistGeom import EmbedMolecule
+from tests.support.canonical_builders import (
+    atom_payload,
+    build_structure,
+    residue_payload,
+)
 
+from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.inference.rdkit_graph import (
     has_declared_stereochemistry,
     molecule_with_pose_stereochemistry,
@@ -15,9 +22,33 @@ from protrepair.chemistry.inference.rdkit_hydrogen_geometry import (
     add_hydrogens_preserving_stereochemistry,
 )
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
+    require_retained_non_polymer_evidence_stereochemistry,
     template_without_hydrogens,
 )
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
+from protrepair.geometry import Vec3
 from protrepair.io import read_structure
+from protrepair.state.chemistry_observation import StructureChemistryObservation
+from protrepair.state.retained_non_polymer_chemistry import (
+    RetainedNonPolymerChemistryEvidenceSource,
+    resolve_retained_non_polymer_chemistry,
+)
+from protrepair.state.topology import TopologyAvailabilityState
+from protrepair.structure import ProteinStructure
+from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.provenance import FileFormat
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
+from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
+    add_retained_non_polymer_hydrogens,
+    resolve_retained_non_polymer_topology,
+)
 
 SMILES = "[P@]1(=O)([O-])OC[C@H]2O[C@@H](n3cnc4c(N)ncnc34)[C@H](O)[C@@H]2O1"
 NAMES = (
@@ -262,3 +293,322 @@ def test_inverted_new_h_is_corrected_without_changing_source_atoms(monkeypatch):
     )
     translated = vectors + center - point
     assert np.linalg.det(vectors) * np.linalg.det(translated) > 0
+
+
+@pytest.mark.parametrize("isotope", ("H", "D", "T"))
+def test_retained_cleanup_cannot_move_source_h_using_an_overridden_template_name(
+    isotope,
+):
+    smiles = "N[C@@H](CO)C(=O)O"
+    names = ("N", "CA", "CB", "OG", "C", "O", "OXT")
+    native = Chem.AddHs(Chem.MolFromSmiles(smiles))
+    assert EmbedMolecule(native, randomSeed=41) == 0
+    hydrogen = next(
+        atom
+        for atom in native.GetAtomWithIdx(1).GetNeighbors()
+        if atom.GetAtomicNum() == 1
+    )
+    point = Vec3.from_iterable(native.GetConformer().GetAtomPosition(hydrogen.GetIdx()))
+    residue_id = ResidueId("L", 1)
+    source = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="SER",
+                residue_id=residue_id,
+                is_hetero=True,
+                atoms=tuple(
+                    atom_payload(
+                        name,
+                        native.GetAtomWithIdx(index).GetSymbol(),
+                        Vec3.from_iterable(
+                            native.GetConformer().GetAtomPosition(index)
+                        ),
+                    )
+                    for index, name in enumerate(names)
+                )
+                + (atom_payload("HG", isotope, point, occupancy=0.4, b_factor=17.0),),
+            ),
+            residue_payload(
+                component_id="BLK",
+                residue_id=ResidueId("Z", 1),
+                is_hetero=True,
+                atoms=(atom_payload("C1", "C", point),),
+            ),
+        ),
+        source_format=FileFormat.MMCIF,
+    )
+    source = ProteinStructure.from_payload(
+        constitution=source.constitution,
+        geometry=source.geometry,
+        topology=StructureTopology(
+            constitution=source.constitution,
+            atom_topologies=source.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    source.constitution.atom_index(AtomRef(residue_id, "CA")),
+                    source.constitution.atom_index(AtomRef(residue_id, "HG")),
+                    provenance=BondProvenance.SOURCE_EXPLICIT,
+                ),
+            ),
+        ),
+        provenance=source.provenance,
+    )
+    evidence = RetainedNonPolymerChemistryEvidence(residue_id, smiles, names)
+    result = add_retained_non_polymer_hydrogens(
+        source,
+        chemistry_evidence=(evidence,),
+        target_residue_ids=frozenset((residue_id,)),
+    )
+    before = source.constitution.atom_index(AtomRef(residue_id, "HG"))
+    after = result.structure.constitution.atom_index(AtomRef(residue_id, "HG"))
+    assert any(event.residue_id == residue_id for event in result.repairs)
+    assert result.structure.geometry.atom_geometry(
+        after
+    ) == source.geometry.atom_geometry(before)
+
+
+@pytest.mark.parametrize("isotope", ("H", "D", "T"))
+@pytest.mark.parametrize("operation", ("prepare", "facts", "topology"))
+def test_opposite_observed_h_is_not_silently_replaced_by_a_corrected_new_h(
+    isotope, operation
+):
+    pose = _pose(1)
+    corrected = add_hydrogens_preserving_stereochemistry(pose)
+    atom = corrected.GetAtomWithIdx(7)
+    hydrogen = next(a for a in atom.GetNeighbors() if a.GetIdx() >= pose.GetNumAtoms())
+    conformer = corrected.GetConformer()
+    center = np.array(conformer.GetAtomPosition(7))
+    point = 2 * center - np.array(conformer.GetAtomPosition(hydrogen.GetIdx()))
+    damaged = Chem.Mol(corrected)
+    damaged.GetConformer().SetAtomPosition(hydrogen.GetIdx(), tuple(point))
+    assert (
+        molecule_with_pose_stereochemistry(damaged).GetAtomWithIdx(7).GetChiralTag()
+        != atom.GetChiralTag()
+    )
+    residue_id = ResidueId("L", 17)
+    source = build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="CMP",
+                residue_id=residue_id,
+                is_hetero=True,
+                atoms=tuple(
+                    atom_payload(
+                        name,
+                        pose.GetAtomWithIdx(i).GetSymbol().upper(),
+                        Vec3.from_iterable(pose.GetConformer().GetAtomPosition(i)),
+                        formal_charge=-1 if name == "O2P" else None,
+                    )
+                    for i, name in enumerate(NAMES)
+                )
+                + (
+                    atom_payload(
+                        "OBSERVED",
+                        isotope,
+                        Vec3.from_iterable(point),
+                        occupancy=0.4,
+                        b_factor=17.0,
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.MMCIF,
+    )
+    topology = StructureTopology(
+        constitution=source.constitution,
+        atom_topologies=source.topology.atom_topologies,
+        bonds=(
+            TopologyBond(
+                source.constitution.atom_index(AtomRef(residue_id, "C1'")),
+                source.constitution.atom_index(AtomRef(residue_id, "OBSERVED")),
+                order=1,
+                relationship_type=BondRelationshipType.COVALENT,
+                provenance=BondProvenance.SOURCE_EXPLICIT,
+            ),
+        ),
+    )
+    source = ProteinStructure.from_payload(
+        constitution=source.constitution,
+        geometry=source.geometry,
+        topology=topology,
+        provenance=source.provenance,
+        polymer_blueprint=source.polymer_blueprint,
+    )
+    evidence = RetainedNonPolymerChemistryEvidence(residue_id, SMILES, NAMES)
+    # The heavy-only projection agrees; the copied H makes the actual pose opposite.
+    require_compatible_pose_stereochemistry(pose)
+    if operation == "facts":
+        facts = resolve_retained_non_polymer_chemistry(
+            source,
+            source.constitution.ligands[0],
+            component_library=build_default_component_library(),
+            evidence=evidence,
+            allow_rdkit_fallback=False,
+        )
+        assert facts.source is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
+        assert "stereo" in facts.failure_reason.lower()
+    else:
+        execute = (
+            add_retained_non_polymer_hydrogens
+            if operation == "prepare"
+            else resolve_retained_non_polymer_topology
+        )
+        result = execute(
+            source,
+            chemistry_evidence=(evidence,),
+            component_library=build_default_component_library(),
+            allow_retained_non_polymer_rdkit_fallback=False,
+        )
+        assert result.structure is source
+        assert not result.repairs
+        assert any("stereo" in issue.message.lower() for issue in result.issues)
+
+
+@pytest.mark.parametrize("reverse_order", (False, True))
+def test_mixed_ligand_batch_preserves_sources_and_refuses_only_opposite_pose(
+    reverse_order,
+):
+    pose = _pose(1)
+    payloads = []
+    evidence = []
+    for seq_num in (1, 2):
+        residue_id = ResidueId("L", seq_num)
+        atoms = []
+        for index, name in enumerate(NAMES):
+            point = pose.GetConformer().GetAtomPosition(index)
+            atoms.append(
+                atom_payload(
+                    name,
+                    pose.GetAtomWithIdx(index).GetSymbol(),
+                    Vec3(point.x, point.y, point.z)
+                    if seq_num == 1
+                    else Vec3(-point.x, point.y, point.z),
+                    formal_charge=pose.GetAtomWithIdx(index).GetFormalCharge(),
+                )
+            )
+        payloads.append(
+            residue_payload(
+                component_id="CMP",
+                residue_id=residue_id,
+                is_hetero=True,
+                atoms=tuple(atoms),
+            )
+        )
+        evidence.append(RetainedNonPolymerChemistryEvidence(residue_id, SMILES, NAMES))
+    source = build_structure(
+        chains=(),
+        ligands=tuple(reversed(payloads)) if reverse_order else tuple(payloads),
+        source_format=FileFormat.MMCIF,
+    )
+    result = add_retained_non_polymer_hydrogens(
+        source,
+        chemistry_evidence=tuple(evidence),
+        allow_retained_non_polymer_rdkit_fallback=False,
+    )
+    assert result.repairs
+    assert all(event.residue_id == ResidueId("L", 1) for event in result.repairs)
+    assert any(
+        issue.residue_id == ResidueId("L", 2) and "stereo" in issue.message.lower()
+        for issue in result.issues
+    )
+    for index, _ in source.geometry.iter_positions():
+        ref = source.constitution.atom_ref_at(index)
+        assert result.structure.geometry.atom_geometry(
+            result.structure.constitution.atom_index(ref)
+        ) == source.geometry.atom_geometry(index)
+    bad = source.constitution.residue_index(ResidueId("L", 2))
+    bad_after = result.structure.constitution.residue_index(ResidueId("L", 2))
+    assert result.structure.residue_geometry(bad_after) == source.residue_geometry(bad)
+
+    observation = StructureChemistryObservation(
+        result.structure,
+        retained_non_polymer_chemistry_evidence=tuple(evidence),
+        allow_retained_non_polymer_rdkit_fallback=False,
+    )
+    ready = observation.projected_facts((ResidueId("L", 1),))[1]
+    fact = ready.retained_non_polymer_facts[0]
+    assert (
+        fact.heavy_atom_topology_availability_state is TopologyAvailabilityState.PRESENT
+    )
+    assert (
+        fact.hydrogen_topology_availability_state is TopologyAvailabilityState.PRESENT
+    )
+    parent_index = result.structure.constitution.atom_index(
+        AtomRef(ResidueId("L", 1), "C1'")
+    )
+    hydrogen_name = next(
+        name
+        for name, parent in result.structure.topology.residue_hydrogen_anchor_by_name(
+            constitution=result.structure.constitution,
+            residue_index=result.structure.constitution.residue_index(
+                ResidueId("L", 1)
+            ),
+        ).items()
+        if parent == "C1'"
+    )
+    hydrogen_index = result.structure.constitution.atom_index(
+        AtomRef(ResidueId("L", 1), hydrogen_name)
+    )
+    original_geometry = result.structure.geometry.atom_geometry(hydrogen_index)
+    center = result.structure.geometry.atom_geometry(parent_index).position
+    flipped = Vec3.from_iterable(
+        2 * center.to_array() - original_geometry.position.to_array()
+    )
+    changed = ProteinStructure.from_payload(
+        constitution=result.structure.constitution,
+        geometry=result.structure.geometry.with_atom_geometry(
+            hydrogen_index, original_geometry.with_position(flipped)
+        ),
+        topology=result.structure.topology,
+        provenance=result.structure.provenance,
+    )
+    changed_observation = observation.for_structure(changed)
+    changed_facts = changed_observation.projected_facts((ResidueId("L", 1),))[1]
+    changed_fact = changed_facts.retained_non_polymer_facts[0]
+    assert (
+        changed_fact.heavy_atom_topology_availability_state
+        is not TopologyAvailabilityState.PRESENT
+    )
+    assert (
+        changed_fact.hydrogen_topology_availability_state
+        is not TopologyAvailabilityState.PRESENT
+    )
+    topology_result = resolve_retained_non_polymer_topology(
+        changed,
+        build_default_component_library(),
+        chemistry_evidence=tuple(evidence),
+        target_residue_ids=frozenset((ResidueId("L", 1),)),
+        allow_retained_non_polymer_rdkit_fallback=False,
+    )
+    assert topology_result.structure is changed
+    assert not topology_result.repairs
+    assert any("stereo" in issue.message.lower() for issue in topology_result.issues)
+
+
+@pytest.mark.parametrize("readiness", (False, True))
+def test_missing_mapped_coordinate_is_a_mapping_failure_not_a_key_error(readiness):
+    source = read_structure(Path("tests/fixtures/corpus/pdb1hw5.ent"))
+    residue = next(r for r in source.constitution.ligands if r.component_id == "CMP")
+    evidence = RetainedNonPolymerChemistryEvidence(
+        residue.residue_id, SMILES, ("ABSENT", *NAMES[1:])
+    )
+    if readiness:
+        facts = resolve_retained_non_polymer_chemistry(
+            source,
+            residue,
+            component_library=build_default_component_library(),
+            evidence=evidence,
+            allow_rdkit_fallback=False,
+        )
+        assert facts.source is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
+        assert "mapping" in facts.failure_reason.lower()
+    else:
+        with pytest.raises(ValueError, match="mapping"):
+            require_retained_non_polymer_evidence_stereochemistry(
+                evidence,
+                source.residue_geometry(
+                    source.constitution.residue_index(residue.residue_id)
+                ),
+            )

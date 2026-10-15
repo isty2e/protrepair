@@ -54,6 +54,28 @@ unchanged and receives a chemistry diagnostic. Other ligands can still be
 prepared. Local FF readiness reports unresolved chemistry, missing heavy-atom
 topology and missing H topology separately.
 
+### Stereochemistry In RDKit Placement
+
+For mapped SMILES, preparation and readiness compare declared stereochemistry
+with the current 3D pose. A confirmed opposite tetrahedral center or double-bond
+configuration leaves the ligand unchanged with a diagnostic. Unspecified SMILES
+stereo and geometry that RDKit cannot assign are not treated as contradictions.
+This check does not choose a protonation state.
+
+RDKit fallback uses stereochemistry observed from the input pose. Both placement
+paths recheck the generated coordinates. If a new tetrahedral H is on the wrong
+side, ProtRepair can reposition that H at its native parent distance while keeping
+the original atoms fixed. A mismatch that cannot be corrected this way is refused;
+the operation does not move source atoms to make them agree with the selected graph.
+
+Existing H/D/T atoms are checked again after correspondence restores their original
+names and coordinates. Subsequent H clash cleanup also keeps these source atoms
+fixed, even when their names overlap a component's rotatable-H program. Newly
+generated eligible H can still undergo cleanup.
+
+These are placement and source-preservation checks, not an optimized-geometry
+certificate or a general validation of template-reference stereochemistry.
+
 ### Fixed-Template Aromatic Bond Orders
 
 Fixed-template preparation currently requires reported bond orders to match the
