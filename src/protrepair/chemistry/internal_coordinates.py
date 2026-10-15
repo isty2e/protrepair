@@ -1,8 +1,13 @@
 """Internal-coordinate programs used by heavy-atom completion semantics."""
 
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
+
+from protrepair.chemistry.restraint.template import (
+    AngleRestraintTarget,
+    BondRestraintTarget,
+)
 
 
 def _normalize_atom_name(atom_name: str) -> str:
@@ -57,6 +62,19 @@ class InternalCoordinateExecutionContext(Protocol):
 
     def place(self, placement: "InternalCoordinatePlacement") -> None:
         """Place one atom according to one internal-coordinate instruction."""
+
+        ...
+
+    def place_with_bond_closure(
+        self,
+        placement: "InternalCoordinatePlacement",
+        *,
+        closing_atom_name: str,
+        closing_bond_length: float,
+        bond_targets: tuple[BondRestraintTarget, ...],
+        angle_targets: tuple[AngleRestraintTarget, ...],
+    ) -> None:
+        """Place a missing target while closing a second materialized bond."""
 
         ...
 
@@ -252,6 +270,108 @@ class PlaceWhenAnyMissing:
 
 
 @dataclass(frozen=True, slots=True)
+class CompleteMissingAtomGroup:
+    """Fill missing targets without replacing materialized group geometry.
+
+    Parameters
+    ----------
+    placements : tuple[InternalCoordinatePlacement, ...]
+        Ordered fallback placements. An already materialized same-frame sibling
+        supplies its torsion with the recipe's relative angular offset. Targets
+        generated during this operation do not become observation references.
+    bond_targets : tuple[BondRestraintTarget, ...]
+        Dictionary targets for non-parent closure bonds. These are used only
+        when part of the group was materialized at operation entry.
+    angle_targets : tuple[AngleRestraintTarget, ...]
+        Dictionary angles used to disambiguate feasible closure solutions.
+    """
+
+    placements: tuple[InternalCoordinatePlacement, ...]
+    bond_targets: tuple[BondRestraintTarget, ...] = ()
+    angle_targets: tuple[AngleRestraintTarget, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "placements", tuple(self.placements))
+        if not self.placements:
+            raise ValueError("missing-atom groups require placements")
+        _normalize_atom_names(
+            tuple(placement.target_atom_name for placement in self.placements)
+        )
+        object.__setattr__(self, "bond_targets", tuple(self.bond_targets))
+        object.__setattr__(self, "angle_targets", tuple(self.angle_targets))
+
+    def apply(self, context: InternalCoordinateExecutionContext) -> None:
+        """Fill absent targets using materialized same-frame siblings.
+
+        Parameters
+        ----------
+        context : InternalCoordinateExecutionContext
+            Current residue-local geometry and placement execution substrate.
+        """
+
+        materialized = frozenset(
+            placement.target_atom_name
+            for placement in self.placements
+            if context.has_atom(placement.target_atom_name)
+        )
+        for placement in self.placements:
+            if context.has_atom(placement.target_atom_name):
+                continue
+
+            if isinstance(placement.dihedral, AbsoluteDihedral):
+                for reference in self.placements:
+                    if (
+                        reference.target_atom_name in materialized
+                        and reference.anchor_atom_names == placement.anchor_atom_names
+                        and isinstance(reference.dihedral, AbsoluteDihedral)
+                    ):
+                        placement = replace(
+                            placement,
+                            dihedral=ReferencedTorsionDihedral(
+                                (
+                                    *reference.anchor_atom_names,
+                                    reference.target_atom_name,
+                                ),
+                                placement.dihedral.degrees - reference.dihedral.degrees,
+                            ),
+                        )
+                        break
+
+            closing_target = self._closing_target(placement, context)
+            if materialized and closing_target is not None:
+                closing_name, closing_distance = closing_target
+                context.place_with_bond_closure(
+                    placement,
+                    closing_atom_name=closing_name,
+                    closing_bond_length=closing_distance,
+                    bond_targets=self.bond_targets,
+                    angle_targets=self.angle_targets,
+                )
+            else:
+                placement.apply(context)
+
+    def _closing_target(
+        self,
+        placement: InternalCoordinatePlacement,
+        context: InternalCoordinateExecutionContext,
+    ) -> tuple[str, float] | None:
+        for bond in self.bond_targets:
+            if bond.atom_name_1 == placement.target_atom_name:
+                closing_name = bond.atom_name_2
+            elif bond.atom_name_2 == placement.target_atom_name:
+                closing_name = bond.atom_name_1
+            else:
+                continue
+
+            if closing_name not in placement.anchor_atom_names and context.has_atom(
+                closing_name
+            ):
+                return closing_name, bond.target_distance_angstrom
+
+        return None
+
+
+@dataclass(frozen=True, slots=True)
 class InternalCoordinateProgram:
     """Ordered internal-coordinate operations for one residue template."""
 
@@ -292,3 +412,36 @@ class InternalCoordinateProgram:
 
         for operation in self.operations:
             operation.apply(context)
+
+    def as_missing_atom_completion(
+        self,
+        *,
+        bond_targets: tuple[BondRestraintTarget, ...] = (),
+        angle_targets: tuple[AngleRestraintTarget, ...] = (),
+    ) -> "InternalCoordinateProgram":
+        """Lower replacement groups to materialized-anchor-aware completion.
+
+        Parameters
+        ----------
+        bond_targets : tuple[BondRestraintTarget, ...]
+            Existing dictionary targets available for partial ring closure.
+        angle_targets : tuple[AngleRestraintTarget, ...]
+            Existing dictionary angles for closure-solution selection.
+
+        Returns
+        -------
+        InternalCoordinateProgram
+            A missing-only program. The original literal/replacement program and
+            non-group operations remain unchanged.
+        """
+
+        return type(self)(
+            operations=tuple(
+                CompleteMissingAtomGroup(
+                    operation.placements, bond_targets, angle_targets
+                )
+                if isinstance(operation, PlaceWhenAnyMissing)
+                else operation
+                for operation in self.operations
+            )
+        )

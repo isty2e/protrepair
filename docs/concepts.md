@@ -60,6 +60,17 @@ continuous relaxation backend may move coordinates, but it does not silently
 create a separate bond graph. FASPR may alter side-chain heavy atoms, but
 hydrogen completion remains a separate transformer responsibility.
 
+Partial standard-residue completion keeps connected atoms already present in
+the source and places only missing atoms. Available side-chain anchors guide
+the missing branches; otherwise the standard recipe supplies a fallback.
+Ring closure uses available component dictionary targets; partial HIS rings have
+no state-independent closure target. If the observed anchors cannot accommodate
+a closure, completion leaves those atoms absent and reports a placement warning
+rather than moving the anchors. The workflow may keep the unchanged source
+instead; a complete-atom goal then remains unmet, with no automatic packing rescue.
+Explicit orphan-fragment rebuilding and later packing or refinement are separate
+operations that may change existing coordinates.
+
 The workflow may evaluate more than one candidate result. Candidate preference
 considers requested-goal satisfaction together with hard errors, parser
 compatibility, clashes, stereochemistry, geometry, issue burden, and search

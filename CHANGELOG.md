@@ -10,9 +10,19 @@
   evidence, and does not estimate pKa
 - retain applied default microstate choices separately from explicit overrides;
   defaults remain source-compatible preferences, not replacement authority
+- retain fitted spans with residue-local reference outliers and report remaining
+  geometry warnings on the selected result, after any follow-up repair
 
 ### Fixed
 
+- use aliphatic LYS dictionary geometry for reconstructed CD-CE and CE-NZ
+  bonds and the CD-CE-NZ angle, without changing the fallback torsions
+- preserve connected materialized atoms during partial standard-residue completion;
+  missing branches follow available anchors, with ring closure where dictionary
+  targets are available. Partial HIS rings have no state-independent closure target;
+  impossible anchored closures leave atoms absent with a placement warning
+- preserve supported donor sidechain charges and bond orders during span grafting,
+  adopting donor choices as preferences rather than transferring override authority
 - bind HIS ring restraints to the supported realized microstate in geometry
   diagnostics and FF construction, rather than applying one protonation table
 - resolve preserved polymer H/D/T attachments without replacing their identity,
