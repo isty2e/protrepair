@@ -24,7 +24,7 @@ from protrepair.diagnostics.events import ValidationIssue
 from protrepair.errors import ResidueNotFoundError
 from protrepair.geometry import Vec3
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.transformer.completion.hydrogen.cleanup_planning import (
     RotatableHydrogenCleanupTarget,
     cleanup_targets_from_report,
@@ -44,8 +44,28 @@ def cleanup_residual_hydrogen_clashes(
     *,
     component_library: ComponentLibrary,
     target_residue_ids: frozenset[ResidueId] | None = None,
+    fixed_hydrogen_atom_refs: frozenset[AtomRef] = frozenset(),
 ) -> tuple[ProteinStructure, tuple[ValidationIssue, ...]]:
-    """Reorient unresolved rotatable hydrogens and report remaining clashes."""
+    """Reorient eligible rotatable H without moving explicitly fixed atoms.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Current canonical coordinates and chemistry.
+    component_library : ComponentLibrary
+        Placement programs for supported rotatable hydrogens.
+    target_residue_ids : frozenset[ResidueId] or None, optional
+        Restrict cleanup to these residues; None includes every supported residue.
+    fixed_hydrogen_atom_refs : frozenset[AtomRef], optional
+        Hydrogens whose original coordinates must remain unchanged, even when a
+        component placement program otherwise selects their names.
+
+    Returns
+    -------
+    tuple[ProteinStructure, tuple[ValidationIssue, ...]]
+        Updated structure and diagnostics for unresolved supported H clashes,
+        including those involving fixed targets.
+    """
 
     include_ligands = bool(structure.constitution.ligands)
     policy = ClashPolicy(include_ligands=include_ligands)
@@ -63,35 +83,35 @@ def cleanup_residual_hydrogen_clashes(
         component_library=component_library,
         report=initial_report,
     )
-    if target_residue_ids is not None:
-        cleanup_targets = tuple(
-            target
-            for target in cleanup_targets
-            if target.residue_id in target_residue_ids
-        )
-    if not cleanup_targets:
-        return structure, ()
-
-    clash_runtime = _build_hydrogen_cleanup_clash_runtime(clash_context)
-    current_residues_by_id: dict[ResidueId, CompletionResiduePayload] = {}
+    cleanup_targets = tuple(
+        target
+        for target in cleanup_targets
+        if (target_residue_ids is None or target.residue_id in target_residue_ids)
+        and AtomRef(target.residue_id, target.hydrogen_atom_name)
+        not in fixed_hydrogen_atom_refs
+    )
     cleaned_residues_by_id: dict[ResidueId, CompletionResiduePayload] = {}
-    for target in cleanup_targets:
-        current_residue = cleaned_residues_by_id.get(target.residue_id)
-        if current_residue is None:
-            current_residue = current_residues_by_id.setdefault(
-                target.residue_id,
-                _completion_payload_for_structure(structure, target.residue_id),
-            )
+    if cleanup_targets:
+        clash_runtime = _build_hydrogen_cleanup_clash_runtime(clash_context)
+        current_residues_by_id: dict[ResidueId, CompletionResiduePayload] = {}
+        for target in cleanup_targets:
+            current_residue = cleaned_residues_by_id.get(target.residue_id)
+            if current_residue is None:
+                current_residue = current_residues_by_id.setdefault(
+                    target.residue_id,
+                    _completion_payload_for_structure(structure, target.residue_id),
+                )
 
-        cleaned_residue = _cleanup_targeted_hydrogen(
-            current_residue,
-            target=target,
-            clash_runtime=clash_runtime,
-        )
-        if cleaned_residue is not None:
-            cleaned_residues_by_id[target.residue_id] = cleaned_residue
+            cleaned_residue = _cleanup_targeted_hydrogen(
+                current_residue,
+                target=target,
+                clash_runtime=clash_runtime,
+            )
+            if cleaned_residue is not None:
+                cleaned_residues_by_id[target.residue_id] = cleaned_residue
 
     current_structure = structure
+    final_report = initial_report
     if cleaned_residues_by_id:
         current_structure = structure.with_updated_residue_facets_batch(
             (
@@ -101,14 +121,13 @@ def cleanup_residual_hydrogen_clashes(
             )
             for residue in cleaned_residues_by_id.values()
         )
-
-    final_report = detect_clashes_from_context(
-        prepare_clash_detection_context(
-            current_structure,
-            component_library=component_library,
-            policy=policy,
+        final_report = detect_clashes_from_context(
+            prepare_clash_detection_context(
+                current_structure,
+                component_library=component_library,
+                policy=policy,
+            )
         )
-    )
     unresolved_report = unresolved_rotatable_hydrogen_report(
         current_structure,
         component_library=component_library,
@@ -119,7 +138,7 @@ def cleanup_residual_hydrogen_clashes(
         issues = tuple(
             issue
             for issue in issues
-            if issue.residue_id is not None and issue.residue_id in target_residue_ids
+            if not target_residue_ids.isdisjoint(issue.scope.residue_ids)
         )
     return current_structure, issues
 
@@ -238,9 +257,7 @@ class _TargetedHydrogenClashScorer:
             element=self.hydrogen_site.element,
             geometry=self.hydrogen_site.geometry.with_position(candidate_position),
             context=self.hydrogen_site.context,
-            grid_cell_size_angstrom=(
-                self.clash_runtime.candidate_cell_size_angstrom
-            ),
+            grid_cell_size_angstrom=(self.clash_runtime.candidate_cell_size_angstrom),
         )
         overlaps: list[float] = []
         for other_site in self.clash_runtime.neighboring_atom_sites(
@@ -276,9 +293,7 @@ class _TargetedHydrogenClashScorer:
             hydrogen_radius = self.clash_runtime.van_der_waals_radius(
                 candidate_hydrogen_site.element
             )
-            other_radius = self.clash_runtime.van_der_waals_radius(
-                other_site.element
-            )
+            other_radius = self.clash_runtime.van_der_waals_radius(other_site.element)
             allowed_distance = self.clash_runtime.policy.allowed_distance_angstrom(
                 left_van_der_waals_radius_angstrom=hydrogen_radius,
                 right_van_der_waals_radius_angstrom=other_radius,

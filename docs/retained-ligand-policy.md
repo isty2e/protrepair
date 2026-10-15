@@ -54,6 +54,40 @@ unchanged and receives a chemistry diagnostic. Other ligands can still be
 prepared. Local FF readiness reports unresolved chemistry, missing heavy-atom
 topology and missing H topology separately.
 
+### Stereochemistry In RDKit Placement
+
+For mapped SMILES, preparation and readiness compare declared stereochemistry
+with the current 3D pose. A confirmed opposite tetrahedral center or double-bond
+configuration leaves the ligand unchanged with a diagnostic. Unspecified SMILES
+stereo and geometry that RDKit cannot assign are not treated as contradictions.
+This check does not choose a protonation state.
+
+RDKit fallback uses stereochemistry observed from the input pose. Both placement
+paths recheck the generated coordinates. If a new tetrahedral H is on the wrong
+side, ProtRepair tests both normals of the three fixed neighbors' plane and selects
+the side consistent with the declaration, retaining the native parent distance.
+It does not use an unassigned center's small displacement to choose that side.
+A mismatch that cannot be corrected with the original atoms fixed is refused;
+the operation does not move source atoms to make them agree with the selected graph.
+
+After correspondence restores original H/D/T names and coordinates, native
+configuration is checked again. This is not a separate H-geometry test: when
+heavy neighbors already determine the configuration, RDKit may not use the H
+position. A displaced or reflected source H can therefore pass this check.
+See the [native tetrahedral observer](https://github.com/rdkit/rdkit/blob/Release_2026_03_2/Code/GraphMol/Chirality.cpp#L3282-L3308).
+
+Retained-H completion keeps existing H/D/T fixed during its clash cleanup,
+including on the template path, not only with overrides. Newly generated eligible
+H can still undergo cleanup.
+
+The final cleanup in `add_hydrogens` also keeps its input ligand H/D/T fixed,
+including when retained completion runs as a local-refinement prerequisite.
+An explicitly requested FF stage may move those atoms within its declared domain;
+cleanup preserves that resulting pose rather than restoring earlier coordinates.
+
+These are placement and source-preservation checks, not an optimized-geometry
+certificate or a general validation of template-reference stereochemistry.
+
 ### Fixed-Template Aromatic Bond Orders
 
 Fixed-template preparation currently requires reported bond orders to match the

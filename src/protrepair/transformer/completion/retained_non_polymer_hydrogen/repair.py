@@ -17,6 +17,7 @@ from protrepair.chemistry.component.topology import (
     template_hydrogen_bond_definitions_for_names,
 )
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
+    require_retained_non_polymer_evidence_stereochemistry,
     retained_non_polymer_evidence_formal_charge_requirements,
 )
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
@@ -43,7 +44,7 @@ from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.topology import (
     AtomTopology,
@@ -272,6 +273,7 @@ def _execute_retained_non_polymer_hydrogen_stage(
     disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(structure)
     hydrogenated_payloads: list[CompletionResiduePayload] = []
     topology_plans: list[_RetainedNonPolymerTopologyPlan] = []
+    fixed_hydrogen_atom_refs: set[AtomRef] = set()
     repairs: list[RepairEvent] = []
     issues: list[ValidationIssue] = []
     bonds_by_residue = _bonds_by_residue(
@@ -352,6 +354,11 @@ def _execute_retained_non_polymer_hydrogen_stage(
             source_payload, result.payload
         ):
             hydrogenated_payloads.append(result.payload)
+            fixed_hydrogen_atom_refs.update(
+                AtomRef(source_payload.residue_id, atom.name)
+                for atom in source_payload.atom_sites
+                if atom.is_hydrogen()
+            )
         if result.topology_plan is not None:
             topology_plans.append(result.topology_plan)
         repairs.extend(result.repairs)
@@ -393,6 +400,7 @@ def _execute_retained_non_polymer_hydrogen_stage(
         updated_structure, cleanup_issues = cleanup_residual_hydrogen_clashes(
             updated_structure,
             component_library=component_library,
+            fixed_hydrogen_atom_refs=frozenset(fixed_hydrogen_atom_refs),
             target_residue_ids=frozenset(
                 payload.residue_id for payload in hydrogenated_payloads
             ),
@@ -570,6 +578,29 @@ def _hydrogenate_retained_non_polymer_payload(
             ),
         )
         hydrogenated_payload = reconciliation.payload
+        try:
+            require_retained_non_polymer_evidence_stereochemistry(
+                chemistry_evidence,
+                hydrogenated_payload.residue_geometry,
+                hydrogen_attachments=tuple(
+                    _hydrogen_anchor_by_name(
+                        reconciliation.project_bond_definitions(
+                            projection.hydrogen_bond_definitions
+                        ),
+                        hydrogenated_payload,
+                    ).items()
+                ),
+            )
+        except (RuntimeError, ValueError) as error:
+            return _RetainedNonPolymerHydrogenPayloadResult(
+                payload=None,
+                repairs=(),
+                issues=(
+                    _retained_non_polymer_evidence_hydrogenation_issue(
+                        payload.residue_site, error=error
+                    ),
+                ),
+            )
         added_atom_names = tuple(
             atom_name
             for atom_name in hydrogenated_payload.atom_names()

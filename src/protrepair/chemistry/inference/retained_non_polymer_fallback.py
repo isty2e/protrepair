@@ -13,6 +13,12 @@ except ImportError:  # pragma: no cover - exercised by availability checks
     rdBase = None
 
 from protrepair.chemistry.component.graph import BondDefinition
+from protrepair.chemistry.inference.rdkit_graph import (
+    molecule_with_pose_stereochemistry,
+)
+from protrepair.chemistry.inference.rdkit_hydrogen_geometry import (
+    add_hydrogens_preserving_stereochemistry,
+)
 from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import Vec3
 from protrepair.structure.constitution import ResidueSite
@@ -551,43 +557,8 @@ def _add_hydrogens_with_stereo_guard(heavy_atom_molecule: "Mol") -> "Mol":
 
     assert Chem is not None
 
-    stereo_before = _heavy_atom_stereo_signature(heavy_atom_molecule)
-    hydrogenated_molecule = Chem.AddHs(heavy_atom_molecule, addCoords=True)
-    stereo_after = _heavy_atom_stereo_signature(hydrogenated_molecule)
-    if stereo_before and stereo_after != stereo_before:
-        raise ValueError(
-            "retained non-polymer fallback stereochemistry changed during hydrogenation"
-        )
-
-    return hydrogenated_molecule
-
-
-def _heavy_atom_stereo_signature(molecule: "Mol") -> tuple[tuple[str, str], ...]:
-    """Return assigned heavy-atom chirality labels by atom name."""
-
-    assert Chem is not None
-
-    stereo_molecule = Chem.Mol(molecule)
-    Chem.AssignAtomChiralTagsFromStructure(
-        stereo_molecule,
-        replaceExistingTags=True,
-    )
-    Chem.AssignStereochemistry(stereo_molecule, cleanIt=True, force=True)
-    centers = Chem.FindMolChiralCenters(
-        stereo_molecule,
-        includeUnassigned=False,
-        useLegacyImplementation=False,
-    )
-    return tuple(
-        sorted(
-            (
-                _rdkit_atom_name(atom),
-                str(stereo_label),
-            )
-            for atom_index, stereo_label in centers
-            for atom in (stereo_molecule.GetAtomWithIdx(int(atom_index)),)
-            if atom.GetAtomicNum() != 1
-        )
+    return add_hydrogens_preserving_stereochemistry(
+        molecule_with_pose_stereochemistry(heavy_atom_molecule)
     )
 
 

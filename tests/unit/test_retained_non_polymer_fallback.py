@@ -6,6 +6,7 @@ from math import cos, pi, sin
 import pytest
 
 from protrepair.chemistry.component.graph import BondDefinition
+from protrepair.chemistry.inference import rdkit_hydrogen_geometry
 from protrepair.chemistry.inference import (
     retained_non_polymer_fallback as fallback_inference,
 )
@@ -81,9 +82,7 @@ def test_fallback_inference_result_owns_pose_bonds_names_and_bounds() -> None:
         "H003",
         "H004",
     )
-    assert inference_result.heavy_bond_definitions == (
-        BondDefinition("O1", "C1"),
-    )
+    assert inference_result.heavy_bond_definitions == (BondDefinition("O1", "C1"),)
     assert _hydrogen_anchor_counts(inference_result.hydrogenated_molecule) == Counter(
         {"C1": 3, "O1": 1}
     )
@@ -196,9 +195,7 @@ def test_fallback_perceives_carbonyl_bond_order_before_hydrogenation() -> None:
         "C2",
         order=2,
     )
-    assert _hydrogen_anchor_counts(hydrogenated_molecule) == Counter(
-        {"C1": 3, "C2": 1}
-    )
+    assert _hydrogen_anchor_counts(hydrogenated_molecule) == Counter({"C1": 3, "C2": 1})
     assert retained_non_polymer_rdkit_fallback_expected_hydrogen_atom_names(
         residue_site,
         residue_geometry,
@@ -419,10 +416,10 @@ def test_fallback_rejects_unsupported_hetero_multiple_bond_motifs(
         )
 
 
-def test_fallback_rejects_hydrogenation_stereo_changes(
+def test_fallback_rejects_native_hydrogenation_that_moves_original_atoms(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fallback should not claim success if hydrogenation changes heavy stereo."""
+    """Bad native coordinates must not seed H positions on another heavy pose."""
 
     residue_site, residue_geometry = _retained_ligand_pose(
         (
@@ -432,18 +429,16 @@ def test_fallback_rejects_hydrogenation_stereo_changes(
         )
     )
 
-    def fake_stereo_signature(molecule) -> tuple[tuple[str, str], ...]:
-        if molecule.GetNumAtoms() == 3:
-            return (("C2", "R"),)
-        return (("C2", "S"),)
+    add_hs = rdkit_hydrogen_geometry.Chem.AddHs
 
-    monkeypatch.setattr(
-        fallback_inference,
-        "_heavy_atom_stereo_signature",
-        fake_stereo_signature,
-    )
+    def changed_coordinates(molecule, **kwargs):
+        result = add_hs(molecule, **kwargs)
+        result.GetConformer().SetAtomPosition(0, (0.0, 0.0, 1.0))
+        return result
 
-    with pytest.raises(ValueError, match="stereochemistry changed"):
+    monkeypatch.setattr(rdkit_hydrogen_geometry.Chem, "AddHs", changed_coordinates)
+
+    with pytest.raises(ValueError, match="original atom coordinates"):
         retained_non_polymer_rdkit_fallback_hydrogenated_molecule(
             residue_site,
             residue_geometry,

@@ -5,7 +5,7 @@ from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.transformer.completion.heavy.core import repair_heavy_atoms_core
 from protrepair.transformer.completion.hydrogen.cleanup import (
     cleanup_residual_hydrogen_clashes,
@@ -48,6 +48,12 @@ def add_hydrogens(
     histidine_protonation_request = normalize_histidine_protonation_request(
         histidine_protonation,
         protonate_histidines=protonate_histidines,
+    )
+    fixed_ligand_hydrogens = frozenset(
+        AtomRef(residue.residue_id, atom.name)
+        for residue in structure.constitution.ligands
+        for atom in residue.atom_sites
+        if atom.is_hydrogen()
     )
     prepared_structure = structure
     repairs: tuple[RepairEvent, ...] = ()
@@ -109,6 +115,7 @@ def add_hydrogens(
         refinement_result,
         component_library=library,
         target_residue_ids=target_residue_ids,
+        fixed_hydrogen_atom_refs=fixed_ligand_hydrogens,
     )
 
 
@@ -117,6 +124,7 @@ def _apply_hydrogen_cleanup_stage(
     *,
     component_library: ComponentLibrary,
     target_residue_ids: frozenset[ResidueId] | None,
+    fixed_hydrogen_atom_refs: frozenset[AtomRef],
 ) -> TransformationResult:
     """Execute the ligand-aware post-hydrogen cleanup stage."""
 
@@ -127,6 +135,7 @@ def _apply_hydrogen_cleanup_stage(
         result.structure,
         component_library=component_library,
         target_residue_ids=target_residue_ids,
+        fixed_hydrogen_atom_refs=fixed_hydrogen_atom_refs,
     )
     return TransformationResult(
         structure=cleaned_structure,

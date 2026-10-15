@@ -20,6 +20,19 @@
 
 ### Fixed
 
+- preserve tetrahedral stereochemistry during RDKit retained-ligand H placement
+  by correcting only newly generated H, without moving original atoms; reject
+  confirmed pose conflicts with mapped SMILES in preparation and readiness
+- choose a corrected H's side from the declared stereo and fixed-neighbor plane,
+  rather than a near-planar center's unassigned signed displacement
+- recheck native configuration after retained H/D/T correspondence; this does not
+  independently validate each source H's geometry. Keep their coordinates
+  fixed during subsequent H clash cleanup, including with chemistry overrides
+- retain input ligand H/D/T custody through the final `add_hydrogens` cleanup,
+  including after retained prerequisites or rejected local refinement. Explicit
+  FF motion is unchanged and its resulting positions are not restored
+- report unresolved rotatable-H clashes even when every target is fixed, and
+  retain relevant residue-pair warnings in scoped cleanup calls
 - check existing external covalent-like and untyped bonds across all provenances
   before preparing an isolated zero-H component; preserve typed noncovalent context
 - preserve full retained-component inventories, including SAH/SAM OXT, separately

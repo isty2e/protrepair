@@ -14,6 +14,7 @@ from protrepair.chemistry.component.topology import (
     template_hydrogen_bond_definitions_for_names,
 )
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
+    require_retained_non_polymer_evidence_stereochemistry,
     retained_non_polymer_evidence_expected_hydrogen_atom_names,
     retained_non_polymer_evidence_formal_charge_requirements,
     retained_non_polymer_evidence_heavy_atom_elements,
@@ -339,6 +340,16 @@ def _resolve_retained_non_polymer_chemistry_source(
     )
     if evidence is not None:
         try:
+            require_retained_non_polymer_evidence_stereochemistry(
+                evidence,
+                residue_geometry,
+                hydrogen_attachments=tuple(
+                    structure.topology.residue_hydrogen_anchor_by_name(
+                        constitution=structure.constitution,
+                        residue_index=residue_index,
+                    ).items()
+                ),
+            )
             evidence_expected_hydrogen_atom_names = (
                 retained_non_polymer_evidence_expected_hydrogen_atom_names(evidence)
             )

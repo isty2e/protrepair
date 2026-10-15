@@ -3,6 +3,7 @@
 from math import sqrt
 from pathlib import Path
 
+import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     CanonicalResiduePayload,
@@ -14,10 +15,15 @@ from tests.support.canonical_builders import (
     build_bonded_structure as build_structure,
 )
 
-from protrepair.chemistry import ComponentLibrary
+import protrepair.transformer.completion.hydrogen.repair as hydrogen_repair
+from protrepair.chemistry import ComponentLibrary, build_default_component_library
+from protrepair.chemistry.retained_non_polymer.registry import (
+    build_bundled_retained_non_polymer_registry,
+)
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import (
     ClashPolicy,
+    ClashReport,
     ValidationIssueKind,
     detect_clashes,
 )
@@ -37,12 +43,24 @@ from protrepair.transformer.completion.hydrogen.rotatable import (
     rotatable_hydrogen_placement_spec,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
+from protrepair.transformer.continuous.binding_policy import (
+    ManualContinuousRelaxationBinding,
+)
+from protrepair.transformer.continuous.settings import (
+    ContinuousRelaxationConfig,
+    ContinuousRelaxationForceField,
+)
+from protrepair.transformer.refinement.directive import RepairLocalRefinementDirective
+from protrepair.transformer.result import TransformationResult
 from protrepair.workflow.contracts import StructureIngressOptions
 
 SERINE_RESIDUE_ID = ResidueId(chain_id="A", seq_num=17)
 
 
-def test_cleanup_reorients_ligand_clashing_serine_hydrogen() -> None:
+@pytest.mark.parametrize("fixed", (False, True))
+def test_cleanup_reorients_only_movable_ligand_clashing_serine_hydrogen(
+    fixed: bool,
+) -> None:
     """Cleanup should reorient one rotatable hydrogen away from a ligand clash."""
 
     library = build_standard_component_library()
@@ -80,6 +98,9 @@ def test_cleanup_reorients_ligand_clashing_serine_hydrogen() -> None:
     cleaned_structure, issues = cleanup_residual_hydrogen_clashes(
         hydrogenated_holo,
         component_library=library,
+        fixed_hydrogen_atom_refs=(
+            frozenset((AtomRef(SERINE_RESIDUE_ID, "HG"),)) if fixed else frozenset()
+        ),
     )
     cleaned_hydrogen = cleaned_structure.geometry.atom_geometry(
         cleaned_structure.constitution.atom_index(
@@ -93,12 +114,127 @@ def test_cleanup_reorients_ligand_clashing_serine_hydrogen() -> None:
     )
 
     assert cleaned_hydrogen is not None
+    if fixed:
+        assert cleaned_structure is hydrogenated_holo
+        assert cleaned_hydrogen.position == original_hydrogen
+        assert final_report == initial_report
+        assert issues
+        assert all(issue.kind is ValidationIssueKind.STERIC_CLASH for issue in issues)
+        return
+
     assert cleaned_hydrogen.position != original_hydrogen
     assert not any(
         clash.left_atom_name == "HG" or clash.right_atom_name == "HG"
         for clash in final_report.clashes
     )
     assert issues == ()
+
+
+@pytest.mark.parametrize("symbol", ("H", "D", "T"))
+@pytest.mark.parametrize("scope", ("all", "source", "blocker", "empty", "unrelated"))
+def test_fixed_ligand_hydrogen_clashes_remain_reported(symbol: str, scope: str) -> None:
+    library = build_default_component_library()
+    source = retained_serine_clash_structure(symbol)
+    ref = AtomRef(ResidueId("L", 1), "HG")
+    selections = {
+        "all": None,
+        "source": frozenset((ref.residue_id,)),
+        "blocker": frozenset((ResidueId("Z", 1),)),
+        "empty": frozenset(),
+        "unrelated": frozenset((ResidueId("X", 99),)),
+    }
+    initial_report = detect_clashes(
+        source, component_library=library, policy=ClashPolicy(include_ligands=True)
+    )
+    expected_issues = ClashReport(
+        clashes=tuple(
+            clash
+            for clash in initial_report.clashes
+            if (clash.left_residue_id, clash.left_atom_name)
+            == (ref.residue_id, ref.atom_name)
+            or (clash.right_residue_id, clash.right_atom_name)
+            == (ref.residue_id, ref.atom_name)
+        )
+    ).to_issues()
+    assert expected_issues
+
+    cleaned, issues = cleanup_residual_hydrogen_clashes(
+        source,
+        component_library=library,
+        target_residue_ids=selections[scope],
+        fixed_hydrogen_atom_refs=frozenset((ref,)),
+    )
+
+    assert cleaned is source
+    assert issues == (expected_issues if scope in {"all", "source", "blocker"} else ())
+
+
+def test_fixed_clash_warning_is_independent_of_unrelated_movable_targets() -> None:
+    library = build_default_component_library()
+    source = retained_serine_clash_structure("H")
+    fixed_ref = AtomRef(ResidueId("L", 1), "HG")
+    extra_ligands = tuple(
+        residue_payload(
+            component_id=residue.component_id,
+            residue_id=ResidueId("M" if residue.component_id == "SER" else "Y", 2),
+            is_hetero=True,
+            atoms=tuple(
+                atom_payload(
+                    atom.name,
+                    atom.element,
+                    residue.position(atom.name).with_offset(100.0, 0.0, 0.0),
+                    formal_charge=residue.formal_charge(atom.name),
+                )
+                for atom in residue.atom_sites
+            ),
+        )
+        for residue in (
+            residue_payload_from_structure(source, site.residue_id)
+            for site in source.constitution.ligands
+        )
+    )
+    mixed = build_structure(
+        chains=(),
+        ligands=(
+            *(
+                canonical_residue_payload_from_structure(source, residue.residue_id)
+                for residue in source.constitution.ligands
+            ),
+            *extra_ligands,
+        ),
+        source_format=source.provenance.ingress.source_format,
+    )
+    _, alone_issues = cleanup_residual_hydrogen_clashes(
+        source,
+        component_library=library,
+        fixed_hydrogen_atom_refs=frozenset((fixed_ref,)),
+    )
+    cleaned, mixed_issues = cleanup_residual_hydrogen_clashes(
+        mixed,
+        component_library=library,
+        fixed_hydrogen_atom_refs=frozenset((fixed_ref,)),
+    )
+    movable_ref = AtomRef(ResidueId("M", 2), "HG")
+
+    assert alone_issues
+    assert (
+        tuple(
+            issue
+            for issue in mixed_issues
+            if fixed_ref.residue_id in issue.scope.residue_ids
+        )
+        == alone_issues
+    )
+    assert residue_payload_from_structure(cleaned, fixed_ref.residue_id).position(
+        fixed_ref.atom_name
+    ) == residue_payload_from_structure(mixed, fixed_ref.residue_id).position(
+        fixed_ref.atom_name
+    )
+    assert residue_payload_from_structure(cleaned, movable_ref.residue_id).position(
+        movable_ref.atom_name
+    ) != residue_payload_from_structure(mixed, movable_ref.residue_id).position(
+        movable_ref.atom_name
+    )
 
 
 def test_cleanup_residual_hydrogen_clashes_reports_unresolved_targets() -> None:
@@ -190,6 +326,193 @@ def test_add_hydrogens_runs_residual_cleanup_for_ligand_clashes() -> None:
         for clash in final_report.clashes
     )
     assert not result.has_warnings()
+
+
+@pytest.mark.parametrize("symbol", ("H", "D", "T"))
+@pytest.mark.parametrize("stage", ("none", "prerequisites", "moved"))
+@pytest.mark.parametrize("targeted", (False, True))
+def test_outer_hydrogen_cleanup_preserves_input_ligand_h_after_other_stages(
+    symbol, stage, targeted, monkeypatch
+):
+    library = build_default_component_library()
+    source = retained_serine_clash_structure(symbol)
+    ref = AtomRef(ResidueId("L", 1), "HG")
+    original = source.geometry.atom_geometry(source.constitution.atom_index(ref))
+    unrestricted, _ = cleanup_residual_hydrogen_clashes(
+        source, component_library=library
+    )
+    assert (
+        unrestricted.geometry.atom_geometry(unrestricted.constitution.atom_index(ref))
+        != original
+    )
+    expected = original
+    if stage == "moved":
+        apply_stage = hydrogen_repair.apply_repair_stage_local_refinement
+        expected = original.with_position(
+            original.position.with_offset(0.02, 0.01, 0.0)
+        )
+
+        def moved_stage(result, **kwargs):
+            staged = apply_stage(result, **kwargs)
+            current = staged.structure
+            # A prior geometry-changing stage is authoritative for its own pose.
+            moved = ProteinStructure.from_payload(
+                constitution=current.constitution,
+                geometry=current.geometry.with_atom_geometry(
+                    current.constitution.atom_index(ref), expected
+                ),
+                topology=current.topology,
+                provenance=current.provenance,
+                polymer_blueprint=current.polymer_blueprint,
+            )
+            return TransformationResult(
+                structure=moved, repairs=staged.repairs, issues=staged.issues
+            )
+
+        monkeypatch.setattr(
+            hydrogen_repair, "apply_repair_stage_local_refinement", moved_stage
+        )
+
+    directive = (
+        None
+        if stage == "none"
+        else RepairLocalRefinementDirective.from_residue_ids(
+            (ref.residue_id,),
+            binding=ManualContinuousRelaxationBinding(
+                ContinuousRelaxationForceField.UFF
+            ),
+            config=ContinuousRelaxationConfig(max_iterations=1),
+        )
+    )
+    result = add_hydrogens(
+        source,
+        component_library=library,
+        prepare_heavy_atoms=False,
+        target_residue_ids=frozenset((ref.residue_id,)) if targeted else None,
+        local_refinement=directive,
+    )
+    if stage != "none":
+        residue = result.structure.constitution.residue_or_ligand(ref.residue_id)
+        assert residue is not None and residue.has_atom_site("HA")
+        assert any(
+            issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
+            for issue in result.issues
+        )
+    index = result.structure.constitution.atom_index(ref)
+    assert result.structure.geometry.atom_geometry(index) == expected
+    assert result.structure.constitution.atom_site_at(index).element == symbol
+    assert result.has_warnings()
+    assert any(
+        issue.kind is ValidationIssueKind.STERIC_CLASH
+        and ref.residue_id in issue.scope.residue_ids
+        for issue in result.issues
+    )
+
+
+def test_outer_cleanup_can_still_move_h_generated_by_retained_prerequisites(
+    monkeypatch,
+):
+    reference = retained_serine_clash_structure("H")
+    source = retained_serine_clash_structure("H", include_source_hydrogen=False)
+    ref = AtomRef(ResidueId("L", 1), "HG")
+    clashing = reference.geometry.atom_geometry(reference.constitution.atom_index(ref))
+    apply_stage = hydrogen_repair.apply_repair_stage_local_refinement
+
+    def placed_into_clash(result, **kwargs):
+        staged = apply_stage(result, **kwargs)
+        current = staged.structure
+        index = current.constitution.atom_index(ref)
+        moved = ProteinStructure.from_payload(
+            constitution=current.constitution,
+            geometry=current.geometry.with_atom_geometry(
+                index,
+                current.geometry.atom_geometry(index).with_position(clashing.position),
+            ),
+            topology=current.topology,
+            provenance=current.provenance,
+            polymer_blueprint=current.polymer_blueprint,
+        )
+        return TransformationResult(
+            structure=moved, repairs=staged.repairs, issues=staged.issues
+        )
+
+    monkeypatch.setattr(
+        hydrogen_repair, "apply_repair_stage_local_refinement", placed_into_clash
+    )
+    result = add_hydrogens(
+        source,
+        prepare_heavy_atoms=False,
+        local_refinement=RepairLocalRefinementDirective.from_residue_ids(
+            (ref.residue_id,),
+            binding=ManualContinuousRelaxationBinding(
+                ContinuousRelaxationForceField.UFF
+            ),
+            config=ContinuousRelaxationConfig(max_iterations=1),
+        ),
+    )
+    new = result.structure.geometry.atom_geometry(
+        result.structure.constitution.atom_index(ref)
+    )
+    assert new.position != clashing.position
+
+
+def retained_serine_clash_structure(
+    symbol: str, *, include_source_hydrogen: bool = True
+) -> ProteinStructure:
+    library = build_default_component_library()
+    prepared = add_hydrogens(build_serine_window_structure()).structure
+    residue = residue_payload_from_structure(prepared, SERINE_RESIDUE_ID)
+    point = resolvable_ligand_atom(residue, component_library=library)[1].position
+    record = build_bundled_retained_non_polymer_registry().get("SO4")
+    assert record is not None
+    sulfate = record.to_idealized_component()
+    positions = {
+        a.atom_name: Vec3.coerce(a.ideal_position)
+        for a in sulfate.heavy_atoms()
+        if a.ideal_position is not None
+    }
+    assert len(positions) == len(sulfate.heavy_atoms())
+    shift = point.to_array() - positions["O1"].to_array()
+    return build_structure(
+        chains=(),
+        ligands=(
+            residue_payload(
+                component_id="SER",
+                residue_id=ResidueId("L", 1),
+                is_hetero=True,
+                atoms=tuple(
+                    atom_payload(
+                        a.name,
+                        symbol if a.name == "HG" else a.element,
+                        residue.position(a.name),
+                        formal_charge=residue.formal_charge(a.name),
+                        occupancy=0.4 if a.name == "HG" else 1.0,
+                        b_factor=17.0 if a.name == "HG" else 0.0,
+                    )
+                    for a in residue.atom_sites
+                    if not a.is_hydrogen()
+                    or (include_source_hydrogen and a.name == "HG")
+                ),
+            ),
+            residue_payload(
+                component_id="SO4",
+                residue_id=ResidueId("Z", 1),
+                is_hetero=True,
+                atoms=tuple(
+                    atom_payload(
+                        a.atom_name,
+                        a.element,
+                        Vec3.from_iterable(positions[a.atom_name].to_array() + shift),
+                        formal_charge=library.require(
+                            "SO4"
+                        ).definition.formal_charges.get(a.atom_name, 0),
+                    )
+                    for a in sulfate.heavy_atoms()
+                ),
+            ),
+        ),
+        source_format=prepared.provenance.ingress.source_format,
+    )
 
 
 def build_serine_window_structure() -> ProteinStructure:
