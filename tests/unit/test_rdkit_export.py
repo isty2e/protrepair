@@ -1,4 +1,8 @@
+import os
+import subprocess
+import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from rdkit import Chem
@@ -9,8 +13,13 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
-from protrepair.errors import ProtrepairError, RdkitProjectionError
+from protrepair.errors import (
+    ProtrepairError,
+    RdkitProjectionError,
+    RdkitUnavailableError,
+)
 from protrepair.geometry import Vec3
+from protrepair.io import rdkit as rdkit_export
 from protrepair.io import to_rdkit_molecule
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import ResidueId
@@ -537,3 +546,149 @@ def test_native_export_refuses_aromatic_coordination():
     )
     with pytest.raises(ProtrepairError, match="aromatic coordination"):
         to_rdkit_molecule(structure)
+
+
+def test_public_import_and_non_native_io_work_without_operational_rdkit():
+    program = """
+import builtins
+
+original_import = builtins.__import__
+
+def unavailable(name, *args, **kwargs):
+    if name == "rdkit" or name.startswith("rdkit."):
+        raise ImportError("injected unavailable RDKit")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = unavailable
+
+import protrepair
+from protrepair.errors import RdkitUnavailableError
+from protrepair.io import FileFormat, read_structure_string, to_rdkit_molecule
+
+structure = read_structure_string(
+    "ATOM      1  N   GLY A   1      11.104  13.207   9.487"
+    "  1.00 20.00           N  \\nEND\\n",
+    FileFormat.PDB,
+)
+assert structure.geometry.atom_count() == 1
+try:
+    to_rdkit_molecule(structure)
+except RdkitUnavailableError:
+    pass
+else:
+    raise AssertionError("native export did not report unavailable RDKit")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=Path(__file__).resolve().parents[2],
+        env={
+            **os.environ,
+            "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize("missing_module", ("Chem", "rdqueries"))
+def test_native_export_unavailable_backend_uses_typed_failure(
+    monkeypatch, missing_module
+):
+    structure = _smiles_structure("C")
+    monkeypatch.setattr(rdkit_export, missing_module, None)
+    with pytest.raises(RdkitUnavailableError):
+        to_rdkit_molecule(structure)
+
+
+def test_native_export_radical_refusal_identifies_the_atom_and_open_valence():
+    source = _structure((atom_payload("C", "C", Vec3(0, 0, 0), formal_charge=0),), ())
+    with pytest.raises(RdkitProjectionError) as caught:
+        to_rdkit_molecule(source)
+    assert source.constitution.atom_ref_at(AtomIndex(0)).display_token() in str(
+        caught.value
+    )
+    assert "open valence" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "relationship,order",
+    (
+        (BondRelationshipType.UNKNOWN, 1),
+        (BondRelationshipType.COVALENT, None),
+        (BondRelationshipType.METAL_COORDINATION, None),
+    ),
+)
+def test_native_export_bond_refusal_identifies_both_endpoints(relationship, order):
+    source = _structure(
+        (
+            atom_payload("H1", "H", Vec3(0, 0, 0), formal_charge=0),
+            atom_payload("H2", "H", Vec3(0, 0, 1), formal_charge=0),
+        ),
+        ((0, 1, order, relationship, False),),
+    )
+    with pytest.raises(RdkitProjectionError) as caught:
+        to_rdkit_molecule(source)
+    for value in (0, 1):
+        assert source.constitution.atom_ref_at(AtomIndex(value)).display_token() in str(
+            caught.value
+        )
+
+
+@pytest.mark.parametrize(
+    "name,smiles,padded_name",
+    (
+        ("CA", "C", " CA "),
+        ("CA", "[Ca+2]", "CA  "),
+        ("CL", "[Cl-]", "CL  "),
+        ("H1", "[H][H]", " H1 "),
+        ("1HG1", "[H][H]", "1HG1"),
+        ("ABCDE", "C", "ABCDE"),
+    ),
+)
+def test_native_residue_metadata_has_element_aware_pdb_names(name, smiles, padded_name):
+    original = _smiles_structure(smiles)
+    source = _structure(
+        tuple(
+            atom_payload(
+                name if value == 0 else atom.name,
+                atom.element,
+                original.geometry.atom_geometry(AtomIndex(value)).position,
+                formal_charge=original.topology.formal_charge(AtomIndex(value)),
+            )
+            for value, atom in enumerate(original.constitution.atom_slots)
+        ),
+        tuple(
+            (
+                bond.atom_index_1.value,
+                bond.atom_index_2.value,
+                bond.order,
+                bond.relationship_type,
+                bond.aromatic,
+            )
+            for bond in original.topology.bonds
+        ),
+    )
+    native = to_rdkit_molecule(source)
+    assert native.GetAtomWithIdx(0).GetPDBResidueInfo().GetName() == padded_name
+    assert source.constitution.atom_site_at(AtomIndex(0)).name == name
+    if len(name) <= 4:
+        assert Chem.MolToPDBBlock(native).splitlines()[0][12:16] == padded_name
+
+
+def test_native_metadata_binary_round_trip_requires_explicit_property_flags():
+    native = to_rdkit_molecule(_smiles_structure("[2H]O[3H]"))
+    without_properties = Chem.Mol(native.ToBinary(Chem.PropertyPickleOptions.NoProps))
+    with pytest.raises(KeyError):
+        without_properties.GetAtomWithIdx(0).GetBoolProp(
+            "protrepair_formal_charge_known"
+        )
+
+    restored = Chem.Mol(native.ToBinary(Chem.PropertyPickleOptions.AllProps))
+    assert restored.GetIntProp("protrepair_omitted_hydrogen_bonds") == 0
+    for original, actual in zip(native.GetAtoms(), restored.GetAtoms(), strict=True):
+        assert actual.GetPropsAsDict() == original.GetPropsAsDict()
+        assert actual.GetIsotope() == original.GetIsotope()
+    for original, actual in zip(native.GetBonds(), restored.GetBonds(), strict=True):
+        assert actual.GetPropsAsDict() == original.GetPropsAsDict()

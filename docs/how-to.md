@@ -125,6 +125,11 @@ raises `RdkitProjectionError` rather than returning a repaired guess. See the
 [native export reference](public-api.md#native-rdkit-export) for the copied
 properties and refusal conditions.
 
+An unavailable RDKit runtime raises `RdkitUnavailableError` at conversion time,
+without preventing package imports or non-native I/O. If you serialize the
+returned molecule, use explicit RDKit property flags to keep its metadata;
+see [native export](public-api.md#native-rdkit-export) for a binary example.
+
 ## Request PRAS-Ratio Histidine Protonation
 
 Histidine protonation is opt-in. Supply an explicit request through the

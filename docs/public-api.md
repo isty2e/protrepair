@@ -129,6 +129,10 @@ H/radical chemistry and failed or chemistry-changing sanitation raise
 charge uses native zero with a knowledge flag; it is not assigned back to
 canonical topology or original observations.
 
+If the required RDKit runtime cannot be imported, the package and non-native
+I/O remain importable; calling this conversion raises
+`protrepair.errors.RdkitUnavailableError`.
+
 The following native properties retain distinctions absent from standard
 RDKit fields:
 
@@ -148,6 +152,29 @@ Hydrogen-bond interactions are not chemical edges in this export. A known-charge
 flag describes current selected chemistry, not whether the original file
 reported that charge. Native export and PDB/mmCIF serialization remain separate
 operations; successful export does not guarantee equivalent PDB re-reading.
+
+`protrepair_formal_charge_known=False` means canonical topology has no assigned
+formal charge. This is common for neutral C and H; it is not a confidence score
+or a warning that the native zero is invalid. Successful export has checked
+that zero against the explicit graph and H inventory through RDKit sanitation
+and rejected unselected radical chemistry. These checks do not establish a
+unique or biologically correct protonation state.
+
+RDKit's default binary and pickle settings omit custom properties. Preserve
+these fields explicitly when creating a binary payload:
+
+```python
+from rdkit import Chem
+
+payload = molecule.ToBinary(Chem.PropertyPickleOptions.AllProps)
+restored = Chem.Mol(payload)
+```
+
+This selects properties for that payload without changing process-wide pickle
+defaults. Native atom-name metadata uses Gemmi's element-aware PDB padding, so
+protein `CA` and elemental calcium retain distinct alignments. Longer atom
+names remain intact in native metadata; the PDB writer's format limits still
+apply when a caller later writes a PDB block.
 
 ## Supported Facades
 
