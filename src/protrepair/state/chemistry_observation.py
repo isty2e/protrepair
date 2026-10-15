@@ -253,6 +253,29 @@ class StructureChemistryObservation:
             raise KeyError(residue_id)
         return residue
 
+    def require_residue(self, residue: ResidueSite) -> None:
+        """Reject a supplied scaffold that differs from its context residue.
+
+        Parameters
+        ----------
+        residue : ResidueSite
+            Context residue or an equal-value copy, including its ordered atoms.
+            Geometry and topology remain bound to the complete context.
+
+        Raises
+        ------
+        KeyError
+            The residue identity is absent from the context.
+        ValueError
+            The identity exists, but its scaffold content differs.
+        """
+        bound_residue = self._residue(residue.residue_id)
+        if bound_residue is not residue and bound_residue != residue:
+            raise ValueError(
+                "chemistry observation residue "
+                f"{residue.residue_id.display_token()} does not match its context"
+            )
+
     def whole_structure_facts(
         self,
     ) -> tuple[StructureCoverageFacts, StructureChemistryReadinessFacts]:

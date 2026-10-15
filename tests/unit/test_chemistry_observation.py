@@ -17,7 +17,10 @@ from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
 from protrepair.scope import AtomSetScope, WholeStructureScope
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
-from protrepair.state import SidechainHeavyAtomCompletenessState
+from protrepair.state import (
+    ResidueProjectionStateFacts,
+    SidechainHeavyAtomCompletenessState,
+)
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.hydrogen_expectation import (
     StructureHydrogenExpectationModel,
@@ -107,6 +110,103 @@ def _evidence(smiles: str):
             heavy_atom_names=("C1", "O1"),
         ).to_evidence(),
     )
+
+
+def _facts_for_supplied_residue(consumer, source, residue, observation=None):
+    if consumer == "singleton":
+        return ResidueProjectionStateFacts.from_residue(source, residue)
+    project = (
+        derive_projection_coverage_and_chemistry_readiness_facts
+        if consumer == "coverage"
+        else StructureProjectionStateFacts.from_projection
+    )
+    return project(
+        context_structure=source,
+        residues=() if residue.is_hetero else (residue,),
+        ligands=(residue,) if residue.is_hetero else (),
+        chemistry_observation=observation,
+    )
+
+
+@pytest.mark.parametrize("consumer", ["singleton", "coverage", "projection"])
+@pytest.mark.parametrize("retained", [False, True])
+@pytest.mark.parametrize(
+    "change", ["inventory", "component", "element", "role", "order"]
+)
+def test_supplied_residue_cannot_silently_replace_conflicting_content(
+    consumer, retained, change
+):
+    source = _ligand() if retained else _polymer()
+    residue = next(source.constitution.iter_residues(include_ligands=True))
+    if change == "inventory":
+        conflicting = replace(residue, atom_sites=residue.atom_sites[:-1])
+    elif change == "component":
+        conflicting = residue.with_component_id("GLY")
+    elif change == "element":
+        conflicting = residue.with_atom_site(
+            replace(residue.atom_sites[0], element="P")
+        )
+    elif change == "role":
+        conflicting = replace(residue, is_hetero=not residue.is_hetero)
+    else:
+        conflicting = replace(residue, atom_sites=tuple(reversed(residue.atom_sites)))
+
+    with pytest.raises(ValueError, match="residue.*context"):
+        _facts_for_supplied_residue(consumer, source, conflicting)
+
+
+@pytest.mark.parametrize("consumer", ["singleton", "coverage", "projection"])
+@pytest.mark.parametrize("retained", [False, True])
+def test_supplied_residue_accepts_equal_value_copy(consumer, retained):
+    source = _ligand() if retained else _polymer()
+    residue = next(source.constitution.iter_residues(include_ligands=True))
+    copied = replace(
+        residue, atom_sites=tuple(replace(atom) for atom in residue.atom_sites)
+    )
+    observation = StructureChemistryObservation(source)
+    assert copied is not residue
+    assert _facts_for_supplied_residue(
+        consumer, source, copied, observation
+    ) == _facts_for_supplied_residue(consumer, source, residue, observation)
+
+
+@pytest.mark.parametrize("consumer", ["singleton", "coverage", "projection"])
+@pytest.mark.parametrize("retained", [False, True])
+def test_supplied_residue_keeps_missing_identity_error(consumer, retained):
+    source = _ligand() if retained else _polymer()
+    residue = next(source.constitution.iter_residues(include_ligands=True))
+    missing = residue.with_residue_id(ResidueId("MISSING", 999))
+    with pytest.raises(KeyError):
+        _facts_for_supplied_residue(consumer, source, missing)
+
+
+@pytest.mark.parametrize("consumer", ["coverage", "projection"])
+@pytest.mark.parametrize("retained", [False, True])
+def test_warm_observation_still_rejects_conflicting_residue(consumer, retained):
+    source = _ligand() if retained else _polymer()
+    residue = next(source.constitution.iter_residues(include_ligands=True))
+    observation = StructureChemistryObservation(source)
+    expected = _facts_for_supplied_residue(consumer, source, residue, observation)
+    conflicting = replace(residue, atom_sites=residue.atom_sites[:-1])
+    with pytest.raises(ValueError, match="residue.*context"):
+        _facts_for_supplied_residue(consumer, source, conflicting, observation)
+    assert (
+        _facts_for_supplied_residue(consumer, source, residue, observation) == expected
+    )
+
+
+@pytest.mark.parametrize("consumer", ["singleton", "coverage", "projection"])
+def test_conflicting_residue_is_rejected_before_chemistry_derivation(consumer):
+    source = _polymer()
+    residue = source.constitution.chains[0].residues[0]
+    conflicting = replace(residue, atom_sites=residue.atom_sites[:-1])
+    with patch.object(
+        observation_module,
+        "StructureHydrogenExpectationModel",
+        side_effect=AssertionError("invalid residue triggered chemistry derivation"),
+    ):
+        with pytest.raises(ValueError, match="residue.*context"):
+            _facts_for_supplied_residue(consumer, source, conflicting)
 
 
 @pytest.mark.parametrize("project_first", [True, False])

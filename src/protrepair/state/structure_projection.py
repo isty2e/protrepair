@@ -305,9 +305,10 @@ class StructureProjectionStateFacts:
         context_structure : ProteinStructure
             Complete context snapshot; selection does not create new chemical termini.
         residues : tuple[ResidueSite, ...]
-            Selected polymer residues from that context.
+            Selected polymer residues matching the context scaffolds;
+            equal-value copies are accepted.
         ligands : tuple[ResidueSite, ...]
-            Selected retained components.
+            Selected retained components matching the context scaffolds.
         component_library : ComponentLibrary or None
             Active definitions, or None for defaults.
         retained_non_polymer_chemistry_evidence : tuple
@@ -328,8 +329,11 @@ class StructureProjectionStateFacts:
 
         Raises
         ------
+        KeyError
+            A selected residue identity is absent from the context.
         ValueError
-            The supplied observation belongs to another context or interpretation.
+            A scaffold differs from the context or the supplied observation has
+            different interpretation inputs.
         """
 
         projected_residue_ids = tuple(
@@ -391,6 +395,10 @@ class StructureProjectionStateFacts:
                 retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
                 allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
             )
+
+        for residue in (*residues, *ligands):
+            observation.require_residue(residue)
+
         residue_facts = tuple(
             observation.residue_facts(residue.residue_id) for residue in residues
         )

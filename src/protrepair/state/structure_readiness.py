@@ -142,9 +142,10 @@ def derive_projection_coverage_and_chemistry_readiness_facts(
     context_structure : ProteinStructure
         Complete chemical context.
     residues : tuple[ResidueSite, ...]
-        Polymer selections; identities resolve against the context.
+        Polymer selections matching the context scaffolds; equal-value copies
+        are accepted.
     ligands : tuple[ResidueSite, ...]
-        Retained-component selections.
+        Retained-component selections matching the context scaffolds.
     component_library : ComponentLibrary or None
         Active library, or defaults.
     retained_non_polymer_chemistry_evidence : tuple
@@ -167,7 +168,8 @@ def derive_projection_coverage_and_chemistry_readiness_facts(
     KeyError
         A selected identity is missing from the context.
     ValueError
-        A selected identity is repeated or the observation inputs do not match.
+        A selected identity is repeated, a scaffold differs from the context,
+        or the observation inputs do not match.
     """
     from protrepair.state.chemistry_observation import StructureChemistryObservation
 
@@ -187,6 +189,10 @@ def derive_projection_coverage_and_chemistry_readiness_facts(
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
             allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
         )
+
+    for residue in (*residues, *ligands):
+        observation.require_residue(residue)
+
     return observation.projected_facts(
         tuple(residue.residue_id for residue in (*residues, *ligands))
     )

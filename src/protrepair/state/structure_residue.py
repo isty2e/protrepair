@@ -109,7 +109,29 @@ class ResidueProjectionStateFacts:
         *,
         component_library: ComponentLibrary | None = None,
     ) -> "ResidueProjectionStateFacts":
-        """Derive primitive singleton residue facts from one observed residue."""
+        """Derive singleton facts for a residue belonging to its context.
+
+        Parameters
+        ----------
+        context_structure : ProteinStructure
+            Complete source of geometry, topology and chemical context.
+        residue : ResidueSite
+            A context residue or an equal-value copy of its scaffold.
+        component_library : ComponentLibrary or None
+            Active component definitions, or defaults.
+
+        Returns
+        -------
+        ResidueProjectionStateFacts
+            Primitive facts for the supplied context residue.
+
+        Raises
+        ------
+        KeyError
+            The residue identity is absent from the context.
+        ValueError
+            The supplied scaffold differs from the context residue.
+        """
 
         from protrepair.state.chemistry_observation import StructureChemistryObservation
 
@@ -117,6 +139,7 @@ class ResidueProjectionStateFacts:
             context_structure,
             component_library=component_library,
         )
+        observation.require_residue(residue)
         return observation.residue_facts(residue.residue_id)
 
 
