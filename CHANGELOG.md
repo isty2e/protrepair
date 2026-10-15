@@ -31,6 +31,8 @@
 - retain input ligand H/D/T custody through the final `add_hydrogens` cleanup,
   including after retained prerequisites or rejected local refinement. Explicit
   FF motion is unchanged and its resulting positions are not restored
+- report unresolved rotatable-H clashes even when every target is fixed, and
+  retain relevant residue-pair warnings in scoped cleanup calls
 - check existing external covalent-like and untyped bonds across all provenances
   before preparing an isolated zero-H component; preserve typed noncovalent context
 - preserve full retained-component inventories, including SAH/SAM OXT, separately

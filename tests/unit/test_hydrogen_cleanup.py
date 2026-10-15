@@ -23,6 +23,7 @@ from protrepair.chemistry.retained_non_polymer.registry import (
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import (
     ClashPolicy,
+    ClashReport,
     ValidationIssueKind,
     detect_clashes,
 )
@@ -117,6 +118,8 @@ def test_cleanup_reorients_only_movable_ligand_clashing_serine_hydrogen(
         assert cleaned_structure is hydrogenated_holo
         assert cleaned_hydrogen.position == original_hydrogen
         assert final_report == initial_report
+        assert issues
+        assert all(issue.kind is ValidationIssueKind.STERIC_CLASH for issue in issues)
         return
 
     assert cleaned_hydrogen.position != original_hydrogen
@@ -125,6 +128,113 @@ def test_cleanup_reorients_only_movable_ligand_clashing_serine_hydrogen(
         for clash in final_report.clashes
     )
     assert issues == ()
+
+
+@pytest.mark.parametrize("symbol", ("H", "D", "T"))
+@pytest.mark.parametrize("scope", ("all", "source", "blocker", "empty", "unrelated"))
+def test_fixed_ligand_hydrogen_clashes_remain_reported(symbol: str, scope: str) -> None:
+    library = build_default_component_library()
+    source = retained_serine_clash_structure(symbol)
+    ref = AtomRef(ResidueId("L", 1), "HG")
+    selections = {
+        "all": None,
+        "source": frozenset((ref.residue_id,)),
+        "blocker": frozenset((ResidueId("Z", 1),)),
+        "empty": frozenset(),
+        "unrelated": frozenset((ResidueId("X", 99),)),
+    }
+    initial_report = detect_clashes(
+        source, component_library=library, policy=ClashPolicy(include_ligands=True)
+    )
+    expected_issues = ClashReport(
+        clashes=tuple(
+            clash
+            for clash in initial_report.clashes
+            if (clash.left_residue_id, clash.left_atom_name)
+            == (ref.residue_id, ref.atom_name)
+            or (clash.right_residue_id, clash.right_atom_name)
+            == (ref.residue_id, ref.atom_name)
+        )
+    ).to_issues()
+    assert expected_issues
+
+    cleaned, issues = cleanup_residual_hydrogen_clashes(
+        source,
+        component_library=library,
+        target_residue_ids=selections[scope],
+        fixed_hydrogen_atom_refs=frozenset((ref,)),
+    )
+
+    assert cleaned is source
+    assert issues == (expected_issues if scope in {"all", "source", "blocker"} else ())
+
+
+def test_fixed_clash_warning_is_independent_of_unrelated_movable_targets() -> None:
+    library = build_default_component_library()
+    source = retained_serine_clash_structure("H")
+    fixed_ref = AtomRef(ResidueId("L", 1), "HG")
+    extra_ligands = tuple(
+        residue_payload(
+            component_id=residue.component_id,
+            residue_id=ResidueId("M" if residue.component_id == "SER" else "Y", 2),
+            is_hetero=True,
+            atoms=tuple(
+                atom_payload(
+                    atom.name,
+                    atom.element,
+                    residue.position(atom.name).with_offset(100.0, 0.0, 0.0),
+                    formal_charge=residue.formal_charge(atom.name),
+                )
+                for atom in residue.atom_sites
+            ),
+        )
+        for residue in (
+            residue_payload_from_structure(source, site.residue_id)
+            for site in source.constitution.ligands
+        )
+    )
+    mixed = build_structure(
+        chains=(),
+        ligands=(
+            *(
+                canonical_residue_payload_from_structure(source, residue.residue_id)
+                for residue in source.constitution.ligands
+            ),
+            *extra_ligands,
+        ),
+        source_format=source.provenance.ingress.source_format,
+    )
+    _, alone_issues = cleanup_residual_hydrogen_clashes(
+        source,
+        component_library=library,
+        fixed_hydrogen_atom_refs=frozenset((fixed_ref,)),
+    )
+    cleaned, mixed_issues = cleanup_residual_hydrogen_clashes(
+        mixed,
+        component_library=library,
+        fixed_hydrogen_atom_refs=frozenset((fixed_ref,)),
+    )
+    movable_ref = AtomRef(ResidueId("M", 2), "HG")
+
+    assert alone_issues
+    assert (
+        tuple(
+            issue
+            for issue in mixed_issues
+            if fixed_ref.residue_id in issue.scope.residue_ids
+        )
+        == alone_issues
+    )
+    assert residue_payload_from_structure(cleaned, fixed_ref.residue_id).position(
+        fixed_ref.atom_name
+    ) == residue_payload_from_structure(mixed, fixed_ref.residue_id).position(
+        fixed_ref.atom_name
+    )
+    assert residue_payload_from_structure(cleaned, movable_ref.residue_id).position(
+        movable_ref.atom_name
+    ) != residue_payload_from_structure(mixed, movable_ref.residue_id).position(
+        movable_ref.atom_name
+    )
 
 
 def test_cleanup_residual_hydrogen_clashes_reports_unresolved_targets() -> None:
@@ -291,6 +401,12 @@ def test_outer_hydrogen_cleanup_preserves_input_ligand_h_after_other_stages(
     index = result.structure.constitution.atom_index(ref)
     assert result.structure.geometry.atom_geometry(index) == expected
     assert result.structure.constitution.atom_site_at(index).element == symbol
+    assert result.has_warnings()
+    assert any(
+        issue.kind is ValidationIssueKind.STERIC_CLASH
+        and ref.residue_id in issue.scope.residue_ids
+        for issue in result.issues
+    )
 
 
 def test_outer_cleanup_can_still_move_h_generated_by_retained_prerequisites(

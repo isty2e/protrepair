@@ -63,7 +63,8 @@ def cleanup_residual_hydrogen_clashes(
     Returns
     -------
     tuple[ProteinStructure, tuple[ValidationIssue, ...]]
-        Updated structure and diagnostics for unresolved eligible H clashes.
+        Updated structure and diagnostics for unresolved supported H clashes,
+        including those involving fixed targets.
     """
 
     include_ligands = bool(structure.constitution.ligands)
@@ -89,29 +90,28 @@ def cleanup_residual_hydrogen_clashes(
         and AtomRef(target.residue_id, target.hydrogen_atom_name)
         not in fixed_hydrogen_atom_refs
     )
-    if not cleanup_targets:
-        return structure, ()
-
-    clash_runtime = _build_hydrogen_cleanup_clash_runtime(clash_context)
-    current_residues_by_id: dict[ResidueId, CompletionResiduePayload] = {}
     cleaned_residues_by_id: dict[ResidueId, CompletionResiduePayload] = {}
-    for target in cleanup_targets:
-        current_residue = cleaned_residues_by_id.get(target.residue_id)
-        if current_residue is None:
-            current_residue = current_residues_by_id.setdefault(
-                target.residue_id,
-                _completion_payload_for_structure(structure, target.residue_id),
-            )
+    if cleanup_targets:
+        clash_runtime = _build_hydrogen_cleanup_clash_runtime(clash_context)
+        current_residues_by_id: dict[ResidueId, CompletionResiduePayload] = {}
+        for target in cleanup_targets:
+            current_residue = cleaned_residues_by_id.get(target.residue_id)
+            if current_residue is None:
+                current_residue = current_residues_by_id.setdefault(
+                    target.residue_id,
+                    _completion_payload_for_structure(structure, target.residue_id),
+                )
 
-        cleaned_residue = _cleanup_targeted_hydrogen(
-            current_residue,
-            target=target,
-            clash_runtime=clash_runtime,
-        )
-        if cleaned_residue is not None:
-            cleaned_residues_by_id[target.residue_id] = cleaned_residue
+            cleaned_residue = _cleanup_targeted_hydrogen(
+                current_residue,
+                target=target,
+                clash_runtime=clash_runtime,
+            )
+            if cleaned_residue is not None:
+                cleaned_residues_by_id[target.residue_id] = cleaned_residue
 
     current_structure = structure
+    final_report = initial_report
     if cleaned_residues_by_id:
         current_structure = structure.with_updated_residue_facets_batch(
             (
@@ -121,14 +121,13 @@ def cleanup_residual_hydrogen_clashes(
             )
             for residue in cleaned_residues_by_id.values()
         )
-
-    final_report = detect_clashes_from_context(
-        prepare_clash_detection_context(
-            current_structure,
-            component_library=component_library,
-            policy=policy,
+        final_report = detect_clashes_from_context(
+            prepare_clash_detection_context(
+                current_structure,
+                component_library=component_library,
+                policy=policy,
+            )
         )
-    )
     unresolved_report = unresolved_rotatable_hydrogen_report(
         current_structure,
         component_library=component_library,
@@ -139,7 +138,7 @@ def cleanup_residual_hydrogen_clashes(
         issues = tuple(
             issue
             for issue in issues
-            if issue.residue_id is not None and issue.residue_id in target_residue_ids
+            if not target_residue_ids.isdisjoint(issue.scope.residue_ids)
         )
     return current_structure, issues
 
