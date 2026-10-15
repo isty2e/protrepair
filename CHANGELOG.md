@@ -12,9 +12,14 @@
   defaults remain source-compatible preferences, not replacement authority
 - retain fitted spans with residue-local reference outliers and report remaining
   geometry warnings on the selected result, after any follow-up repair
+- refuse fixed-template aromatic inputs whose reported orders use a different
+  Kekule form, leaving the ligand unchanged. This conservative representation
+  limit can reject chemically equivalent inputs; see the retained-ligand policy
 
 ### Fixed
 
+- report graph-only retained-ligand repairs even when another ligand receives
+  hydrogens in the same call, without treating shifted atom slots as bond changes
 - match retained H/D/T identities within compatible parent groups before applying
   correspondence limits. Unmatched source hydrogens or an exceeded limit leave
   the residue unchanged with a diagnostic rather than silently replacing them

@@ -47,6 +47,26 @@ unchanged and receives a chemistry diagnostic. Other ligands can still be
 prepared. Local FF readiness reports unresolved chemistry, missing heavy-atom
 topology and missing H topology separately.
 
+### Fixed-Template Aromatic Bond Orders
+
+Fixed-template preparation currently requires reported bond orders to match the
+template's particular Kekule form. A chemically equivalent alternative can pass
+ingress but still be refused during preparation. For example, FMN with repeated
+CONECT records selecting the opposite aromatic-ring double bonds receives
+`CHEMISTRY_CONTRADICTION`, even though the difference need not be a chemical
+contradiction. The ligand's atoms and bonds remain unchanged.
+
+This also affects inputs with complete hydrogens: topology-only repair cannot
+resolve that representation, and local force-field readiness remains blocked.
+Connectivity-only records and orders matching the template do not have this
+limitation.
+
+Fixed-template resonance selection is deferred rather than handled by ignoring
+reported orders. It needs a shared resolution rule for the template graph,
+hydrogen inventory, charges and stereochemistry, used by both preparation and
+readiness. Revisit this limitation before extending the resolver's support to
+alternate fixed-template aromatic forms.
+
 ## Incomplete Templates
 
 A template can place hydrogens on the heavy atoms that are present, even when
