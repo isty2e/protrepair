@@ -13,7 +13,6 @@ from protrepair.chemistry.retained_non_polymer.covalent_context import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
-from protrepair.structure.disulfide import disulfide_atom_ref_pair
 from protrepair.structure.labels import AtomRef
 from protrepair.structure.topology import BondRelationshipType
 
@@ -64,10 +63,8 @@ class RetainedTemplateBinding:
             return
         self._bind_acyl(structure, residue, template, component_library, context)
         if residue.component_id == "CYS" and len(context.attachments) == 1:
-            bond, _, _ = context.attachments[0]
-            pair = disulfide_atom_ref_pair(structure.constitution, bond)
-            if pair is not None and bond.order in (None, 1) and not bond.aromatic:
-                object.__setattr__(self, "external_bonds", (pair,))
+            pair = context.require_neutral_disulfide_pair()
+            object.__setattr__(self, "external_bonds", (pair,))
         context.require_admitted(self.external_bonds)
 
     def _bind_acyl(
@@ -124,6 +121,12 @@ class RetainedTemplateBinding:
         partner = constitution.residue_site_at(
             constitution.residue_index(nitrogen.residue_id)
         )
+        partner_context = RetainedCovalentContext(structure, nitrogen.residue_id)
+        if not partner_context.has_exclusive_attachment(nitrogen, carbonyl):
+            raise ValueError(
+                "linked amide N has another external covalent or "
+                "unresolved relationship"
+            )
         partner_template = component_library.get(partner.component_id)
         if partner_template is None:
             raise ValueError(
@@ -184,6 +187,9 @@ def is_resolved_acyl_amide_link(
         return False
     carbonyl_index, nitrogen_index = indices
     assert carbonyl_index is not None and nitrogen_index is not None
+    partner_context = RetainedCovalentContext(structure, nitrogen.residue_id)
+    if not partner_context.has_exclusive_attachment(nitrogen, carbonyl):
+        return False
     amide = structure.topology.bond_between(carbonyl_index, nitrogen_index)
     if (
         amide is None

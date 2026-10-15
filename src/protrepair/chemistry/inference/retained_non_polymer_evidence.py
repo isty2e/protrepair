@@ -1,6 +1,5 @@
 """RDKit-backed inference for retained non-polymer chemistry evidence."""
 
-from dataclasses import replace
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -22,7 +21,6 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 )
 from protrepair.errors import RdkitUnavailableError
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.disulfide import disulfide_atom_ref_pair
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import AtomRef
 
@@ -124,36 +122,8 @@ def retained_non_polymer_evidence_external_bonds(
     context = RetainedCovalentContext(structure, evidence.residue_id)
     if not context.attachments:
         return ()
-    if len(context.attachments) != 1:
-        raise ValueError(
-            "selected chemistry cannot represent multiple external attachments"
-        )
-
-    bond, inside, outside = context.attachments[0]
-    pair = disulfide_atom_ref_pair(structure.constitution, bond)
-    if pair is None:
-        raise ValueError(
-            "selected chemistry cannot represent external "
-            f"{bond.relationship_type.value} relationship "
-            f"{inside.display_token()}--{outside.display_token()}"
-        )
-    if bond.order not in {None, 1} or bond.aromatic:
-        raise ValueError("disulfide evidence requires a non-aromatic single attachment")
-    bond.with_resolved_chemistry(replace(bond, order=1))
-
-    for endpoint in (inside, outside):
-        index = structure.constitution.atom_index(endpoint)
-        if structure.constitution.atom_site_at(index).element != "S":
-            raise ValueError("disulfide evidence requires sulfur at both SG endpoints")
-        if structure.topology.formal_charge(index) not in {None, 0}:
-            raise ValueError("disulfide evidence conflicts with a source sulfur charge")
-    partner_context = RetainedCovalentContext(structure, outside.residue_id)
-    if any(
-        partner_inside == outside
-        and frozenset((partner_inside, partner_outside)) != frozenset(pair)
-        for _, partner_inside, partner_outside in partner_context.attachments
-    ):
-        raise ValueError("disulfide evidence requires one attachment per sulfur")
+    pair = context.require_neutral_disulfide_pair()
+    _, inside, _ = context.attachments[0]
 
     if Chem is None:
         raise RdkitUnavailableError(

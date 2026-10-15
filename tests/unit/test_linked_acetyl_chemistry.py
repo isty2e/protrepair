@@ -4,6 +4,12 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.support.canonical_builders import (
+    atom_payload,
+    build_structure,
+    chain_payload,
+    residue_payload,
+)
 
 from protrepair.api import process_structure
 from protrepair.chemistry import (
@@ -36,8 +42,10 @@ from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.topology import (
+    BondProvenance,
     BondRelationshipType,
     StructureTopology,
+    TopologyBond,
 )
 from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
     add_retained_non_polymer_hydrogens,
@@ -193,6 +201,114 @@ def _with_bonds(source, bonds):
         ),
         polymer_blueprint=source.polymer_blueprint,
         provenance=source.provenance,
+    )
+
+
+def _cap_with_occupied_nitrogen(relationship, provenance, *, realized=False):
+    original = _source()
+    if realized:
+        original = add_retained_non_polymer_hydrogens(original).structure
+
+    def payload(residue_id):
+        index = original.constitution.residue_index(residue_id)
+        return (
+            original.constitution.residue_site_at(index),
+            original.residue_geometry(index),
+            original.residue_formal_charge_by_atom_name(index),
+        )
+
+    previous = ResidueId("A", -1)
+    source = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="GLY",
+                        residue_id=previous,
+                        atoms=(atom_payload("C", "C", Vec3(-10, 0, 0)),),
+                    ),
+                    payload(FIRST),
+                ),
+            ),
+        ),
+        ligands=(payload(CAP),),
+        source_format=FileFormat.PDB,
+    )
+    remapped = tuple(
+        replace(
+            bond,
+            atom_index_1=source.constitution.atom_index(
+                original.constitution.atom_ref_at(bond.atom_index_1)
+            ),
+            atom_index_2=source.constitution.atom_index(
+                original.constitution.atom_ref_at(bond.atom_index_2)
+            ),
+        )
+        for bond in original.topology.bonds
+    )
+    return _with_bonds(
+        source,
+        (
+            *remapped,
+            TopologyBond(
+                source.constitution.atom_index(AtomRef(previous, "C")),
+                source.constitution.atom_index(AtomRef(FIRST, "N")),
+                order=1,
+                relationship_type=relationship,
+                provenance=provenance,
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize("provenance", tuple(BondProvenance))
+@pytest.mark.parametrize(
+    "relationship",
+    (BondRelationshipType.COVALENT, BondRelationshipType.UNKNOWN),
+)
+def test_cap_refuses_an_already_occupied_polymer_nitrogen(relationship, provenance):
+    source = _cap_with_occupied_nitrogen(relationship, provenance)
+    for transform in (
+        add_retained_non_polymer_hydrogens,
+        resolve_retained_non_polymer_topology,
+    ):
+        result = transform(source, build_default_component_library())
+        assert result.structure is source and not result.repairs
+        assert any(
+            issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
+            for issue in result.issues
+        )
+    assert (
+        _fact(source).component_support_state
+        is ComponentSupportState.UNSUPPORTED_COMPONENTS_PRESENT
+    )
+
+
+def test_realized_cap_with_second_nitrogen_attachment_is_not_an_amide_boundary():
+    source = _cap_with_occupied_nitrogen(
+        BondRelationshipType.COVALENT,
+        BondProvenance.SEQUENCE_INFERRED,
+        realized=True,
+    )
+    assert not is_resolved_acyl_amide_link(
+        source, AtomRef(CAP, "C"), AtomRef(FIRST, "N")
+    )
+    assert _linkage(source) is PeptideLinkage.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "relationship",
+    (BondRelationshipType.HYDROGEN_BOND, BondRelationshipType.METAL_COORDINATION),
+)
+def test_non_covalent_partner_relationship_does_not_occupy_the_cap_nitrogen(
+    relationship,
+):
+    source = _cap_with_occupied_nitrogen(relationship, BondProvenance.SOURCE_EXPLICIT)
+    result = add_retained_non_polymer_hydrogens(source)
+    assert not result.issues
+    assert is_resolved_acyl_amide_link(
+        result.structure, AtomRef(CAP, "C"), AtomRef(FIRST, "N")
     )
 
 

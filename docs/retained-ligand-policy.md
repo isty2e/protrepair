@@ -71,6 +71,8 @@ is absent from that application; the methyl H inventory is retained. Existing
 carbonyl H, conflicting charges, ambiguous links or unsupported partners are
 not removed to make it fit. The original isolated template remains available
 when there is no covalent attachment.
+The polymer N must have no other external covalent or untyped attachment;
+an existing peptide bond is not displaced to admit a cap.
 
 The topology/H transformer realizes the admitted external order and preserves
 the source link metadata. Readiness requires that realized graph, and polymer
@@ -78,6 +80,9 @@ N chemistry recognizes the cap only after its neutral acyl-amide graph exists.
 An unresolved deposited link alone is not enough. Canonical CYS SG--SG
 disulfides retain their no-thiol-H inventory; mapped evidence must describe a
 compatible neutral terminal-thiol precursor.
+Both sulfur endpoints must have compatible source charges and no competing
+external covalent or untyped attachment at SG. Links at another atom on the
+partner residue do not consume the sulfur's attachment site.
 
 Other linked chemistry, including glycosidic and covalent-adduct preparation,
 is unsupported by this resolver. Connected glycans previously treated as

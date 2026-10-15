@@ -24,6 +24,9 @@
 
 ### Fixed
 
+- validate both ends of retained covalent preparation: refuse caps on already
+  occupied backbone nitrogens and disulfides with charged or multiply attached
+  sulfur partners, without changing the source structure
 - reuse a topology-local inter-residue bond index instead of scanning the whole
   graph for each retained component's connection checks
 - reserve acyl-cap diagnostics for carbonyl C--polymer backbone N candidates;

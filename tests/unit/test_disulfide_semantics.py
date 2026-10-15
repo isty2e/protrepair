@@ -45,6 +45,10 @@ from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state.hydrogen_expectation import (
     StructureHydrogenExpectationModel,
 )
+from protrepair.state.retained_non_polymer_chemistry import (
+    RetainedNonPolymerChemistryEvidenceSource,
+    resolve_retained_non_polymer_chemistry,
+)
 from protrepair.state.structure_topology import (
     DisulfideEndpointMultiplicityContradiction,
     DisulfideTopologyConflict,
@@ -68,6 +72,7 @@ from protrepair.structure.topology import (
 from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
 from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
     add_retained_non_polymer_hydrogens,
+    resolve_retained_non_polymer_topology,
 )
 from protrepair.transformer.continuous.bonds import (
     inter_residue_bonds,
@@ -293,6 +298,147 @@ def test_retained_cysteine_disulfide_uses_shared_hydrogen_semantics() -> None:
     )
     assert bond is not None
     assert bond.relationship_type is BondRelationshipType.DISULFIDE
+
+
+@pytest.mark.parametrize("chemistry_mode", ("template", "override"))
+@pytest.mark.parametrize("charge", (-1, 1))
+@pytest.mark.parametrize("endpoint", ("L", "R"))
+def test_retained_disulfide_refuses_charge_at_either_sulfur(
+    chemistry_mode, charge, endpoint
+):
+    left_id, right_id = ResidueId("L", 1), ResidueId("R", 1)
+    source = retained_cys_pair_structure(left_id, right_id)
+    index = source.constitution.residue_index(ResidueId(endpoint, 1))
+    source = source.with_updated_residue_facets(
+        source.constitution.residue_site_at(index),
+        residue_geometry=source.residue_geometry(index),
+        formal_charge_by_atom_name=(("SG", charge),),
+    )
+    assert (
+        source.topology.formal_charge(
+            source.constitution.atom_index(AtomRef(ResidueId(endpoint, 1), "SG"))
+        )
+        == charge
+    )
+    _assert_retained_disulfide_refused(source, left_id, chemistry_mode)
+
+
+@pytest.mark.parametrize("chemistry_mode", ("template", "override"))
+@pytest.mark.parametrize("provenance", tuple(BondProvenance))
+@pytest.mark.parametrize(
+    "relationship",
+    (
+        BondRelationshipType.COVALENT,
+        BondRelationshipType.DISULFIDE,
+        BondRelationshipType.UNKNOWN,
+    ),
+)
+def test_retained_disulfide_refuses_another_partner_sulfur_attachment(
+    chemistry_mode, provenance, relationship
+):
+    source = _retained_disulfide_with_partner_link(relationship, provenance)
+    _assert_retained_disulfide_refused(source, ResidueId("L", 1), chemistry_mode)
+
+
+@pytest.mark.parametrize(
+    ("inside_name", "relationship"),
+    (
+        ("SG", BondRelationshipType.HYDROGEN_BOND),
+        ("SG", BondRelationshipType.METAL_COORDINATION),
+        ("N", BondRelationshipType.COVALENT),
+        ("N", BondRelationshipType.UNKNOWN),
+    ),
+)
+def test_disulfide_partner_boundary_is_atom_local_and_not_non_covalent(
+    inside_name, relationship
+):
+    source = _retained_disulfide_with_partner_link(
+        relationship, BondProvenance.SOURCE_EXPLICIT, inside_name=inside_name
+    )
+    target = ResidueId("L", 1)
+    result = add_retained_non_polymer_hydrogens(
+        source, target_residue_ids=frozenset((target,))
+    )
+    assert not result.issues and result.repairs
+    assert not has_hydrogen_topology_bond_to(result.structure, AtomRef(target, "SG"))
+
+
+def _retained_disulfide_with_partner_link(
+    relationship, provenance, *, inside_name="SG"
+):
+    left_id, right_id, third_id = (
+        ResidueId("L", 1),
+        ResidueId("R", 1),
+        ResidueId("X", 1),
+    )
+    source = build_structure(
+        chains=(),
+        ligands=tuple(
+            retained_cys_payload(residue_id, x_offset=8.0 * offset)
+            for offset, residue_id in enumerate((left_id, right_id, third_id))
+        ),
+        source_format=FileFormat.PDB,
+    )
+    return ProteinStructure.from_payload(
+        constitution=source.constitution,
+        geometry=source.geometry,
+        topology=StructureTopology(
+            constitution=source.constitution,
+            atom_topologies=source.topology.atom_topologies,
+            bonds=(
+                TopologyBond(
+                    source.constitution.atom_index(AtomRef(left_id, "SG")),
+                    source.constitution.atom_index(AtomRef(right_id, "SG")),
+                    order=1,
+                    relationship_type=BondRelationshipType.DISULFIDE,
+                    provenance=provenance,
+                ),
+                TopologyBond(
+                    source.constitution.atom_index(AtomRef(right_id, inside_name)),
+                    source.constitution.atom_index(AtomRef(third_id, "SG")),
+                    order=1,
+                    relationship_type=relationship,
+                    provenance=provenance,
+                ),
+            ),
+        ),
+        polymer_blueprint=source.polymer_blueprint,
+        provenance=source.provenance,
+    )
+
+
+def _assert_retained_disulfide_refused(source, target, chemistry_mode):
+    library = build_default_component_library()
+    evidence = (
+        RetainedNonPolymerChemistryOverride(
+            residue_id=target,
+            smiles="NC(CS)C=O",
+            heavy_atom_names=("N", "CA", "CB", "SG", "C", "O"),
+        ).to_evidence()
+        if chemistry_mode == "override"
+        else None
+    )
+    residue = source.constitution.residue_or_ligand(target)
+    assert residue is not None
+    resolution = resolve_retained_non_polymer_chemistry(
+        source, residue, component_library=library, evidence=evidence
+    )
+    assert resolution.source is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
+    for transform in (
+        add_retained_non_polymer_hydrogens,
+        resolve_retained_non_polymer_topology,
+    ):
+        result = transform(
+            source,
+            library,
+            target_residue_ids=frozenset((target,)),
+            chemistry_evidence=() if evidence is None else (evidence,),
+        )
+        assert result.structure is source and not result.repairs
+        assert any(
+            issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
+            for issue in result.issues
+        )
 
 
 @pytest.mark.parametrize("chemistry_mode", ("override", "fallback"))
