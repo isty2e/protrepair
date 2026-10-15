@@ -120,6 +120,11 @@ molecule does not update the structure.
 Typed coordination becomes donor-to-metal `DATIVE` when exactly one endpoint
 matches RDKit's M-atom metal grammar. Compatible aromatic representation may
 normalize; declared aromatic double bonds must admit a compatible Kekule form.
+This includes a complete alternating single/double ring with input aromatic
+flags set to false: RDKit may return aromatic bonds while the original orders
+and flags remain in the `protrepair_bond_order` and `protrepair_aromatic`
+properties. Exact native aromatic-flag equality is not required; the canonical
+structure is unchanged.
 Stereo is assigned from coordinates. Export does not prepare chemistry, add H,
 optimize geometry or establish force-field support.
 

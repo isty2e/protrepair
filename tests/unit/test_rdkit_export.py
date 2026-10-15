@@ -120,6 +120,52 @@ def test_native_export_preserves_selected_organic_chemistry(smiles):
     assert Chem.SanitizeMol(native) == Chem.SanitizeFlags.SANITIZE_NONE
 
 
+@pytest.mark.parametrize(
+    "smiles",
+    ("c1ccccc1", "n1ccccc1", "c1cc[nH]c1", "c1ccc2ccccc2c1", "C=Cc1ccccc1"),
+)
+def test_native_export_normalizes_kekule_input_without_changing_selected_chemistry(
+    smiles,
+):
+    source = _smiles_structure(smiles)
+    topology = StructureTopology(
+        constitution=source.constitution,
+        atom_topologies=source.topology.atom_topologies,
+        bonds=tuple(replace(bond, aromatic=False) for bond in source.topology.bonds),
+    )
+    source = ProteinStructure.from_payload(
+        constitution=source.constitution,
+        geometry=source.geometry,
+        topology=topology,
+        provenance=source.provenance,
+        polymer_blueprint=source.polymer_blueprint,
+    )
+    native = to_rdkit_molecule(source)
+    expected = Chem.AddHs(Chem.MolFromSmiles(smiles))
+
+    assert Chem.MolToSmiles(native) == Chem.MolToSmiles(expected)
+    assert any(bond.GetIsAromatic() for bond in native.GetBonds())
+    assert native.GetNumBonds() == len(topology.bonds)
+    assert source.topology is topology
+    assert not any(bond.aromatic for bond in source.topology.bonds)
+    for bond in topology.bonds:
+        first, second = (index.value for index in bond.endpoint_pair())
+        projected = native.GetBondBetweenAtoms(first, second)
+        assert projected.GetIntProp("protrepair_bond_order") == bond.order
+        assert not projected.GetBoolProp("protrepair_aromatic")
+        if not projected.GetIsAromatic():
+            assert projected.GetBondTypeAsDouble() == bond.order
+
+    assert tuple(
+        tuple(native.GetConformer().GetAtomPosition(index))
+        for index in range(native.GetNumAtoms())
+    ) == tuple(tuple(atom.position) for atom in source.geometry.atom_geometries)
+    assert not any(
+        atom.GetNumRadicalElectrons() or atom.GetNumImplicitHs()
+        for atom in native.GetAtoms()
+    )
+
+
 def test_native_export_copies_full_precision_identity_scalars_and_isotopes():
     structure = _smiles_structure("[2H]O[3H]")
     native = to_rdkit_molecule(structure)
