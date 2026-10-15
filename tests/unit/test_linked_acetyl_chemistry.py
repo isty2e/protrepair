@@ -25,9 +25,6 @@ from protrepair.chemistry.retained_non_polymer.template_binding import (
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure_string, write_structure_string
-from protrepair.io.nonstandard_component_ingress import (
-    read_nonstandard_component_registry,
-)
 from protrepair.scope import WholeStructureScope
 from protrepair.state import HydrogenCoverageState
 from protrepair.state.chemistry_observation import StructureChemistryObservation
@@ -242,11 +239,9 @@ def _with_source_cap_hydrogens(*, isotope="H", carbonyl=False, count=1):
     )
 
 
-def test_default_acetyl_preserves_frozen_isolated_ccd_graph():
-    path = PDB_PATH.parents[1] / "chemistry/retained/ACE.cif"
-    frozen = read_nonstandard_component_registry(path).get("ACE")
+def test_default_acetyl_keeps_neutral_isolated_four_hydrogen_inventory():
+    frozen = build_bundled_retained_non_polymer_registry().get("ACE")
     assert frozen is not None
-    assert build_bundled_retained_non_polymer_registry().get("ACE") == frozen
     template = build_default_component_library().get("ACE")
     assert template is not None and len(template.expected_hydrogen_atom_names()) == 4
     assert sum(a.formal_charge for a in frozen.to_idealized_component().atoms) == 0

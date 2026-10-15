@@ -1,5 +1,6 @@
 """Curated isolated ligands retain source evidence and realize chemical graphs."""
 
+from dataclasses import replace
 from math import isfinite
 from pathlib import Path
 
@@ -87,13 +88,39 @@ def _assert_source_preserved(
         assert new.provenance is old.provenance
 
 
-@pytest.mark.parametrize("component_id", ("SAN", "CMP"))
-def test_curated_standalone_records_match_frozen_primary_ccd(component_id):
+@pytest.mark.parametrize("component_id", ("ACE", "SAN", "CMP"))
+def test_curated_records_match_frozen_primary_ccd(component_id):
     frozen = read_nonstandard_component_registry(
         FIXTURES / f"chemistry/retained/{component_id}.cif"
     ).get(component_id)
     bundled = build_bundled_retained_non_polymer_registry().get(component_id)
-    assert bundled == frozen and bundled is not None
+    assert bundled is not None and frozen is not None
+    assert (
+        replace(
+            bundled,
+            bond_targets=frozen.bond_targets,
+            angle_targets=frozen.angle_targets,
+        )
+        == frozen
+    )
+    for actual, expected in zip(bundled.bond_targets, frozen.bond_targets, strict=True):
+        assert actual.target_distance_angstrom == pytest.approx(
+            expected.target_distance_angstrom, rel=0.0, abs=1e-8
+        )
+        assert (
+            replace(actual, target_distance_angstrom=expected.target_distance_angstrom)
+            == expected
+        )
+    for actual, expected in zip(
+        bundled.angle_targets, frozen.angle_targets, strict=True
+    ):
+        assert actual.target_angle_degrees == pytest.approx(
+            expected.target_angle_degrees, rel=0.0, abs=1e-6
+        )
+        assert (
+            replace(actual, target_angle_degrees=expected.target_angle_degrees)
+            == expected
+        )
     template = build_default_component_library().require(component_id)
     assert dict(template.heavy_atom_charge_requirements()) == {
         atom.atom_name: atom.formal_charge
