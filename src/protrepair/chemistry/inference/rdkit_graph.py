@@ -1,5 +1,6 @@
 """RDKit graph declarations and independently observed pose stereochemistry."""
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 try:
@@ -7,7 +8,7 @@ try:
 except ImportError:  # pragma: no cover - exercised by availability checks
     Chem = None
 
-from protrepair.errors import RdkitUnavailableError
+from protrepair.errors import BondOrderConstraintError, RdkitUnavailableError
 
 if TYPE_CHECKING:
     from rdkit.Chem.rdchem import Mol
@@ -118,3 +119,127 @@ def molecule_with_pose_stereochemistry(molecule: "Mol") -> "Mol":
     chem.RemoveStereochemistry(observed)
     chem.AssignStereochemistryFrom3D(observed, replaceExistingTags=True)
     return observed
+
+
+def kekulized_molecule(
+    molecule: "Mol",
+    *,
+    bond_order_constraints: Mapping[tuple[int, int], int] | None = None,
+) -> "Mol":
+    """Copy a native graph with integral aromatic orders and retained flags.
+
+    Parameters
+    ----------
+    molecule : Mol
+        Resolved native chemistry, including any typed coordination bonds.
+    bond_order_constraints : Mapping[tuple[int, int], int] or None
+        Reported integral covalent orders keyed by native endpoint pairs.
+        Only aromatic single/double assignments may differ from the input.
+
+    Returns
+    -------
+    Mol
+        Defensive copy with a source-compatible Kekule form. Atom identities,
+        charges, H, stereochemistry and conformers are not modified. Coordination
+        remains typed; this operation does not infer a microstate or sanitize it.
+
+    Raises
+    ------
+    ValueError
+        The graph cannot be kekulized.
+    BondOrderConstraintError
+        Reported orders cannot preserve the resolved chemistry.
+    RdkitUnavailableError
+        RDKit is not operational.
+    """
+
+    chem = Chem
+    if chem is None:
+        raise RdkitUnavailableError("graph projection requires operational RDKit")
+
+    projected = chem.Mol(molecule)
+    try:
+        chem.Kekulize(projected, clearAromaticFlags=False)
+    except (ValueError, RuntimeError) as error:
+        raise ValueError("native graph has no compatible Kekule form") from error
+
+    if not bond_order_constraints:
+        return projected
+
+    constraints: dict[int, int] = {}
+    covalent_types = {
+        chem.BondType.SINGLE,
+        chem.BondType.DOUBLE,
+        chem.BondType.TRIPLE,
+        chem.BondType.QUADRUPLE,
+    }
+    for (first, second), order in bond_order_constraints.items():
+        if (
+            type(first) is not int
+            or type(second) is not int
+            or not 0 <= first < molecule.GetNumAtoms()
+            or not 0 <= second < molecule.GetNumAtoms()
+            or first == second
+            or type(order) is not int
+            or order not in (1, 2, 3, 4)
+        ):
+            raise BondOrderConstraintError("invalid native bond order constraint")
+        bond = projected.GetBondBetweenAtoms(first, second)
+        if bond is None or bond.HasQuery() or bond.GetBondType() not in covalent_types:
+            raise BondOrderConstraintError(
+                "bond order constraint lacks a resolved covalent edge"
+            )
+        index = bond.GetIdx()
+        if index in constraints and constraints[index] != order:
+            raise BondOrderConstraintError("conflicting native bond order constraints")
+        if bond.GetIsAromatic():
+            if order not in (1, 2):
+                raise BondOrderConstraintError(
+                    "aromatic order constraints must be single or double"
+                )
+        elif bond.GetBondTypeAsDouble() != order:
+            raise BondOrderConstraintError(
+                "bond order constraint conflicts with non-aromatic chemistry"
+            )
+        constraints[index] = order
+    if all(
+        projected.GetBondWithIdx(index).GetBondTypeAsDouble() == order
+        for index, order in constraints.items()
+    ):
+        return projected
+
+    constrained = chem.Mol(molecule)
+    for index, order in constraints.items():
+        bond = constrained.GetBondWithIdx(index)
+        if bond.GetIsAromatic():
+            bond.SetBondType(
+                chem.BondType.SINGLE if order == 1 else chem.BondType.DOUBLE
+            )
+            # RDKit only reassigns aromatic-flagged edges during kekulization.
+            bond.SetIsAromatic(False)
+    try:
+        chem.Kekulize(constrained, clearAromaticFlags=False)
+    except (ValueError, RuntimeError) as error:
+        raise BondOrderConstraintError(
+            "source orders have no compatible Kekule form"
+        ) from error
+    for before, after in zip(projected.GetBonds(), constrained.GetBonds(), strict=True):
+        after.SetIsAromatic(before.GetIsAromatic())
+    if any(
+        constrained.GetBondWithIdx(index).GetBondTypeAsDouble() != order
+        for index, order in constraints.items()
+    ) or _aromatic_order_sums(constrained) != _aromatic_order_sums(projected):
+        raise BondOrderConstraintError(
+            "source orders cannot preserve aromatic atom valence"
+        )
+    return constrained
+
+
+def _aromatic_order_sums(molecule: "Mol") -> tuple[float, ...]:
+    sums = [0.0] * molecule.GetNumAtoms()
+    for bond in molecule.GetBonds():
+        if bond.GetIsAromatic():
+            order = bond.GetBondTypeAsDouble()
+            sums[bond.GetBeginAtomIdx()] += order
+            sums[bond.GetEndAtomIdx()] += order
+    return tuple(sums)
