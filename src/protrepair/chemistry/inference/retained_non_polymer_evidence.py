@@ -1,5 +1,6 @@
 """RDKit-backed inference for retained non-polymer chemistry evidence."""
 
+from dataclasses import replace
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -13,11 +14,17 @@ from protrepair.chemistry.inference.rdkit_graph import (
     has_declared_stereochemistry,
     require_compatible_pose_stereochemistry,
 )
+from protrepair.chemistry.retained_non_polymer.covalent_context import (
+    RetainedCovalentContext,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
 from protrepair.errors import RdkitUnavailableError
+from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.disulfide import disulfide_atom_ref_pair
 from protrepair.structure.geometry import ResidueGeometry
+from protrepair.structure.labels import AtomRef
 
 if TYPE_CHECKING:
     from rdkit.Chem.rdchem import Mol
@@ -85,6 +92,102 @@ def require_retained_non_polymer_evidence_stereochemistry(
     template.RemoveAllConformers()
     template.AddConformer(conformer, assignId=True)
     require_compatible_pose_stereochemistry(template)
+
+
+def retained_non_polymer_evidence_external_bonds(
+    evidence: RetainedNonPolymerChemistryEvidence,
+    structure: ProteinStructure,
+) -> tuple[tuple[AtomRef, AtomRef], ...]:
+    """Admit isolated evidence or a terminal thiol bound in a canonical disulfide.
+
+    Parameters
+    ----------
+    evidence : RetainedNonPolymerChemistryEvidence
+        Residue-local precursor SMILES with an ordered heavy-atom mapping.
+    structure : ProteinStructure
+        Current canonical graph, including source charges and external attachments.
+
+    Returns
+    -------
+    tuple[tuple[AtomRef, AtomRef], ...]
+        Stable endpoint pairs whose binding consumes a generated precursor thiol H.
+        Empty for isolated evidence. Other coupled-reaction chemistry is unsupported.
+
+    Raises
+    ------
+    ValueError
+        An attachment, sulfur charge, precursor or mapping is incompatible with the
+        single neutral-thiol disulfide grammar.
+    RdkitUnavailableError
+        RDKit is not operational when the precursor must be inspected.
+    """
+    context = RetainedCovalentContext(structure, evidence.residue_id)
+    if not context.attachments:
+        return ()
+    if len(context.attachments) != 1:
+        raise ValueError(
+            "selected chemistry cannot represent multiple external attachments"
+        )
+
+    bond, inside, outside = context.attachments[0]
+    pair = disulfide_atom_ref_pair(structure.constitution, bond)
+    if pair is None:
+        raise ValueError(
+            "selected chemistry cannot represent external "
+            f"{bond.relationship_type.value} relationship "
+            f"{inside.display_token()}--{outside.display_token()}"
+        )
+    if bond.order not in {None, 1} or bond.aromatic:
+        raise ValueError("disulfide evidence requires a non-aromatic single attachment")
+    bond.with_resolved_chemistry(replace(bond, order=1))
+
+    for endpoint in (inside, outside):
+        index = structure.constitution.atom_index(endpoint)
+        if structure.constitution.atom_site_at(index).element != "S":
+            raise ValueError("disulfide evidence requires sulfur at both SG endpoints")
+        if structure.topology.formal_charge(index) not in {None, 0}:
+            raise ValueError("disulfide evidence conflicts with a source sulfur charge")
+    partner_context = RetainedCovalentContext(structure, outside.residue_id)
+    if any(
+        partner_inside == outside
+        and frozenset((partner_inside, partner_outside)) != frozenset(pair)
+        for _, partner_inside, partner_outside in partner_context.attachments
+    ):
+        raise ValueError("disulfide evidence requires one attachment per sulfur")
+
+    if Chem is None:
+        raise RdkitUnavailableError(
+            "disulfide evidence requires an operational RDKit installation"
+        )
+    template = template_without_hydrogens(evidence.smiles)
+    names = _evidence_heavy_atom_names_by_index(
+        template, heavy_atom_names=evidence.heavy_atom_names
+    )
+    sulfur_index = next(
+        (index for index, name in names.items() if name == inside.atom_name), None
+    )
+    if sulfur_index is None:
+        raise ValueError("disulfide evidence must map the attached SG atom")
+    sulfur = template.GetAtomWithIdx(sulfur_index)
+    neighbors = tuple(sulfur.GetNeighbors())
+    if (
+        len(Chem.GetMolFrags(template)) != 1
+        or sulfur.GetAtomicNum() != 16
+        or sulfur.GetFormalCharge() != 0
+        or sulfur.GetNumRadicalElectrons() != 0
+        or sulfur.GetIsAromatic()
+        or sulfur.GetTotalNumHs() != 1
+        or len(neighbors) != 1
+        or neighbors[0].GetAtomicNum() != 6
+        or any(bond.GetBondTypeAsDouble() != 1.0 for bond in sulfur.GetBonds())
+    ):
+        raise ValueError(
+            "disulfide evidence requires a neutral closed-shell terminal thiol"
+        )
+
+    admitted = (pair,)
+    context.require_admitted(admitted)
+    return admitted
 
 
 def retained_non_polymer_evidence_heavy_atom_elements(

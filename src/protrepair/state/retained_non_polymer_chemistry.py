@@ -16,6 +16,7 @@ from protrepair.chemistry.component.topology import (
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     require_retained_non_polymer_evidence_stereochemistry,
     retained_non_polymer_evidence_expected_hydrogen_atom_names,
+    retained_non_polymer_evidence_external_bonds,
     retained_non_polymer_evidence_formal_charge_requirements,
     retained_non_polymer_evidence_heavy_atom_elements,
     retained_non_polymer_evidence_heavy_bond_definitions,
@@ -25,13 +26,19 @@ from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
     preferred_retained_non_polymer_expected_hydrogen_atom_names,
 )
+from protrepair.chemistry.retained_non_polymer.covalent_context import (
+    RetainedCovalentContext,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
+)
+from protrepair.chemistry.retained_non_polymer.template_binding import (
+    RetainedTemplateBinding,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import BondRelationshipType
 
 
@@ -59,10 +66,43 @@ class RetainedNonPolymerChemistryResolution:
     hydrogen_bond_definitions: tuple[BondDefinition, ...] = ()
     heavy_atom_elements: tuple[str, ...] = ()
     formal_charge_requirements: tuple[tuple[str, int], ...] = ()
+    external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     failure_reason: str = ""
     rdkit_backend_version: str | None = None
     hydrogen_name_projection_candidate_count: int = 0
     hydrogen_name_projection_candidate_limit: int = 0
+
+    def has_external_bond_topology(self, structure: ProteinStructure) -> bool:
+        """Check that admitted external chemistry has been realized.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Current canonical graph, observed without modification.
+
+        Returns
+        -------
+        bool
+            Whether every required attachment is covalent-like, single and
+            non-aromatic. A deposited LINK without order is insufficient.
+        """
+        for first, second in self.external_bonds:
+            indices = tuple(
+                structure.constitution.resolve_atom_index(ref)
+                for ref in (first, second)
+            )
+            if indices[0] is None or indices[1] is None:
+                return False
+            bond = structure.topology.bond_between(indices[0], indices[1])
+            if (
+                bond is None
+                or bond.relationship_type
+                not in (BondRelationshipType.COVALENT, BondRelationshipType.DISULFIDE)
+                or bond.order != 1
+                or bond.aromatic
+            ):
+                return False
+        return True
 
     def has_formal_charge_topology(
         self, structure: ProteinStructure, residue: ResidueSite
@@ -205,6 +245,7 @@ class RetainedNonPolymerChemistryResolution:
             or self.hydrogen_bond_definitions
             or self.heavy_atom_elements
             or self.formal_charge_requirements
+            or self.external_bonds
         ):
             raise ValueError(
                 "unresolved retained non-polymer chemistry must not carry "
@@ -340,6 +381,9 @@ def _resolve_retained_non_polymer_chemistry_source(
     )
     if evidence is not None:
         try:
+            external_bonds = retained_non_polymer_evidence_external_bonds(
+                evidence, structure
+            )
             require_retained_non_polymer_evidence_stereochemistry(
                 evidence,
                 residue_geometry,
@@ -380,10 +424,21 @@ def _resolve_retained_non_polymer_chemistry_source(
             hydrogen_bond_definitions=hydrogen_bond_definitions,
             heavy_atom_elements=heavy_atom_elements,
             formal_charge_requirements=charge_requirements,
+            external_bonds=external_bonds,
         )
 
     template = component_library.get(residue.component_id)
     if template is not None and template.can_add_hydrogens():
+        try:
+            binding = RetainedTemplateBinding(
+                structure, residue, template, component_library
+            )
+        except ValueError as error:
+            return RetainedNonPolymerChemistryResolution(
+                source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
+                failure_reason=str(error),
+            )
+        template = binding.template
         expected_hydrogen_atom_names = _preferred_expected_hydrogen_atom_names(
             expected_hydrogen_atom_names=(
                 _materializable_retained_non_polymer_template_hydrogen_atom_names(
@@ -407,6 +462,7 @@ def _resolve_retained_non_polymer_chemistry_source(
                 ),
             ),
             formal_charge_requirements=template.heavy_atom_charge_requirements(),
+            external_bonds=binding.external_bonds,
         )
 
     if not allow_rdkit_fallback:
@@ -416,6 +472,7 @@ def _resolve_retained_non_polymer_chemistry_source(
         )
 
     try:
+        RetainedCovalentContext(structure, residue.residue_id).require_admitted()
         fallback_inference_result = infer_retained_non_polymer_rdkit_fallback(
             residue,
             residue_geometry,

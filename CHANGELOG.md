@@ -4,6 +4,10 @@
 
 ### Changed
 
+- require selected chemistry to explain external covalent-like and untyped
+  attachments before retained H/topology preparation. Unsupported connected
+  components, including glycans without a contextual model, remain unchanged
+  with diagnostics rather than receiving an isolated H inventory
 - include sulfate chemistry in the retained-component bundle, using the common
   template preparation path
 - use local polar contacts by default to choose between source-compatible
@@ -20,6 +24,13 @@
 
 ### Fixed
 
+- reuse a topology-local inter-residue bond index instead of scanning the whole
+  graph for each retained component's connection checks
+- reserve acyl-cap diagnostics for carbonyl C--polymer backbone N candidates;
+  other unsupported aldehyde attachments receive the common relationship diagnostic
+- bind deposited neutral carbonyl C--polymer N caps through shared contextual
+  chemistry, publishing the single bond before polymer N preparation while
+  preserving source atoms, H/D/T, charges and link metadata
 - preserve tetrahedral stereochemistry during RDKit retained-ligand H placement
   by correcting only newly generated H, without moving original atoms; reject
   confirmed pose conflicts with mapped SMILES in preparation and readiness
@@ -176,6 +187,8 @@
 
 ### Added
 
+- bundle standalone SAN and CMP chemistry and the complete isolated ACE
+  dictionary, without adding component-ID-specific preparation branches
 - export prepared canonical structures directly to a sanitized RDKit molecule,
   keeping explicit H/D/T, assigned charges, typed coordination and full-precision
   coordinates without PDB parsing. Refuse unresolved or reinterpreted chemistry;

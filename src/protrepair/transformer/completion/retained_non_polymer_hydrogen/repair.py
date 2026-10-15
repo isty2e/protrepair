@@ -18,14 +18,21 @@ from protrepair.chemistry.component.topology import (
 )
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     require_retained_non_polymer_evidence_stereochemistry,
+    retained_non_polymer_evidence_external_bonds,
     retained_non_polymer_evidence_formal_charge_requirements,
 )
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
 )
+from protrepair.chemistry.retained_non_polymer.covalent_context import (
+    RetainedCovalentContext,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
     evidence_by_residue_id,
+)
+from protrepair.chemistry.retained_non_polymer.template_binding import (
+    RetainedTemplateBinding,
 )
 from protrepair.diagnostics.chemistry_contradictions import (
     diagnose_retained_non_polymer_template_chemistry_contradictions,
@@ -108,6 +115,7 @@ class _RetainedNonPolymerTopologyPlan:
     bond_definitions: tuple[BondDefinition, ...]
     provenance: BondProvenance
     formal_charge_requirements: tuple[tuple[str, int], ...] = ()
+    external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
 
     def requires_unlinked_scaffold(self, heavy_atom_names: Collection[str]) -> bool:
         """An admitted zero-H graph cannot acquire extra covalent bonds."""
@@ -298,6 +306,30 @@ def _execute_retained_non_polymer_hydrogen_stage(
             )
         )
         try:
+            template_binding = None
+            evidence_external_bonds = ()
+            evidence = chemistry_evidence_by_residue_id.get(ligand.residue_id)
+            template = component_library.get(ligand.component_id)
+            try:
+                if evidence is not None:
+                    evidence_external_bonds = (
+                        retained_non_polymer_evidence_external_bonds(
+                            evidence, structure
+                        )
+                    )
+                elif template is not None:
+                    template_binding = RetainedTemplateBinding(
+                        structure, ligand, template, component_library
+                    )
+                else:
+                    RetainedCovalentContext(
+                        structure, ligand.residue_id
+                    ).require_admitted()
+            except (ValueError, RuntimeError) as error:
+                issues.append(
+                    _retained_chemistry_conflict_issue(ligand, ValueError(str(error)))
+                )
+                continue
             result = _hydrogenate_retained_non_polymer_payload(
                 source_payload.without_atom_sites(_hydrogen_atom_names(source_payload)),
                 component_library=component_library,
@@ -313,6 +345,8 @@ def _execute_retained_non_polymer_hydrogen_stage(
                 allow_retained_non_polymer_rdkit_fallback=(
                     allow_retained_non_polymer_rdkit_fallback
                 ),
+                template_binding=template_binding,
+                evidence_external_bonds=evidence_external_bonds,
             )
         except _SourceHydrogenReconciliationError as error:
             issues.append(
@@ -537,6 +571,8 @@ def _hydrogenate_retained_non_polymer_payload(
     source_explicit_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
     is_disulfide_bonded: bool,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
+    template_binding: RetainedTemplateBinding | None = None,
+    evidence_external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = (),
 ) -> _RetainedNonPolymerHydrogenPayloadResult:
     """Hydrogenate one retained non-polymer residue when supported."""
 
@@ -631,10 +667,15 @@ def _hydrogenate_retained_non_polymer_payload(
                 formal_charge_requirements=retained_non_polymer_evidence_formal_charge_requirements(
                     chemistry_evidence
                 ),
+                external_bonds=evidence_external_bonds,
             ),
         )
 
-    template = component_library.get(payload.component_id)
+    template = (
+        component_library.get(payload.component_id)
+        if template_binding is None
+        else template_binding.template
+    )
     if template is not None:
         if not template.has_compatible_heavy_scaffold(payload.residue_site):
             return _RetainedNonPolymerHydrogenPayloadResult(
@@ -755,6 +796,19 @@ def _hydrogenate_retained_non_polymer_payload(
                     f"(missing {', '.join(missing_heavy_atom_names)}) failed: {error}",
                     atom_names=error.atom_names,
                 ) from error
+            if (
+                template_binding is not None
+                and template_binding.external_bonds
+                and source_payload is not None
+            ):
+                unpreserved_names = reconciliation.unpreserved_source_hydrogen_names(
+                    source_payload
+                )
+                if unpreserved_names:
+                    raise _SourceHydrogenReconciliationError(
+                        "linked template cannot preserve all source hydrogens",
+                        atom_names=unpreserved_names,
+                    )
             if missing_heavy_atom_names and source_payload is not None:
                 unpreserved_names = reconciliation.unpreserved_source_hydrogen_names(
                     source_payload
@@ -819,6 +873,9 @@ def _hydrogenate_retained_non_polymer_payload(
                     ),
                     provenance=BondProvenance.TEMPLATE_RESOLVED,
                     formal_charge_requirements=charge_requirements,
+                    external_bonds=()
+                    if template_binding is None
+                    else template_binding.external_bonds,
                 ),
             )
 
@@ -1410,6 +1467,22 @@ def _retained_non_polymer_topology_bonds_for_plan(
             )
         )
 
+    for first, second in plan.external_bonds:
+        first_index, second_index = (
+            structure.constitution.atom_index(ref) for ref in (first, second)
+        )
+        current = structure.topology.bond_between(first_index, second_index)
+        bonds.append(
+            TopologyBond(
+                first_index,
+                second_index,
+                order=1,
+                relationship_type=BondRelationshipType.COVALENT
+                if current is None
+                else current.relationship_type,
+                provenance=plan.provenance,
+            )
+        )
     return tuple(bonds)
 
 
@@ -1469,6 +1542,9 @@ def _require_compatible_topology_plan(
     *,
     existing_bonds: tuple[TopologyBond, ...],
 ) -> None:
+    RetainedCovalentContext(structure, plan.residue_id).require_admitted(
+        plan.external_bonds
+    )
     residue_index = structure.constitution.residue_index(plan.residue_id)
     _require_compatible_formal_charges(
         dict(structure.residue_formal_charge_by_atom_name(residue_index)),
@@ -1487,6 +1563,17 @@ def _require_compatible_topology_plan(
             structure.constitution.atom_ref_at(index) for index in bond.endpoint_pair()
         )
         external = any(ref.residue_id != plan.residue_id for ref in references)
+        if external and any(
+            frozenset(references) == frozenset(pair) for pair in plan.external_bonds
+        ):
+            bond.with_resolved_chemistry(
+                TopologyBond(
+                    *bond.endpoint_pair(),
+                    order=1,
+                    relationship_type=bond.relationship_type,
+                    provenance=plan.provenance,
+                )
+            )
         if (
             external
             and requires_unlinked_scaffold
@@ -1593,10 +1680,11 @@ def _topology_plan_for_bond_definitions(
     bond_definitions: tuple[BondDefinition, ...],
     provenance: BondProvenance,
     formal_charge_requirements: tuple[tuple[str, int], ...] = (),
+    external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = (),
 ) -> _RetainedNonPolymerTopologyPlan | None:
     """Return retained ligand topology plan for validated bond definitions."""
 
-    if not bond_definitions and not formal_charge_requirements:
+    if not bond_definitions and not formal_charge_requirements and not external_bonds:
         return None
 
     return _RetainedNonPolymerTopologyPlan(
@@ -1604,6 +1692,7 @@ def _topology_plan_for_bond_definitions(
         bond_definitions=bond_definitions,
         provenance=provenance,
         formal_charge_requirements=formal_charge_requirements,
+        external_bonds=external_bonds,
     )
 
 

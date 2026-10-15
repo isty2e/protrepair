@@ -757,3 +757,167 @@ class TestProteinStructureTopologyBondRewrites:
             (AtomIndex(0), AtomIndex(1)),
             (AtomIndex(1), AtomIndex(2)),
         )
+
+
+class TestInterResidueBondQueries:
+    @pytest.mark.parametrize("relationship", tuple(BondRelationshipType))
+    @pytest.mark.parametrize("provenance", tuple(BondProvenance))
+    def test_preserves_all_relationships_origins_and_canonical_order(
+        self, relationship, provenance
+    ):
+        constitution = _two_residue_constitution().constitution
+        first = TopologyBond(
+            AtomIndex(0),
+            AtomIndex(2),
+            relationship_type=relationship,
+            provenance=provenance,
+            source_metadata=(
+                SourceBondMetadata(
+                    record_type=SourceBondRecordType.PDB_LINK, source_id="first"
+                )
+                if provenance is BondProvenance.SOURCE_EXPLICIT
+                else None
+            ),
+        )
+        second = TopologyBond(AtomIndex(1), AtomIndex(3))
+        local = TopologyBond(
+            AtomIndex(0),
+            AtomIndex(1),
+            relationship_type=relationship,
+            provenance=provenance,
+        )
+        topology = StructureTopology(
+            constitution=constitution,
+            atom_topologies=(None,) * 4,
+            bonds=(second, local, first),
+        )
+        equivalent = StructureTopology(
+            constitution=constitution,
+            atom_topologies=topology.atom_topologies,
+            bonds=topology.bonds,
+        )
+        original_hash = hash(topology)
+        original_repr = repr(topology)
+
+        for index in (ResidueIndex(0), ResidueIndex(1), ResidueIndex(0)):
+            observed = topology.inter_residue_bonds_for_residue(
+                constitution=constitution, residue_index=index
+            )
+            assert observed == (first, second)
+        assert topology == equivalent
+        assert hash(topology) == original_hash
+        assert repr(topology) == original_repr
+        restored = pickle.loads(pickle.dumps(topology))
+        assert restored == topology
+        assert restored.inter_residue_bonds_for_residue(
+            constitution=constitution, residue_index=ResidueIndex(0)
+        ) == (first, second)
+        equal_constitution = type(constitution)(
+            chains=constitution.chains, ligands=constitution.ligands
+        )
+        assert (
+            equal_constitution.address_space_key is not constitution.address_space_key
+        )
+        assert topology.inter_residue_bonds_for_residue(
+            constitution=equal_constitution, residue_index=ResidueIndex(0)
+        ) == (first, second)
+
+    def test_empty_graph_has_no_inter_residue_relationships(self):
+        constitution = _two_residue_constitution().constitution
+        topology = StructureTopology.empty(constitution=constitution)
+        for index in (ResidueIndex(1), ResidueIndex(0)):
+            assert (
+                topology.inter_residue_bonds_for_residue(
+                    constitution=constitution, residue_index=index
+                )
+                == ()
+            )
+
+    @pytest.mark.parametrize("warm", (False, True))
+    def test_rejects_an_unaligned_constitution_before_or_after_query(self, warm):
+        source = _bonded_rewrite_structure()
+        if warm:
+            source.topology.inter_residue_bonds_for_residue(
+                constitution=source.constitution, residue_index=ResidueIndex(0)
+            )
+        with pytest.raises(ModelInvariantError, match="matching constitution"):
+            source.topology.inter_residue_bonds_for_residue(
+                constitution=_two_residue_constitution().constitution,
+                residue_index=ResidueIndex(0),
+            )
+
+    def test_geometry_change_preserves_graph_query(self):
+        source = _bonded_rewrite_structure()
+        original = source.topology.inter_residue_bonds_for_residue(
+            constitution=source.constitution, residue_index=ResidueIndex(0)
+        )
+        geometry = source.residue_geometry(ResidueIndex(0))
+        moved = source.with_updated_residue_geometries(
+            (
+                (
+                    _residue_id("A", 1),
+                    geometry.with_atom_geometry(
+                        "N", geometry.atom_geometry("N").with_position(Vec3(9, 8, 7))
+                    ),
+                ),
+            )
+        )
+        assert moved.geometry != source.geometry
+        assert (
+            moved.topology.inter_residue_bonds_for_residue(
+                constitution=moved.constitution, residue_index=ResidueIndex(0)
+            )
+            == original
+        )
+
+    def test_new_graph_in_same_address_space_does_not_reuse_old_relationships(self):
+        source = _bonded_rewrite_structure()
+        original = source.topology.inter_residue_bonds_for_residue(
+            constitution=source.constitution, residue_index=ResidueIndex(1)
+        )
+        replacement = StructureTopology(
+            constitution=source.constitution,
+            atom_topologies=source.topology.atom_topologies,
+            bonds=(source.topology.bonds[-1],),
+        )
+        assert replacement.inter_residue_bonds_for_residue(
+            constitution=source.constitution, residue_index=ResidueIndex(1)
+        ) == (source.topology.bonds[-1],)
+        assert (
+            source.topology.inter_residue_bonds_for_residue(
+                constitution=source.constitution, residue_index=ResidueIndex(1)
+            )
+            == original
+        )
+
+    @pytest.mark.parametrize("rewrite", ("hydrogens", "ligands", "chains"))
+    def test_topology_rewrites_cannot_reuse_old_residue_addresses(self, rewrite):
+        source = _bonded_rewrite_structure()
+        for index in range(len(source.constitution.residue_slots)):
+            source.topology.inter_residue_bonds_for_residue(
+                constitution=source.constitution, residue_index=ResidueIndex(index)
+            )
+        if rewrite == "hydrogens":
+            updated = source.without_hydrogens()
+        elif rewrite == "ligands":
+            updated = source.with_ligand_facets(ligand_sites=(), ligand_geometries=())
+        else:
+            updated = source.select_chains(("B",))
+
+        for index, residue in enumerate(updated.constitution.residue_slots):
+            expected = tuple(
+                bond
+                for bond in updated.topology.bonds
+                if sum(
+                    updated.constitution.atom_ref_at(endpoint).residue_id
+                    == residue.residue_id
+                    for endpoint in bond.endpoint_pair()
+                )
+                == 1
+            )
+            assert (
+                updated.topology.inter_residue_bonds_for_residue(
+                    constitution=updated.constitution, residue_index=ResidueIndex(index)
+                )
+                == expected
+            )

@@ -649,9 +649,11 @@ def test_external_relationship_is_preserved_without_becoming_a_local_h_anchor(
         BondRelationshipType.COVALENT,
         BondRelationshipType.DISULFIDE,
     }
-    assert fact.requires_topology_resolution() == (
-        covalent_attachment or not resolved_local
-    )
+    if covalent_attachment:
+        assert "external" in fact.chemistry_failure_reason
+        assert not fact.requires_topology_resolution()
+    else:
+        assert fact.requires_topology_resolution() is not resolved_local
     result = resolve_retained_non_polymer_topology(
         source, ComponentLibrary({}), target_residue_ids=frozenset((LIGAND_ID,))
     )

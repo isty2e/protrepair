@@ -18,6 +18,9 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateResolution,
     MicrostateResolutionStatus,
 )
+from protrepair.chemistry.retained_non_polymer.template_binding import (
+    is_resolved_acyl_amide_link,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -236,8 +239,7 @@ class PolymerMicrostateContext:
                     and partner.atom_name == partner_name
                     and constitution.atom_site_at(other).element == partner_name
                     and constitution.atom_site_at(index).element == name
-                    and constitution.residue_index(partner.residue_id).value
-                    < polymer_count
+                    and self._is_supported_peptide_partner(index, other, kind)
                 ):
                     linkage = PeptideLinkage.LINKED
             elif not external and assume_free_chain_ends:
@@ -250,6 +252,19 @@ class PolymerMicrostateContext:
                     assumed = True
         return PolymerMicrostateSite(
             template, kind, linkage, free_terminal_assumption=assumed
+        )
+
+    def _is_supported_peptide_partner(
+        self, index: AtomIndex, other: AtomIndex, kind: PolymerChemicalSite
+    ) -> bool:
+        constitution = self.source.constitution
+        partner = constitution.atom_ref_at(other)
+        polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
+        return constitution.residue_index(partner.residue_id).value < polymer_count or (
+            kind is PolymerChemicalSite.BACKBONE_N
+            and is_resolved_acyl_amide_link(
+                self.source, partner, constitution.atom_ref_at(index)
+            )
         )
 
     def hydrogen_attachments(
@@ -383,8 +398,7 @@ class PolymerMicrostateContext:
                         and (atom.name, other_atom.name) == expected_names
                         and other_atom.element == expected_names[1]
                         and bond.order == 1
-                        and constitution.residue_index(other_ref.residue_id).value
-                        < len(constitution.residue_slots) - len(constitution.ligands)
+                        and self._is_supported_peptide_partner(index, other, site.kind)
                     )
                     external_partners.add(other_ref)
                 if not allowed or bond.order is None or len(external_partners) > 1:
