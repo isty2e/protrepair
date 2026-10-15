@@ -13,7 +13,7 @@ from protrepair.io import read_structure_string, write_structure_string
 from protrepair.scope import WholeStructureScope
 from protrepair.state import HydrogenCoverageState
 from protrepair.state.hydrogen_expectation import (
-    derive_structure_hydrogen_expectation_model,
+    StructureHydrogenExpectationModel,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef
@@ -71,7 +71,7 @@ def test_direct_hydrogenation_realizes_every_standard_site(prepared):
     targets = _targets(prepared)
     assert len(targets) == 290
     assert all(target.is_realized() for target in targets)
-    expectations = derive_structure_hydrogen_expectation_model(
+    expectations = StructureHydrogenExpectationModel(
         prepared, component_library=build_default_component_library()
     )
     for (

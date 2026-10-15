@@ -15,6 +15,11 @@
 
 ### Fixed
 
+- bind shared chemistry observations to the current structure, component library,
+  ligand evidence and fallback policy, so readiness and local refinement cannot
+  reuse hydrogen expectations from incompatible inputs
+- reject supplied residue scaffolds that differ from their context instead of
+  silently reporting facts for another atom inventory or component
 - use aliphatic LYS dictionary geometry for reconstructed CD-CE and CE-NZ
   bonds and the CD-CE-NZ angle, without changing the fallback torsions
 - preserve connected materialized atoms during partial standard-residue completion;

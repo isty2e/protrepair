@@ -9,6 +9,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
 from protrepair.scope import ResidueSetScope, WholeStructureScope
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.hydrogen_expectation import StructureHydrogenExpectationModel
 from protrepair.state.scoped import CarrierScopedState
 from protrepair.state.structure_axes import (
@@ -25,7 +26,6 @@ from protrepair.state.structure_boundary import (
 )
 from protrepair.state.structure_observation_rules import projection_chain_count
 from protrepair.state.structure_residue import (
-    ResidueProjectionFactRuntime,
     ResidueProjectionStateFacts,
 )
 from protrepair.structure.aggregate import ProteinStructure
@@ -246,6 +246,7 @@ class StructureProjectionStateFacts:
             ...,
         ] = (),
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
     ) -> "StructureProjectionStateFacts":
         """Derive scoped facts over a whole canonical structure.
 
@@ -258,7 +259,9 @@ class StructureProjectionStateFacts:
         retained_non_polymer_chemistry_evidence : tuple
             Explicit RetainedNonPolymerChemistryEvidence entries.
         hydrogen_expectation_model : StructureHydrogenExpectationModel or None
-            Reusable expectation model. Changed chemistry requires rebinding.
+            Expectations reused only when their complete inputs match.
+        allow_retained_non_polymer_rdkit_fallback : bool
+            Whether retained-component inference is permitted.
 
         Returns
         -------
@@ -276,6 +279,7 @@ class StructureProjectionStateFacts:
                 retained_non_polymer_chemistry_evidence
             ),
             hydrogen_expectation_model=hydrogen_expectation_model,
+            allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
         )
 
     @classmethod
@@ -291,6 +295,8 @@ class StructureProjectionStateFacts:
             ...,
         ] = (),
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
+        allow_retained_non_polymer_rdkit_fallback: bool = True,
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> "StructureProjectionStateFacts":
         """Derive facts for selected residues within their chemical context.
 
@@ -299,20 +305,35 @@ class StructureProjectionStateFacts:
         context_structure : ProteinStructure
             Complete context snapshot; selection does not create new chemical termini.
         residues : tuple[ResidueSite, ...]
-            Selected polymer residues from that context.
+            Selected polymer residues matching the context scaffolds;
+            equal-value copies are accepted.
         ligands : tuple[ResidueSite, ...]
-            Selected retained components.
+            Selected retained components matching the context scaffolds.
         component_library : ComponentLibrary or None
             Active definitions, or None for defaults.
         retained_non_polymer_chemistry_evidence : tuple
             Explicit RetainedNonPolymerChemistryEvidence entries.
         hydrogen_expectation_model : StructureHydrogenExpectationModel or None
-            Reusable expectation model. Changed chemistry requires rebinding.
+            Expectations reused only when their complete inputs match.
+        allow_retained_non_polymer_rdkit_fallback : bool
+            Whether retained-component inference is permitted.
+        chemistry_observation : StructureChemistryObservation or None
+            Shared observation requiring the exact context and interpretation inputs.
+            It owns expectations when supplied; the model argument is only a hint
+            for constructing a new observation.
 
         Returns
         -------
         StructureProjectionStateFacts
             Projected state with context-bound polymer site targets.
+
+        Raises
+        ------
+        KeyError
+            A selected residue identity is absent from the context.
+        ValueError
+            A scaffold differs from the context or the supplied observation has
+            different interpretation inputs.
         """
 
         projected_residue_ids = tuple(
@@ -333,6 +354,8 @@ class StructureProjectionStateFacts:
                 retained_non_polymer_chemistry_evidence
             ),
             hydrogen_expectation_model=hydrogen_expectation_model,
+            allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            chemistry_observation=chemistry_observation,
         )
 
     @classmethod
@@ -349,19 +372,35 @@ class StructureProjectionStateFacts:
             ...,
         ],
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None,
+        allow_retained_non_polymer_rdkit_fallback: bool,
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> "StructureProjectionStateFacts":
         """Derive scoped facts over one explicit projection and semantic scope."""
 
-        runtime = ResidueProjectionFactRuntime.from_context(
-            context_structure,
-            component_library=component_library,
-            retained_non_polymer_chemistry_evidence=(
-                retained_non_polymer_chemistry_evidence
-            ),
-            hydrogen_expectation_model=hydrogen_expectation_model,
-        )
+        observation = chemistry_observation
+        if observation is None:
+            observation = StructureChemistryObservation(
+                context_structure,
+                component_library=component_library,
+                retained_non_polymer_chemistry_evidence=(
+                    retained_non_polymer_chemistry_evidence
+                ),
+                hydrogen_expectation_model=hydrogen_expectation_model,
+                allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            )
+        else:
+            observation.require_context(
+                context_structure,
+                component_library=component_library,
+                retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+                allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            )
+
+        for residue in (*residues, *ligands):
+            observation.require_residue(residue)
+
         residue_facts = tuple(
-            runtime.derive_residue_facts(residue) for residue in residues
+            observation.residue_facts(residue.residue_id) for residue in residues
         )
         atom_count = sum(len(residue.atom_sites) for residue in (*residues, *ligands))
         hydrogen_atom_count = sum(
@@ -415,7 +454,7 @@ class StructureProjectionStateFacts:
                 target
                 for residue in residues
                 for target in (
-                    runtime.hydrogen_expectation_model.polymer_preparation.targets_for(
+                    observation.hydrogen_expectation_model.polymer_preparation.targets_for(
                         residue.residue_id
                     )
                 )

@@ -11,6 +11,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 )
 from protrepair.diagnostics import ValidationIssueKind
 from protrepair.errors import RefinementError
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
 )
@@ -94,12 +95,13 @@ def apply_repair_stage_local_refinement(
         )
 
     staged_result = result
+    observation: StructureChemistryObservation | None = None
     if (
         prerequisite_policy
         is RepairStageRefinementPrerequisitePolicy.STAGE_MISSING_PREREQUISITES
     ):
         try:
-            staged_result = _apply_local_refinement_prerequisites(
+            staged_result, observation = _apply_local_refinement_prerequisites(
                 result,
                 local_refinement=local_refinement,
                 component_library=component_library,
@@ -120,6 +122,13 @@ def apply_repair_stage_local_refinement(
             return staged_result
     snapshot = ProteinStructureSnapshot.from_structure(staged_result.structure)
     try:
+        if observation is None:
+            observation = StructureChemistryObservation(
+                staged_result.structure,
+                component_library=component_library,
+                allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+                retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+            )
         bound_execution = local_refinement.bind_execution(
             snapshot,
             component_library=component_library,
@@ -129,6 +138,7 @@ def apply_repair_stage_local_refinement(
             retained_non_polymer_chemistry_evidence=(
                 retained_non_polymer_chemistry_evidence
             ),
+            chemistry_observation=observation,
         )
     except (RefinementError, ValueError) as error:
         return _merge_rejected_refinement_outcome(
@@ -152,6 +162,7 @@ def apply_repair_stage_local_refinement(
                 retained_non_polymer_chemistry_evidence=(
                     retained_non_polymer_chemistry_evidence
                 ),
+                chemistry_observation=observation,
             )
         except RefinementError as error:
             if not _is_mmff_parameterization_failure(error):
@@ -184,6 +195,7 @@ def apply_repair_stage_local_refinement(
                     retained_non_polymer_chemistry_evidence=(
                         retained_non_polymer_chemistry_evidence
                     ),
+                    chemistry_observation=observation,
                 )
             except RefinementError as fallback_error:
                 return _merge_rejected_refinement_outcome(
@@ -206,6 +218,7 @@ def apply_repair_stage_local_refinement(
                 retained_non_polymer_chemistry_evidence=(
                     retained_non_polymer_chemistry_evidence
                 ),
+                chemistry_observation=observation,
             )
         except RefinementError as error:
             return _merge_rejected_refinement_outcome(
@@ -263,11 +276,18 @@ def _apply_local_refinement_prerequisites(
         RetainedNonPolymerChemistryEvidence,
         ...,
     ],
-) -> TransformationResult:
-    """Stage proposal-local completion prerequisites before one FF execution."""
+) -> tuple[TransformationResult, StructureChemistryObservation]:
+    """Return staged prerequisites and observations bound to the resulting carrier."""
 
     staged_result = result
+    observation = StructureChemistryObservation(
+        result.structure,
+        component_library=component_library,
+        allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+        retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+    )
     for _ in range(4):
+        observation = observation.for_structure(staged_result.structure)
         prerequisite_targets = _local_refinement_prerequisite_targets(
             staged_result.structure,
             local_refinement=local_refinement,
@@ -278,9 +298,10 @@ def _apply_local_refinement_prerequisites(
             retained_non_polymer_chemistry_evidence=(
                 retained_non_polymer_chemistry_evidence
             ),
+            chemistry_observation=observation,
         )
         if prerequisite_targets.is_empty():
-            return staged_result
+            return staged_result, observation
 
         if prerequisite_targets.heavy_residue_ids:
             from protrepair.transformer.completion.heavy.core import (
@@ -359,10 +380,10 @@ def _apply_local_refinement_prerequisites(
                 previous_staged_result,
                 staged_result,
             ):
-                return staged_result
+                return staged_result, observation.for_structure(staged_result.structure)
             continue
 
-    return staged_result
+    return staged_result, observation.for_structure(staged_result.structure)
 
 
 def _local_refinement_prerequisite_targets(
@@ -375,6 +396,7 @@ def _local_refinement_prerequisite_targets(
         RetainedNonPolymerChemistryEvidence,
         ...,
     ],
+    chemistry_observation: StructureChemistryObservation,
 ) -> _LocalRefinementPrerequisiteTargets:
     """Return local completion prerequisite targets for one local directive."""
 
@@ -392,6 +414,7 @@ def _local_refinement_prerequisite_targets(
         retained_non_polymer_chemistry_evidence=(
             retained_non_polymer_chemistry_evidence
         ),
+        chemistry_observation=chemistry_observation,
     )
     continuous_region_readiness_facts = (
         atom_scope_facts.continuous_region_readiness_facts

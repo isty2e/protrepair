@@ -7,6 +7,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
 from protrepair.diagnostics.events import ValidationIssue
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.completion.hydrogen.protonation import (
     HistidineProtonationRequest,
@@ -94,16 +95,21 @@ class WorkflowBranchEvaluator:
         if cached_entry is not None and cached_entry[0] is state.result:
             return cached_entry[1]
 
+        observation = StructureChemistryObservation(
+            state.result.structure, component_library=self.component_library
+        )
         requested_goal_report = evaluate_requested_goal_report(
             state.result.structure,
             requested_goals=self.requested_goals.goals,
             component_library=self.component_library,
             already_satisfied_requested_goals=(self.already_satisfied_requested_goals),
+            chemistry_observation=observation,
         )
         evaluation = self._evaluation_for_report(
             state.result,
             requested_goal_report=requested_goal_report,
             search_depth=search_depth,
+            chemistry_observation=observation,
         )
         self._evaluations_by_result_depth[cache_key] = (state.result, evaluation)
         return evaluation
@@ -140,6 +146,7 @@ class WorkflowBranchEvaluator:
         *,
         requested_goal_report: RequestedGoalReport,
         search_depth: int,
+        chemistry_observation: StructureChemistryObservation,
     ) -> WorkflowBranchEvaluation:
         """Pair one goal report with its policy-independent structure score."""
 
@@ -151,6 +158,7 @@ class WorkflowBranchEvaluator:
                 planning_context=self.planning_context,
                 component_library=self.component_library,
                 search_depth=search_depth,
+                chemistry_observation=chemistry_observation,
             ),
         )
 
@@ -182,6 +190,9 @@ class WorkflowBranchEvaluator:
                 ),
             )
         else:
+            observation = StructureChemistryObservation(
+                result.structure, component_library=self.component_library
+            )
             requested_goal_report = evaluate_requested_goal_report(
                 result.structure,
                 requested_goals=self.requested_goals.goals,
@@ -191,11 +202,13 @@ class WorkflowBranchEvaluator:
                 already_satisfied_requested_goals=(
                     self.already_satisfied_requested_goals
                 ),
+                chemistry_observation=observation,
             )
             evaluation = self._evaluation_for_report(
                 result,
                 requested_goal_report=requested_goal_report,
                 search_depth=node_id.value,
+                chemistry_observation=observation,
             )
 
         return evaluate_terminal_branch_outcome(

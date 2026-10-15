@@ -1,6 +1,8 @@
 """Tests for explicit local-refinement hookup after repair stages."""
 
+from dataclasses import replace
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 from tests.support.canonical_builders import (
@@ -12,8 +14,10 @@ from tests.support.canonical_builders import (
     build_bonded_structure as build_structure,
 )
 
+import protrepair.state.chemistry_observation as observation_module
 import protrepair.transformer.refinement.local_pipeline.candidates as local_candidates
 from protrepair.chemistry import (
+    ComponentLibrary,
     build_default_component_library,
     build_default_restraint_library,
 )
@@ -30,6 +34,10 @@ from protrepair.diagnostics.clashes import prepare_clash_detection_basis
 from protrepair.errors import RefinementError
 from protrepair.geometry import Vec3
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
+from protrepair.state.chemistry_observation import StructureChemistryObservation
+from protrepair.state.hydrogen_expectation import (
+    StructureHydrogenExpectationModel,
+)
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
     AtomRef,
@@ -76,6 +84,84 @@ except ImportError:  # pragma: no cover - required dependency import guard
     Chem = None
 
 RDKIT_AVAILABLE = Chem is not None
+
+
+def test_ready_repair_stage_shares_chemistry_across_all_refinement_phases():
+    source = build_backbone_structure(component_id="ALA", source_name="phase-reuse")
+    ready = add_hydrogens(repair_heavy_atoms(source).structure)
+    directive = RepairLocalRefinementDirective.from_residue_ids(
+        (ResidueId("A", 1),),
+        config=ContinuousRelaxationConfig(),
+        binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.UFF),
+    )
+    with patch.object(
+        observation_module,
+        "StructureHydrogenExpectationModel",
+        wraps=StructureHydrogenExpectationModel,
+    ) as derive:
+        result = apply_repair_stage_local_refinement(
+            ready,
+            local_refinement=directive,
+            component_library=build_default_component_library(),
+        )
+    assert derive.call_count == 1
+    assert any(
+        repair.kind is RepairEventKind.LOCAL_REFINEMENT_APPLIED
+        for repair in result.repairs
+    )
+    assert not any(
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
+    )
+
+
+@pytest.mark.parametrize("construction", ["factory", "direct"])
+@pytest.mark.parametrize("change", ["carrier", "library", "evidence", "policy"])
+def test_local_request_rejects_mismatched_observation(construction, change):
+    source = build_backbone_structure(component_id="ALA", source_name="request-binding")
+    ready = add_hydrogens(repair_heavy_atoms(source).structure).structure
+    library = build_default_component_library()
+    directive = RepairLocalRefinementDirective.from_residue_ids(
+        (ResidueId("A", 1),),
+        config=ContinuousRelaxationConfig(),
+        binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.UFF),
+    )
+    snapshot = ProteinStructureSnapshot.from_structure(ready)
+    bound = directive.bind_execution(snapshot, component_library=library)
+    context = ProteinTransformationContext(
+        source_snapshot=snapshot,
+        atom_input=bound.atom_input,
+    )
+    request = LocalRefinementRequest.from_context(
+        context,
+        spec=bound.binding_decision.settings,
+        component_library=library,
+        restraint_library=None,
+    )
+    mismatched = StructureChemistryObservation(
+        source if change == "carrier" else ready,
+        component_library=ComponentLibrary() if change == "library" else library,
+        retained_non_polymer_chemistry_evidence=(
+            RetainedNonPolymerChemistryOverride(
+                residue_id=ResidueId("L", 1),
+                smiles="CO",
+                heavy_atom_names=("C1", "O1"),
+            ).to_evidence(),
+        )
+        if change == "evidence"
+        else (),
+        allow_retained_non_polymer_rdkit_fallback=change != "policy",
+    )
+    with pytest.raises(ValueError, match="interpretation"):
+        if construction == "direct":
+            replace(request, chemistry_observation=mismatched)
+        else:
+            LocalRefinementRequest.from_context(
+                context,
+                spec=bound.binding_decision.settings,
+                component_library=library,
+                restraint_library=None,
+                chemistry_observation=mismatched,
+            )
 
 
 def test_repair_heavy_atoms_stages_prerequisites_for_explicit_local_refinement() -> (
@@ -133,7 +219,12 @@ def test_local_refinement_stage_stages_passive_context_hydrogens(
         component_library=None,
         allow_retained_non_polymer_rdkit_fallback=True,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation=None,
     ):
+        assert chemistry_observation is not None
+        assert (
+            chemistry_observation.context_structure is context.source_snapshot.structure
+        )
         del allow_retained_non_polymer_rdkit_fallback
         del retained_non_polymer_chemistry_evidence
         nonlocal refinement_call_count
@@ -221,7 +312,12 @@ def test_local_refinement_stage_respects_strict_passive_context_policy(
         component_library=None,
         allow_retained_non_polymer_rdkit_fallback=True,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation=None,
     ):
+        assert chemistry_observation is not None
+        assert (
+            chemistry_observation.context_structure is context.source_snapshot.structure
+        )
         del (
             context,
             spec,
@@ -300,7 +396,12 @@ def test_local_refinement_stage_threads_retained_ligand_evidence(
         component_library=None,
         allow_retained_non_polymer_rdkit_fallback=True,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation=None,
     ):
+        assert chemistry_observation is not None
+        assert (
+            chemistry_observation.context_structure is context.source_snapshot.structure
+        )
         del spec
         nonlocal refinement_call_count
         refinement_call_count += 1
@@ -357,8 +458,10 @@ def test_local_refinement_stage_threads_retained_ligand_evidence(
     )
 
 
+@pytest.mark.parametrize("move_ligand", [False, True])
 def test_refinement_candidate_threads_retained_ligand_policy_to_execution(
     monkeypatch: pytest.MonkeyPatch,
+    move_ligand: bool,
 ) -> None:
     """Execution must use the same retained-ligand policy as readiness binding."""
 
@@ -382,6 +485,8 @@ def test_refinement_candidate_threads_retained_ligand_policy_to_execution(
     readiness_evidence: list[tuple[RetainedNonPolymerChemistryEvidence, ...]] = []
     problem_policies: list[bool] = []
     problem_evidence: list[tuple[RetainedNonPolymerChemistryEvidence, ...]] = []
+    observed_chemistry: list[StructureChemistryObservation] = []
+    problem_resolution_maps = []
     sentinel_problem = cast(ContinuousRelaxationProblem, object())
 
     def fake_derive_atom_scope_facts(
@@ -391,11 +496,13 @@ def test_refinement_candidate_threads_retained_ligand_policy_to_execution(
             RetainedNonPolymerChemistryEvidence,
             ...,
         ] = (),
+        chemistry_observation,
         **kwargs,
     ) -> object:
         del args, kwargs
         readiness_policies.append(allow_retained_non_polymer_rdkit_fallback)
         readiness_evidence.append(retained_non_polymer_chemistry_evidence)
+        observed_chemistry.append(chemistry_observation)
         return object()
 
     def fake_require_atom_scope_execution(facts: object) -> None:
@@ -408,11 +515,15 @@ def test_refinement_candidate_threads_retained_ligand_policy_to_execution(
             RetainedNonPolymerChemistryEvidence,
             ...,
         ] = (),
+        retained_non_polymer_chemistry_resolution_by_residue_id,
         **kwargs,
     ) -> ContinuousRelaxationProblem:
         del args, kwargs
         problem_policies.append(allow_retained_non_polymer_rdkit_fallback)
         problem_evidence.append(retained_non_polymer_chemistry_evidence)
+        problem_resolution_maps.append(
+            retained_non_polymer_chemistry_resolution_by_residue_id
+        )
         return sentinel_problem
 
     class RecordingBackend:
@@ -482,9 +593,35 @@ def test_refinement_candidate_threads_retained_ligand_policy_to_execution(
         ),
         allow_retained_non_polymer_rdkit_fallback=False,
         retained_non_polymer_chemistry_evidence=retained_evidence,
+        chemistry_observation=StructureChemistryObservation(
+            structure,
+            component_library=component_library,
+            allow_retained_non_polymer_rdkit_fallback=False,
+            retained_non_polymer_chemistry_evidence=retained_evidence,
+        ),
     )
+    original_model = request.chemistry_observation.hydrogen_expectation_model
+    candidate_structure = structure
+    if move_ligand:
+        geometry = structure.residue_geometry(
+            structure.constitution.residue_index(ligand_residue_id)
+        )
+        candidate_structure = structure.with_updated_residue_geometries(
+            (
+                (
+                    ligand_residue_id,
+                    geometry.with_atom_geometry(
+                        "O1",
+                        replace(geometry.atom_geometry("O1"), position=Vec3(10, 0, 0)),
+                    ),
+                ),
+            )
+        )
     candidate = RefinementExecutionCandidate(
-        context=request.context,
+        context=ProteinTransformationContext.from_snapshot_atom_input(
+            ProteinStructureSnapshot.from_structure(candidate_structure),
+            request.context.atom_input,
+        ),
         lineage=RefinementCandidateLineage(),
         fallback_structure=structure,
     )
@@ -496,6 +633,26 @@ def test_refinement_candidate_threads_retained_ligand_policy_to_execution(
     assert problem_policies == [False]
     assert problem_evidence == [retained_evidence]
     assert backend.observed_problem is sentinel_problem
+    assert len(observed_chemistry) == 1
+    observation = observed_chemistry[0]
+    assert observation.context_structure is candidate_structure
+    observed_model = observation.hydrogen_expectation_model
+    assert (observed_model is original_model) is not move_ligand
+    assert (
+        problem_resolution_maps[0]
+        is observed_model.retained_non_polymer_resolution_by_residue_id
+    )
+    fresh = StructureChemistryObservation(
+        candidate_structure,
+        component_library=component_library,
+        retained_non_polymer_chemistry_evidence=retained_evidence,
+        allow_retained_non_polymer_rdkit_fallback=False,
+    )
+    fresh_model = fresh.hydrogen_expectation_model
+    assert (
+        problem_resolution_maps[0]
+        == fresh_model.retained_non_polymer_resolution_by_residue_id
+    )
 
 
 def test_add_hydrogens_can_run_explicit_local_refinement(
@@ -523,7 +680,12 @@ def test_add_hydrogens_can_run_explicit_local_refinement(
         component_library=None,
         allow_retained_non_polymer_rdkit_fallback=True,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation=None,
     ):
+        assert chemistry_observation is not None
+        assert (
+            chemistry_observation.context_structure is context.source_snapshot.structure
+        )
         del allow_retained_non_polymer_rdkit_fallback
         del retained_non_polymer_chemistry_evidence
         nonlocal refinement_call_count
@@ -613,7 +775,12 @@ def test_add_hydrogens_binds_recommended_mmff_at_execution_time(
         component_library=None,
         allow_retained_non_polymer_rdkit_fallback=True,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation=None,
     ):
+        assert chemistry_observation is not None
+        assert (
+            chemistry_observation.context_structure is context.source_snapshot.structure
+        )
         del allow_retained_non_polymer_rdkit_fallback
         del retained_non_polymer_chemistry_evidence
         nonlocal refinement_call_count
@@ -662,6 +829,7 @@ def test_add_hydrogens_retries_recommended_mmff_with_uff_on_parameterization_fai
         binding=RecommendedContinuousRelaxationBinding(),
     )
     attempted_force_fields: list[ContinuousRelaxationForceField] = []
+    observations: list[StructureChemistryObservation] = []
 
     def fake_refine_local_region(
         context: ProteinTransformationContext,
@@ -670,11 +838,17 @@ def test_add_hydrogens_retries_recommended_mmff_with_uff_on_parameterization_fai
         component_library=None,
         allow_retained_non_polymer_rdkit_fallback=True,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation=None,
     ):
+        assert chemistry_observation is not None
+        assert (
+            chemistry_observation.context_structure is context.source_snapshot.structure
+        )
         del allow_retained_non_polymer_rdkit_fallback
         del retained_non_polymer_chemistry_evidence
         assert component_library is not None
         attempted_force_fields.append(spec.force_field)
+        observations.append(chemistry_observation)
         if spec.force_field is ContinuousRelaxationForceField.MMFF:
             raise RefinementError(
                 "RDKit MMFF could not parameterize the selected "
@@ -702,6 +876,8 @@ def test_add_hydrogens_retries_recommended_mmff_with_uff_on_parameterization_fai
         ContinuousRelaxationForceField.MMFF,
         ContinuousRelaxationForceField.UFF,
     ]
+    assert len(observations) == 2
+    assert observations[0] is observations[1]
 
 
 def test_add_hydrogens_skips_recommended_refinement_when_mmff_and_uff_fail(
@@ -728,7 +904,12 @@ def test_add_hydrogens_skips_recommended_refinement_when_mmff_and_uff_fail(
         component_library=None,
         allow_retained_non_polymer_rdkit_fallback=True,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation=None,
     ):
+        assert chemistry_observation is not None
+        assert (
+            chemistry_observation.context_structure is context.source_snapshot.structure
+        )
         del context
         del allow_retained_non_polymer_rdkit_fallback
         del retained_non_polymer_chemistry_evidence

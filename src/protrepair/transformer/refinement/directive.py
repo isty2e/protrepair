@@ -7,6 +7,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
 from protrepair.scope import AtomSetScope, ResidueSetScope
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.domain import AtomScopeStateFacts
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
@@ -77,14 +78,11 @@ class RepairLocalRefinementDirective:
             )
         if not self.execution_scope_spec.is_residuewise():
             raise TypeError(
-                "repair local refinement execution_scope_spec must stay "
-                "residuewise"
+                "repair local refinement execution_scope_spec must stay residuewise"
             )
 
         semantic_residue_ids = set(self.scope_spec.referenced_residue_ids())
-        execution_residue_ids = set(
-            self.execution_scope_spec.referenced_residue_ids()
-        )
+        execution_residue_ids = set(self.execution_scope_spec.referenced_residue_ids())
         if not semantic_residue_ids <= execution_residue_ids:
             raise ValueError(
                 "repair local refinement execution_scope_spec must cover the "
@@ -165,8 +163,7 @@ class RepairLocalRefinementDirective:
             return residue_id in selected_scope.residue_ids
 
         return any(
-            atom_ref.residue_id == residue_id
-            for atom_ref in selected_scope.atom_refs
+            atom_ref.residue_id == residue_id for atom_ref in selected_scope.atom_refs
         )
 
     def single_focus_residue_id(self) -> ResidueId | None:
@@ -211,8 +208,35 @@ class RepairLocalRefinementDirective:
             RetainedNonPolymerChemistryEvidence,
             ...,
         ] = (),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> BoundRepairLocalRefinementExecution:
-        """Bind one legal current-state execution from this directive."""
+        """Bind one legal current-state execution from this directive.
+
+        Parameters
+        ----------
+        snapshot : ProteinStructureSnapshot
+            Current carrier after any prerequisite transformations.
+        component_library : ComponentLibrary or None
+            Active chemistry definitions, or defaults.
+        allow_retained_non_polymer_rdkit_fallback : bool
+            Whether retained-component inference is permitted.
+        retained_non_polymer_chemistry_evidence : tuple
+            Explicit retained-component evidence.
+        chemistry_observation : StructureChemistryObservation or None
+            Shared observations under these exact inputs, not prior readiness approval.
+
+        Returns
+        -------
+        BoundRepairLocalRefinementExecution
+            Selected atom domain, current readiness facts and binding decision.
+
+        Raises
+        ------
+        ValueError
+            The supplied observation has different inputs.
+        RefinementError
+            Current readiness does not permit execution.
+        """
 
         atom_input = self.resolve_atom_input(snapshot)
         active_component_library = (
@@ -232,6 +256,7 @@ class RepairLocalRefinementDirective:
             retained_non_polymer_chemistry_evidence=(
                 retained_non_polymer_chemistry_evidence
             ),
+            chemistry_observation=chemistry_observation,
         )
 
         require_atom_scope_continuous_relaxation_execution(atom_scope_facts)

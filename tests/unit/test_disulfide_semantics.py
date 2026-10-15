@@ -43,7 +43,7 @@ from protrepair.io import read_structure_string, write_structure_string
 from protrepair.scope import AtomSetScope
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state.hydrogen_expectation import (
-    derive_structure_hydrogen_expectation_model,
+    StructureHydrogenExpectationModel,
 )
 from protrepair.state.structure_topology import (
     DisulfideEndpointMultiplicityContradiction,
@@ -253,7 +253,7 @@ def test_hydrogen_expectation_consumes_topology_disulfide_semantics(
         distance_angstrom=2.0,
         relationship_type=relationship_type,
     )
-    model = derive_structure_hydrogen_expectation_model(
+    model = StructureHydrogenExpectationModel(
         structure,
         component_library=build_default_component_library(),
     )
@@ -271,7 +271,7 @@ def test_retained_cysteine_disulfide_uses_shared_hydrogen_semantics() -> None:
     structure = retained_cys_pair_structure(left_id, right_id)
     component_library = build_default_component_library()
 
-    expectation = derive_structure_hydrogen_expectation_model(
+    expectation = StructureHydrogenExpectationModel(
         structure,
         component_library=component_library,
     )
@@ -318,7 +318,7 @@ def test_retained_disulfide_excludes_sg_h_across_chemistry_sources(
     )
     component_library = ComponentLibrary(templates={})
 
-    expectation = derive_structure_hydrogen_expectation_model(
+    expectation = StructureHydrogenExpectationModel(
         structure,
         component_library=component_library,
         retained_non_polymer_chemistry_evidence=chemistry_evidence,
