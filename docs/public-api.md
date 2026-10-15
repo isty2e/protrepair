@@ -104,9 +104,82 @@ Import these functions from `protrepair.io`:
 | `read_structure_string(text, file_format)` | Normalize an in-memory coordinate block |
 | `write_structure(structure, path, file_format=None)` | Atomically write a canonical structure |
 | `write_structure_string(structure, file_format)` | Serialize to an in-memory coordinate block |
+| `to_rdkit_molecule(structure)` | Copy selected canonical chemistry into a sanitized RDKit molecule |
 
 Writers project canonical topology and residue roles. They do not maintain a
 separate writer-owned connectivity model.
+
+### Native RDKit Export
+
+`to_rdkit_molecule()` takes a prepared `ProteinStructure`, not a path or PDB
+block. It returns an independent mutable `rdkit.Chem.Mol` with a full-precision
+3D conformer. Atom indices match the structure's current `AtomIndex` values;
+residue identity, explicit H/D/T and assigned charges are copied. Editing the
+molecule does not update the structure.
+
+Typed coordination becomes donor-to-metal `DATIVE` when exactly one endpoint
+matches RDKit's M-atom metal grammar. Compatible aromatic representation may
+normalize; declared aromatic double bonds must admit a compatible Kekule form.
+This includes a complete alternating single/double ring with input aromatic
+flags set to false: RDKit may return aromatic bonds while the original orders
+and flags remain in the `protrepair_bond_order` and `protrepair_aromatic`
+properties. Exact native aromatic-flag equality is not required; the canonical
+structure is unchanged.
+Stereo is assigned from coordinates. Export does not prepare chemistry, add H,
+optimize geometry or establish force-field support.
+
+Unresolved bonds, unknown metal charge, ambiguous coordination, unselected
+H/radical chemistry and failed or chemistry-changing sanitation raise
+`protrepair.errors.RdkitProjectionError`, a `ProtrepairError`. Unknown nonmetal
+charge uses native zero with a knowledge flag; it is not assigned back to
+canonical topology or original observations.
+
+If the required RDKit runtime cannot be imported, the package and non-native
+I/O remain importable; calling this conversion raises
+`protrepair.errors.RdkitUnavailableError`.
+
+The following native properties retain distinctions absent from standard
+RDKit fields:
+
+| Property | Location | Meaning |
+| --- | --- | --- |
+| `protrepair_formal_charge_known` | Atom | Whether current canonical charge is assigned |
+| `protrepair_b_factor_known` | Atom | Whether the copied B factor is known; otherwise native temperature factor is zero |
+| `protrepair_source_element` | Atom | Source element symbol, including D/T aliases |
+| `protrepair_relationship_type` | Bond | Canonical chemical relationship |
+| `protrepair_bond_provenance` | Bond | Provenance of that relationship |
+| `protrepair_bond_order_known` | Bond | Whether canonical integral order is resolved |
+| `protrepair_bond_order` | Bond | Input integral order, present only when resolved |
+| `protrepair_aromatic` | Bond | Input aromatic flag before native normalization |
+| `protrepair_omitted_hydrogen_bonds` | Molecule | Number of omitted noncovalent hydrogen-bond interactions |
+
+Hydrogen-bond interactions are not chemical edges in this export. A known-charge
+flag describes current selected chemistry, not whether the original file
+reported that charge. Native export and PDB/mmCIF serialization remain separate
+operations; successful export does not guarantee equivalent PDB re-reading.
+
+`protrepair_formal_charge_known=False` means canonical topology has no assigned
+formal charge. This is common for neutral C and H; it is not a confidence score
+or a warning that the native zero is invalid. Successful export has checked
+that zero against the explicit graph and H inventory through RDKit sanitation
+and rejected unselected radical chemistry. These checks do not establish a
+unique or biologically correct protonation state.
+
+RDKit's default binary and pickle settings omit custom properties. Preserve
+these fields explicitly when creating a binary payload:
+
+```python
+from rdkit import Chem
+
+payload = molecule.ToBinary(Chem.PropertyPickleOptions.AllProps)
+restored = Chem.Mol(payload)
+```
+
+This selects properties for that payload without changing process-wide pickle
+defaults. Native atom-name metadata uses Gemmi's element-aware PDB padding, so
+protein `CA` and elemental calcium retain distinct alignments. Longer atom
+names remain intact in native metadata; the PDB writer's format limits still
+apply when a caller later writes a PDB block.
 
 ## Supported Facades
 
@@ -117,7 +190,7 @@ separate writer-owned connectivity model.
 | `protrepair.scope` | Semantic scopes and scope relations |
 | `protrepair.state` | Target state axes and observation read models |
 | `protrepair.analysis` | Analysis kinds and structured analysis results |
-| `protrepair.io` | PDB/mmCIF ingress and egress |
+| `protrepair.io` | PDB/mmCIF ingress and egress, and native RDKit export |
 | `protrepair.sources` | UniProt and AlphaFold source records, retrieval outcomes, and sequence projection |
 | `protrepair.structure` | Canonical structure, topology, provenance, and labels |
 | `protrepair.geometry` | Public geometric value objects and transforms |

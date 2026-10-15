@@ -37,8 +37,16 @@ class UnknownElementRadiusError(ProtrepairError, ValueError):
     """Raised when an element has no radius under the requested radius kind."""
 
 
+class BondOrderConstraintError(ProtrepairError, ValueError):
+    """Raised when reported orders cannot preserve resolved covalent chemistry."""
+
+
 class RdkitUnavailableError(ProtrepairError):
     """Raised when a required RDKit backend cannot be imported."""
+
+
+class RdkitProjectionError(ProtrepairError):
+    """Raised when canonical chemistry cannot be faithfully projected to RDKit."""
 
 
 class UnsupportedFileFormatError(ProtrepairError):

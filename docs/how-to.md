@@ -103,6 +103,33 @@ transform_requests = WorkflowTransformRequests(
 If retained-ligand hydrogen completion needs that fallback, the goal remains
 blocked and the result contains a structured issue explaining why.
 
+## Pass Prepared Chemistry To RDKit
+
+Use native export when downstream code needs the graph selected by ProtRepair,
+rather than bonds and charges inferred from a PDB block:
+
+```python
+from protrepair.io import to_rdkit_molecule
+
+molecule = to_rdkit_molecule(result.structure)
+```
+
+Request hydrogen completion and inspect the repair result first. Export copies
+the selected chemistry and full-precision coordinates; it does not fill missing
+atoms, select protonation states or optimize the structure. The returned
+molecule is independent of `result.structure`.
+
+Metal charges must already be assigned. Unknown nonmetal charge is represented
+as neutral with a flag marking it unknown. Unresolved or reinterpreted chemistry
+raises `RdkitProjectionError` rather than returning a repaired guess. See the
+[native export reference](public-api.md#native-rdkit-export) for the copied
+properties and refusal conditions.
+
+An unavailable RDKit runtime raises `RdkitUnavailableError` at conversion time,
+without preventing package imports or non-native I/O. If you serialize the
+returned molecule, use explicit RDKit property flags to keep its metadata;
+see [native export](public-api.md#native-rdkit-export) for a binary example.
+
 ## Request PRAS-Ratio Histidine Protonation
 
 Histidine protonation is opt-in. Supply an explicit request through the

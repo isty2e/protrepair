@@ -176,6 +176,10 @@
 
 ### Added
 
+- export prepared canonical structures directly to a sanitized RDKit molecule,
+  keeping explicit H/D/T, assigned charges, typed coordination and full-precision
+  coordinates without PDB parsing. Refuse unresolved or reinterpreted chemistry;
+  native representation does not imply force-field support
 - retain typed source coordination declarations to policy-excluded partners and
   report non-blocking omission warnings beside retained metals, without restoring
   excluded atoms or inferring metal chemistry
