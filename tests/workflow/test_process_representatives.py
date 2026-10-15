@@ -73,15 +73,68 @@ WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, frozenset[str]]] = {
 pytestmark = pytest.mark.workflow
 
 
+@pytest.fixture(scope="module")
+def protonated_1afc_result() -> ProcessResult:
+    """Share this exact workflow request among read-only result checks."""
+
+    case_id = "1afc-hydrogen-his-protonated"
+    return run_workflow_representative_case(
+        REPRESENTATIVE_CASES[case_id].input_path,
+        case_id,
+    )
+
+
+@pytest.fixture
+def representative_result(
+    case_id: str,
+    request: pytest.FixtureRequest,
+) -> ProcessResult:
+    # Resolve lazily: selecting another case must not run the 1AFC workflow.
+    if case_id == "1afc-hydrogen-his-protonated":
+        return request.getfixturevalue("protonated_1afc_result")
+
+    return run_workflow_representative_case(
+        REPRESENTATIVE_CASES[case_id].input_path,
+        case_id,
+    )
+
+
+@pytest.fixture(scope="module")
+def hydrogenated_2dn2_result() -> ProcessResult:
+    source = WHOLE_STRUCTURE_CORPUS_SOURCES["2dn2-whole-structure"]
+    return process_structure(
+        source.output_path,
+        ingress=ingress_options(ligand_policy=LigandPolicy.KEEP),
+        selected_source_chain_ids=(source.selected_source_chain_ids or None),
+        requested_goals=whole_structure_requested_goals(
+            HydrogenCoverageState.COMPLETE,
+        ),
+    )
+
+
+@pytest.fixture(scope="module")
+def hydrogenated_2qls_result() -> ProcessResult:
+    source = WHOLE_STRUCTURE_CORPUS_SOURCES["2qls-whole-structure"]
+    return process_structure(
+        source.output_path,
+        ingress=ingress_options(ligand_policy=LigandPolicy.KEEP),
+        selected_source_chain_ids=(source.selected_source_chain_ids or None),
+        requested_goals=whole_structure_requested_goals(
+            HydrogenCoverageState.COMPLETE,
+        ),
+    )
+
+
 @pytest.mark.representative_regression
 @pytest.mark.parametrize("case_id", WORKFLOW_REPRESENTATIVE_CASE_IDS)
 def test_process_structure_preserves_representative_semantics(
     case_id: str,
+    representative_result: ProcessResult,
 ) -> None:
     """Workflow replay should preserve the stored representative summary."""
 
     expected = REPRESENTATIVE_CASES[case_id]
-    result = run_workflow_representative_case(expected.input_path, case_id)
+    result = representative_result
     assert not result.has_errors()
     summary = summarize_structure(result.structure)
 
@@ -102,11 +155,14 @@ def test_process_structure_preserves_representative_semantics(
     "case_id",
     tuple(WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP),
 )
-def test_process_structure_preserves_rdkit_coordinate_digest(case_id: str) -> None:
+def test_process_structure_preserves_rdkit_coordinate_digest(
+    case_id: str,
+    representative_result: ProcessResult,
+) -> None:
     """RDKit-backed coordinate digest should match registered backend versions."""
 
     expected = REPRESENTATIVE_CASES[case_id]
-    result = run_workflow_representative_case(expected.input_path, case_id)
+    result = representative_result
     assert not result.has_errors()
     summary = summarize_structure(result.structure)
     assert structure_summaries_match_except_digest(
@@ -239,14 +295,12 @@ def _patch_rdkit_version(
 
 
 @pytest.mark.representative_regression
-def test_process_structure_repairs_1afc_to_no_conect_rdkit_readable_output() -> None:
+def test_process_structure_repairs_1afc_to_no_conect_rdkit_readable_output(
+    protonated_1afc_result: ProcessResult,
+) -> None:
     """Hydrogenated 1AFC workflow output should survive no-CONECT RDKit sanitize."""
 
-    expected = REPRESENTATIVE_CASES["1afc-hydrogen-his-protonated"]
-    result = run_workflow_representative_case(
-        expected.input_path,
-        "1afc-hydrogen-his-protonated",
-    )
+    result = protonated_1afc_result
 
     assert measure_rdkit_no_conect_sanitize_readability(result.structure) is True
 
@@ -311,35 +365,23 @@ def test_explicit_3j6b_repair_uses_calculation_only_peptide_boundaries() -> None
 
 
 @pytest.mark.representative_regression
-def test_2dn2_heme_hydrogenation_preserves_no_conect_rdkit_readability() -> None:
+def test_2dn2_heme_hydrogenation_preserves_no_conect_rdkit_readability(
+    hydrogenated_2dn2_result: ProcessResult,
+) -> None:
     """2DN2 should stay RDKit-readable after template-backed HEM hydrogenation."""
 
-    source = WHOLE_STRUCTURE_CORPUS_SOURCES["2dn2-whole-structure"]
-    result = process_structure(
-        source.output_path,
-        ingress=ingress_options(ligand_policy=LigandPolicy.KEEP),
-        selected_source_chain_ids=(source.selected_source_chain_ids or None),
-        requested_goals=whole_structure_requested_goals(
-            HydrogenCoverageState.COMPLETE,
-        ),
-    )
+    result = hydrogenated_2dn2_result
 
     assert measure_rdkit_no_conect_sanitize_readability(result.structure) is True
 
 
 @pytest.mark.representative_regression
-def test_process_structure_2qls_heme_cofactor_uses_template_backed_hydrogens() -> None:
+def test_process_structure_2qls_heme_cofactor_uses_template_backed_hydrogens(
+    hydrogenated_2qls_result: ProcessResult,
+) -> None:
     """2QLS HEM ligands should use bundled template hydrogens, not generic fallback."""
 
-    source = WHOLE_STRUCTURE_CORPUS_SOURCES["2qls-whole-structure"]
-    result = process_structure(
-        source.output_path,
-        ingress=ingress_options(ligand_policy=LigandPolicy.KEEP),
-        selected_source_chain_ids=(source.selected_source_chain_ids or None),
-        requested_goals=whole_structure_requested_goals(
-            HydrogenCoverageState.COMPLETE,
-        ),
-    )
+    result = hydrogenated_2qls_result
 
     hem_ligands = tuple(
         ligand
@@ -359,18 +401,12 @@ def test_process_structure_2qls_heme_cofactor_uses_template_backed_hydrogens() -
 
 
 @pytest.mark.representative_regression
-def test_process_structure_2qls_output_stays_no_conect_rdkit_readable() -> None:
+def test_process_structure_2qls_output_stays_no_conect_rdkit_readable(
+    hydrogenated_2qls_result: ProcessResult,
+) -> None:
     """2QLS should repair the LEU-local parser failure in default workflow."""
 
-    source = WHOLE_STRUCTURE_CORPUS_SOURCES["2qls-whole-structure"]
-    result = process_structure(
-        source.output_path,
-        ingress=ingress_options(ligand_policy=LigandPolicy.KEEP),
-        selected_source_chain_ids=(source.selected_source_chain_ids or None),
-        requested_goals=whole_structure_requested_goals(
-            HydrogenCoverageState.COMPLETE,
-        ),
-    )
+    result = hydrogenated_2qls_result
 
     assert measure_rdkit_no_conect_sanitize_readability(result.structure) is True
     assert not any(
@@ -424,18 +460,12 @@ def test_2qls_parser_witness_exposes_extra_leu32_proximity_bond() -> None:
 
 
 @pytest.mark.representative_regression
-def test_process_structure_2dn2_has_no_parser_readability_issue() -> None:
+def test_process_structure_2dn2_has_no_parser_readability_issue(
+    hydrogenated_2dn2_result: ProcessResult,
+) -> None:
     """2DN2 should stay free of parser-readability issues after HEM repair."""
 
-    source = WHOLE_STRUCTURE_CORPUS_SOURCES["2dn2-whole-structure"]
-    result = process_structure(
-        source.output_path,
-        ingress=ingress_options(ligand_policy=LigandPolicy.KEEP),
-        selected_source_chain_ids=(source.selected_source_chain_ids or None),
-        requested_goals=whole_structure_requested_goals(
-            HydrogenCoverageState.COMPLETE,
-        ),
-    )
+    result = hydrogenated_2dn2_result
 
     assert not any(
         issue.kind is ValidationIssueKind.PARSER_READABILITY for issue in result.issues

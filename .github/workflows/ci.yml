@@ -40,7 +40,7 @@ jobs:
         run: .venv/bin/basedpyright src/protrepair tests
 
       - name: Unit tests
-        run: .venv/bin/pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q
+        run: .venv/bin/pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q --durations=25 --durations-min=1
 
   installed-artifact-smoke:
     name: Installed wheel and sdist FASPR/RDKit smoke (Python 3.12)
