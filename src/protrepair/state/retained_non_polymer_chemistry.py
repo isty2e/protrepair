@@ -8,6 +8,7 @@ from itertools import combinations
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.library import ComponentLibrary
+from protrepair.chemistry.component.semantics import IdealGeometryHydrogenSemantics
 from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.component.topology import (
     template_heavy_bond_definitions_for_present_atoms,
@@ -58,10 +59,11 @@ class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class RetainedNonPolymerChemistryResolution:
-    """Coordinate-free chemistry resolution for one retained non-polymer residue."""
+    """Selected chemistry facts bound to one retained residue and its context."""
 
     source: RetainedNonPolymerChemistryEvidenceSource
     expected_hydrogen_atom_names: tuple[str, ...] = ()
+    expected_heavy_atom_names: tuple[str, ...] = ()
     heavy_bond_definitions: tuple[BondDefinition, ...] = ()
     hydrogen_bond_definitions: tuple[BondDefinition, ...] = ()
     heavy_atom_elements: tuple[str, ...] = ()
@@ -71,6 +73,30 @@ class RetainedNonPolymerChemistryResolution:
     rdkit_backend_version: str | None = None
     hydrogen_name_projection_candidate_count: int = 0
     hydrogen_name_projection_candidate_limit: int = 0
+
+    def has_expected_heavy_scaffold(self, residue: ResidueSite) -> bool:
+        """Check the selected product inventory instead of its isolated precursor.
+
+        Parameters
+        ----------
+        residue : ResidueSite
+            Current retained atom inventory.
+
+        Returns
+        -------
+        bool
+            The complete selected heavy inventory is present without extra names
+            and agrees with any recorded element identities.
+        """
+        present = {atom.name for atom in residue.atom_sites if not atom.is_hydrogen()}
+        if present != set(self.expected_heavy_atom_names):
+            return False
+        return not self.heavy_atom_elements or all(
+            residue.atom_site(name).element == element
+            for name, element in zip(
+                self.expected_heavy_atom_names, self.heavy_atom_elements, strict=True
+            )
+        )
 
     def has_external_bond_topology(self, structure: ProteinStructure) -> bool:
         """Check that admitted external chemistry has been realized.
@@ -241,7 +267,8 @@ class RetainedNonPolymerChemistryResolution:
                 "carry expected hydrogen names"
             )
         if not resolved and (
-            self.heavy_bond_definitions
+            self.expected_heavy_atom_names
+            or self.heavy_bond_definitions
             or self.hydrogen_bond_definitions
             or self.heavy_atom_elements
             or self.formal_charge_requirements
@@ -251,6 +278,12 @@ class RetainedNonPolymerChemistryResolution:
                 "unresolved retained non-polymer chemistry must not carry "
                 "resolved topology or element facts"
             )
+        if (
+            self.expected_heavy_atom_names
+            and self.heavy_atom_elements
+            and len(self.expected_heavy_atom_names) != len(self.heavy_atom_elements)
+        ):
+            raise ValueError("resolved heavy atom names and elements must align")
         if resolved and self.failure_reason:
             raise ValueError(
                 "resolved retained non-polymer chemistry must not carry a failure "
@@ -344,7 +377,7 @@ def resolve_retained_non_polymer_chemistry(
     allow_rdkit_fallback: bool = True,
     disulfide_residue_ids: frozenset[ResidueId] | None = None,
 ) -> RetainedNonPolymerChemistryResolution:
-    """Resolve coordinate-free chemistry facts for one retained non-polymer."""
+    """Resolve selected chemistry against source and current connected context."""
 
     resolution = _resolve_retained_non_polymer_chemistry_source(
         structure,
@@ -439,6 +472,16 @@ def _resolve_retained_non_polymer_chemistry_source(
                 failure_reason=str(error),
             )
         template = binding.template
+        expected_heavy_names = template.expected_heavy_atom_names()
+        heavy_elements = ()
+        if isinstance(template.hydrogen_semantics, IdealGeometryHydrogenSemantics):
+            elements_by_name = {
+                atom.atom_name: atom.element
+                for atom in template.hydrogen_semantics.component.heavy_atoms()
+            }
+            heavy_elements = tuple(
+                elements_by_name[name] for name in expected_heavy_names
+            )
         expected_hydrogen_atom_names = _preferred_expected_hydrogen_atom_names(
             expected_hydrogen_atom_names=(
                 _materializable_retained_non_polymer_template_hydrogen_atom_names(
@@ -451,6 +494,8 @@ def _resolve_retained_non_polymer_chemistry_source(
         return RetainedNonPolymerChemistryResolution(
             source=RetainedNonPolymerChemistryEvidenceSource.TEMPLATE,
             expected_hydrogen_atom_names=expected_hydrogen_atom_names,
+            expected_heavy_atom_names=expected_heavy_names,
+            heavy_atom_elements=heavy_elements,
             heavy_bond_definitions=template_heavy_bond_definitions_for_present_atoms(
                 residue,
                 template=template,

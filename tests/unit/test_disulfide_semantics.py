@@ -1376,8 +1376,8 @@ def test_continuous_bond_planning_rejects_multiply_bonded_disulfide_endpoint() -
         plan_continuous_region_bonds(region, build_default_component_library())
 
 
-def test_continuous_bond_planning_allows_a_partial_disulfide_projection() -> None:
-    """A local region carrying only one incident S-S pair remains realizable."""
+def test_chemical_context_closure_does_not_hide_a_disulfide_contradiction() -> None:
+    """A connected third sulfur stays in fixed context despite spatial distance."""
 
     structure = three_cysteine_structure((0.0, 2.1, -20.0))
     shared_sulfur = AtomRef(ResidueId("A", 1), "SG")
@@ -1401,16 +1401,17 @@ def test_continuous_bond_planning_allows_a_partial_disulfide_projection() -> Non
         context_radius_angstrom=6.0,
     )
 
-    planned_bonds = plan_continuous_region_bonds(
-        region,
-        build_default_component_library(),
+    assert region.movable_atom_indices == (
+        structure.constitution.atom_index(selected_sulfur),
     )
-
-    assert any(
-        bond.involves(structure.constitution.atom_index(shared_sulfur))
-        and bond.involves(structure.constitution.atom_index(selected_sulfur))
-        for bond in planned_bonds
+    assert (
+        structure.constitution.atom_index(AtomRef(ResidueId("C", 1), "SG"))
+        in region.fixed_context_atom_indices
     )
+    with pytest.raises(
+        RefinementError, match="multiple canonical disulfide relationships"
+    ):
+        plan_continuous_region_bonds(region, build_default_component_library())
 
 
 def test_unrelated_disulfide_contradiction_does_not_block_local_bond_planning() -> None:

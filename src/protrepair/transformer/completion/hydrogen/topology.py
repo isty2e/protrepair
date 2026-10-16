@@ -35,8 +35,9 @@ def resolve_fixed_hydrogen_topology(
     Returns
     -------
     TransformationResult
-        Topology-only edits and residue-local diagnostics. Contradictory residues
-        remain unchanged. Coupled microstate sites retain their separate atomic
+        Topology-only edits and residue-local diagnostics. Unresolved fixed
+        parents are excluded while independently known parents can be attached.
+        Coupled microstate sites retain their separate atomic
         realization path; this operation neither selects nor changes protonation.
     """
     prepared: PolymerMicrostatePreparation | None = None
@@ -57,6 +58,20 @@ def resolve_fixed_hydrogen_topology(
                     PolymerMicrostateContext(structure), component_library
                 )
             try:
+                fixed_context = prepared.fixed_hydrogen_context(residue.residue_id)
+                if fixed_context is not None and fixed_context.failure_reason:
+                    issues.append(
+                        ValidationIssue.for_residue(
+                            kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+                            severity=IssueSeverity.WARNING,
+                            message=(
+                                "linked polymer H at ND2 left unresolved: "
+                                f"{fixed_context.failure_reason}"
+                            ),
+                            residue_id=residue.residue_id,
+                            component_id=residue.component_id,
+                        )
+                    )
                 bonds = prepared.fixed_hydrogen_topology_updates(residue.residue_id)
             except ValueError as error:
                 issues.append(

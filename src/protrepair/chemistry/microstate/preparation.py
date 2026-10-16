@@ -19,11 +19,14 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateResolution,
     MicrostateResolutionStatus,
 )
+from protrepair.chemistry.retained_non_polymer.glycosidic import (
+    GlycosidicTemplateBinding,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
-from protrepair.structure.labels import ResidueId
-from protrepair.structure.topology import TopologyBond
+from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.topology import BondRelationshipType, TopologyBond
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +147,109 @@ class PolymerSitePreparation:
 
 
 @dataclass(frozen=True, slots=True, init=False)
+class FixedPolymerHydrogenContext:
+    """Select fixed H while retaining uncertainty at a linked amide parent.
+
+    Parameters
+    ----------
+    context : PolymerMicrostateContext
+        Current snapshot and source observations.
+    residue_id : ResidueId
+        Present polymer residue with a component template.
+    template : ResidueTemplate
+        Isolated fixed-H chemistry.
+    component_library : ComponentLibrary
+        Partner definitions for contextual ASN chemistry.
+
+    Notes
+    -----
+    Failed ASN binding leaves ND2 unresolved, not neutral primary-amide
+    chemistry. Other fixed parents retain their independently selected H.
+    This value does not place atoms or certify completed H coverage.
+    """
+
+    isolated_template: ResidueTemplate
+    glycosidic: GlycosidicTemplateBinding | None
+    failure_reason: str
+
+    def __init__(
+        self,
+        context: PolymerMicrostateContext,
+        residue_id: ResidueId,
+        template: ResidueTemplate,
+        component_library: ComponentLibrary,
+    ) -> None:
+        object.__setattr__(self, "isolated_template", template)
+        object.__setattr__(self, "glycosidic", None)
+        object.__setattr__(self, "failure_reason", "")
+        residue = context.source.constitution.residue_or_ligand(residue_id)
+        if residue is None:
+            raise ValueError("fixed H preparation requires a present residue")
+        if residue.component_id != "ASN" or not residue.has_atom_site("ND2"):
+            return
+        if not any(
+            bond.relationship_type
+            not in (
+                BondRelationshipType.HYDROGEN_BOND,
+                BondRelationshipType.METAL_COORDINATION,
+            )
+            for bond in context.external_heavy_bonds(AtomRef(residue_id, "ND2"))
+        ):
+            return
+        try:
+            binding = GlycosidicTemplateBinding(
+                context.source, residue, template, component_library
+            )
+        except ValueError as error:
+            object.__setattr__(self, "failure_reason", str(error))
+        else:
+            object.__setattr__(self, "glycosidic", binding)
+
+    @property
+    def template(self) -> ResidueTemplate:
+        """Return the product or isolated grammar for unaffected parents.
+
+        Returns
+        -------
+        ResidueTemplate
+            Placement grammar; unresolved parents must still be excluded.
+        """
+        return (
+            self.isolated_template
+            if self.glycosidic is None
+            else self.glycosidic.template
+        )
+
+    @property
+    def unresolved_parent_names(self) -> frozenset[str]:
+        """Identify fixed parents whose contextual H inventory is unknown.
+
+        Returns
+        -------
+        frozenset[str]
+            ND2 when linked ASN chemistry could not be selected, otherwise empty.
+        """
+        return frozenset(("ND2",)) if self.failure_reason else frozenset()
+
+    def hydrogen_atom_names(self) -> tuple[str, ...]:
+        """Return only H identities with a resolved parent inventory.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Selected template names outside unresolved fixed parents.
+        """
+        template = self.template
+        names = template.expected_hydrogen_atom_names()
+        anchors = template.template_hydrogen_anchor_by_name(names)
+        return tuple(
+            name
+            for name in names
+            if anchors.get(name) not in self.unresolved_parent_names
+        )
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class PolymerMicrostatePreparation:
     """Resolve one snapshot's polymer targets for placement and state consumers.
 
@@ -163,8 +269,8 @@ class PolymerMicrostatePreparation:
     -----
     Charge defaults are resolved together before local neutral-HIS preferences.
     Ambiguous neighboring rings supply no polar support, so residue iteration
-    order cannot act as an implicit H-bond network optimizer. Geometry-dependent
-    targets cannot be reused after coordinate edits until a choice is applied.
+    order cannot act as an implicit H-bond network optimizer. Unselected HIS
+    preferences depend on coordinates and cannot be reused after coordinate edits.
 
     Raises
     ------
@@ -293,6 +399,36 @@ class PolymerMicrostatePreparation:
             )
         )
 
+    def fixed_hydrogen_context(
+        self, residue_id: ResidueId
+    ) -> FixedPolymerHydrogenContext | None:
+        """Select fixed H inventories and retain unresolved parent identities.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Polymer identity in the preparation snapshot.
+
+        Returns
+        -------
+        FixedPolymerHydrogenContext or None
+            Partial or resolved fixed-H selection; None when no template exists.
+
+        Raises
+        ------
+        ValueError
+            The polymer residue is absent from this snapshot.
+        """
+        residue = self.context.source.constitution.residue_or_ligand(residue_id)
+        if residue is None:
+            raise ValueError("fixed H preparation requires a present residue")
+        template = self.component_library.get(residue.component_id)
+        if template is None:
+            return None
+        return FixedPolymerHydrogenContext(
+            self.context, residue_id, template, self.component_library
+        )
+
     def fixed_hydrogen_atom_sites(
         self, residue_id: ResidueId
     ) -> tuple[tuple[AtomSite, str], ...]:
@@ -313,7 +449,8 @@ class PolymerMicrostatePreparation:
         ------
         ValueError
             Original fixed-parent H exceed the template inventory, or a required
-            identity collides with another atom.
+            identity collides with another atom. Unresolved linked parents are
+            excluded rather than assigned the isolated template inventory.
         """
         residue = self.context.source.constitution.residue_or_ligand(residue_id)
         if residue is None:
@@ -321,12 +458,16 @@ class PolymerMicrostatePreparation:
         template = self.component_library.get(residue.component_id)
         if template is None or not template.can_add_hydrogens():
             return ()
+        isolated = template
+        fixed_context = self.fixed_hydrogen_context(residue_id)
+        assert fixed_context is not None
+        template = fixed_context.template
         controlled = frozenset(
             name
             for target in self.targets_for(residue_id)
             for name in target.controlled_parent_names()
         )
-        expected = template.expected_hydrogen_atom_names()
+        expected = fixed_context.hydrogen_atom_names()
         anchors = template.template_hydrogen_anchor_by_name(expected)
         names_by_parent: dict[str, list[str]] = {}
         for name in expected:
@@ -343,7 +484,7 @@ class PolymerMicrostatePreparation:
             if observation is None
             else observation.constitution.residue_or_ligand(residue_id)
         )
-        grammar = PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN)
+        grammar = PolymerMicrostateSite(isolated, PolymerChemicalSite.SIDECHAIN)
         selected: dict[str, list[AtomSite]] = {parent: [] for parent in names_by_parent}
         for candidate in (original, residue):
             if candidate is None or candidate.component_id != residue.component_id:

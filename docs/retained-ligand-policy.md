@@ -84,10 +84,52 @@ Both sulfur endpoints must have compatible source charges and no competing
 external covalent or untyped attachment at SG. Links at another atom on the
 partner residue do not consume the sulfur's attachment site.
 
-Other linked chemistry, including glycosidic and covalent-adduct preparation,
-is unsupported by this resolver. Connected glycans previously treated as
-isolated components can now remain unprepared; this avoids filling occupied
-valences without a contextual chemical model.
+### Glycosidic Links
+
+An explicit single covalent link can select a pyranose product inventory.
+The selected component graph must contain one saturated six-membered sugar
+ring and an aldose-like anomeric carbon with declared stereochemistry.
+The donor's leaving hydroxyl is replaced by the deposited partner: a neutral
+alcohol oxygen on another supported pyranose, or polymer ASN ND2. An occupied
+acceptor oxygen receives no hydroxyl H; linked ASN receives one amide H rather
+than two. Methyl glycosides can act as acceptors, but not as donors through
+their anomeric O--methyl group.
+
+Sugar roles come from the selected graph, not the component ID or atom names.
+The protein acceptor is specifically the standard ASN ND2 carboxamide.
+The bundle includes NAG, MAN, BMA, FUC, FUL, GAL, GNX and IDY; a compatible
+user template uses the same path. FUC and GAL use their
+[CCD](https://www.wwpdb.org/data/ccd) graphs and ideal coordinates, without
+component-specific placement rules. Isolated templates retain their original inventories.
+Both preparation and readiness use the linked product's heavy atoms, H,
+charges and bonds. Local FF context retains covalently connected partners as
+fixed atoms even when they lie outside the spatial shell; it does not enlarge
+the requested motion. This rule also applies to disulfides and other admitted
+non-peptide covalent links, so local refinement that previously failed at such
+a boundary can now run.
+
+Admission is residue-local. It checks the residue's scaffold and actual 3D
+orientation, including the donor's substituted partner, and the chemistry and
+exclusive occupancy of both ends of each incident link. New stereocenter H is
+checked before publication. A stereo error or unrelated missing substituent in
+another residue does not veto an otherwise supported product. An ambiguous
+link, incompatible endpoint or unknown partner role still blocks preparation
+at that link.
+
+Original leaving atoms, excess source H/D/T, incompatible charges or
+contradictory geometry are not removed or moved to make a link fit. Only neutral,
+non-source H on a newly occupied hydroxyl can be removed. If an ASN link cannot
+be interpreted, its ND2 H inventory stays unresolved; independently known CA/CB
+hydrogens can still be added. Readiness remains partial rather than treating
+that known subset as complete.
+
+This is not general carbohydrate reconstruction. Missing heavy atoms, absent
+or untyped links, furanose/ketose donors, ambiguous rings and other acceptor
+families remain unsupported. Proximity alone does not establish a glycosidic
+link. Covalent-adduct preparation also remains unsupported by this resolver.
+The actual-pose stereo checks described here apply to the linked path. Isolated
+fixed-template preparation does not yet certify every declared center against
+the deposited pose; that broader admission policy remains separate work.
 
 ### Stereochemistry In RDKit Placement
 

@@ -20,6 +20,7 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ChainSite, ResidueSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.labels import ResidueId
+from protrepair.structure.topology import is_covalent_like_relationship
 
 
 @dataclass(frozen=True, slots=True, init=False, eq=False)
@@ -136,15 +137,25 @@ class StructureHydrogenExpectationModel:
         source = self.polymer_preparation.context.source
         # Ligand inference and source-H name projection can depend on geometry
         # even when polymer identity selection does not.
-        return source.geometry is structure.geometry or all(
-            source.residue_geometry(
-                source.constitution.residue_index(ligand.residue_id)
-            )
-            == structure.residue_geometry(
-                structure.constitution.residue_index(ligand.residue_id)
-            )
-            for ligand in structure.constitution.ligands
-        )
+        if source.geometry is structure.geometry:
+            return True
+        for ligand in source.constitution.ligands:
+            index = source.constitution.residue_index(ligand.residue_id)
+            if source.residue_geometry(index) != structure.residue_geometry(index):
+                return False
+            # A substituted stereocenter uses its actual external partner too.
+            for bond in source.topology.inter_residue_bonds_for_residue(
+                constitution=source.constitution, residue_index=index
+            ):
+                if not is_covalent_like_relationship(bond):
+                    continue
+                if any(
+                    source.geometry.position(endpoint)
+                    != structure.geometry.position(endpoint)
+                    for endpoint in bond.endpoint_pair()
+                ):
+                    return False
+        return True
 
     def resolution_for_retained_non_polymer(
         self,
@@ -198,7 +209,12 @@ def _polymer_expected_hydrogen_atom_names(
                     )
                 ]
             except ValueError:
-                names = list(template.expected_hydrogen_atom_names())
+                fixed_context = preparation.fixed_hydrogen_context(residue.residue_id)
+                names = list(
+                    fixed_context.hydrogen_atom_names()
+                    if fixed_context is not None
+                    else template.expected_hydrogen_atom_names()
+                )
                 anchors = template.template_hydrogen_anchor_by_name(names)
                 names = [name for name in names if anchors.get(name) not in controlled]
             for target in targets:

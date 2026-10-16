@@ -87,8 +87,11 @@ class ContinuousRelaxationRegion:
                 selected_residue_index_set=selected_residue_index_set,
             )
         )
-        # A shared omitted residue must not become two overlapping caps. Keep
-        # cyclic proline N chemistry intact instead of replacing it with NME.
+        # Only ordinary peptide cuts can receive caps. Retain other covalent
+        # partners as fixed context, without expanding motion or spatial shells.
+        # A shared omitted residue must not become two overlapping caps; proline
+        # N also needs its intact ring rather than an NME replacement.
+        polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
         while True:
             omitted: dict[ResidueIndex, set[str]] = {}
             additions: set[ResidueIndex] = set()
@@ -111,7 +114,14 @@ class ContinuousRelaxationRegion:
                     constitution.atom_site_at(i).name
                     for i in (bond.atom_index_1, bond.atom_index_2)
                 }
-                if names != {"C", "N"} or bond.order != 1 or bond.aromatic:
+                if (
+                    names != {"C", "N"}
+                    or bond.order != 1
+                    or bond.aromatic
+                    or first.value >= polymer_count
+                    or second.value >= polymer_count
+                ):
+                    additions.add(outside_residue)
                     continue
                 name = constitution.atom_site_at(outside).name
                 omitted.setdefault(outside_residue, set()).add(name)

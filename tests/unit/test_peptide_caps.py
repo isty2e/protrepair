@@ -403,7 +403,7 @@ def test_canonical_h_parent_excludes_a_nearer_geometric_parent():
         assert parents == ["CB"]
 
 
-def test_caps_do_not_invent_support_for_non_peptide_cuts(intact):
+def test_non_peptide_partners_remain_fixed_instead_of_becoming_caps(intact):
     first = intact.constitution.atom_index(AtomRef(ResidueId("A", 9), "CB"))
     second = intact.constitution.atom_index(AtomRef(ResidueId("A", 1), "CB"))
     source = _with_topology(
@@ -414,8 +414,45 @@ def test_caps_do_not_invent_support_for_non_peptide_cuts(intact):
             bonds=(*intact.topology.bonds, TopologyBond(first, second)),
         ),
     )
+    problem = _problem(source, (ResidueId("A", 10),), 0)
+    assert set(problem.region.movable_atom_indices) == set(
+        source.constitution.atom_indices_for_residue(ResidueId("A", 10))
+    )
+    partner_indices = set(
+        source.constitution.atom_indices_for_residue(ResidueId("A", 1))
+    )
+    assert partner_indices <= set(problem.region.fixed_context_atom_indices)
+    capped = _caps(problem)
+    assert all(
+        boundary.endpoint.atom_name in {"C", "N"} for boundary in capped.plan.boundaries
+    )
+    assert (
+        capped.project_result(
+            _result(capped.problem.region.snapshot.structure)
+        ).refined_structure
+        == source
+    )
+
+    # An incomplete region supplied directly still cannot cap a side-chain bond.
+    incomplete = replace(
+        problem,
+        region=replace(
+            problem.region,
+            included_residue_indices=tuple(
+                index
+                for index in problem.region.included_residue_indices
+                if source.constitution.residue_site_at(index).residue_id
+                != ResidueId("A", 1)
+            ),
+            fixed_context_atom_indices=tuple(
+                index
+                for index in problem.region.fixed_context_atom_indices
+                if index not in partner_indices
+            ),
+        ),
+    )
     with pytest.raises(RefinementError, match="non-peptide"):
-        _caps(_problem(source, (ResidueId("A", 10),), 0))
+        _caps(incomplete)
 
 
 def test_degenerate_synthetic_cap_frame_fails_without_changing_source(cropped):

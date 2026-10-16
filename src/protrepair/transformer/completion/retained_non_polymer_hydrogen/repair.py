@@ -2,7 +2,7 @@
 
 from collections import Counter, deque
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import chain
 
 from protrepair.chemistry import (
@@ -307,6 +307,7 @@ def _execute_retained_non_polymer_hydrogen_stage(
         )
         try:
             template_binding = None
+            replaceable_hydrogens = ()
             evidence_external_bonds = ()
             evidence = chemistry_evidence_by_residue_id.get(ligand.residue_id)
             template = component_library.get(ligand.component_id)
@@ -320,6 +321,9 @@ def _execute_retained_non_polymer_hydrogen_stage(
                 elif template is not None:
                     template_binding = RetainedTemplateBinding(
                         structure, ligand, template, component_library
+                    )
+                    replaceable_hydrogens = (
+                        template_binding.glycosidic.excess_generated_hydrogen_names()
                     )
                 else:
                     RetainedCovalentContext(
@@ -336,7 +340,7 @@ def _execute_retained_non_polymer_hydrogen_stage(
                 chemistry_evidence=chemistry_evidence_by_residue_id.get(
                     ligand.residue_id
                 ),
-                source_payload=source_payload,
+                source_payload=source_payload.without_atom_sites(replaceable_hydrogens),
                 source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
                 source_explicit_hydrogen_anchor_by_name=(
                     source_explicit_hydrogen_anchor_by_name
@@ -363,6 +367,13 @@ def _execute_retained_non_polymer_hydrogen_stage(
             continue
         if result.payload is not None and result.topology_plan is not None:
             try:
+                if template_binding is not None:
+                    template_binding.glycosidic.require_hydrogen_stereochemistry(
+                        result.payload.residue_geometry,
+                        _hydrogen_anchor_by_name(
+                            result.topology_plan.bond_definitions, result.payload
+                        ),
+                    )
                 _require_compatible_topology_plan(
                     structure,
                     result.topology_plan,
@@ -395,6 +406,18 @@ def _execute_retained_non_polymer_hydrogen_stage(
             )
         if result.topology_plan is not None:
             topology_plans.append(result.topology_plan)
+        if replaceable_hydrogens and result.payload is not None:
+            repairs.append(
+                RepairEvent.for_residue(
+                    kind=RepairEventKind.HYDROGENS_REMOVED,
+                    residue_id=ligand.residue_id,
+                    component_id=ligand.component_id,
+                    atom_names=replaceable_hydrogens,
+                    details=(
+                        "removed generated H on occupied glycosidic hydroxyl valences"
+                    ),
+                )
+            )
         repairs.extend(result.repairs)
         issues.extend(result.issues)
 
@@ -1753,6 +1776,17 @@ def _apply_retained_non_polymer_hydrogen_directive(
     if patch is None:
         return None
 
+    # Selected chemistry, not the spelling of a mapped H name, owns its element.
+    patch = OrderedAtomPatch(
+        placements=tuple(
+            replace(placement, element=atom.element)
+            if not payload.has_atom(placement.atom_name)
+            and (atom := semantics.component.atom(placement.atom_name)) is not None
+            and atom.is_hydrogen()
+            else placement
+            for placement in patch.placements
+        )
+    )
     return payload.apply_patch(patch)
 
 
