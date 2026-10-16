@@ -514,6 +514,7 @@ def test_selected_reference_contradictions_cannot_be_hidden_by_library_dispatch(
         source,
         library.with_template(template),
         allow_retained_non_polymer_rdkit_fallback=False,
+        target_residue_ids=frozenset((DONOR,)),
     )
     assert result.structure is source and result.issues and not result.repairs
 
@@ -533,7 +534,10 @@ def test_mirrored_source_ring_is_not_repaired_by_overwriting_observed_stereo():
     with pytest.raises(ValueError, match="stereo"):
         _binding(source, library)
     result = add_retained_non_polymer_hydrogens(
-        source, library, allow_retained_non_polymer_rdkit_fallback=False
+        source,
+        library,
+        allow_retained_non_polymer_rdkit_fallback=False,
+        target_residue_ids=frozenset((DONOR,)),
     )
     assert result.structure is source and not result.repairs
 
@@ -568,7 +572,10 @@ def test_original_isotopes_with_opaque_names_preserve_parent_identity(
     source = _with_atom(source, residue_id, name, isotope, position)
     source = _redeposit(source)
     result = add_retained_non_polymer_hydrogens(
-        source, library, allow_retained_non_polymer_rdkit_fallback=False
+        source,
+        library,
+        allow_retained_non_polymer_rdkit_fallback=False,
+        target_residue_ids=frozenset((residue_id,)),
     )
     if occupied:
         assert result.structure is source and result.issues and not result.repairs
@@ -611,7 +618,7 @@ def test_occupied_hydroxyl_cleanup_requires_generated_neutral_hydrogen(mode):
         if mode == "topology_only"
         else add_retained_non_polymer_hydrogens
     )
-    result = operation(source, library)
+    result = operation(source, library, target_residue_ids=frozenset((ACCEPTOR,)))
     if mode == "generated":
         assert not result.issues
         assert (
@@ -655,7 +662,10 @@ def test_later_mutation_cannot_hide_original_precursor_contradictions(hidden_fac
     with pytest.raises(ValueError, match="original"):
         _binding(source, library)
     result = add_retained_non_polymer_hydrogens(
-        source, library, allow_retained_non_polymer_rdkit_fallback=False
+        source,
+        library,
+        allow_retained_non_polymer_rdkit_fallback=False,
+        target_residue_ids=frozenset((DONOR,)),
     )
     assert result.structure is source and result.issues and not result.repairs
 
@@ -753,7 +763,10 @@ def test_multiple_occupied_hydroxyls_are_admitted_as_one_connected_product(
         removable = next(a.name for a in site.atom_sites if a.element == "O")
         source = source.without_atom_refs((AtomRef(third, removable),))
     result = add_retained_non_polymer_hydrogens(
-        source, library, allow_retained_non_polymer_rdkit_fallback=False
+        source,
+        library,
+        allow_retained_non_polymer_rdkit_fallback=False,
+        target_residue_ids=frozenset((third,)) if missing_partner else None,
     )
     if missing_partner:
         assert result.structure is source and result.issues and not result.repairs

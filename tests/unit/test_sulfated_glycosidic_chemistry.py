@@ -292,9 +292,7 @@ def test_isolated_sulfated_records_keep_their_noncontextual_chemistry(name, expe
         "methyl_donor",
     ),
 )
-def test_sulfated_contradiction_refuses_both_connected_partners(
-    mutation, topology_only
-):
+def test_sulfated_contradiction_preserves_the_affected_residue(mutation, topology_only):
     text = _source_text()
     if mutation in {"acceptor_charge", "sulfate_charge"}:
         name = "O4" if mutation == "acceptor_charge" else "OS3"
@@ -361,7 +359,14 @@ def test_sulfated_contradiction_refuses_both_connected_partners(
         if topology_only
         else add_retained_non_polymer_hydrogens
     )
-    result = transformer(source, build_default_component_library())
+    affected = None
+    if mutation in {"missing_acceptor", "sulfate_charge"}:
+        affected = frozenset((ResidueId("B", 1),))
+    elif mutation == "missing_donor":
+        affected = frozenset((ResidueId("B", 2),))
+    result = transformer(
+        source, build_default_component_library(), target_residue_ids=affected
+    )
     assert result.structure is source and result.issues and not result.repairs
     _assert_source_preserved(source, result.structure)
 
@@ -469,9 +474,7 @@ def test_valid_isolated_idy_override_cannot_protonate_linked_o4(topology_only):
     "component,center",
     [(name, f"C{i}") for name in ("IDY", "GNX") for i in range(1, 6)],
 )
-def test_wrong_actual_sulfated_tetrahedron_refuses_the_connected_pair(
-    component, center
-):
+def test_wrong_actual_sulfated_tetrahedron_refuses_its_own_residue(component, center):
     source = _source()
     residue = next(
         r for r in source.constitution.ligands if r.component_id == component
@@ -506,7 +509,9 @@ def test_wrong_actual_sulfated_tetrahedron_refuses_the_connected_pair(
             geometry.atom_geometry(center).with_position(Vec3.from_iterable(flipped)),
         ),
     )
-    result = add_retained_non_polymer_hydrogens(source)
+    result = add_retained_non_polymer_hydrogens(
+        source, target_residue_ids=frozenset((residue.residue_id,))
+    )
     assert result.structure is source and result.issues and not result.repairs
     assert any("stereo" in issue.message for issue in result.issues)
 
@@ -579,7 +584,7 @@ def test_original_h_on_linked_hydroxyl_is_not_removed_to_admit_sulfated_chemistr
 
 
 @pytest.mark.parametrize("mutation", ("extra", "element"))
-def test_sulfated_incompatible_acceptor_inventory_refuses_both_partners(mutation):
+def test_sulfated_incompatible_acceptor_inventory_is_not_changed(mutation):
     source = _source()
     residue = source.constitution.ligands[0]
     geometry = source.residue_geometry(
@@ -594,7 +599,9 @@ def test_sulfated_incompatible_acceptor_inventory_refuses_both_partners(mutation
             for atom in residue.atom_sites
         )
     source = source.with_updated_residue_facets(residue, residue_geometry=geometry)
-    result = add_retained_non_polymer_hydrogens(source)
+    result = add_retained_non_polymer_hydrogens(
+        source, target_residue_ids=frozenset((residue.residue_id,))
+    )
     assert result.structure is source and result.issues and not result.repairs
 
 

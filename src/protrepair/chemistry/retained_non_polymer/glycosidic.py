@@ -1,6 +1,6 @@
 """Contextual pyranose inventory and stereo at deposited glycosidic links."""
 
-from collections import Counter, deque
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from math import isfinite
@@ -53,13 +53,14 @@ class GlycosidicTemplateBinding:
     template : ResidueTemplate
         Isolated component chemistry, never modified in place.
     component_library : ComponentLibrary
-        Chemistry for both ends of every link in the connected glycan.
+        Chemistry for both ends of this residue's incident links.
 
     Notes
     -----
     A donor's leaving O/H inventory is replaced by the actual N/O partner. Acceptor
     hydroxyl H or one ASN ND2 H is excluded from the application, not deleted
-    from source. A conflicting connected partner prevents admission.
+    from source. Incident endpoint chemistry must agree; remote residue geometry
+    and inventory failures do not invalidate this residue's product.
     Other component families and unlinked templates retain their semantics.
     This binding supports graph-qualified pyranose alcohol acceptors and polymer
     ASN ND2; other glycoconjugates require their own chemical interpretation.
@@ -120,86 +121,77 @@ class GlycosidicTemplateBinding:
                         roles = PyranoseScaffold(semantics.component)
                     except ValueError:
                         pass
+                    if roles is not None and (
+                        set(isolated.definition.bonds)
+                        != set(roles.component.heavy_bonds())
+                        or set(isolated.expected_heavy_atom_names())
+                        != set(roles.component.heavy_atom_names())
+                        or any(
+                            isolated.definition.formal_charges.get(atom.atom_name, 0)
+                            != atom.formal_charge
+                            for atom in roles.component.heavy_atoms()
+                        )
+                    ):
+                        raise ValueError(
+                            "pyranose template and H chemistry disagree "
+                            "on the precursor graph"
+                        )
                 roles_by_residue[site.residue_id] = roles
             return roles_by_residue[site.residue_id]
 
         if residue.component_id != "ASN" and roles_for(residue, template) is None:
             return
 
-        queue = deque((residue.residue_id,))
-        visited: set[ResidueId] = set()
-        while queue:
-            residue_id = queue.popleft()
-            if residue_id in visited:
-                continue
-            visited.add(residue_id)
-            site = constitution.residue_or_ligand(residue_id)
-            assert site is not None
-            isolated = (
-                template
-                if residue_id == residue.residue_id
-                else component_library.get(site.component_id)
-            )
-            if isolated is None:
+        links = initial_links
+        if len({inside.atom_name for _, inside, _ in links}) != len(links):
+            raise ValueError("glycosidic anchor requires exactly one external bond")
+        roles = roles_for(residue, template)
+        for bond, inside, outside in links:
+            partner = constitution.residue_or_ligand(outside.residue_id)
+            assert partner is not None
+            partner_template = component_library.get(partner.component_id)
+            if partner_template is None:
                 raise ValueError("glycosidic partner has no supported template")
-            links = RetainedCovalentContext(structure, residue_id).attachments
-            if site.component_id == "ASN":
-                links = tuple(link for link in links if link[1].atom_name == "ND2")
-            if not links or len({inside.atom_name for _, inside, _ in links}) != len(
-                links
-            ):
-                raise ValueError("glycosidic anchor requires exactly one external bond")
-            roles = roles_for(site, isolated)
-            for bond, inside, outside in links:
-                partner = constitution.residue_or_ligand(outside.residue_id)
-                assert partner is not None
-                partner_template = (
-                    template
-                    if partner.residue_id == residue.residue_id
-                    else component_library.get(partner.component_id)
-                )
-                if partner_template is None:
-                    raise ValueError("glycosidic partner has no supported template")
-                partner_roles = roles_for(partner, partner_template)
-                self._require_link(inside, outside, bond, roles, partner_roles)
-                queue.append(outside.residue_id)
+            partner_roles = roles_for(partner, partner_template)
+            self._require_link(
+                inside, outside, bond, roles, partner_roles, template, partner_template
+            )
 
-            if roles is not None:
-                require_compatible_component_reference(roles.component)
-                projected, donor = self._bind_sugar(site, isolated, links, roles)
-                anchors = PolymerMicrostateSite(
-                    isolated, PolymerChemicalSite.SIDECHAIN
-                ).named_hydrogen_parents(site)
-                anchors.update(
-                    structure.topology.residue_hydrogen_anchor_by_name(
-                        constitution=constitution,
-                        residue_index=constitution.residue_index(site.residue_id),
-                    )
+        if roles is not None:
+            require_compatible_component_reference(roles.component)
+            projected, donor = self._bind_sugar(residue, template, links, roles)
+            anchors = PolymerMicrostateSite(
+                template, PolymerChemicalSite.SIDECHAIN
+            ).named_hydrogen_parents(residue)
+            anchors.update(
+                structure.topology.residue_hydrogen_anchor_by_name(
+                    constitution=constitution,
+                    residue_index=constitution.residue_index(residue.residue_id),
                 )
-                self._require_sugar_stereo(
-                    site.residue_id,
-                    roles,
-                    donor,
-                    structure.residue_geometry(
-                        constitution.residue_index(site.residue_id)
-                    ),
-                    anchors,
-                )
-            else:
-                projected = self._bind_asparagine(site, isolated)
-                donor = None
-            self._require_hydrogen_compatibility(site, isolated, projected)
-            if residue_id == residue.residue_id:
-                object.__setattr__(self, "template", projected)
-                object.__setattr__(
-                    self,
-                    "external_bonds",
-                    tuple((inside, outside) for _, inside, outside in links),
-                )
-                object.__setattr__(self, "_pyranose", roles)
-                object.__setattr__(self, "_donor_partner", donor)
-                if site.component_id == "ASN":
-                    object.__setattr__(self, "amide_partner", links[0][2])
+            )
+            self._require_sugar_stereo(
+                residue.residue_id,
+                roles,
+                donor,
+                structure.residue_geometry(
+                    constitution.residue_index(residue.residue_id)
+                ),
+                anchors,
+            )
+        else:
+            projected = self._bind_asparagine(residue, template)
+            donor = None
+        self._require_hydrogen_compatibility(residue, template, projected)
+        object.__setattr__(self, "template", projected)
+        object.__setattr__(
+            self,
+            "external_bonds",
+            tuple((inside, outside) for _, inside, outside in links),
+        )
+        object.__setattr__(self, "_pyranose", roles)
+        object.__setattr__(self, "_donor_partner", donor)
+        if residue.component_id == "ASN":
+            object.__setattr__(self, "amide_partner", links[0][2])
 
     def _require_link(
         self,
@@ -208,6 +200,8 @@ class GlycosidicTemplateBinding:
         bond: TopologyBond,
         left_roles: PyranoseScaffold | None,
         right_roles: PyranoseScaffold | None,
+        left_template: ResidueTemplate,
+        right_template: ResidueTemplate,
     ) -> None:
         if (
             bond.relationship_type is not BondRelationshipType.COVALENT
@@ -233,6 +227,11 @@ class GlycosidicTemplateBinding:
                 "glycosidic attachment requires one unambiguous anomeric donor"
             )
         donor, acceptor, acceptor_site, donor_roles, acceptor_roles = donors[0]
+        donor_template, acceptor_template = (
+            (left_template, right_template)
+            if donor == inside
+            else (right_template, left_template)
+        )
         assert donor_roles is not None
         donor_roles.require_donor(donor.atom_name)
 
@@ -244,6 +243,7 @@ class GlycosidicTemplateBinding:
                 >= polymer_count
             ):
                 raise ValueError("N-glycosylation requires polymer ASN ND2")
+            self._require_asparagine_amide(acceptor_site, acceptor_template)
         elif acceptor_roles is not None:
             acceptor_roles.require_acceptor(acceptor.atom_name)
         else:
@@ -261,6 +261,58 @@ class GlycosidicTemplateBinding:
                 constitution.atom_index(ref)
             ) not in (None, 0):
                 raise ValueError("glycosidic endpoint has a conflicting formal charge")
+            observation = self._structure.provenance.ingress.observation
+            if observation is not None:
+                original = observation.constitution.resolve_atom_index(ref)
+                if original is not None and observation.topology.formal_charge(
+                    original
+                ) not in (None, 0):
+                    raise ValueError(
+                        "original glycosidic endpoint has a conflicting formal charge"
+                    )
+        for inside_ref, outside_ref in ((inside, outside), (outside, inside)):
+            if not RetainedCovalentContext(
+                self._structure, inside_ref.residue_id
+            ).has_exclusive_attachment(inside_ref, outside_ref):
+                raise ValueError("glycosidic anchor requires exactly one external bond")
+        self._require_endpoint_source_hydrogens(donor, donor_template, maximum=1)
+        self._require_endpoint_source_hydrogens(
+            acceptor,
+            acceptor_template,
+            maximum=1 if acceptor_site.component_id == "ASN" else 0,
+        )
+
+    def _require_endpoint_source_hydrogens(
+        self, ref: AtomRef, template: ResidueTemplate, *, maximum: int
+    ) -> None:
+        observation = self._structure.provenance.ingress.observation
+        if observation is None:
+            return
+        original = observation.constitution.residue_or_ligand(ref.residue_id)
+        if original is None:
+            return
+        anchors = PolymerMicrostateSite(
+            template, PolymerChemicalSite.SIDECHAIN
+        ).named_hydrogen_parents(original)
+        anchors.update(
+            observation.topology.residue_hydrogen_anchor_by_name(
+                constitution=observation.constitution,
+                residue_index=observation.constitution.residue_index(ref.residue_id),
+            )
+        )
+        hydrogens = tuple(
+            atom
+            for atom in original.atom_sites
+            if atom.is_hydrogen() and anchors.get(atom.name) == ref.atom_name
+        )
+        if len(hydrogens) > maximum or any(
+            observation.topology.formal_charge(
+                observation.constitution.atom_index(AtomRef(ref.residue_id, atom.name))
+            )
+            not in (None, 0)
+            for atom in hydrogens
+        ):
+            raise ValueError("original H contradict the glycosidic endpoint inventory")
 
     def _bind_sugar(
         self,
@@ -273,19 +325,6 @@ class GlycosidicTemplateBinding:
         if not isinstance(semantics, IdealGeometryHydrogenSemantics):
             raise ValueError("glycosidic donor requires idealized pyranose chemistry")
         component = roles.component
-        if (
-            set(template.definition.bonds) != set(component.heavy_bonds())
-            or set(template.expected_heavy_atom_names())
-            != set(component.heavy_atom_names())
-            or any(
-                template.definition.formal_charges.get(atom.atom_name, 0)
-                != atom.formal_charge
-                for atom in component.heavy_atoms()
-            )
-        ):
-            raise ValueError(
-                "pyranose template and H chemistry disagree on the precursor graph"
-            )
         donor = next(
             (
                 outside
@@ -355,13 +394,9 @@ class GlycosidicTemplateBinding:
                     )
         return projected_template, donor
 
-    def _bind_asparagine(
+    def _require_asparagine_amide(
         self, residue: ResidueSite, template: ResidueTemplate
-    ) -> ResidueTemplate:
-        if not set(template.expected_polymer_heavy_atom_names()).issubset(
-            residue.atom_site_names()
-        ):
-            raise ValueError("glycosylated ASN requires a complete heavy scaffold")
+    ) -> None:
         amide_names = {"CG", "OD1", "ND2"}
         expected_bonds = {
             frozenset(("CB", "CG")): 1,
@@ -384,7 +419,25 @@ class GlycosidicTemplateBinding:
             raise ValueError("glycosylated ASN requires neutral carboxamide chemistry")
 
         constitution = self._structure.constitution
-        for bond in self._structure.topology.bonds:
+        topology = self._structure.topology
+        bonds = list(
+            topology.inter_residue_bonds_for_residue(
+                constitution=constitution,
+                residue_index=constitution.residue_index(residue.residue_id),
+            )
+        )
+        for name in amide_names:
+            if not residue.has_atom_site(name):
+                raise ValueError("glycosylated ASN requires a complete amide group")
+            first = constitution.atom_index(AtomRef(residue.residue_id, name))
+            for atom in residue.atom_sites:
+                if atom.is_hydrogen():
+                    continue
+                second = constitution.atom_index(AtomRef(residue.residue_id, atom.name))
+                bond = topology.bond_between(first, second)
+                if bond is not None:
+                    bonds.append(bond)
+        for bond in bonds:
             if bond.relationship_type in _NONCOVALENT:
                 continue
             refs = tuple(constitution.atom_ref_at(i) for i in bond.endpoint_pair())
@@ -426,6 +479,14 @@ class GlycosidicTemplateBinding:
                 raise ValueError(
                     "source ASN amide disagrees with neutral glycosylation chemistry"
                 )
+
+    def _bind_asparagine(
+        self, residue: ResidueSite, template: ResidueTemplate
+    ) -> ResidueTemplate:
+        if not set(template.expected_polymer_heavy_atom_names()).issubset(
+            residue.atom_site_names()
+        ):
+            raise ValueError("glycosylated ASN requires a complete heavy scaffold")
         semantics = template.hydrogen_semantics
         if not isinstance(semantics, HydrogenSemantics):
             raise ValueError("glycosylated ASN requires supported fixed-H semantics")

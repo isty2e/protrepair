@@ -431,6 +431,17 @@ class StructureChemistryObservation:
                 self.hydrogen_expectation_model.expected_hydrogen_atom_names_by_residue
             ),
         )
+        fixed_context = (
+            self.hydrogen_expectation_model.polymer_preparation.fixed_hydrogen_context(
+                residue.residue_id
+            )
+        )
+        if (
+            fixed_context is not None
+            and fixed_context.unresolved_parent_names
+            and h_coverage_state is HydrogenCoverageState.COMPLETE
+        ):
+            h_coverage_state = HydrogenCoverageState.PARTIAL
         heavy_atom_topology_availability_state = (
             _polymer_heavy_topology_availability_state(
                 self.context_structure,

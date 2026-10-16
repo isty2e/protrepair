@@ -328,11 +328,11 @@ def _fixed_hydrogens(
                 )
                 continue
             isolated_template = template
-            try:
-                binding = prepared.fixed_template_binding(payload.residue_id)
-                if binding is not None:
-                    template = binding.template
-            except ValueError as error:
+            fixed_context = prepared.fixed_hydrogen_context(payload.residue_id)
+            assert fixed_context is not None
+            binding = fixed_context.glycosidic
+            template = fixed_context.template
+            if fixed_context.failure_reason:
                 issues.append(
                     ValidationIssue.for_residue(
                         kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
@@ -340,11 +340,11 @@ def _fixed_hydrogens(
                         residue_id=payload.residue_id,
                         component_id=payload.component_id,
                         message=(
-                            f"linked polymer fixed-H chemistry left unchanged: {error}"
+                            "linked polymer H at ND2 left unresolved: "
+                            f"{fixed_context.failure_reason}"
                         ),
                     )
                 )
-                continue
             site_targets = prepared.targets_for(payload.residue_id)
             controlled = frozenset(
                 name
@@ -354,7 +354,7 @@ def _fixed_hydrogens(
             fixed_template_names = frozenset(
                 name
                 for name, parent in template.template_hydrogen_anchor_by_name(
-                    template.expected_hydrogen_atom_names()
+                    fixed_context.hydrogen_atom_names()
                 ).items()
                 if parent not in controlled
             )

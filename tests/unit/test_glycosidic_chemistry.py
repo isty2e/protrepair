@@ -1,5 +1,6 @@
 """Deposited glycosidic links determine both partners' hydrogen inventories."""
 
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
@@ -29,10 +30,11 @@ from protrepair.chemistry.retained_non_polymer.registry import (
     build_bundled_retained_non_polymer_registry,
 )
 from protrepair.geometry import Vec3
-from protrepair.io import read_structure_string, write_structure_string
+from protrepair.io import read_structure, read_structure_string, write_structure_string
 from protrepair.io.nonstandard_component_ingress import (
     read_nonstandard_component_registry,
 )
+from protrepair.state import HydrogenCoverageState
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.topology import TopologyAvailabilityState
 from protrepair.structure.aggregate import ProteinStructure
@@ -46,6 +48,9 @@ from protrepair.structure.topology import (
     TopologyBond,
 )
 from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
+from protrepair.transformer.completion.hydrogen.topology import (
+    resolve_fixed_hydrogen_topology,
+)
 from protrepair.transformer.completion.retained_non_polymer_hydrogen import (
     repair as retained_repair,
 )
@@ -296,7 +301,11 @@ def test_unsupported_glycosidic_link_is_not_admitted_or_modified(kwargs):
         add_retained_non_polymer_hydrogens,
         resolve_retained_non_polymer_topology,
     ):
-        result = transformer(source, build_default_component_library())
+        result = transformer(
+            source,
+            build_default_component_library(),
+            target_residue_ids=frozenset((ResidueId("D", 1),)),
+        )
         assert result.structure is source and result.issues and not result.repairs
     binding_residue = source.constitution.ligands[0]
     with pytest.raises(ValueError):
@@ -320,7 +329,9 @@ def test_duplicate_anomeric_attachment_is_not_arbitrarily_selected():
             ),
         ),
     )
-    result = add_retained_non_polymer_hydrogens(source)
+    result = add_retained_non_polymer_hydrogens(
+        source, target_residue_ids=frozenset((ResidueId("D", 1),))
+    )
     assert result.structure is source and result.issues
 
 
@@ -365,7 +376,9 @@ def test_actual_coordinate_stereo_is_checked_at_anomer_and_ring_center(
             geometry.atom_geometry(name).with_position(Vec3.from_iterable(flipped)),
         ),
     )
-    result = add_retained_non_polymer_hydrogens(source)
+    result = add_retained_non_polymer_hydrogens(
+        source, target_residue_ids=frozenset((residue_id,))
+    )
     assert result.structure is source and result.issues and not result.repairs
     assert any("stereo" in issue.message for issue in result.issues)
 
@@ -418,7 +431,9 @@ def test_incomplete_or_contradictory_application_keeps_source(mutation):
         source = _with_bonds(
             source, tuple(b for b in source.topology.bonds if b != bond)
         )
-    result = add_retained_non_polymer_hydrogens(source)
+    result = add_retained_non_polymer_hydrogens(
+        source, target_residue_ids=frozenset((ResidueId("D", 1),))
+    )
     assert result.structure is source and result.issues and not result.repairs
 
 
@@ -507,13 +522,15 @@ def test_original_h_cannot_be_removed_to_make_linked_valence_valid(isotope, kind
         hydroxyl=kind == "hydroxyl",
         amide_h=2 if kind == "overfilled_amide" else 0,
     )
-    result = add_retained_non_polymer_hydrogens(source)
+    result = add_retained_non_polymer_hydrogens(
+        source, target_residue_ids=frozenset((ResidueId("D", 1),))
+    )
     assert result.structure is source and result.issues and not result.repairs
     result = materialize_hydrogens_core(
         source, target_residue_ids=frozenset((ResidueId("A", 205),))
     )
     _assert_source_preserved(source, result.structure)
-    assert result.issues
+    assert bool(result.issues) == (kind == "overfilled_amide")
 
 
 @pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
@@ -578,7 +595,9 @@ def test_linked_asn_requires_actual_amide_bond_orders(names, order, origin):
                 for bond in source.topology.bonds
             ),
         )
-    result = add_retained_non_polymer_hydrogens(source, library)
+    result = add_retained_non_polymer_hydrogens(
+        source, library, target_residue_ids=frozenset((ResidueId("D", 1),))
+    )
     assert result.structure is source and result.issues and not result.repairs
     result = materialize_hydrogens_core(
         source, library, target_residue_ids=frozenset((ResidueId("A", 205),))
@@ -665,7 +684,11 @@ def test_hydroxyl_pruning_cannot_bypass_charge_source_or_topology_only_contract(
         if mode == "topology_only"
         else add_retained_non_polymer_hydrogens
     )
-    result = transformer(source, build_default_component_library())
+    result = transformer(
+        source,
+        build_default_component_library(),
+        target_residue_ids=frozenset((ResidueId("D", 1),)),
+    )
     assert result.structure is source and result.issues and not result.repairs
 
 
@@ -713,7 +736,9 @@ def test_original_anomeric_h_on_opposite_tetrahedron_is_preserved_and_refused(is
     source = read_structure_string(
         write_structure_string(source, FileFormat.MMCIF), FileFormat.MMCIF
     )
-    result = add_retained_non_polymer_hydrogens(source)
+    result = add_retained_non_polymer_hydrogens(
+        source, target_residue_ids=frozenset((ResidueId("D", 1),))
+    )
     assert result.structure is source and result.issues and not result.repairs
     assert any("stereo" in issue.message for issue in result.issues)
 
@@ -771,7 +796,7 @@ def test_unlinked_asn_stays_a_primary_amide_after_context_rebinding():
 @pytest.mark.parametrize(
     "residue_id,name", ((ResidueId("D", 1), "C1"), (ResidueId("A", 205), "ND2"))
 )
-def test_linked_asn_preparation_cannot_reuse_changed_partner_geometry(residue_id, name):
+def test_partner_pose_changes_recheck_sugar_stereo_not_asn_inventory(residue_id, name):
     source = _source()
     observation = StructureChemistryObservation(source)
     expectation = observation.hydrogen_expectation_model
@@ -813,13 +838,24 @@ def test_linked_asn_preparation_cannot_reuse_changed_partner_geometry(residue_id
             ),
         )
     )
-    assert not preparation.matches_chemistry(moved)
+    assert preparation.matches_chemistry(moved)
     rebound = observation.for_structure(moved).hydrogen_expectation_model
     fresh = StructureChemistryObservation(moved).hydrogen_expectation_model
-    assert rebound.polymer_preparation is not preparation
     for candidate in (rebound.polymer_preparation, fresh.polymer_preparation):
-        with pytest.raises(ValueError, match="stereo"):
-            candidate.fixed_hydrogen_atom_sites(asn_id)
+        assert (
+            sum(
+                parent == "ND2"
+                for _, parent in candidate.fixed_hydrogen_atom_sites(asn_id)
+            )
+            == 1
+        )
+    sugar_id = ResidueId("D", 1)
+    assert rebound.resolution_for_retained_non_polymer(
+        sugar_id
+    ) == fresh.resolution_for_retained_non_polymer(sugar_id)
+    assert (
+        "stereo" in rebound.resolution_for_retained_non_polymer(sugar_id).failure_reason
+    )
 
 
 @pytest.mark.parametrize(
@@ -875,7 +911,7 @@ def test_failure_in_one_glycan_does_not_change_it_or_block_other_glycans():
         if ligand.component_id not in {"NAG", "BMA", "FUL"}:
             continue
         count = sum(atom.is_hydrogen() for atom in ligand.atom_sites)
-        if ligand.residue_id.chain_id == "B":
+        if ligand.residue_id == ResidueId("B", 1):
             assert count == 0
         else:
             assert (
@@ -1005,3 +1041,155 @@ def test_contextual_inventory_projects_custom_ideal_heavy_semantics_too():
         fact.heavy_atom_topology_availability_state is TopologyAvailabilityState.PRESENT
         for fact in facts
     )
+
+
+def _flip_center(source, residue_id, name):
+    template = build_default_component_library().require(
+        source.constitution.residue_or_ligand(residue_id).component_id
+    )
+    semantics = template.hydrogen_semantics
+    assert isinstance(semantics, IdealGeometryHydrogenSemantics)
+    component = semantics.component
+    refs = tuple(
+        AtomRef(residue_id, neighbor)
+        for neighbor in component.bonded_atom_names(name)
+        if (atom := component.atom(neighbor)) is not None and not atom.is_hydrogen()
+    )
+    a, b, c = (
+        source.geometry.position(source.constitution.atom_index(ref)).to_array()
+        for ref in refs
+    )
+    normal = np.cross(b - a, c - a)
+    normal /= np.linalg.norm(normal)
+    geometry = source.residue_geometry(source.constitution.residue_index(residue_id))
+    old = geometry.position(name).to_array()
+    return source.with_updated_residue_geometries(
+        (
+            (
+                residue_id,
+                geometry.with_atom_geometry(
+                    name,
+                    geometry.atom_geometry(name).with_position(
+                        Vec3.from_iterable(old - 2 * np.dot(old - a, normal) * normal)
+                    ),
+                ),
+            ),
+        )
+    )
+
+
+def _hydrogen_parents(structure, residue_id):
+    return structure.topology.residue_hydrogen_anchor_by_name(
+        constitution=structure.constitution,
+        residue_index=structure.constitution.residue_index(residue_id),
+    )
+
+
+def test_unknown_link_leaves_only_nd2_unresolved_and_prepares_independent_asn_h():
+    source = _change_link(_source(), relationship=BondRelationshipType.UNKNOWN)
+    residue_id = ResidueId("A", 205)
+    result = materialize_hydrogens_core(
+        source, target_residue_ids=frozenset((residue_id,))
+    )
+    parents = Counter(_hydrogen_parents(result.structure, residue_id).values())
+    assert parents["CA"] == 1 and parents["CB"] == 2
+    assert parents["ND2"] == 0
+    assert any(issue.residue_id == residue_id for issue in result.issues)
+    observation = StructureChemistryObservation(result.structure)
+    fact = observation.residue_completion_facts(residue_id).chemistry_readiness_facts
+    assert fact.hydrogen_coverage_state is HydrogenCoverageState.PARTIAL
+    assert fact.hydrogen_topology_availability_state is TopologyAvailabilityState.ABSENT
+
+
+@pytest.mark.parametrize("bad_seq", (1, 2))
+def test_remote_stereo_does_not_veto_a_valid_neighbor_or_asn(bad_seq):
+    source = _source()
+    bad_id, good_id = ResidueId("D", bad_seq), ResidueId("D", 3 - bad_seq)
+    source = _flip_center(source, bad_id, "C3")
+    result = add_retained_non_polymer_hydrogens(source)
+    assert {issue.residue_id for issue in result.issues} == {bad_id}
+    good = result.structure.constitution.residue_or_ligand(good_id)
+    bad = result.structure.constitution.residue_or_ligand(bad_id)
+    assert good is not None and bad is not None
+    assert any(atom.is_hydrogen() for atom in good.atom_sites)
+    assert not any(atom.is_hydrogen() for atom in bad.atom_sites)
+    asn_id = ResidueId("A", 205)
+    polymer = materialize_hydrogens_core(
+        result.structure, target_residue_ids=frozenset((asn_id,))
+    )
+    assert Counter(_hydrogen_parents(polymer.structure, asn_id).values())["ND2"] == 1
+
+
+@pytest.mark.parametrize("isotope", ("H", "D", "T"))
+def test_unresolved_amide_preserves_source_isotopes_and_known_parent_topology(isotope):
+    source = _change_link(
+        _deposit_selected_hydrogens(isotope=isotope, amide_h=1),
+        relationship=BondRelationshipType.UNKNOWN,
+    )
+    residue_id = ResidueId("A", 205)
+    result = materialize_hydrogens_core(
+        source, target_residue_ids=frozenset((residue_id,))
+    )
+    _assert_source_preserved(source, result.structure)
+    assert Counter(_hydrogen_parents(result.structure, residue_id).values())["CB"] == 2
+    residue = result.structure.constitution.residue_or_ligand(residue_id)
+    assert residue is not None and residue.atom_site("HD21").element == isotope
+
+    stripped = _with_bonds(
+        result.structure,
+        tuple(
+            bond
+            for bond in result.structure.topology.bonds
+            if not any(
+                result.structure.constitution.atom_ref_at(i).residue_id == residue_id
+                and result.structure.constitution.atom_site_at(i).is_hydrogen()
+                for i in bond.endpoint_pair()
+            )
+        ),
+    )
+    topology_only = resolve_fixed_hydrogen_topology(
+        stripped,
+        build_default_component_library(),
+        target_residue_ids=frozenset((residue_id,)),
+    )
+    assert topology_only.structure.constitution is stripped.constitution
+    assert topology_only.structure.geometry is stripped.geometry
+    assert any(issue.residue_id == residue_id for issue in topology_only.issues)
+    parents = Counter(_hydrogen_parents(topology_only.structure, residue_id).values())
+    assert parents["CA"] == 1 and parents["CB"] == 2 and parents["ND2"] == 0
+    fact = (
+        StructureChemistryObservation(topology_only.structure)
+        .residue_completion_facts(residue_id)
+        .chemistry_readiness_facts
+    )
+    assert fact.hydrogen_coverage_state is HydrogenCoverageState.PARTIAL
+
+
+def test_1g82_rejected_attachment_does_not_remove_independent_asn_h():
+    source = read_structure(Path(__file__).parents[1] / "fixtures/corpus/pdb1g82.ent")
+    residue_ids = frozenset(ResidueId(chain, 79) for chain in "ABCD")
+    result = materialize_hydrogens_core(source, target_residue_ids=residue_ids)
+    _assert_source_preserved(source, result.structure)
+    for residue_id in residue_ids:
+        parents = Counter(_hydrogen_parents(result.structure, residue_id).values())
+        assert parents["CA"] == 1 and parents["CB"] == 2
+        assert parents["ND2"] == (0 if residue_id.chain_id == "A" else 1)
+    assert {issue.residue_id for issue in result.issues} == {ResidueId("A", 79)}
+
+
+def test_1vbo_only_opposite_stereo_residues_are_rejected():
+    source = read_structure(Path(__file__).parents[1] / "fixtures/corpus/pdb1vbo.ent")
+    selected = frozenset(
+        ResidueId(chain, number) for chain in "IJK" for number in (1, 2, 3)
+    )
+    result = add_retained_non_polymer_hydrogens(source, target_residue_ids=selected)
+    _assert_source_preserved(source, result.structure)
+    assert {issue.residue_id for issue in result.issues} == {
+        ResidueId(chain, 1) for chain in "IJK"
+    }
+    for residue_id in selected:
+        residue = result.structure.constitution.residue_or_ligand(residue_id)
+        assert residue is not None
+        assert sum(atom.is_hydrogen() for atom in residue.atom_sites) == (
+            0 if residue_id.seq_num == 1 else 11
+        )
