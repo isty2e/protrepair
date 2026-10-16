@@ -14,6 +14,7 @@ from tests.support.canonical_builders import (
 from tests.support.component_reference import assert_component_reference_matches
 
 from protrepair.chemistry import (
+    HydrogenSemantics,
     IdealGeometryHeavyAtomMode,
     IdealGeometryHeavyAtomSemantics,
     IdealGeometryHydrogenSemantics,
@@ -145,6 +146,53 @@ def test_glycosylated_asn_has_one_secondary_amide_hydrogen():
     assert np.dot(h, c) / np.linalg.norm(c) == pytest.approx(
         np.dot(h, partner) / np.linalg.norm(partner)
     )
+
+
+@pytest.mark.parametrize("without_backbone", (False, True))
+def test_grouped_asn_outputs_keep_one_linked_amide_h(without_backbone):
+    source = _source()
+    library = build_default_component_library()
+    template = library.require("ASN")
+    semantics = template.hydrogen_semantics
+    assert isinstance(semantics, HydrogenSemantics)
+    plan = tuple(
+        operation
+        for operation in semantics.plan_with_backbone or ()
+        if not {"1HD2", "2HD2"}.intersection(operation[0])
+    ) + ((("1HD2", "2HD2"), "class2", ("CB", "CG", "ND2", 1.01)),)
+    template = replace(
+        template,
+        hydrogen_semantics=replace(
+            semantics,
+            plan_with_backbone=plan,
+            plan_without_backbone=plan if without_backbone else None,
+        ),
+    )
+    library = library.with_template(template)
+    residue_id = ResidueId("A", 205)
+    residue = source.constitution.residue_or_ligand(residue_id)
+    assert residue is not None
+    binding = GlycosidicTemplateBinding(source, residue, template, library)
+    assert tuple(
+        name
+        for name, parent in binding.template.template_hydrogen_anchor_by_name(
+            binding.template.expected_hydrogen_atom_names()
+        ).items()
+        if parent == "ND2"
+    ) == ("1HD2",)
+    result = materialize_hydrogens_core(
+        source, library, target_residue_ids=frozenset((residue_id,))
+    )
+    # Custom fixed-H plans do not authorize the separate backbone microstate sites.
+    assert {issue.atom_names for issue in result.issues} == {("N",), ("C", "O", "OXT")}
+    assert Counter(_hydrogen_parents(result.structure, residue_id).values())["ND2"] == 1
+    _assert_source_preserved(source, result.structure)
+    fact = (
+        StructureChemistryObservation(result.structure, component_library=library)
+        .residue_completion_facts(residue_id)
+        .chemistry_readiness_facts
+    )
+    assert fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
 
 
 def _assert_source_preserved(source, structure):

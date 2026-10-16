@@ -11,6 +11,7 @@ from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.component.pyranose import PyranoseScaffold
 from protrepair.chemistry.component.semantics import (
     HeavyAtomSemantics,
+    HydrogenOperation,
     HydrogenSemantics,
     IdealGeometryHeavyAtomSemantics,
     IdealGeometryHydrogenSemantics,
@@ -121,9 +122,22 @@ class GlycosidicTemplateBinding:
                         roles = PyranoseScaffold(semantics.component)
                     except ValueError:
                         pass
+                    graph_views = tuple(
+                        frozenset(
+                            (
+                                frozenset((bond.atom_name_1, bond.atom_name_2)),
+                                bond.order,
+                                bond.aromatic,
+                            )
+                            for bond in bonds
+                        )
+                        for bonds in (
+                            isolated.definition.bonds,
+                            semantics.component.heavy_bonds(),
+                        )
+                    )
                     if roles is not None and (
-                        set(isolated.definition.bonds)
-                        != set(roles.component.heavy_bonds())
+                        graph_views[0] != graph_views[1]
                         or set(isolated.expected_heavy_atom_names())
                         != set(roles.component.heavy_atom_names())
                         or any(
@@ -498,22 +512,24 @@ class GlycosidicTemplateBinding:
         if len(names) != 2:
             raise ValueError("isolated ASN amide must have two template H")
         excluded = names[1]
+
+        def project_plan(
+            plan: tuple[HydrogenOperation, ...] | None,
+        ) -> tuple[HydrogenOperation, ...] | None:
+            if plan is None:
+                return None
+            return tuple(
+                (retained, method, arguments)
+                for outputs, method, arguments in plan
+                if (retained := tuple(name for name in outputs if name != excluded))
+            )
+
         return replace(
             template,
             hydrogen_semantics=replace(
                 semantics,
-                plan_with_backbone=tuple(
-                    operation
-                    for operation in semantics.plan_with_backbone or ()
-                    if excluded not in operation[0]
-                ),
-                plan_without_backbone=None
-                if semantics.plan_without_backbone is None
-                else tuple(
-                    operation
-                    for operation in semantics.plan_without_backbone
-                    if excluded not in operation[0]
-                ),
+                plan_with_backbone=project_plan(semantics.plan_with_backbone),
+                plan_without_backbone=project_plan(semantics.plan_without_backbone),
             ),
         )
 

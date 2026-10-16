@@ -28,6 +28,9 @@
 
 ### Fixed
 
+- retain the remaining ASN amide H when a custom placement operation has grouped
+  outputs, compare glycosidic precursor bonds independently of endpoint order,
+  and report invalid native component references as local chemistry failures
 - retain non-peptide covalent partners of local FF context as fixed atoms,
   without expanding the requested motion or spatial shell. This also unblocks
   previously refused disulfide boundaries and can change default H completion

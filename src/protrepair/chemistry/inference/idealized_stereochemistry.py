@@ -35,7 +35,10 @@ def require_compatible_component_reference(component: IdealizedComponent) -> Non
     """
     if Chem is None:
         raise RdkitUnavailableError("component reference requires operational RDKit")
-    _component_reference_molecule(component)
+    try:
+        _component_reference_molecule(component)
+    except RuntimeError as error:
+        raise ValueError(f"invalid component reference graph: {error}") from error
 
 
 @lru_cache(maxsize=128)

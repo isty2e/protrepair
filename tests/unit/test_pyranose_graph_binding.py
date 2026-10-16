@@ -26,6 +26,9 @@ from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.component.pyranose import PyranoseScaffold
 from protrepair.chemistry.component.semantics import IdealGeometryHydrogenSemantics
 from protrepair.chemistry.component.template import ResidueTemplate
+from protrepair.chemistry.inference.idealized_stereochemistry import (
+    require_compatible_component_reference,
+)
 from protrepair.chemistry.retained_non_polymer.glycosidic import (
     GlycosidicTemplateBinding,
 )
@@ -268,6 +271,101 @@ def _with_bonds(
         ),
         provenance=source.provenance,
         polymer_blueprint=source.polymer_blueprint,
+    )
+
+
+@pytest.mark.parametrize("reverse_component", (False, True))
+def test_undirected_bond_endpoint_order_does_not_change_preparation(reverse_component):
+    source, library, _, _ = _source()
+    template = library.require("DGR")
+    semantics = template.hydrogen_semantics
+    assert isinstance(semantics, IdealGeometryHydrogenSemantics)
+    reversed_bonds = tuple(
+        replace(b, atom_name_1=b.atom_name_2, atom_name_2=b.atom_name_1)
+        for b in (
+            semantics.component.bonds
+            if reverse_component
+            else template.definition.bonds
+        )
+    )
+    if reverse_component:
+        template = replace(
+            template,
+            hydrogen_semantics=replace(
+                semantics, component=replace(semantics.component, bonds=reversed_bonds)
+            ),
+        )
+    else:
+        template = replace(
+            template, definition=replace(template.definition, bonds=reversed_bonds)
+        )
+    baseline = add_retained_non_polymer_hydrogens(source, library)
+    result = add_retained_non_polymer_hydrogens(source, library.with_template(template))
+    assert not result.issues
+    assert result.structure == baseline.structure
+
+
+@pytest.mark.parametrize("failure", ("unknown_element", "overvalent"))
+def test_native_reference_failures_use_value_error(failure):
+    template, carbon, _, _ = _template(GLUCOSE, "BAD")
+    semantics = template.hydrogen_semantics
+    assert isinstance(semantics, IdealGeometryHydrogenSemantics)
+    component = semantics.component
+    if failure == "unknown_element":
+        component = replace(
+            component,
+            atoms=tuple(
+                replace(atom, element="XX") if atom.atom_name == carbon else atom
+                for atom in component.atoms
+            ),
+        )
+    else:
+        bonded = component.bonded_atom_names(carbon)
+        other = next(
+            a.atom_name
+            for a in component.atoms
+            if a.atom_name not in bonded and a.atom_name != carbon
+        )
+        component = replace(
+            component, bonds=(*component.bonds, BondDefinition(carbon, other))
+        )
+    with pytest.raises(ValueError):
+        require_compatible_component_reference(component)
+
+
+def test_invalid_native_reference_stays_a_local_preparation_and_readiness_failure():
+    source, library, _, _ = _source()
+    template = library.require("DGR")
+    semantics = template.hydrogen_semantics
+    assert isinstance(semantics, IdealGeometryHydrogenSemantics)
+    component = semantics.component
+    roles = PyranoseScaffold(component)
+    bad_atom = next(
+        name for name in roles.hydroxyl_hydrogens if name != roles.exocyclic_oxygen
+    )
+    component = replace(
+        component,
+        atoms=tuple(
+            replace(atom, element="XX") if atom.atom_name == bad_atom else atom
+            for atom in component.atoms
+        ),
+    )
+    library = library.with_template(
+        replace(template, hydrogen_semantics=replace(semantics, component=component))
+    )
+    result = add_retained_non_polymer_hydrogens(
+        source, library, target_residue_ids=frozenset((DONOR,))
+    )
+    assert result.structure is source and result.issues
+    facts = (
+        StructureChemistryObservation(source, component_library=library)
+        .whole_structure_facts()[1]
+        .retained_non_polymer_facts
+    )
+    failed = next(fact for fact in facts if fact.residue_id == DONOR)
+    assert (
+        failed.heavy_atom_topology_availability_state
+        is TopologyAvailabilityState.ABSENT
     )
 
 
