@@ -88,7 +88,7 @@ def _assert_source_preserved(
         assert new.provenance is old.provenance
 
 
-@pytest.mark.parametrize("component_id", ("ACE", "SAN", "CMP"))
+@pytest.mark.parametrize("component_id", ("ACE", "SAN", "CMP", "FUC", "GAL"))
 def test_curated_records_match_frozen_primary_ccd(component_id):
     frozen = read_nonstandard_component_registry(
         FIXTURES / f"chemistry/retained/{component_id}.cif"

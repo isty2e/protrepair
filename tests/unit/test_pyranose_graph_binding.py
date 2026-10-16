@@ -29,9 +29,13 @@ from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.retained_non_polymer.glycosidic import (
     GlycosidicTemplateBinding,
 )
+from protrepair.chemistry.retained_non_polymer.registry import (
+    build_bundled_retained_non_polymer_registry,
+)
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure_string, write_structure_string
+from protrepair.io.rdkit import to_rdkit_molecule
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.topology import TopologyAvailabilityState
 from protrepair.structure.aggregate import ProteinStructure
@@ -60,6 +64,64 @@ CHARGED = "O=C([O-])[C@H]1O[C@@H](O)[C@H](O)[C@@H](O)[C@@H]1O"
 METHYL = "CO[C@H]1O[C@@H](CO)[C@H](O)[C@@H](O)[C@@H]1O"
 DONOR = ResidueId("G", 1)
 ACCEPTOR = ResidueId("G", 2)
+
+
+@pytest.mark.parametrize("component_id", ("FUC", "GAL"))
+def test_ccd_additions_use_the_same_linked_product_and_native_graph(component_id):
+    registry = build_bundled_retained_non_polymer_registry()
+    donor, acceptor = registry.get(component_id), registry.get("MAN")
+    assert donor is not None and acceptor is not None
+    donor_atoms = {atom.atom_name: atom for atom in donor.atoms}
+    acceptor_atoms = {atom.atom_name: atom for atom in acceptor.atoms}
+    shift = np.asarray(donor_atoms["O1"].ideal_position) - np.asarray(
+        acceptor_atoms["O4"].ideal_position
+    )
+    source = build_structure(
+        chains=(),
+        source_format=FileFormat.MMCIF,
+        ligands=tuple(
+            residue_payload(
+                component_id=record.component_id,
+                residue_id=residue_id,
+                is_hetero=True,
+                atoms=tuple(
+                    atom_payload(
+                        atom.atom_name,
+                        atom.element,
+                        Vec3.from_iterable(np.asarray(atom.ideal_position) + offset),
+                    )
+                    for atom in record.atoms
+                    if not atom.is_hydrogen() and atom.atom_name not in excluded
+                ),
+            )
+            for record, residue_id, offset, excluded in (
+                (donor, DONOR, np.zeros(3), {"O1"}),
+                (acceptor, ACCEPTOR, shift, set()),
+            )
+        ),
+    )
+    link = TopologyBond(
+        source.constitution.atom_index(AtomRef(DONOR, "C1")),
+        source.constitution.atom_index(AtomRef(ACCEPTOR, "O4")),
+        order=1,
+        provenance=BondProvenance.SOURCE_EXPLICIT,
+    )
+    source = _with_bonds(source, (link,))
+    result = add_retained_non_polymer_hydrogens(source)
+    assert not result.issues
+    _assert_preserved(source, result.structure)
+    molecule = to_rdkit_molecule(result.structure)
+    assert molecule.GetNumAtoms() == len(result.structure.constitution.atom_slots)
+    assert not any(atom.GetNumRadicalElectrons() for atom in molecule.GetAtoms())
+    facts = (
+        StructureChemistryObservation(result.structure)
+        .whole_structure_facts()[1]
+        .retained_non_polymer_facts
+    )
+    assert all(
+        fact.hydrogen_topology_availability_state is TopologyAvailabilityState.PRESENT
+        for fact in facts
+    )
 
 
 def _template(
