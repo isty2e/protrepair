@@ -1,6 +1,5 @@
 """Curated isolated ligands retain source evidence and realize chemical graphs."""
 
-from dataclasses import replace
 from math import isfinite
 from pathlib import Path
 
@@ -8,6 +7,7 @@ import numpy as np
 import pytest
 from rdkit import Chem
 from rdkit.Chem import rdForceFieldHelpers
+from tests.support.component_reference import assert_component_reference_matches
 from tests.support.refinement_contract import build_continuous_relaxation_problem
 
 from protrepair.chemistry import (
@@ -95,32 +95,7 @@ def test_curated_records_match_frozen_primary_ccd(component_id):
     ).get(component_id)
     bundled = build_bundled_retained_non_polymer_registry().get(component_id)
     assert bundled is not None and frozen is not None
-    assert (
-        replace(
-            bundled,
-            bond_targets=frozen.bond_targets,
-            angle_targets=frozen.angle_targets,
-        )
-        == frozen
-    )
-    for actual, expected in zip(bundled.bond_targets, frozen.bond_targets, strict=True):
-        assert actual.target_distance_angstrom == pytest.approx(
-            expected.target_distance_angstrom, rel=0.0, abs=1e-8
-        )
-        assert (
-            replace(actual, target_distance_angstrom=expected.target_distance_angstrom)
-            == expected
-        )
-    for actual, expected in zip(
-        bundled.angle_targets, frozen.angle_targets, strict=True
-    ):
-        assert actual.target_angle_degrees == pytest.approx(
-            expected.target_angle_degrees, rel=0.0, abs=1e-6
-        )
-        assert (
-            replace(actual, target_angle_degrees=expected.target_angle_degrees)
-            == expected
-        )
+    assert_component_reference_matches(bundled, frozen)
     template = build_default_component_library().require(component_id)
     assert dict(template.heavy_atom_charge_requirements()) == {
         atom.atom_name: atom.formal_charge

@@ -11,6 +11,7 @@ from tests.support.canonical_builders import (
     build_structure,
     residue_payload,
 )
+from tests.support.component_reference import assert_component_reference_matches
 
 from protrepair.chemistry import (
     IdealGeometryHeavyAtomMode,
@@ -198,7 +199,9 @@ def test_frozen_isolated_ccd_inventory_is_unchanged(name, expected_h):
         SOURCE.parents[1] / "chemistry/retained" / f"{name}.cif"
     ).get(name)
     assert record is not None
-    assert build_bundled_retained_non_polymer_registry().get(name) == record
+    bundled = build_bundled_retained_non_polymer_registry().get(name)
+    assert bundled is not None
+    assert_component_reference_matches(bundled, record)
     component = record.to_idealized_component()
     atoms = []
     for atom in component.heavy_atoms():

@@ -11,6 +11,7 @@ from tests.support.canonical_builders import (
     build_structure,
     residue_payload,
 )
+from tests.support.component_reference import assert_component_reference_matches
 
 from protrepair.chemistry import (
     IdealGeometryHydrogenSemantics,
@@ -98,7 +99,8 @@ def test_sulfated_bundled_chemistry_matches_frozen_ccd(name):
         FIXTURES / f"chemistry/retained/{name}.cif"
     ).get(name)
     bundled = build_bundled_retained_non_polymer_registry().get(name)
-    assert bundled == frozen and bundled is not None
+    assert bundled is not None and frozen is not None
+    assert_component_reference_matches(bundled, frozen)
 
 
 @pytest.mark.parametrize("strict", (False, True))
