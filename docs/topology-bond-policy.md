@@ -402,6 +402,20 @@ a canonical disulfide.
 
 ### Disulfide Candidate Resolution
 
+An explicit, untyped CYS SG--SG connection can be resolved from its graph without
+a distance cutoff. Each neutral-compatible sulfur must have only a single
+non-aromatic CB--SG bond and the one external sulfur connection, whose order
+must be absent or single. Thiol H/D/T, competing attachments, incompatible
+elements or charges, aromatic bonds and conflicting reported orders block this
+interpretation. Missing sulfur charge is compatible with the neutral product;
+an explicitly nonzero charge is not overwritten.
+
+The planner selects the topology-resolution transformer for these source pairs.
+It rechecks the current graph, publishes a single `DISULFIDE` relationship and
+preserves source provenance and connection metadata, including the originally
+untyped declaration. Until that transition, H observation does not silently
+assume a disulfide. Unsupported untyped sulfur chemistry remains partial.
+
 Continuous relaxation likewise projects inter-residue disulfide constraints
 from canonical topology only. A likely geometry candidate must pass through an
 explicit topology-writing transformer before it becomes an execution bond; the

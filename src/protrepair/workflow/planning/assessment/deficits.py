@@ -386,11 +386,11 @@ def _topology_resolution_deficit(
 ) -> StructureTopologyResolutionDeficit | None:
     """Return a required deficit for promotable disulfide evidence."""
 
-    if not facts.promotable_candidates:
+    if not facts.has_promotable_candidates():
         return None
 
     return StructureTopologyResolutionDeficit(
-        promotable_disulfide_count=len(facts.promotable_candidates),
+        promotable_disulfide_count=facts.promotable_candidate_count(),
         disposition=WorkflowDeficitDisposition.REQUIRED,
     )
 
