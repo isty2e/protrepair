@@ -138,15 +138,15 @@ HME propionates. These are preparation defaults, not pKa predictions. It then
 publishes the H inventory, bonds and atom charges shared by the remaining
 metal-state alternatives for that ligand chemistry, not the intersection of
 every catalogue state. In particular, HME's Fe(II)/Fe(III) alternatives do not
-assign an unknown Fe charge. A source-assigned charge is retained when compatible,
-and a native H-placement representative cannot publish its otherwise unresolved metal
-state. The result carries a coordinated-preparation informational diagnostic,
-not an external-override or organic-fallback label.
+assign an unknown Fe charge. A source-assigned charge is retained when
+compatible, and a native H-placement representative cannot publish its
+otherwise unresolved metal state. The result carries a coordinated-preparation
+informational diagnostic, not an external-override or organic-fallback label.
 
 The HME catalogue fixes negative pyrrole charges at `NA` and `NC`. Other
 placements, including `NB`/`ND`, are not normalized and may be refused even when
 they describe chemically equivalent forms. Carboxylate alternatives do not
-extend that coverage to porphyrin resonance representations.
+extend that coverage to macrocycle resonance representations.
 
 Automatic ligand preparation does not select a polymer thiolate state. Under
 the existing CYS policy, a neutral heme-bound CYS can retain HG. A complete H
