@@ -311,7 +311,6 @@ class RetainedNonPolymerChemistryResolution:
                 or self.formal_charge_requirements
                 or self.external_bonds
                 or self.context_bonds
-                or self.coordination_bonds
             )
         ):
             raise ValueError(
@@ -586,12 +585,13 @@ def _resolve_retained_non_polymer_chemistry_source(
     try:
         atomic_site.require_unambiguous_hydrogenation()
         if atomic_site.is_monatomic_ion():
-            atomic_site.require_source_context(structure)
+            coordination_bonds = atomic_site.require_source_context(structure)
             atom = residue.atom_sites[0]
             return RetainedNonPolymerChemistryResolution(
                 source=RetainedNonPolymerChemistryEvidenceSource.ATOMIC_INVENTORY,
                 expected_heavy_atom_names=(atom.name,),
                 heavy_atom_elements=(atom.element,),
+                coordination_bonds=coordination_bonds,
             )
     except ValueError as error:
         return RetainedNonPolymerChemistryResolution(

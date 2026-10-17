@@ -577,7 +577,7 @@ def selected_graph_coordination_bonds(
             if local_index is None
             else NitrogenCoordinationDonor.from_molecule(template, local_index)
         )
-        hydrogen_count = 0 if role is None else role.hydrogen_count
+        hydrogen_count = None if role is None else role.hydrogen_count
         selected_charge = (
             None
             if local_index is None
@@ -607,7 +607,7 @@ def selected_graph_coordination_bonds(
                 or attached.relationship_type is BondRelationshipType.UNKNOWN
             ) and structure.constitution.atom_site_at(other).is_hydrogen():
                 current_hydrogens.add(other)
-        if len(current_hydrogens) > hydrogen_count:
+        if hydrogen_count is not None and len(current_hydrogens) > hydrogen_count:
             raise CoordinationEvidenceConflictError(
                 "selected coordination conflicts with source donor hydrogen"
             )
@@ -632,13 +632,15 @@ def selected_graph_coordination_bonds(
                         current_atom is None
                         or current_atom.element_identity
                         != original_atom.element_identity
+                        or structure.constitution.resolve_atom_index(ref)
+                        not in current_hydrogens
                     ):
                         raise CoordinationEvidenceConflictError(
                             "selected coordination cannot hide original donor "
-                            f"hydrogen identity at {ref.display_token()}"
+                            f"hydrogen identity or attachment at {ref.display_token()}"
                         )
                     original_hydrogens.add(other)
-            if len(original_hydrogens) > hydrogen_count:
+            if hydrogen_count is not None and len(original_hydrogens) > hydrogen_count:
                 raise CoordinationEvidenceConflictError(
                     "selected coordination conflicts with original donor hydrogen"
                 )

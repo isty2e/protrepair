@@ -253,10 +253,25 @@ class RetainedTemplateBinding:
                                 ref = bound_constitution.atom_ref_at(index)
                                 if site.is_hydrogen():
                                     current_site = constitution.resolve_atom_site(ref)
+                                    current_index = constitution.resolve_atom_index(ref)
+                                    current_bond = (
+                                        None
+                                        if current_index is None
+                                        else structure.topology.bond_between(
+                                            constitution.atom_index(local),
+                                            current_index,
+                                        )
+                                    )
                                     if (
                                         current_site is None
                                         or current_site.element_identity
                                         != site.element_identity
+                                        or current_bond is None
+                                        or not (
+                                            is_covalent_like_relationship(current_bond)
+                                            or current_bond.relationship_type
+                                            is BondRelationshipType.UNKNOWN
+                                        )
                                     ):
                                         raise ValueError(
                                             "selected template cannot hide "

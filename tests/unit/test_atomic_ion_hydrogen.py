@@ -575,3 +575,83 @@ def test_generated_h_on_original_atomic_site_is_not_erased_or_extended():
         current, current.constitution.ligands[0], component_library=ComponentLibrary()
     )
     assert not resolution.source.is_resolved()
+
+
+@pytest.mark.parametrize("change", ("none", "remove", "rebind", "retype", "missing"))
+@pytest.mark.parametrize("reverse", (False, True))
+def test_atomic_inventory_requires_original_coordination_pairs(change, reverse):
+    source = _linked_source(reverse=reverse)
+    residue = source.constitution.residue_or_ligand(ION)
+    assert residue is not None
+    original = resolve_retained_non_polymer_chemistry(
+        source, residue, component_library=ComponentLibrary()
+    )
+    first = source.topology.bonds[0]
+    if change == "missing":
+        source = source.without_atom_refs((AtomRef(ResidueId("A", 1), "O1"),))
+    elif change != "none":
+        if change == "rebind":
+            spare = residue_payload(
+                component_id="UNK",
+                residue_id=ResidueId("C", 1),
+                is_hetero=True,
+                atoms=(atom_payload("O1", "O", Vec3(0, 2.4, 0)),),
+            )
+            source = source.with_ligand_facets(
+                ligand_sites=(*source.constitution.ligands, spare[0]),
+                ligand_geometries=(
+                    *(
+                        source.residue_geometry(
+                            source.constitution.residue_index(site.residue_id)
+                        )
+                        for site in source.constitution.ligands
+                    ),
+                    spare[1],
+                ),
+            )
+        replacement = (
+            replace(
+                first,
+                atom_index_1=source.constitution.atom_index(AtomRef(ION, "X1")),
+                atom_index_2=source.constitution.atom_index(
+                    AtomRef(ResidueId("C", 1), "O1")
+                ),
+            )
+            if change == "rebind"
+            else replace(first, relationship_type=BondRelationshipType.HYDROGEN_BOND)
+        )
+        source = ProteinStructure.from_payload(
+            constitution=source.constitution,
+            geometry=source.geometry,
+            topology=StructureTopology(
+                constitution=source.constitution,
+                atom_topologies=source.topology.atom_topologies,
+                bonds=tuple(
+                    replacement if bond == first else bond
+                    for bond in source.topology.bonds
+                    if change != "remove" or bond != first
+                ),
+            ),
+            provenance=source.provenance,
+        )
+    residue = source.constitution.residue_or_ligand(ION)
+    assert residue is not None
+    resolution = resolve_retained_non_polymer_chemistry(
+        source, residue, component_library=ComponentLibrary()
+    )
+    if change == "none":
+        assert resolution.source.is_resolved()
+        assert len(resolution.coordination_bonds) == 2
+        assert resolution.has_coordination_topology(source)
+    else:
+        assert not resolution.source.is_resolved()
+        assert not original.has_coordination_topology(source)
+    for operation in (
+        add_retained_non_polymer_hydrogens,
+        resolve_retained_non_polymer_topology,
+    ):
+        result = operation(
+            source, ComponentLibrary(), target_residue_ids=frozenset((ION,))
+        )
+        assert result.structure is source and not result.repairs
+        assert bool(result.issues) == (change != "none")

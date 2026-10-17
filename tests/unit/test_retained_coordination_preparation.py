@@ -1218,7 +1218,9 @@ def test_incomplete_mapped_donor_does_not_abort_a_valid_neighbor():
 
 @pytest.mark.parametrize("route", ("template", "evidence"))
 @pytest.mark.parametrize("isotope", ("H", "D", "T"))
-@pytest.mark.parametrize("change", ("none", "remove", "replace_isotope"))
+@pytest.mark.parametrize(
+    "change", ("none", "remove", "replace_isotope", "detach", "retype", "swap")
+)
 def test_allowed_original_donor_h_retains_its_identity(route, isotope, change):
     smiles = "CS(=O)(=O)[NH-]"
     source, library, donor = _selected_donor_case(smiles)
@@ -1267,6 +1269,30 @@ def test_allowed_original_donor_h_retains_its_identity(route, isotope, change):
             residue_geometry=source.residue_geometry(index),
             formal_charge_by_atom_name=source.residue_formal_charge_by_atom_name(index),
         )
+    elif change in {"detach", "retype", "swap"}:
+        donor_index = source.constitution.atom_index(donor)
+        hydrogen_index = source.constitution.atom_index(AtomRef(LIGAND_ID, name))
+        other_hydrogen = next(
+            name for name, parent in parents.items() if parent != donor.atom_name
+        )
+        other_index = source.constitution.atom_index(AtomRef(LIGAND_ID, other_hydrogen))
+        carbon = source.constitution.atom_index(
+            AtomRef(LIGAND_ID, parents[other_hydrogen])
+        )
+        bonds = []
+        for bond in source.topology.bonds:
+            if bond.involves(hydrogen_index) and bond.involves(donor_index):
+                if change == "detach":
+                    continue
+                bond = (
+                    replace(bond, relationship_type=BondRelationshipType.HYDROGEN_BOND)
+                    if change == "retype"
+                    else replace(bond, atom_index_1=carbon, atom_index_2=hydrogen_index)
+                )
+            elif change == "swap" and bond.involves(other_index):
+                bond = replace(bond, atom_index_1=donor_index, atom_index_2=other_index)
+            bonds.append(bond)
+        source = _with_bonds(source, tuple(bonds))
     residue = source.constitution.residue_or_ligand(LIGAND_ID)
     assert residue is not None
     active_library = ComponentLibrary({}) if evidence is not None else library
@@ -1289,3 +1315,58 @@ def test_allowed_original_donor_h_retains_its_identity(route, isotope, change):
         assert not resolution.source.is_resolved()
         assert result.structure is source
         assert not result.repairs and result.issues
+
+
+@pytest.mark.parametrize("isotope", ("H", "D", "T"))
+def test_selected_metal_does_not_impose_zero_h_on_an_external_donor(isotope):
+    source, library, donor = _selected_donor_case("CS(=O)(=O)[NH-]")
+    source = add_retained_non_polymer_hydrogens(
+        source, library, target_residue_ids=frozenset((LIGAND_ID,))
+    ).structure
+    index = source.constitution.residue_index(LIGAND_ID)
+    parents = source.topology.residue_hydrogen_anchor_by_name(
+        constitution=source.constitution, residue_index=index
+    )
+    hydrogen = next(
+        name for name, parent in parents.items() if parent == donor.atom_name
+    )
+    source = source.with_updated_residue_facets(
+        replace(
+            source.constitution.residue_site_at(index),
+            atom_sites=tuple(
+                AtomSite(atom.name, isotope) if atom.name == hydrogen else atom
+                for atom in source.constitution.residue_site_at(index).atom_sites
+            ),
+        ),
+        residue_geometry=source.residue_geometry(index),
+        formal_charge_by_atom_name=source.residue_formal_charge_by_atom_name(index),
+    )
+    source = _observed(source)
+    metal_id = ResidueId("Z", 9)
+    evidence = RetainedNonPolymerChemistryOverride(
+        metal_id, "[Zn+2]", ("ZN",)
+    ).to_evidence()
+    residue = source.constitution.residue_or_ligand(metal_id)
+    assert residue is not None
+    resolution = resolve_retained_non_polymer_chemistry(
+        source, residue, component_library=library, evidence=evidence
+    )
+    assert resolution.source.is_resolved()
+    assert resolution.has_coordination_topology(source)
+    assert len(resolution.coordination_bonds) == 1
+    for operation in (
+        add_retained_non_polymer_hydrogens,
+        resolve_retained_non_polymer_topology,
+    ):
+        result = operation(
+            source,
+            library,
+            chemistry_evidence=(evidence,),
+            target_residue_ids=frozenset((metal_id,)),
+        )
+        assert not result.issues
+        assert result.structure.constitution == source.constitution
+        assert result.structure.geometry == source.geometry
+        assert result.structure.constitution.resolve_atom_site(
+            AtomRef(LIGAND_ID, hydrogen)
+        ) == source.constitution.resolve_atom_site(AtomRef(LIGAND_ID, hydrogen))

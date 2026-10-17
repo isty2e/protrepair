@@ -15,6 +15,7 @@ from protrepair.chemistry.retained_non_polymer.covalent_context import (
 from protrepair.errors import RdkitUnavailableError
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite, ResidueSite
+from protrepair.structure.labels import AtomRef
 from protrepair.structure.topology import BondRelationshipType
 
 _HALOGEN_ATOMIC_NUMBERS = frozenset({9, 17, 35, 53, 85, 117})
@@ -77,7 +78,9 @@ class RetainedAtomicSite:
                 "a molecular template or mapped evidence"
             )
 
-    def require_source_context(self, structure: ProteinStructure) -> None:
+    def require_source_context(
+        self, structure: ProteinStructure
+    ) -> tuple[tuple[AtomRef, AtomRef], ...]:
         """Admit atomic preparation without hiding original molecular evidence.
 
         Parameters
@@ -85,20 +88,38 @@ class RetainedAtomicSite:
         structure : ProteinStructure
             Snapshot retaining original observations and current typed links.
 
+        Returns
+        -------
+        tuple[tuple[AtomRef, AtomRef], ...]
+            Current coordination pairs retained as preparation requirements.
+
         Raises
         ------
         ValueError
             The current inventory is not monatomic, an unexplained attachment
-            exists, or source atoms/links require molecular chemistry.
+            exists, source atoms/links require molecular chemistry, or an
+            original coordination pair is missing from the current graph.
         RdkitUnavailableError
             Native element classification is unavailable.
         """
         if not self.is_monatomic_ion():
             raise ValueError("atomic preparation requires a monatomic inventory")
         RetainedCovalentContext(structure, self.residue.residue_id).require_admitted()
+        constitution = structure.constitution
+        index = constitution.atom_index(
+            AtomRef(self.residue.residue_id, self.residue.atom_sites[0].name)
+        )
+        pairs = tuple(
+            (
+                constitution.atom_ref_at(bond.atom_index_1),
+                constitution.atom_ref_at(bond.atom_index_2),
+            )
+            for bond in structure.topology.incident_bonds_by_atom().get(index, ())
+            if bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+        )
         observation = structure.provenance.ingress.observation
         if observation is None:
-            return
+            return pairs
 
         original = observation.constitution.residue_or_ligand(self.residue.residue_id)
         if original is not None and original.atom_sites != self.residue.atom_sites:
@@ -111,6 +132,27 @@ class RetainedAtomicSite:
                 raise ValueError(
                     "source molecular connectivity forbids atomic preparation"
                 )
+            if bond.relationship_type is BondRelationshipType.METAL_COORDINATION:
+                first, second = (
+                    constitution.resolve_atom_index(
+                        observation.constitution.atom_ref_at(endpoint)
+                    )
+                    for endpoint in bond.endpoint_pair()
+                )
+                current = (
+                    None
+                    if first is None or second is None
+                    else structure.topology.bond_between(first, second)
+                )
+                if (
+                    current is None
+                    or current.relationship_type
+                    is not BondRelationshipType.METAL_COORDINATION
+                ):
+                    raise ValueError(
+                        "atomic preparation cannot hide original coordination"
+                    )
+        return pairs
 
     def _ion_atom(self) -> AtomSite | None:
         heavy_atoms = tuple(
