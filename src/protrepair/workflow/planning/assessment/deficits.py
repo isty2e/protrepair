@@ -222,10 +222,10 @@ class StructureParserCompatibilityDeficit:
         return self.has_parser_visible_proximity_burden()
 
     def has_parser_visible_proximity_burden(self) -> bool:
-        """Return whether parser compatibility failed on geometry-like proximity."""
+        """Return whether noncanonical parser proximity remains observed."""
 
         return (
-            self.compatibility_state.is_incompatible()
+            self.compatibility_state is not ParserCompatibilityState.NOT_OBSERVED
             and self.extra_proximity_bond_count > 0
         )
 

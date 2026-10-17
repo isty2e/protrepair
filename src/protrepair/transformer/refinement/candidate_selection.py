@@ -12,8 +12,19 @@ from protrepair.transformer.refinement.acceptance import (
 
 def assessed_refinement_candidate_order_key(
     assessment: AssessedRefinementResult,
-) -> tuple[int, int, float, float, int, float, int, int]:
-    """Return a stable ordering key for one assessed candidate."""
+) -> tuple[int, int, int, int, float, int, float, float, int, int]:
+    """Rank a candidate by its accepted metrics, including fallback metrics.
+
+    Parameters
+    ----------
+    assessment : AssessedRefinementResult
+        Executed candidate with its adoption decision and parent metrics.
+
+    Returns
+    -------
+    tuple
+        The common refinement quality key; rejected candidates use their parent.
+    """
 
     return refinement_metrics_order_key(assessment.accepted_metrics())
 

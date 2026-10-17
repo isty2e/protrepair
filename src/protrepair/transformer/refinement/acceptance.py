@@ -8,6 +8,7 @@ from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.restraint.library import RestraintLibrary
 from protrepair.diagnostics.clashes import (
     ClashDetectionBasis,
+    ClashPolicy,
     ClashReport,
     StericClash,
     detect_clashes_from_context,
@@ -40,6 +41,9 @@ from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.artifacts import RegionTransformationResult
 
 SEVERE_RESTRAINT_BACKED_BOND_LENGTH_DEVIATION_ANGSTROM = 0.20
+
+# Contact coverage is independent of the executing force-field model.
+DEFAULT_REFINEMENT_CLASH_POLICY = ClashPolicy(include_ligands=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +305,7 @@ def measure_refinement_acceptance_metrics(
         structure,
         component_library=component_library,
         basis=clash_basis,
+        policy=DEFAULT_REFINEMENT_CLASH_POLICY if clash_basis is None else None,
     )
     focus_clashes = detect_clashes_from_context(
         clash_context,
@@ -322,12 +327,10 @@ def measure_refinement_acceptance_metrics(
         component_library=component_library,
         residue_ids=focus_residue_ids,
     )
-    rdkit_readability_metrics = (
-        measure_rdkit_no_conect_sanitize_readability_metrics(
-            structure,
-            component_library=component_library,
-            pdb_block_projector=pdb_block_projector,
-        )
+    rdkit_readability_metrics = measure_rdkit_no_conect_sanitize_readability_metrics(
+        structure,
+        component_library=component_library,
+        pdb_block_projector=pdb_block_projector,
     )
     return RefinementAcceptanceMetrics(
         focus_quality=FocusRefinementQualityMetrics(
@@ -339,9 +342,7 @@ def measure_refinement_acceptance_metrics(
             restraint_backed_geometry_outlier_count=(
                 geometry_report.restraint_backed_outlier_count()
             ),
-            fallback_geometry_outlier_count=(
-                geometry_report.fallback_outlier_count()
-            ),
+            fallback_geometry_outlier_count=(geometry_report.fallback_outlier_count()),
             severe_restraint_backed_bond_length_outlier_count=(
                 _severe_restraint_backed_bond_length_outlier_count(
                     geometry_report.bond_length_outliers
@@ -357,9 +358,7 @@ def measure_refinement_acceptance_metrics(
             total_near_covalent_overlap_angstrom=(
                 _total_contact_overlap_angstrom(near_covalent_contacts)
             ),
-            stereochemistry_violation_count=len(
-                stereochemistry_report.violations
-            ),
+            stereochemistry_violation_count=len(stereochemistry_report.violations),
         ),
         parser_compatibility=WholeStructureParserCompatibilityMetrics(
             rdkit_sanitize_readable=rdkit_readability_metrics.sanitize_readable,
@@ -431,17 +430,6 @@ def refinement_metrics_regressed(
 ) -> bool:
     """Return whether one refinement result regressed selected-region quality."""
 
-    if _has_unresolved_parser_visibility_failure(
-        before_metrics,
-        after_metrics,
-    ):
-        return (
-            _whole_structure_unreadable_order_key(after_metrics)
-            >= _whole_structure_unreadable_order_key(before_metrics)
-            or _focus_metrics_order_key(after_metrics)
-            > _focus_metrics_order_key(before_metrics)
-        )
-
     return refinement_metrics_order_key(after_metrics) > refinement_metrics_order_key(
         before_metrics
     )
@@ -453,28 +441,49 @@ def refinement_metrics_rejected(
 ) -> bool:
     """Return whether one refinement result should be rejected."""
 
-    return refinement_metrics_regressed(
-        before_metrics,
-        after_metrics,
-    ) or refinement_has_new_parser_visibility_failure(
-        before_metrics,
-        after_metrics,
-    ) or refinement_has_new_stereochemistry_failure(
-        before_metrics,
-        after_metrics,
-    ) or refinement_has_new_severe_restraint_backed_bond_length_failure(
-        before_metrics,
-        after_metrics,
+    return (
+        refinement_metrics_regressed(
+            before_metrics,
+            after_metrics,
+        )
+        or refinement_has_new_parser_visibility_failure(
+            before_metrics,
+            after_metrics,
+        )
+        or refinement_has_new_stereochemistry_failure(
+            before_metrics,
+            after_metrics,
+        )
+        or refinement_has_new_severe_restraint_backed_bond_length_failure(
+            before_metrics,
+            after_metrics,
+        )
     )
 
 
 def refinement_metrics_order_key(
     metrics: RefinementAcceptanceMetrics,
-) -> tuple[int, int, float, float, int, float, int, int]:
-    """Return one stable ordering key for accepted refinement quality."""
+) -> tuple[int, int, int, int, float, int, float, float, int, int]:
+    """Rank observed parser burden, clashes, then soft contact proxies.
 
+    Parameters
+    ----------
+    metrics : RefinementAcceptanceMetrics
+        Measured local quality and whole-structure parser observations.
+
+    Returns
+    -------
+    tuple
+        Lower is better. Unknown parser status is not treated as evidence of
+        either readability or extra bonds. Equal keys retain candidate order.
+    """
+
+    parser = metrics.parser_compatibility
+    observed = parser.rdkit_sanitize_readable is not None
     return (
-        0 if metrics.parser_compatibility.rdkit_sanitize_readable is not False else 1,
+        int(parser.rdkit_sanitize_readable is False),
+        parser.extra_heavy_proximity_bond_count if observed else 0,
+        parser.extra_proximity_bond_count if observed else 0,
         *_focus_metrics_order_key(metrics),
     )
 
@@ -515,18 +524,6 @@ def refinement_has_new_severe_restraint_backed_bond_length_failure(
     )
 
 
-def _has_unresolved_parser_visibility_failure(
-    before_metrics: RefinementAcceptanceMetrics,
-    after_metrics: RefinementAcceptanceMetrics,
-) -> bool:
-    """Return whether parser-visible unreadability remained unresolved."""
-
-    return (
-        before_metrics.parser_compatibility.rdkit_sanitize_readable is False
-        and after_metrics.parser_compatibility.rdkit_sanitize_readable is False
-    )
-
-
 def _clashes_involving_residues(
     clash_report: ClashReport,
     *,
@@ -544,7 +541,7 @@ def _clashes_involving_residues(
 
 def _focus_metrics_order_key(
     metrics: RefinementAcceptanceMetrics,
-) -> tuple[int, float, float, int, float, int, int]:
+) -> tuple[int, float, int, float, float, int, int]:
     """Return one stable selected-region quality ordering key.
 
     Clash burden is primary. Stereochemistry and geometry only break ties after
@@ -553,11 +550,11 @@ def _focus_metrics_order_key(
 
     focus_quality = metrics.focus_quality
     return (
+        focus_quality.clash_count,
+        focus_quality.clash_overlap_sum_angstrom,
         focus_quality.near_covalent_contact_count,
         focus_quality.worst_near_covalent_overlap_angstrom,
         focus_quality.total_near_covalent_overlap_angstrom,
-        focus_quality.clash_count,
-        focus_quality.clash_overlap_sum_angstrom,
         focus_quality.stereochemistry_violation_count,
         focus_quality.geometry_outlier_count,
     )
@@ -574,22 +571,6 @@ def _severe_restraint_backed_bond_length_outlier_count(
         if outlier.restraint_backed
         and outlier.deviation_angstrom()
         >= SEVERE_RESTRAINT_BACKED_BOND_LENGTH_DEVIATION_ANGSTROM
-    )
-
-
-def _whole_structure_unreadable_order_key(
-    metrics: RefinementAcceptanceMetrics,
-) -> tuple[int, int, int, float, float]:
-    """Return one global parser-visible burden key for unreadable structures."""
-
-    parser_compatibility = metrics.parser_compatibility
-    whole_structure_proximity = metrics.whole_structure_proximity
-    return (
-        parser_compatibility.extra_heavy_proximity_bond_count,
-        parser_compatibility.extra_proximity_bond_count,
-        whole_structure_proximity.near_covalent_contact_count,
-        whole_structure_proximity.worst_near_covalent_overlap_angstrom,
-        whole_structure_proximity.total_near_covalent_overlap_angstrom,
     )
 
 

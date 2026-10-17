@@ -12,16 +12,14 @@ from protrepair.state.structure_axes import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 
-__all__ = ["StructureParserCompatibilityFacts"]
-
 
 @dataclass(frozen=True, slots=True)
 class StructureParserCompatibilityFacts:
     """Parser-profile compatibility observations over one canonical structure.
 
     These facts are not chemistry-readiness truth. They record whether a
-    specific downstream parser profile accepts the current coordinates without
-    inferring invalid proximity bonds.
+    specific downstream parser profile accepts the current coordinates, and
+    separately record observed noncanonical proximity bonds.
     """
 
     carrier: ProteinStructure
@@ -40,7 +38,7 @@ class StructureParserCompatibilityFacts:
         """Return whether parser-visible false proximity remains observed."""
 
         return (
-            self.compatibility_state.is_incompatible()
+            self.compatibility_state is not ParserCompatibilityState.NOT_OBSERVED
             and self.extra_proximity_bond_count > 0
         )
 
@@ -71,3 +69,6 @@ class StructureParserCompatibilityFacts:
             extra_proximity_bond_count=metrics.extra_proximity_bond_count,
             extra_heavy_proximity_bond_count=metrics.extra_heavy_proximity_bond_count,
         )
+
+
+__all__ = ["StructureParserCompatibilityFacts"]

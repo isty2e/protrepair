@@ -440,7 +440,7 @@ def derive_atom_scope_continuous_relaxation_facts(
                 value=_atom_scope_clash_state(
                     snapshot,
                     residue_ids=referenced_residue_ids,
-                    component_library=active_component_library,
+                    chemistry_observation=observation,
                 ),
             ),
             topology_availability_facts=TopologyAvailabilityFacts.from_projection(
@@ -577,15 +577,16 @@ def _atom_scope_clash_state(
     snapshot: ProteinStructureSnapshot,
     *,
     residue_ids: tuple[ResidueId, ...],
-    component_library: ComponentLibrary,
+    chemistry_observation: StructureChemistryObservation,
 ) -> ClashState:
     """Return steric clash truth over one selected residue projection."""
 
     if has_clashes_in_residue_projection(
         snapshot.structure,
         residue_ids=residue_ids,
-        component_library=component_library,
+        component_library=chemistry_observation.component_library,
         policy=CONTINUOUS_RELAXATION_CLASH_POLICY,
+        polar_chemistry=chemistry_observation.polar_contact_chemistry,
     ):
         return ClashState.PRESENT
 

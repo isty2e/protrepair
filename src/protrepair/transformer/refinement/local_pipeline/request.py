@@ -28,6 +28,7 @@ from protrepair.transformer.continuous.readiness import (
     require_atom_scope_continuous_relaxation_execution,
 )
 from protrepair.transformer.continuous.settings import ContinuousRelaxationSettings
+from protrepair.transformer.refinement.acceptance import DEFAULT_REFINEMENT_CLASH_POLICY
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +179,8 @@ class LocalRefinementRequest:
             clash_basis=prepare_clash_detection_basis(
                 context.source_snapshot.structure,
                 component_library=active_component_library,
+                policy=DEFAULT_REFINEMENT_CLASH_POLICY,
+                polar_chemistry=observation.polar_contact_chemistry,
             ),
             pdb_block_projector=prepare_rdkit_no_conect_pdb_block_projector(
                 context.source_snapshot.structure

@@ -17,6 +17,7 @@ from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import (
     PolymerMicrostatePreparation,
 )
+from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
     evidence_by_residue_id,
@@ -84,11 +85,15 @@ class StructureChemistryObservation:
         Whether template-less retained chemistry may use RDKit inference.
     hydrogen_expectation_model : StructureHydrogenExpectationModel or None
         Existing expectations, reused only when their derivation inputs match.
+    polar_contact_chemistry : PolarContactChemistry or None
+        Existing graph interpretation, reused only for the same constitution,
+        topology and component library. It contains no geometric contact results.
 
     Notes
     -----
     Queries own their projection and derive from the bound context, not injected
-    fact tuples. Private memoization lasts only as long as this observation.
+    fact tuples. Snapshot facts stay local; graph-only interpretations may be
+    shared with observations rebound to the same graph and library.
     Workflow history, preparation requests and score policy are not state facts.
     """
 
@@ -103,6 +108,7 @@ class StructureChemistryObservation:
         ResidueId, RetainedNonPolymerChemistryEvidence
     ]
     _hydrogen_expectation_model: StructureHydrogenExpectationModel | None
+    _polar_contact_chemistry: PolarContactChemistry | None
     _whole_facts: tuple[StructureCoverageFacts, StructureChemistryReadinessFacts] | None
     _residue_facts: dict[ResidueId, ResidueCompletionStateFacts]
     _retained_facts: dict[ResidueId, RetainedNonPolymerChemistryReadinessFact]
@@ -118,6 +124,7 @@ class StructureChemistryObservation:
         ] = (),
         allow_retained_non_polymer_rdkit_fallback: bool = True,
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
+        polar_contact_chemistry: PolarContactChemistry | None = None,
     ) -> None:
         library = (
             build_default_component_library()
@@ -136,6 +143,14 @@ class StructureChemistryObservation:
             )
         ):
             hydrogen_expectation_model = None
+
+        if (
+            polar_contact_chemistry is not None
+            and not polar_contact_chemistry.matches_inputs(
+                context_structure.constitution, context_structure.topology, library
+            )
+        ):
+            polar_contact_chemistry = None
 
         object.__setattr__(self, "context_structure", context_structure)
         object.__setattr__(self, "component_library", library)
@@ -158,6 +173,7 @@ class StructureChemistryObservation:
         object.__setattr__(
             self, "_hydrogen_expectation_model", hydrogen_expectation_model
         )
+        object.__setattr__(self, "_polar_contact_chemistry", polar_contact_chemistry)
         object.__setattr__(self, "_whole_facts", None)
         object.__setattr__(self, "_residue_facts", {})
         object.__setattr__(self, "_retained_facts", {})
@@ -179,6 +195,7 @@ class StructureChemistryObservation:
             This observation for the same carrier; otherwise a new observation.
             Residue facts are never transferred. Existing H expectations are only
             reused after their complete derivation inputs have been checked.
+            Existing polar chemistry needs only the same graph and library.
         """
         if structure is self.context_structure:
             return self
@@ -189,7 +206,29 @@ class StructureChemistryObservation:
             retained_non_polymer_chemistry_evidence=self.retained_non_polymer_chemistry_evidence,
             allow_retained_non_polymer_rdkit_fallback=self.allow_retained_non_polymer_rdkit_fallback,
             hydrogen_expectation_model=self._hydrogen_expectation_model,
+            polar_contact_chemistry=self._polar_contact_chemistry,
         )
+
+    @property
+    def polar_contact_chemistry(self) -> PolarContactChemistry:
+        """Interpret graph-bound donor, acceptor and hydrogen-parent chemistry.
+
+        Returns
+        -------
+        PolarContactChemistry
+            Lazily derived interpretation shared by this observation lineage
+            while its graph and library remain unchanged. No coordinates or
+            geometric contact outcomes are retained.
+        """
+        chemistry = self._polar_contact_chemistry
+        if chemistry is None:
+            chemistry = PolarContactChemistry(
+                self.context_structure.constitution,
+                self.context_structure.topology,
+                self.component_library,
+            )
+            object.__setattr__(self, "_polar_contact_chemistry", chemistry)
+        return chemistry
 
     def require_context(
         self,

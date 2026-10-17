@@ -15,6 +15,7 @@ from protrepair.chemistry.microstate.preparation import (
     PolymerSitePreparation,
 )
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
+from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.chemistry.retained_non_polymer.glycosidic import (
     GlycosidicTemplateBinding,
 )
@@ -285,6 +286,9 @@ def _fixed_hydrogens(
     issues = []
     fixed_bond_refs = []
     disulfides = disulfide_bonded_cysteine_residue_ids(structure)
+    polar_chemistry = PolarContactChemistry(
+        structure.constitution, structure.topology, library
+    )
     for chain in structure.constitution.chains:
         if not any(residue.residue_id in targets for residue in chain.residues):
             continue
@@ -301,6 +305,7 @@ def _fixed_hydrogens(
         environment = HydrogenCompletionEnvironment.from_payloads(
             heavy,
             templates=templates,
+            polar_chemistry=polar_chemistry,
             disulfide_bonded_residue_ids=disulfides.intersection(
                 payload.residue_id for payload in payloads
             ),

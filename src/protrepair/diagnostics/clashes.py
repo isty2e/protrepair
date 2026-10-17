@@ -15,6 +15,7 @@ from protrepair.chemistry import (
     ResidueTemplate,
     prepare_radius_lookup,
 )
+from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.diagnostics import clash_topology_rules
 from protrepair.diagnostics.clash_pair_generation import (
     ClashPairAtomSite,
@@ -43,12 +44,7 @@ from protrepair.structure.peptide import are_peptide_adjacent
 from protrepair.structure.slots import ResidueIndex
 from protrepair.structure.topology import StructureTopology
 
-HYDROGEN_ANCHOR_DISTANCE_CUTOFF_ANGSTROM = 1.45
 MINIMUM_CLASH_GRID_CELL_SIZE_ANGSTROM = 1.0
-HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
-HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
-DONOR_ELEMENTS = frozenset({"N", "O", "S"})
-ACCEPTOR_ELEMENTS = frozenset({"N", "O", "S"})
 NEIGHBOR_CELL_OFFSETS: tuple[tuple[int, int, int], ...] = tuple(
     (dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
 )
@@ -159,7 +155,30 @@ class ClashPolicy(ContactPairPolicy):
 
 @dataclass(frozen=True, slots=True)
 class ResidueContext:
-    """Runtime residue context used by clash diagnostics."""
+    """Runtime residue context used by clash diagnostics.
+
+    Parameters
+    ----------
+    residue_site : ResidueSite
+        Canonical residue and atom identities.
+    residue_geometry : ResidueGeometry
+        Coordinates aligned with those identities.
+    template : ResidueTemplate or None
+        Supported component chemistry, when available.
+    domain : ContactDomain
+        Contact-pair selection category.
+    chain_index, residue_index : int or None
+        Polymer traversal positions; None outside polymer chains.
+    polar_chemistry : PolarContactChemistry
+        Shared observation of the structure's current bonds and formal charges.
+    peptide_neighbor_residue_ids : frozenset[ResidueId], default=frozenset()
+        Residues connected by supported peptide adjacency.
+
+    Raises
+    ------
+    TypeError or ValueError
+        If the supplied contact domain cannot be normalized.
+    """
 
     residue_site: ResidueSite
     residue_geometry: ResidueGeometry
@@ -167,41 +186,17 @@ class ResidueContext:
     domain: ContactDomain
     chain_index: int | None
     residue_index: int | None
+    polar_chemistry: PolarContactChemistry = field(repr=False, compare=False)
     peptide_neighbor_residue_ids: frozenset[ResidueId] = frozenset()
-    _hydrogen_anchor_by_name: Mapping[str, str] | None = field(
-        default=None,
-        repr=False,
-        compare=False,
-    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "domain", ContactDomain.normalize(self.domain))
-        if self._hydrogen_anchor_by_name is None:
-            return
-
-        object.__setattr__(
-            self,
-            "_hydrogen_anchor_by_name",
-            MappingProxyType(dict(self._hydrogen_anchor_by_name)),
-        )
 
     @property
     def hydrogen_anchor_by_name(self) -> Mapping[str, str]:
-        """Return inferred hydrogen anchors for the current residue geometry."""
+        """Return chemically supported H anchors, independent of coordinates."""
 
-        hydrogen_anchor_by_name = self._hydrogen_anchor_by_name
-        if hydrogen_anchor_by_name is None:
-            hydrogen_anchor_by_name = infer_hydrogen_anchors(
-                self.residue_site,
-                self.residue_geometry,
-            )
-            object.__setattr__(
-                self,
-                "_hydrogen_anchor_by_name",
-                hydrogen_anchor_by_name,
-            )
-
-        return hydrogen_anchor_by_name
+        return self.polar_chemistry.hydrogen_anchors(self.residue_id)
 
     @property
     def residue_id(self) -> ResidueId:
@@ -235,6 +230,7 @@ class _ResidueContextBasis:
     chain_index: int | None
     residue_index: int | None
     residue_slot_index: int
+    polar_chemistry: PolarContactChemistry = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "domain", ContactDomain.normalize(self.domain))
@@ -332,14 +328,10 @@ class _ClashTopologyFacts:
         """Return whether a structure carries semantically equal topology facts."""
 
         return (
-            (
-                structure.constitution is self.constitution
-                or structure.constitution == self.constitution
-            )
-            and (
-                structure.topology is self.topology
-                or structure.topology == self.topology
-            )
+            structure.constitution is self.constitution
+            or structure.constitution == self.constitution
+        ) and (
+            structure.topology is self.topology or structure.topology == self.topology
         )
 
 
@@ -386,9 +378,7 @@ class ClashDetectionContext:
             not isfinite(self.candidate_cell_size_angstrom)
             or self.candidate_cell_size_angstrom <= 0.0
         ):
-            raise ValueError(
-                "candidate_cell_size_angstrom must be finite and positive"
-            )
+            raise ValueError("candidate_cell_size_angstrom must be finite and positive")
         allowed_distance_by_element_pair = _allowed_distance_by_element_pair(
             radius_by_element,
             policy=self.policy,
@@ -398,9 +388,7 @@ class ClashDetectionContext:
             max(allowed_distance_by_element_pair.values(), default=0.0),
         )
         if self.candidate_cell_size_angstrom < required_cell_size_angstrom:
-            raise ValueError(
-                "candidate_cell_size_angstrom must cover the clash cutoff"
-            )
+            raise ValueError("candidate_cell_size_angstrom must cover the clash cutoff")
 
         if not self.geometry.is_aligned_to(self.constitution):
             raise ValueError(
@@ -541,13 +529,12 @@ class ClashDetectionContext:
 class ClashDetectionBasis:
     """Coordinate-independent clash facts for one constitution and topology.
 
-    The basis owns constitution, topology exclusions, component, and policy
-    facts. Coordinate-derived facts, including inferred hydrogen anchors, are
-    bound later for each candidate geometry.
+    The basis owns constitution, topology exclusions, polar chemistry, component,
+    and policy facts. Only coordinates are rebound for candidate geometry.
     """
 
-    residue_context_bases: tuple[_ResidueContextBasis, ...]
-    atom_site_bases: tuple[_AtomSiteBasis, ...]
+    _residue_context_bases: tuple[_ResidueContextBasis, ...]
+    _atom_site_bases: tuple[_AtomSiteBasis, ...]
     policy: ClashPolicy
     constitution: StructureConstitution = field(repr=False, compare=False)
     topology: StructureTopology = field(repr=False, compare=False)
@@ -579,24 +566,20 @@ class ClashDetectionBasis:
             not isfinite(self.candidate_cell_size_angstrom)
             or self.candidate_cell_size_angstrom <= 0.0
         ):
-            raise ValueError(
-                "candidate_cell_size_angstrom must be finite and positive"
-            )
+            raise ValueError("candidate_cell_size_angstrom must be finite and positive")
         required_cell_size_angstrom = _clash_candidate_cell_size_angstrom(
             radius_by_element,
             policy=self.policy,
         )
         if self.candidate_cell_size_angstrom < required_cell_size_angstrom:
-            raise ValueError(
-                "candidate_cell_size_angstrom must cover the clash cutoff"
-            )
+            raise ValueError("candidate_cell_size_angstrom must cover the clash cutoff")
 
         object.__setattr__(
             self,
-            "residue_context_bases",
-            tuple(self.residue_context_bases),
+            "_residue_context_bases",
+            tuple(self._residue_context_bases),
         )
-        object.__setattr__(self, "atom_site_bases", tuple(self.atom_site_bases))
+        object.__setattr__(self, "_atom_site_bases", tuple(self._atom_site_bases))
         object.__setattr__(
             self,
             "_topology_facts",
@@ -647,7 +630,7 @@ class ClashDetectionBasis:
 
         residue_contexts = bind_residue_contexts(
             structure,
-            self.residue_context_bases,
+            self._residue_context_bases,
         )
         return tuple(
             AtomSite(
@@ -661,7 +644,7 @@ class ClashDetectionBasis:
                 context=residue_contexts[atom_site_basis.residue_context_index],
                 grid_cell_size_angstrom=candidate_cell_size_angstrom,
             )
-            for atom_site_basis in self.atom_site_bases
+            for atom_site_basis in self._atom_site_bases
         )
 
     def bind_context(
@@ -851,30 +834,54 @@ def prepare_clash_detection_basis(
     *,
     component_library: ComponentLibrary,
     policy: ClashPolicy | None = None,
+    polar_chemistry: PolarContactChemistry | None = None,
 ) -> ClashDetectionBasis:
-    """Prepare coordinate-independent clash facts for one topology snapshot."""
+    """Prepare coordinate-independent clash facts for the current graph.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Canonical atom identities and topology.
+    component_library : ComponentLibrary
+        Active definitions for missing supported chemistry.
+    policy : ClashPolicy or None
+        Pair inclusion and overlap policy, or defaults.
+    polar_chemistry : PolarContactChemistry or None
+        Optional interpretation of these exact graph and library inputs.
+
+    Returns
+    -------
+    ClashDetectionBasis
+        Graph-bound preparation; coordinates are supplied when binding.
+
+    Raises
+    ------
+    ValueError
+        Supplied polar chemistry belongs to different inputs.
+    UnknownElementRadiusError
+        An included element has no supported radius.
+    """
 
     normalized_policy = ClashPolicy() if policy is None else policy
     residue_context_bases = build_residue_context_bases(
         structure,
         component_library=component_library,
         include_ligands=normalized_policy.include_ligands,
+        polar_chemistry=polar_chemistry,
     )
     atom_site_bases = build_atom_site_bases(
         residue_context_bases,
         policy=normalized_policy,
     )
-    elements = frozenset(
-        atom_site_basis.element for atom_site_basis in atom_site_bases
-    )
+    elements = frozenset(atom_site_basis.element for atom_site_basis in atom_site_bases)
     radius_lookup = prepare_radius_lookup(elements, RadiusKind.VAN_DER_WAALS)
     radius_lookup.require_complete("clash detection basis")
     radius_by_element = {
         element: radius_lookup.radius_angstrom(element) for element in elements
     }
     return ClashDetectionBasis(
-        residue_context_bases=residue_context_bases,
-        atom_site_bases=atom_site_bases,
+        _residue_context_bases=residue_context_bases,
+        _atom_site_bases=atom_site_bases,
         policy=normalized_policy,
         constitution=structure.constitution,
         topology=structure.topology,
@@ -907,8 +914,35 @@ def prepare_projected_clash_detection_context(
     residue_ids: tuple[ResidueId, ...],
     component_library: ComponentLibrary,
     policy: ClashPolicy | None = None,
+    polar_chemistry: PolarContactChemistry | None = None,
 ) -> ClashDetectionContext:
-    """Prepare reusable clash state for one residue-id projection."""
+    """Prepare a coordinate-bound clash context for selected residues.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Complete canonical graph and current coordinates.
+    residue_ids : tuple[ResidueId, ...]
+        Residues to include in the projection.
+    component_library : ComponentLibrary
+        Active component definitions.
+    policy : ClashPolicy or None
+        Pair inclusion and overlap policy, or defaults.
+    polar_chemistry : PolarContactChemistry or None
+        Optional interpretation of these exact graph and library inputs.
+
+    Returns
+    -------
+    ClashDetectionContext
+        Selected sites with fresh coordinates and shared chemical interpretation.
+
+    Raises
+    ------
+    ValueError
+        Supplied polar chemistry belongs to different inputs.
+    UnknownElementRadiusError
+        An included element has no supported radius.
+    """
 
     normalized_policy = ClashPolicy() if policy is None else policy
     residue_contexts = build_projected_residue_contexts(
@@ -916,6 +950,7 @@ def prepare_projected_clash_detection_context(
         residue_ids=residue_ids,
         component_library=component_library,
         include_ligands=normalized_policy.include_ligands,
+        polar_chemistry=polar_chemistry,
     )
     elements = _atom_site_elements_from_residue_contexts(
         residue_contexts,
@@ -1118,8 +1153,36 @@ def has_clashes_in_residue_projection(
     residue_ids: tuple[ResidueId, ...],
     component_library: ComponentLibrary,
     policy: ClashPolicy | None = None,
+    polar_chemistry: PolarContactChemistry | None = None,
 ) -> bool:
-    """Return whether one residue-id projection contains any steric clash."""
+    """Test a residue projection using current coordinates.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Complete structure supplying chemistry and current geometry.
+    residue_ids : tuple[ResidueId, ...]
+        Residues to inspect for clashes.
+    component_library : ComponentLibrary
+        Active component definitions.
+    policy : ClashPolicy or None
+        Contact policy, or defaults.
+    polar_chemistry : PolarContactChemistry or None
+        Optional interpretation bound to the same graph and library. Geometric
+        contacts are always recomputed, including when chemistry is reused.
+
+    Returns
+    -------
+    bool
+        Whether the projection contains a clash under the selected policy.
+
+    Raises
+    ------
+    ValueError
+        Supplied polar chemistry belongs to another graph or library.
+    UnknownElementRadiusError
+        An included atom in the selected projection lacks a supported radius.
+    """
 
     return has_clashes_in_context(
         prepare_projected_clash_detection_context(
@@ -1127,6 +1190,7 @@ def has_clashes_in_residue_projection(
             residue_ids=residue_ids,
             component_library=component_library,
             policy=policy,
+            polar_chemistry=polar_chemistry,
         ),
     )
 
@@ -1299,8 +1363,40 @@ def build_residue_context_bases(
     *,
     component_library: ComponentLibrary,
     include_ligands: bool,
+    polar_chemistry: PolarContactChemistry | None = None,
 ) -> tuple[_ResidueContextBasis, ...]:
-    """Return coordinate-independent diagnostic residue context bases."""
+    """Interpret residue chemistry before binding candidate coordinates.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Complete canonical graph.
+    component_library : ComponentLibrary
+        Active component definitions.
+    include_ligands : bool
+        Whether retained non-polymer residues are included.
+    polar_chemistry : PolarContactChemistry or None
+        Optional interpretation of these exact graph and library inputs.
+
+    Returns
+    -------
+    tuple
+        Residue bases sharing one validated chemical interpretation.
+
+    Raises
+    ------
+    ValueError
+        Supplied polar chemistry belongs to different inputs.
+    """
+
+    if polar_chemistry is None:
+        polar_chemistry = PolarContactChemistry(
+            structure.constitution, structure.topology, component_library
+        )
+    elif not polar_chemistry.matches_inputs(
+        structure.constitution, structure.topology, component_library
+    ):
+        raise ValueError("polar chemistry must match the graph and component library")
 
     bases: list[_ResidueContextBasis] = []
     for chain_index, chain_site in enumerate(structure.constitution.chains):
@@ -1316,6 +1412,7 @@ def build_residue_context_bases(
                     chain_index=chain_index,
                     residue_index=residue_index,
                     residue_slot_index=residue_slot_index.value,
+                    polar_chemistry=polar_chemistry,
                 )
             )
 
@@ -1332,6 +1429,7 @@ def build_residue_context_bases(
                     chain_index=None,
                     residue_index=None,
                     residue_slot_index=residue_slot_index.value,
+                    polar_chemistry=polar_chemistry,
                 )
             )
 
@@ -1388,6 +1486,7 @@ def bind_residue_contexts(
                 domain=basis.domain,
                 chain_index=basis.chain_index,
                 residue_index=basis.residue_index,
+                polar_chemistry=basis.polar_chemistry,
                 peptide_neighbor_residue_ids=peptide_neighbor_ids_by_basis_index[
                     basis_index
                 ],
@@ -1413,9 +1512,9 @@ def _peptide_neighbor_ids_by_basis_index(
         if basis.chain_index is None or basis.residue_index is None:
             continue
 
-        basis_index_by_chain_residue[
-            (basis.chain_index, basis.residue_index)
-        ] = basis_index
+        basis_index_by_chain_residue[(basis.chain_index, basis.residue_index)] = (
+            basis_index
+        )
 
     for (
         chain_index,
@@ -1450,8 +1549,33 @@ def build_projected_residue_contexts(
     residue_ids: tuple[ResidueId, ...],
     component_library: ComponentLibrary,
     include_ligands: bool,
+    polar_chemistry: PolarContactChemistry | None = None,
 ) -> tuple[ResidueContext, ...]:
-    """Return diagnostic residue contexts for one residue-id projection."""
+    """Bind current coordinates for a residue-id projection.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Complete canonical graph and current coordinates.
+    residue_ids : tuple[ResidueId, ...]
+        Residues to include.
+    component_library : ComponentLibrary
+        Active component definitions.
+    include_ligands : bool
+        Whether retained non-polymer residues are included.
+    polar_chemistry : PolarContactChemistry or None
+        Optional interpretation of these exact graph and library inputs.
+
+    Returns
+    -------
+    tuple[ResidueContext, ...]
+        Selected residue contexts in structure order.
+
+    Raises
+    ------
+    ValueError
+        Supplied polar chemistry belongs to different inputs.
+    """
 
     selected_residue_ids = frozenset(residue_ids)
     return bind_residue_contexts(
@@ -1462,47 +1586,11 @@ def build_projected_residue_contexts(
                 structure,
                 component_library=component_library,
                 include_ligands=include_ligands,
+                polar_chemistry=polar_chemistry,
             )
             if basis.residue_id in selected_residue_ids
         ),
     )
-
-
-def infer_hydrogen_anchors(
-    residue_site: ResidueSite,
-    residue_geometry: "ResidueGeometry",
-) -> Mapping[str, str]:
-    """Infer a bonded heavy-atom anchor for each hydrogen in one residue."""
-
-    heavy_atom_geometries = tuple(
-        (
-            atom_site,
-            residue_geometry.atom_geometry(atom_site.name),
-        )
-        for atom_site in residue_site.atom_sites
-        if not atom_site.is_hydrogen()
-    )
-    hydrogen_anchor_by_name: dict[str, str] = {}
-    for hydrogen_atom_site in residue_site.atom_sites:
-        if not hydrogen_atom_site.is_hydrogen():
-            continue
-
-        hydrogen_geometry = residue_geometry.atom_geometry(hydrogen_atom_site.name)
-        closest_heavy_atom_name: str | None = None
-        closest_heavy_atom_distance = float("inf")
-        for heavy_atom_site, heavy_atom_geometry in heavy_atom_geometries:
-            distance = hydrogen_geometry.distance_to(heavy_atom_geometry)
-            if distance < closest_heavy_atom_distance:
-                closest_heavy_atom_distance = distance
-                closest_heavy_atom_name = heavy_atom_site.name
-
-        if closest_heavy_atom_name is None:
-            continue
-
-        if closest_heavy_atom_distance <= HYDROGEN_ANCHOR_DISTANCE_CUTOFF_ANGSTROM:
-            hydrogen_anchor_by_name[hydrogen_atom_site.name] = closest_heavy_atom_name
-
-    return MappingProxyType(hydrogen_anchor_by_name)
 
 
 def build_atom_sites(
@@ -1590,7 +1678,7 @@ def same_residue_bond_hops(
     left_site: AtomSite,
     right_site: AtomSite,
 ) -> int | None:
-    """Return same-residue bond hops for two atom sites if the template knows them."""
+    """Return residue-local hops from canonical and supported projected bonds."""
 
     return clash_topology_rules.same_residue_bond_hops(
         cast(clash_topology_rules.ClashTopologyAtomSite, left_site),
@@ -1621,29 +1709,6 @@ def atom_to_named_backbone_hops(
         cast(clash_topology_rules.ClashTopologyAtomSite, site),
         target_atom_name=target_atom_name,
     )
-
-
-def atom_to_atom_bond_hops_within_residue(
-    atom_name_1: str,
-    atom_name_2: str,
-    *,
-    context: ResidueContext,
-    template: ResidueTemplate,
-) -> int | None:
-    """Return intra-residue bond hops using heavy topology plus inferred H anchors."""
-
-    return clash_topology_rules.atom_to_atom_bond_hops_within_residue(
-        atom_name_1,
-        atom_name_2,
-        context=cast(clash_topology_rules.ClashTopologyResidueContext, context),
-        template=template,
-    )
-
-
-def atom_is_hydrogen(residue_site: ResidueSite, atom_name: str) -> bool:
-    """Return whether a named atom within a residue is a hydrogen."""
-
-    return clash_topology_rules.atom_is_hydrogen(residue_site, atom_name)
 
 
 def probable_hydrogen_bond(

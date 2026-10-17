@@ -55,13 +55,11 @@ class RotatableHydrogenClashBurden:
                 "rotatable-hydrogen worst overlap must be finite and non-negative"
             )
         if self.clash_count == 0 and (
-            self.total_overlap_angstrom != 0.0
-            or self.worst_overlap_angstrom != 0.0
+            self.total_overlap_angstrom != 0.0 or self.worst_overlap_angstrom != 0.0
         ):
             raise ValueError("zero clash count requires zero overlap burden")
         if self.clash_count > 0 and (
-            self.total_overlap_angstrom <= 0.0
-            or self.worst_overlap_angstrom <= 0.0
+            self.total_overlap_angstrom <= 0.0 or self.worst_overlap_angstrom <= 0.0
         ):
             raise ValueError("positive clash count requires positive overlap burden")
         if self.worst_overlap_angstrom > self.total_overlap_angstrom:
@@ -113,7 +111,19 @@ class RotatableHydrogenCandidateRank:
 
 @dataclass(frozen=True, slots=True)
 class RotatableHydrogenLocalSite:
-    """Same-residue heavy-atom site used in rotatable-hydrogen scoring."""
+    """Same-residue heavy-atom site used in rotatable-hydrogen scoring.
+
+    Parameters
+    ----------
+    atom_name, element : str
+        Canonical site identity and element.
+    x, y, z : float
+        Coordinates in angstrom.
+    bond_hops_from_donor : int or None
+        Supported covalent distance, or None when no path is known.
+    is_acceptor : bool
+        Chemistry-backed eligibility for the current donor, not an element test.
+    """
 
     atom_name: str
     element: str
@@ -121,6 +131,7 @@ class RotatableHydrogenLocalSite:
     y: float
     z: float
     bond_hops_from_donor: int | None
+    is_acceptor: bool
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "atom_name", self.atom_name.strip().upper())
@@ -129,13 +140,41 @@ class RotatableHydrogenLocalSite:
 
 @dataclass(frozen=True, slots=True)
 class RotatableHydrogenEnvironment:
-    """Packed heavy-atom interaction data for one canonical residue."""
+    """Packed heavy-atom interaction data for one canonical residue.
+
+    Parameters
+    ----------
+    residue_id : ResidueId
+        Residue whose hydrogen is being placed.
+    atom_x, atom_y, atom_z : tuple[float, ...]
+        External heavy-site coordinates in angstrom.
+    elements : tuple[str, ...]
+        External heavy-site elements, aligned with coordinates.
+    acceptors : tuple[bool, ...]
+        Chemistry-backed acceptor eligibility for this donor, aligned with sites.
+    charges : tuple[float, ...]
+        Partial charges for interaction energy, not formal charges.
+    sigmas_nm, epsilons_kj_mol : tuple[float, ...]
+        Lennard-Jones parameters, aligned with sites.
+    local_sites : tuple[RotatableHydrogenLocalSite, ...], default=()
+        Same-residue sites with chemical hop exclusions.
+
+    Raises
+    ------
+    TypeError
+        If the residue identity is not canonical.
+    ValueError
+        If packed columns have different lengths.
+    UnknownElementRadiusError
+        If a scoring element has no supported radius.
+    """
 
     residue_id: ResidueId
     atom_x: tuple[float, ...]
     atom_y: tuple[float, ...]
     atom_z: tuple[float, ...]
     elements: tuple[str, ...]
+    acceptors: tuple[bool, ...]
     charges: tuple[float, ...]
     sigmas_nm: tuple[float, ...]
     epsilons_kj_mol: tuple[float, ...]
@@ -155,6 +194,7 @@ class RotatableHydrogenEnvironment:
             len(self.atom_y),
             len(self.atom_z),
             len(self.elements),
+            len(self.acceptors),
             len(self.charges),
             len(self.sigmas_nm),
             len(self.epsilons_kj_mol),
@@ -401,16 +441,17 @@ def hydrogen_clash_burden(
             donor_y=donor_vector.y,
             donor_z=donor_vector.z,
             donor_element=search.donor_element,
-            allow_hydrogen_bond=False,
+            allow_hydrogen_bond=local_site.is_acceptor,
         )
         if overlap > 0.0:
             overlaps.append(overlap)
 
-    for site_x, site_y, site_z, site_element in zip(
+    for site_x, site_y, site_z, site_element, is_acceptor in zip(
         environment.atom_x,
         environment.atom_y,
         environment.atom_z,
         environment.elements,
+        environment.acceptors,
         strict=True,
     ):
         overlap = hydrogen_steric_overlap_against_site(
@@ -427,7 +468,7 @@ def hydrogen_clash_burden(
             donor_y=donor_vector.y,
             donor_z=donor_vector.z,
             donor_element=search.donor_element,
-            allow_hydrogen_bond=True,
+            allow_hydrogen_bond=is_acceptor,
         )
         if overlap > 0.0:
             overlaps.append(overlap)

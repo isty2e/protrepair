@@ -1,5 +1,6 @@
 """Focused tests for placement-time rotatable-hydrogen scoring."""
 
+from collections.abc import Sequence
 from dataclasses import replace
 
 import numpy as np
@@ -7,16 +8,25 @@ import pytest
 from tests.support.canonical_builders import (
     CanonicalAtomPayload,
     atom_payload,
+    build_structure,
+    chain_payload,
     completion_payload,
 )
 
 import protrepair.transformer.completion.hydrogen.scoring as hydrogen_scoring
-from protrepair.chemistry import RotatableHydrogenKind, UnknownElementRadiusError
+from protrepair.chemistry import (
+    ComponentLibrary,
+    ResidueTemplate,
+    RotatableHydrogenKind,
+    UnknownElementRadiusError,
+)
+from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics import ClashPolicy
 from protrepair.geometry import GeometryPlacementError, InternalCoordinateFrame, Vec3
 from protrepair.geometry.placement_vector import PLACEMENT_VECTOR_NORM_EPSILON
 from protrepair.structure.labels import ResidueId
+from protrepair.structure.provenance import FileFormat
 from protrepair.transformer.completion.hydrogen.domain import (
     HydrogenCompletionEnvironment,
 )
@@ -28,8 +38,10 @@ from protrepair.transformer.completion.hydrogen.rotatable import (
     ROTATABLE_HYDROGEN_SPECS,
     RotatableHydrogenEnvironment,
     RotatableHydrogenSearch,
-    build_rotatable_hydrogen_environments,
     rotatable_hydrogen_placement_spec,
+)
+from protrepair.transformer.completion.hydrogen.rotatable import (
+    build_rotatable_hydrogen_environments as pack_environments,
 )
 from protrepair.transformer.completion.hydrogen.scoring import (
     hydrogen_steric_overlap_against_site,
@@ -106,6 +118,7 @@ def test_optimize_rotatable_hydrogen_keeps_probable_hydrogen_bond_orientation(
             atom_y=(0.0, 2.7),
             atom_z=(0.0, 0.0),
             elements=("O", "C"),
+            acceptors=(True, False),
             charges=(0.0, 0.0),
             sigmas_nm=(0.0, 0.0),
             epsilons_kj_mol=(0.0, 0.0),
@@ -143,6 +156,7 @@ def test_optimize_rotatable_hydrogen_selects_least_bad_candidate(
             atom_y=(0.0,),
             atom_z=(0.0,),
             elements=("C",),
+            acceptors=(False,),
             charges=(0.0,),
             sigmas_nm=(0.0,),
             epsilons_kj_mol=(0.0,),
@@ -177,6 +191,7 @@ def test_clash_free_candidate_outranks_arbitrarily_favorable_clashed_energy(
         atom_y=(0.0,),
         atom_z=(0.0,),
         elements=("C",),
+        acceptors=(False,),
         charges=(0.0,),
         sigmas_nm=(0.0,),
         epsilons_kj_mol=(0.0,),
@@ -291,9 +306,7 @@ def test_rotatable_hydrogen_clash_burden_rejects_invalid_overlaps(
     """Only finite positive contacts may enter a clash burden."""
 
     with pytest.raises(ValueError, match="finite and positive"):
-        hydrogen_scoring.RotatableHydrogenClashBurden.from_positive_overlaps(
-            overlaps
-        )
+        hydrogen_scoring.RotatableHydrogenClashBurden.from_positive_overlaps(overlaps)
 
 
 @pytest.mark.parametrize(
@@ -510,6 +523,7 @@ def test_rotatable_hydrogen_environment_reports_unknown_radii_once() -> None:
             atom_y=(0.0, 1.0),
             atom_z=(0.0, 0.0),
             elements=("XX", "C1"),
+            acceptors=(False, False),
             charges=(0.0, 0.0),
             sigmas_nm=(0.0, 0.0),
             epsilons_kj_mol=(0.0, 0.0),
@@ -531,6 +545,7 @@ def test_rotatable_hydrogen_environment_rejects_misaligned_packed_fields() -> No
             atom_y=(),
             atom_z=(0.0,),
             elements=("C",),
+            acceptors=(False,),
             charges=(0.0,),
             sigmas_nm=(0.0,),
             epsilons_kj_mol=(0.0,),
@@ -600,6 +615,7 @@ def test_rotatable_hydrogen_coincident_site_has_infinite_potential() -> None:
         atom_y=(0.0,),
         atom_z=(0.0,),
         elements=("C",),
+        acceptors=(False,),
         charges=(0.0,),
         sigmas_nm=(0.0,),
         epsilons_kj_mol=(0.0,),
@@ -856,6 +872,7 @@ def test_rotatable_hydrogen_search_skips_undefined_candidate_frames() -> None:
             atom_y=(0.0,),
             atom_z=(0.0,),
             elements=("C",),
+            acceptors=(False,),
             charges=(0.0,),
             sigmas_nm=(0.0,),
             epsilons_kj_mol=(0.0,),
@@ -876,9 +893,7 @@ def test_hydrogen_scale_bond_rejects_shared_degenerate_threshold() -> None:
     """Hydrogen scaling should use the closed shared norm threshold."""
 
     origin = np.zeros(3, dtype=np.float64)
-    candidate = np.array(
-        (PLACEMENT_VECTOR_NORM_EPSILON, 0.0, 0.0), dtype=np.float64
-    )
+    candidate = np.array((PLACEMENT_VECTOR_NORM_EPSILON, 0.0, 0.0), dtype=np.float64)
 
     with pytest.raises(GeometryPlacementError, match="degenerate bond vector"):
         scale_bond(origin, candidate, 1.0)
@@ -1207,6 +1222,7 @@ def minimal_environment(
         atom_y=(marker,),
         atom_z=(0.0,),
         elements=("C",),
+        acceptors=(False,),
         charges=(0.0,),
         sigmas_nm=(0.0,),
         epsilons_kj_mol=(0.0,),
@@ -1247,4 +1263,37 @@ def build_residue(
             insertion_code=insertion_code,
         ),
         atoms=atoms,
+    )
+
+
+def build_rotatable_hydrogen_environments(
+    *,
+    residues: tuple[CompletionResiduePayload, ...],
+    templates: Sequence[ResidueTemplate | None],
+) -> tuple[RotatableHydrogenEnvironment, ...]:
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                residues[0].residue_id.chain_id,
+                tuple(
+                    (
+                        r.residue_site,
+                        r.residue_geometry,
+                        r.formal_charge_by_atom_name,
+                    )
+                    for r in residues
+                ),
+            ),
+        )
+        if residues
+        else (),
+        source_format=FileFormat.PDB,
+    )
+    library = ComponentLibrary({t.component_id: t for t in templates if t is not None})
+    return pack_environments(
+        residues=residues,
+        templates=templates,
+        polar_chemistry=PolarContactChemistry(
+            structure.constitution, structure.topology, library
+        ),
     )
