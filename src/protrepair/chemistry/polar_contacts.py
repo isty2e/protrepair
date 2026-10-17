@@ -140,6 +140,7 @@ class PolarContactChemistry:
                 # a parent; branch-ambiguous families such as THR HG do not.
                 families: dict[str, set[str]] = {}
                 aliases: dict[str, set[str]] = {}
+                numbered_families: dict[tuple[str, str], set[str]] = {}
                 for name, parent in template.template_hydrogen_anchor_by_name(
                     template.expected_hydrogen_atom_names()
                 ).items():
@@ -147,6 +148,20 @@ class PolarContactChemistry:
                     aliases.setdefault(name, set()).add(parent)
                     if name[0].isdigit():
                         aliases.setdefault(name[1:] + name[0], set()).add(parent)
+                        numbered_families.setdefault((name[1:], parent), set()).add(
+                            name[0]
+                        )
+                # CCD methylene suffixes are 2/3, retaining branch digits:
+                # 1HG1/2HG1 correspond to HG12/HG13, not the methyl HG2 family.
+                for (stem, parent), numbers in numbered_families.items():
+                    parent_ref = named_refs.get(parent)
+                    if (
+                        numbers == {"1", "2"}
+                        and parent_ref is not None
+                        and self._atoms[parent_ref].element == "C"
+                    ):
+                        for number in ("2", "3"):
+                            aliases.setdefault(stem + number, set()).add(parent)
                 for site in residue.atom_sites:
                     if not site.is_hydrogen() or site.name in anchors:
                         continue
@@ -343,28 +358,34 @@ class PolarContactChemistry:
                     hydrogens or any(self._atoms[n].element == "S" for n in heavy)
                 ):
                     return False
-                if hydrogens and self._resonance_center(heavy[0], ref):
+                if hydrogens and (
+                    self._resonance_center(heavy[0], ref)
+                    or self._carboxyl_oxygen_peer(ref) is not None
+                ):
                     return False
                 return True
-            # A neutral resonance oxygen can be encoded with a single bond when
-            # the other carboxylate oxygen carries the observed negative charge.
+            # Stock carboxyl groups can have all-single bonds before charges are
+            # published. This contact projection does not choose a charge state.
             return (
                 element == "O"
                 and not hydrogens
                 and valence == 1
-                and any(
-                    self._atoms[parent].element == "C"
-                    and any(
-                        peer != ref
-                        and self._atoms[peer].element == "O"
-                        and self._charges[peer] == -1
-                        and peer not in self._unavailable
-                        and len(self._neighbors[peer]) == 1
-                        and self._neighbors[peer][parent].order == 1
-                        and not self._neighbors[peer][parent].aromatic
-                        for peer in self._neighbors[parent]
+                and (
+                    (charge is None and self._carboxyl_oxygen_peer(ref) is not None)
+                    or any(
+                        self._atoms[parent].element == "C"
+                        and any(
+                            peer != ref
+                            and self._atoms[peer].element == "O"
+                            and self._charges[peer] == -1
+                            and peer not in self._unavailable
+                            and len(self._neighbors[peer]) == 1
+                            and self._neighbors[peer][parent].order == 1
+                            and not self._neighbors[peer][parent].aromatic
+                            for peer in self._neighbors[parent]
+                        )
+                        for parent in heavy
                     )
-                    for parent in heavy
                 )
             )
         if any(self._resonance_center(parent, ref) for parent in heavy):
@@ -386,6 +407,46 @@ class PolarContactChemistry:
             )
             for parent in heavy
         )
+
+    def _carboxyl_oxygen_peer(self, ref: AtomRef) -> AtomRef | None:
+        if self._atoms[ref].element != "O":
+            return None
+        heavy = [n for n in self._neighbors[ref] if not self._atoms[n].is_hydrogen()]
+        if len(heavy) != 1:
+            return None
+        center = heavy[0]
+        neighbors = self._neighbors[center]
+        if (
+            self._atoms[center].element != "C"
+            or center in self._unavailable
+            or self._charges[center] not in {None, 0}
+            or len(neighbors) != 3
+            or any(b.aromatic for b in neighbors.values())
+        ):
+            return None
+        oxygens = [n for n in neighbors if self._atoms[n].element == "O"]
+        if len(oxygens) != 2 or sum(neighbors[n].order for n in oxygens) not in {2, 3}:
+            return None
+        if any(b.order != 1 for n, b in neighbors.items() if n not in oxygens):
+            return None
+        peer = next(n for n in oxygens if n != ref)
+        if peer in self._unavailable or self._charges[peer] not in {None, 0, -1}:
+            return None
+        if self._charges[peer] == -1 and neighbors[peer].order != 1:
+            return None
+        other_neighbors = self._neighbors[peer]
+        if len(other_neighbors) == 1:
+            return peer
+        if (
+            len(other_neighbors) == 2
+            and neighbors[peer].order == 1
+            and self._charges[peer] != -1
+            and all(
+                n == center or self._atoms[n].is_hydrogen() for n in other_neighbors
+            )
+        ):
+            return peer
+        return None
 
     def _resonance_center(self, center: AtomRef, excluded: AtomRef) -> bool:
         if self._atoms[center].element not in {"C", "S", "P"}:

@@ -65,7 +65,7 @@ WORKFLOW_RDKIT_COORDINATE_DIGESTS_2DP: dict[str, dict[str, frozenset[str]]] = {
     "1afc-hydrogen-his-protonated": {
         "2026.03.2": frozenset(
             {
-                "7eeddbdad5b277d4dfe22af1501e891415839b30c5f8ed28e4163e11fcec93a8",
+                "8265662f45573dc6974754ec794663750278e2053f4d22a986d5a72f8a017326",
             }
         ),
     },

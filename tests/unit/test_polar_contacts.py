@@ -739,3 +739,164 @@ def test_explicit_molecular_graph_supports_distinct_polar_motifs(
         )
         == expected_count
     )
+
+
+@pytest.mark.parametrize(
+    "component,oxygen_names",
+    [("ASP", ("OD1", "OD2")), ("GLU", ("OE1", "OE2")), ("ALA", ("O", "OXT"))],
+)
+def test_stock_carboxyl_oxygens_are_acceptors_before_charge_publication(
+    component: str, oxygen_names: tuple[str, str]
+) -> None:
+    template = LIBRARY.require(component)
+    source = molecular_fixture(
+        tuple(
+            atom_payload(
+                name,
+                "N" if name.startswith("N") else "O" if name.startswith("O") else "C",
+                Vec3(i, 0, 0),
+            )
+            for i, name in enumerate(template.definition.atom_names)
+            if name != "OXT" or component == "ALA"
+        ),
+        (),
+        component=component,
+    )
+    topology = source.topology
+    chemistry = PolarContactChemistry(source.constitution, topology, LIBRARY)
+
+    assert set(oxygen_names) <= chemistry.acceptor_names(RID)
+    assert source.topology is topology
+    assert all(
+        topology.formal_charge(source.constitution.atom_index(AtomRef(RID, name)))
+        is None
+        for name in oxygen_names
+    )
+
+
+@pytest.mark.parametrize("oxygen_order", [1, 2])
+@pytest.mark.parametrize("acid_hydrogen", [False, True])
+def test_unknown_carboxyl_charge_does_not_hide_unprotonated_oxygen(
+    oxygen_order: int, acid_hydrogen: bool
+) -> None:
+    atoms = tuple(
+        atom_payload(name, element, Vec3(i, 0, 0))
+        for i, (name, element) in enumerate(
+            (("R", "C"), ("C", "C"), ("O1", "O"), ("O2", "O"))
+        )
+    )
+    bonds = (("R", "C", 1), ("C", "O1", oxygen_order), ("C", "O2", 1))
+    if acid_hydrogen:
+        atoms += (atom_payload("HO", "D", Vec3(3, 1, 0)),)
+        bonds += (("O2", "HO", 1),)
+    source = molecular_fixture(atoms, bonds)
+    chemistry = PolarContactChemistry(
+        source.constitution, source.topology, ComponentLibrary()
+    )
+
+    assert chemistry.acceptor_names(RID) == ({"O1"} if acid_hydrogen else {"O1", "O2"})
+
+
+@pytest.mark.parametrize("extra", [None, "H"])
+def test_carboxyl_inference_requires_a_complete_trigonal_carbon(
+    extra: str | None,
+) -> None:
+    atoms = (
+        atom_payload("C", "C", Vec3(0, 0, 0)),
+        atom_payload("O1", "O", Vec3(1, 0, 0)),
+        atom_payload("O2", "O", Vec3(-1, 0, 0)),
+    )
+    bonds = (("C", "O1", 1), ("C", "O2", 1))
+    if extra is not None:
+        atoms += (
+            atom_payload("R", "C", Vec3(0, 1, 0)),
+            atom_payload("H", "H", Vec3(0, -1, 0)),
+        )
+        bonds += (("C", "R", 1), ("C", "H", 1))
+    source = molecular_fixture(atoms, bonds)
+    chemistry = PolarContactChemistry(
+        source.constitution, source.topology, ComponentLibrary()
+    )
+
+    assert not chemistry.acceptor_names(RID)
+
+
+@pytest.mark.parametrize(
+    "name,element", [("HG12", "H"), ("HG13", "H"), ("DG13", "D"), ("TG13", "T")]
+)
+def test_branched_methylene_suffix_preserves_the_template_parent(
+    name: str, element: str
+) -> None:
+    source = molecular_fixture(
+        (
+            atom_payload("CB", "C", Vec3(-1, 0, 0)),
+            atom_payload("CG1", "C", Vec3(0, 0, 0)),
+            atom_payload("CG2", "C", Vec3(0.2, 0, 0)),
+            atom_payload("CD1", "C", Vec3(0, 1, 0)),
+            atom_payload(name, element, Vec3(1, 0, 0)),
+        ),
+        (),
+        component="ILE",
+    )
+    chemistry = PolarContactChemistry(source.constitution, source.topology, LIBRARY)
+
+    assert chemistry.hydrogen_anchors(RID)[name] == "CG1"
+    assert chemistry.bond_hop_distance(AtomRef(RID, name), AtomRef(RID, "CG1")) == 1
+
+
+@pytest.mark.parametrize(
+    "component,name,parents",
+    [("ILE", "HG24", ("CG1", "CG2")), ("ARG", "HH13", ("NH1", "NH2"))],
+)
+def test_methylene_suffix_shift_does_not_create_methyl_or_amide_aliases(
+    component, name, parents
+) -> None:
+    source = molecular_fixture(
+        tuple(
+            atom_payload(parent, "N" if parent.startswith("N") else "C", Vec3(i, 0, 0))
+            for i, parent in enumerate(parents)
+        )
+        + (atom_payload(name, "H", Vec3(1, 1, 0)),),
+        (),
+        component=component,
+    )
+    chemistry = PolarContactChemistry(source.constitution, source.topology, LIBRARY)
+
+    assert name not in chemistry.hydrogen_anchors(RID)
+
+
+@pytest.mark.parametrize(
+    "center_charge,peer_charge,peer_order", [(1, None, 2), (0, 1, 1), (0, -1, 2)]
+)
+def test_unknown_carboxyl_inference_preserves_declared_charge_conflicts(
+    center_charge, peer_charge, peer_order
+) -> None:
+    source = molecular_fixture(
+        (
+            atom_payload("R", "C", Vec3(0, 1, 0)),
+            atom_payload("C", "C", Vec3(0, 0, 0), formal_charge=center_charge),
+            atom_payload("O1", "O", Vec3(1, 0, 0)),
+            atom_payload("O2", "O", Vec3(-1, 0, 0), formal_charge=peer_charge),
+        ),
+        (("C", "R", 1), ("C", "O1", 1), ("C", "O2", peer_order)),
+    )
+    chemistry = PolarContactChemistry(
+        source.constitution, source.topology, ComponentLibrary()
+    )
+
+    assert "O1" not in chemistry.acceptor_names(RID)
+
+
+def test_methylene_alias_does_not_override_a_declared_source_parent() -> None:
+    source = molecular_fixture(
+        (
+            atom_payload("CG1", "C", Vec3(0, 0, 0)),
+            atom_payload("CG2", "C", Vec3(2, 0, 0)),
+            atom_payload("HG13", "H", Vec3(1, 0, 0)),
+        ),
+        (("CG2", "HG13", 1),),
+        component="ILE",
+    )
+    chemistry = PolarContactChemistry(source.constitution, source.topology, LIBRARY)
+
+    assert chemistry.hydrogen_anchors(RID)["HG13"] == "CG2"

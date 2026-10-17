@@ -108,7 +108,13 @@ because it is nitrogen. Known canonical bonds take precedence. Supported
 templates can fill absent bonds or interpret an exact match to an untyped
 CONECT record; they cannot move H to a nearer atom or override a conflicting
 attachment. Standard H-numbering variants are recognized only when their
-template parent is unambiguous. These projections do not change topology.
+template parent is unambiguous, including branched methylene names such as ILE
+HG12/HG13. These projections do not change topology.
+
+Carboxyl oxygens can be recognized from their carbon/oxygen bond context before
+formal charges are available, including stock ASP, GLU and terminal groups. This
+does not assign charges. An observed acid O-H or conflicting source chemistry
+still limits acceptor eligibility.
 
 The current geometry envelope is H...acceptor distance 1.6-2.4 A, donor-H
 distance at most 1.45 A, and donor-H...acceptor angle greater than 120 degrees.

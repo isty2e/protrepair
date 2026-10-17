@@ -60,9 +60,13 @@
   the existing geometric cutoffs and source attachment authority; apply the
   same eligibility to rotatable-H placement, which can change generated H
   positions without changing the force-field terms
+- recognize charge-unspecified carboxyl oxygens before H placement and preserve
+  branched methylene parents across PDB H naming conventions, without assigning
+  charges or renaming deposited atoms
 - use full RDKit sanitation for no-CONECT readability and retain unresolved
   failure evidence when localization fails; report H attachments outside
-  canonical topology separately, even when sanitation succeeds
+  canonical topology separately, even when sanitation succeeds; this observed
+  attachment burden can create parser deficits used by correction planning
 - include retained contacts in default local refinement assessment and compare
   actual parser burden, then steric clashes, before soft contact proxies;
   equal quality is not regression, and local improvement need not resolve an

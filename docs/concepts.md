@@ -88,6 +88,8 @@ The no-CONECT parser probe runs full RDKit sanitation. A successful parse can
 still attach H to a different heavy atom, so the probe separately checks
 attachments against declared canonical H/D/T parents. It does not guess missing
 parents or rewrite the structure's topology.
+Observed noncanonical attachments also contribute to the parser deficits used
+by correction planning, even when sanitation succeeds.
 
 Local candidate comparison puts confirmed parser failure first, then observed
 noncanonical parser bonds, steric clashes and overlap, and soft contact proxies.
