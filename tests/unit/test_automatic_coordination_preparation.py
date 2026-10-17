@@ -396,6 +396,114 @@ def test_current_neutralization_cannot_hide_original_charge(component_id):
     assert result.issues
 
 
+@pytest.mark.parametrize("change", ("removed", "renamed", "element"))
+@pytest.mark.parametrize("hydrogenated", (False, True))
+def test_original_heavy_identity_cannot_be_hidden_by_current_scaffold(
+    change, hydrogenated, component_id
+):
+    current = _source(component_id=component_id)
+    index = current.constitution.residue_index(IMD)
+    residue = current.constitution.residue_site_at(index)
+    geometry = current.residue_geometry(index)
+    if change == "removed":
+        original = current.with_updated_residue_facets(
+            residue.with_atom_site(AtomSite("SOURCEC", "C")),
+            residue_geometry=geometry.with_atom_geometry(
+                "SOURCEC", AtomGeometry(Vec3(10, 10, 10))
+            ),
+        )
+    elif change == "renamed":
+        original = current.without_atom_refs((AtomRef(IMD, "C2"),))
+        original = original.with_updated_residue_facets(
+            residue.without_atom_sites(("C2",)).with_atom_site(
+                AtomSite("SOURCEC", "C")
+            ),
+            residue_geometry=original.residue_geometry(index).with_atom_geometry(
+                "SOURCEC", geometry.atom_geometry("C2")
+            ),
+        )
+    else:
+        original = current.with_updated_residue_facets(
+            residue.with_atom_site(AtomSite("C2", "O")),
+            residue_geometry=geometry,
+        )
+    original = _observed(original)
+    if hydrogenated:
+        prepared = add_retained_non_polymer_hydrogens(
+            current, target_residue_ids=frozenset((IMD,))
+        )
+        assert prepared.repairs
+        current = prepared.structure
+    changed = current.with_provenance(original.provenance)
+    residue = changed.constitution.residue_or_ligand(IMD)
+    assert residue is not None
+
+    resolution = resolve_retained_non_polymer_chemistry(
+        changed,
+        residue,
+        component_library=build_default_component_library(),
+        allow_rdkit_fallback=True,
+    )
+    assert resolution.source is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
+    assert "original heavy" in resolution.failure_reason
+
+    _, chemistry = StructureChemistryObservation(
+        changed, component_library=build_default_component_library()
+    ).whole_structure_facts()
+    fact = next(
+        item for item in chemistry.retained_non_polymer_facts if item.residue_id == IMD
+    )
+    assert (
+        fact.heavy_topology_source
+        is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
+    )
+    assert fact.chemistry_failure_reason
+
+    for transform in (
+        add_retained_non_polymer_hydrogens,
+        resolve_retained_non_polymer_topology,
+    ):
+        result = transform(
+            changed,
+            build_default_component_library(),
+            target_residue_ids=frozenset((IMD,)),
+        )
+        assert result.structure is changed
+        assert not result.repairs
+        assert result.issues
+        assert all(
+            issue.kind is not ValidationIssueKind.RETAINED_NON_POLYMER_FALLBACK_USED
+            for issue in result.issues
+        )
+
+
+@pytest.mark.parametrize("missing", ("C2", "C5"))
+def test_original_incomplete_scaffold_does_not_forbid_completed_current_atoms(
+    missing, component_id
+):
+    current = _source(component_id=component_id)
+    original = _observed(current.without_atom_refs((AtomRef(IMD, missing),)))
+    completed = current.with_provenance(original.provenance)
+    result = add_retained_non_polymer_hydrogens(
+        completed, target_residue_ids=frozenset((IMD,))
+    )
+    assert result.repairs
+    assert all(issue.severity is IssueSeverity.INFO for issue in result.issues)
+    residue = result.structure.constitution.residue_or_ligand(IMD)
+    assert residue is not None
+    resolution = resolve_retained_non_polymer_chemistry(
+        result.structure,
+        residue,
+        component_library=build_default_component_library(),
+        allow_rdkit_fallback=False,
+    )
+    assert (
+        resolution.source
+        is RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION
+    )
+    assert resolution.has_hydrogen_topology(result.structure, residue)
+
+
 @pytest.mark.parametrize("order,aromatic", ((2, False), (1, True)))
 def test_invalid_source_hydrogen_edge_cannot_supply_preparation_evidence(
     order, aromatic, component_id

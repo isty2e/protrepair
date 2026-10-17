@@ -351,6 +351,28 @@ def _source_compatible_hypotheses(
         raise ValueError(
             "coordinated component heavy scaffold is incomplete or changed"
         )
+
+    observation = structure.provenance.ingress.observation
+    original = (
+        None
+        if observation is None
+        else observation.constitution.residue_or_ligand(residue.residue_id)
+    )
+    if original is not None:
+        current_identities = {
+            (atom.name, atom.element_identity)
+            for atom in residue.atom_sites
+            if not atom.is_hydrogen()
+        }
+        if any(
+            (atom.name, atom.element_identity) not in current_identities
+            for atom in original.atom_sites
+            if not atom.is_hydrogen()
+        ):
+            raise ValueError(
+                "coordinated preparation cannot hide original heavy atom identities"
+            )
+
     require_retained_non_polymer_evidence_stereochemistry(
         candidates[0],
         structure.residue_geometry(

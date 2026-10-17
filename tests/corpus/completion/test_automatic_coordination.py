@@ -24,6 +24,7 @@ from protrepair.chemistry.retained_non_polymer.coordination import (
 )
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.errors import RefinementError
+from protrepair.geometry import Vec3
 from protrepair.io import read_structure, read_structure_string, write_structure_string
 from protrepair.scope import WholeStructureScope
 from protrepair.state import HydrogenCoverageState
@@ -427,6 +428,39 @@ def test_2d6c_automatic_bound_preparation_keeps_unknown_fe_and_source_atoms(
     assert repeated.structure.constitution == prepared.constitution
     assert repeated.structure.geometry == prepared.geometry
     assert repeated.structure.topology == prepared.topology
+
+
+@pytest.mark.parametrize("component_id", ("HME", "IMD"))
+def test_2d6c_missing_original_heavy_atom_blocks_only_its_coupled_site(
+    source_2d6c, component_id
+):
+    residue_id = ResidueId("A", 154 if component_id == "HME" else 155)
+    index = source_2d6c.constitution.residue_index(residue_id)
+    original = source_2d6c.with_updated_residue_facets(
+        source_2d6c.constitution.residue_site_at(index).with_atom_site(
+            AtomSite("SOURCEC", "C")
+        ),
+        residue_geometry=source_2d6c.residue_geometry(index).with_atom_geometry(
+            "SOURCEC", AtomGeometry(Vec3(10, 10, 10))
+        ),
+    )
+    original = _with_source_topology(original, original.topology)
+    changed = original.without_atom_refs((AtomRef(residue_id, "SOURCEC"),))
+
+    result = add_retained_non_polymer_hydrogens(changed)
+    for sequence, hydrogen_count in ((154, 34), (155, 4)):
+        refused_id = ResidueId("A", sequence)
+        refused = result.structure.constitution.residue_or_ligand(refused_id)
+        assert refused == changed.constitution.residue_or_ligand(refused_id)
+        assert refused is not None
+        assert not any(atom.is_hydrogen() for atom in refused.atom_sites)
+
+        prepared = result.structure.constitution.residue_or_ligand(
+            ResidueId("B", sequence)
+        )
+        assert prepared is not None
+        assert sum(atom.is_hydrogen() for atom in prepared.atom_sites) == hydrogen_count
+    assert any("original heavy" in issue.message for issue in result.issues)
 
 
 @pytest.mark.parametrize("charge", (None, 2, 3))
