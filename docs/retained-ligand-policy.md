@@ -124,6 +124,7 @@ catalogue supplies finite mapped alternatives for IMD, PIM, CPZ, HME and AZM.
 Component codes select chemical data; the same scaffold, donor and source checks
 apply to each family. External donors need a supported typed coordination
 relationship. The process does not infer missing partners from distance.
+This preparation also applies when organic RDKit fallback is disabled.
 
 The complete heavy scaffold, elements, declared stereo, original and current
 H/D/T attachments, known charges and reported bond orders must agree with an
@@ -132,14 +133,24 @@ constrain that choice. A contradictory or unsupported recognized site stays
 unchanged with a diagnostic; it does not fall through to organic inference.
 Explicit mapped evidence and active component templates retain precedence.
 
-Preparation prefers compatible neutral bound imidazoles and deprotonated HME
-propionates. These are preparation defaults, not pKa predictions. Only the H
-inventory, bonds and atom charges shared by the surviving alternatives are
-published. In particular, HME's Fe(II)/Fe(III) alternatives do not assign an
-unknown Fe charge. A source-assigned charge is retained when compatible, and a
-native H-placement representative cannot publish its otherwise unresolved metal
+Preparation first prefers compatible neutral bound imidazoles and deprotonated
+HME propionates. These are preparation defaults, not pKa predictions. It then
+publishes the H inventory, bonds and atom charges shared by the remaining
+metal-state alternatives for that ligand chemistry, not the intersection of
+every catalogue state. In particular, HME's Fe(II)/Fe(III) alternatives do not
+assign an unknown Fe charge. A source-assigned charge is retained when compatible,
+and a native H-placement representative cannot publish its otherwise unresolved metal
 state. The result carries a coordinated-preparation informational diagnostic,
 not an external-override or organic-fallback label.
+
+The HME catalogue fixes negative pyrrole charges at `NA` and `NC`. Other
+placements, including `NB`/`ND`, are not normalized and may be refused even when
+they describe chemically equivalent forms. Carboxylate alternatives do not
+extend that coverage to porphyrin resonance representations.
+
+Automatic ligand preparation does not select a polymer thiolate state. Under
+the existing CYS policy, a neutral heme-bound CYS can retain HG. A complete H
+inventory does not establish that the metal-site protonation is correct.
 
 Fresh readiness checks the realized H, charges and typed relationships, including
 when no new H is needed. Supported ligands can supply a fixed passive calculation
