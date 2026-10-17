@@ -160,13 +160,13 @@ def test_resolve_local_bond_planning_support_strict_policy_blocks_passive_fallba
 ) -> None:
     """Strict passive context support must not consult RDKit fallback chemistry."""
 
-    def fail_resolution(*args, **kwargs):
-        raise AssertionError("strict passive support resolved chemistry")
+    def fail_fallback(*args, **kwargs):
+        raise AssertionError("strict passive support invoked RDKit fallback")
 
     monkeypatch.setattr(
-        "protrepair.transformer.continuous.support."
-        "resolve_retained_non_polymer_chemistry",
-        fail_resolution,
+        retained_non_polymer_chemistry,
+        "infer_retained_non_polymer_rdkit_fallback",
+        fail_fallback,
     )
     snapshot = ProteinStructureSnapshot.from_structure(
         build_ser_with_template_less_ligand_structure(

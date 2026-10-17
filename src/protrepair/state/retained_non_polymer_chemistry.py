@@ -28,6 +28,9 @@ from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
     preferred_retained_non_polymer_expected_hydrogen_atom_names,
 )
+from protrepair.chemistry.retained_non_polymer.coordination import (
+    coordinated_component_preparation,
+)
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
@@ -50,6 +53,7 @@ class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
 
     TEMPLATE = "template"
     EXTERNAL_OVERRIDE = "external_override"
+    COORDINATION_PREPARATION = "coordination_preparation"
     ATOMIC_INVENTORY = "atomic_inventory"
     RDKIT_FALLBACK = "rdkit_fallback"
     UNRESOLVED = "unresolved"
@@ -472,6 +476,20 @@ def _resolve_retained_non_polymer_chemistry_source(
     present_hydrogen_atom_names = tuple(
         atom_site.name for atom_site in residue.atom_sites if atom_site.is_hydrogen()
     )
+    preparation = None
+    if evidence is None:
+        try:
+            preparation = coordinated_component_preparation(
+                structure, residue, component_library
+            )
+        except (RuntimeError, ValueError) as error:
+            return RetainedNonPolymerChemistryResolution(
+                source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
+                failure_reason=str(error),
+            )
+        if preparation is not None:
+            evidence = preparation.hydrogenation_template
+
     if evidence is not None:
         try:
             external_bonds = retained_non_polymer_evidence_external_bonds(
@@ -506,7 +524,9 @@ def _resolve_retained_non_polymer_chemistry_source(
                 evidence
             )
             charge_requirements = (
-                retained_non_polymer_evidence_formal_charge_requirements(evidence)
+                preparation.formal_charge_requirements()
+                if preparation is not None
+                else retained_non_polymer_evidence_formal_charge_requirements(evidence)
             )
         except (RuntimeError, ValueError) as error:
             return RetainedNonPolymerChemistryResolution(
@@ -514,7 +534,12 @@ def _resolve_retained_non_polymer_chemistry_source(
                 failure_reason=str(error),
             )
         return RetainedNonPolymerChemistryResolution(
-            source=RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE,
+            source=(
+                RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION
+                if preparation is not None
+                else RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
+            ),
+            expected_heavy_atom_names=evidence.heavy_atom_names,
             expected_hydrogen_atom_names=_preferred_expected_hydrogen_atom_names(
                 expected_hydrogen_atom_names=evidence_expected_hydrogen_atom_names,
                 present_hydrogen_atom_names=present_hydrogen_atom_names,

@@ -4,6 +4,13 @@
 
 ### Changed
 
+- prepare registered coordinated components even with organic RDKit fallback
+  disabled, when no active template or override applies; first choose
+  source-compatible ligand states by the documented preferences, then publish
+  H, bond and charge assignments shared across their remaining metal-state
+  alternatives. Preserve unknown metal charge and source atoms, and report
+  automatic preparation separately from overrides or organic inference without
+  enabling metal-site force-field optimization
 - prepare explicitly selected retained coordination chemistry with separate
   covalent and dative bonds, source-compatible nitrogen donor checks and
   coordination-aware readiness; validate standard O/HIS/CYS donor contexts

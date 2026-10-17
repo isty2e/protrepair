@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from protrepair.chemistry import build_default_component_library
 from protrepair.io import read_structure, read_structure_string, write_structure_string
 from protrepair.io.nonstandard_component_ingress import (
     parse_bond_row,
@@ -13,9 +12,6 @@ from protrepair.io.nonstandard_component_ingress import (
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.topology import BondRelationshipType
-from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
-    add_retained_non_polymer_hydrogens,
-)
 
 
 def _component_asset(
@@ -208,21 +204,12 @@ def test_incomplete_bond_columns_cannot_hide_declared_coordination(
 
 
 @pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
-def test_2d6c_keeps_unresolved_retained_atoms_and_typed_coordination(
+def test_2d6c_ingress_keeps_unresolved_atoms_and_typed_coordination(
     file_format: FileFormat,
 ) -> None:
     source = read_structure(Path(__file__).parents[1] / "fixtures/corpus/pdb2d6c.ent")
-    result = add_retained_non_polymer_hydrogens(
-        source, build_default_component_library()
-    )
-    prepared = result.structure
-    assert prepared.constitution == source.constitution
-    assert prepared.geometry == source.geometry
-    assert prepared.topology == source.topology
-    assert result.issues
-
     restored = read_structure_string(
-        write_structure_string(prepared, file_format), file_format
+        write_structure_string(source, file_format), file_format
     )
     for chain in ("A", "B"):
         for seq, count in ((154, 43), (155, 5)):

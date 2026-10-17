@@ -10,8 +10,9 @@ them.
 ProtRepair resolves retained-ligand chemistry in this order:
 
 1. explicit chemistry evidence supplied at ingress
-2. a bundled component template that can add hydrogens
-3. RDKit fallback inference when fallback is allowed
+2. an active component template that supports the requested preparation
+3. a registered coordination family, when its scaffold and site are supported
+4. RDKit fallback inference when fallback is allowed
 
 Existing hydrogen names are preferred when they are compatible with the
 resolved chemistry. Explicit overrides are validated against the retained
@@ -113,9 +114,55 @@ unresolved rather than forcing the standard site into a different chemistry.
 
 Readiness checks the selected coordination relationships even when all H are
 already present. The H or topology-only transformer publishes the admitted graph
-without losing source connection metadata. Automatic selection of a bound
-ligand microstate and metal-site force-field support remain unsupported by this
-preparation path.
+without losing source connection metadata. This does not establish metal-site
+force-field support.
+
+### Automatic Coordinated-Component Preparation
+
+For components without an active template or explicit override, a packaged
+catalogue supplies finite mapped alternatives for IMD, PIM, CPZ, HME and AZM.
+Component codes select chemical data; the same scaffold, donor and source checks
+apply to each family. External donors need a supported typed coordination
+relationship. The process does not infer missing partners from distance.
+This preparation also applies when organic RDKit fallback is disabled.
+
+The complete heavy scaffold, elements, declared stereo, original and current
+H/D/T attachments, known charges and reported bond orders must agree with an
+alternative. Other registered site members and supported polymer partners also
+constrain that choice. A contradictory or unsupported recognized site stays
+unchanged with a diagnostic; it does not fall through to organic inference.
+Explicit mapped evidence and active component templates retain precedence.
+
+Preparation first prefers compatible neutral bound imidazoles and deprotonated
+HME propionates. These are preparation defaults, not pKa predictions. It then
+publishes the H inventory, bonds and atom charges shared by the remaining
+metal-state alternatives for that ligand chemistry, not the intersection of
+every catalogue state. In particular, HME's Fe(II)/Fe(III) alternatives do not
+assign an unknown Fe charge. A source-assigned charge is retained when
+compatible, and a native H-placement representative cannot publish its
+otherwise unresolved metal state. The result carries a coordinated-preparation
+informational diagnostic, not an external-override or organic-fallback label.
+
+The HME catalogue fixes negative pyrrole charges at `NA` and `NC`. Other
+placements, including `NB`/`ND`, are not normalized and may be refused even when
+they describe chemically equivalent forms. Carboxylate alternatives do not
+extend that coverage to macrocycle resonance representations.
+
+Automatic ligand preparation does not select a polymer thiolate state. Under
+the existing CYS policy, a neutral heme-bound CYS can retain HG. A complete H
+inventory does not establish that the metal-site protonation is correct.
+
+Fresh readiness checks the realized H, charges and typed relationships, including
+when no new H is needed. Supported ligands can supply a fixed passive calculation
+graph even with organic fallback disabled; coordination is not converted to a
+covalent FF bond. This path does not authorize movable template-less ligands,
+metal optimization, or oxidation/spin-state prediction. A broader predictor or
+metal potential would need a separate chemistry and execution contract.
+
+H completion does not guarantee that a proximity-only PDB parser will infer the
+same graph: it can still misread heme N--Fe relationships as covalent bonds.
+Topology-preserving RDKit export also requires an assigned metal charge; this
+preparation does not invent one to make export succeed.
 
 ### Atomic Ions
 
