@@ -1,6 +1,7 @@
-"""RDKit graph declarations and independently observed pose stereochemistry."""
+"""RDKit graph projections preserving covalent orders and dative direction."""
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 try:
@@ -8,10 +9,92 @@ try:
 except ImportError:  # pragma: no cover - exercised by availability checks
     Chem = None
 
+from protrepair.chemistry.component.graph import (
+    BondDefinition,
+    CoordinationBondDefinition,
+)
 from protrepair.errors import BondOrderConstraintError, RdkitUnavailableError
 
 if TYPE_CHECKING:
     from rdkit.Chem.rdchem import Mol
+
+AROMATIC_N_COORDINATION_METALS = frozenset(
+    ("FE", "ZN", "CU", "CO", "NI", "MN", "CD", "HG")
+)
+
+
+@dataclass(frozen=True, slots=True)
+class NativeBondProjection:
+    """Joint named graph projection with disjoint physical relationship products.
+
+    Parameters
+    ----------
+    covalent_bonds : tuple[BondDefinition, ...]
+        Integral covalent orders with aromatic identity retained.
+    coordination_bonds : tuple[CoordinationBondDefinition, ...]
+        Oriented dative relationships, not covalent valence contributions.
+
+    Raises
+    ------
+    ValueError
+        A pair is repeated or has competing physical relationships.
+    """
+
+    covalent_bonds: tuple[BondDefinition, ...]
+    coordination_bonds: tuple[CoordinationBondDefinition, ...]
+
+    def __post_init__(self) -> None:
+        pairs = tuple(
+            tuple(sorted((bond.atom_name_1, bond.atom_name_2)))
+            for bond in self.covalent_bonds
+        ) + tuple(bond.endpoint_pair() for bond in self.coordination_bonds)
+        if any(first == second for first, second in pairs) or len(set(pairs)) != len(
+            pairs
+        ):
+            raise ValueError("native graph projection has competing endpoint pairs")
+
+
+def require_aromatic_nitrogen_donor(molecule: "Mol", donor_index: int) -> None:
+    """Require a closed-shell aromatic N lone-pair donor in the native graph.
+
+    Parameters
+    ----------
+    molecule : Mol
+        Native chemistry with an initialized atom-property cache.
+    donor_index : int
+        Native index of the donor, not a constitution atom slot.
+
+    Raises
+    ------
+    ValueError
+        The donor is protonated, substituted, radical, or outside neutral/anionic
+        aromatic N chemistry with exactly two covalently bonded carbon neighbors.
+    RdkitUnavailableError
+        RDKit is not operational.
+    """
+    chem = Chem
+    if chem is None:
+        raise RdkitUnavailableError(
+            "coordination validation requires operational RDKit"
+        )
+    donor = molecule.GetAtomWithIdx(donor_index)
+    neighbors = tuple(
+        bond.GetOtherAtom(donor)
+        for bond in donor.GetBonds()
+        if bond.GetBondType() != chem.BondType.DATIVE
+    )
+    if (
+        donor.GetAtomicNum() != 7
+        or donor.GetFormalCharge() not in {0, -1}
+        or not donor.GetIsAromatic()
+        or donor.GetNumRadicalElectrons() != 0
+        or donor.GetTotalNumHs(includeNeighbors=True) != 0
+        or len(neighbors) != 2
+        or any(atom.GetAtomicNum() != 6 for atom in neighbors)
+    ):
+        raise ValueError(
+            "coordination requires an unprotonated aromatic nitrogen donor"
+        )
 
 
 def has_declared_stereochemistry(molecule: "Mol") -> bool:
@@ -243,3 +326,146 @@ def _aromatic_order_sums(molecule: "Mol") -> tuple[float, ...]:
             sums[bond.GetBeginAtomIdx()] += order
             sums[bond.GetEndAtomIdx()] += order
     return tuple(sums)
+
+
+def covalent_bond_definitions_from_molecule(
+    molecule: "Mol",
+    *,
+    atom_names_by_index: Mapping[int, str],
+    bond_order_constraints: Mapping[tuple[str, str], int] | None = None,
+) -> tuple[BondDefinition, ...]:
+    """Project a resolved covalent graph without rounding aromatic bond orders.
+
+    Parameters
+    ----------
+    molecule : Mol
+        Resolved native covalent chemistry; the input is not modified.
+    atom_names_by_index : Mapping[int, str]
+        Complete native-index to canonical atom-name correspondence.
+    bond_order_constraints : Mapping[tuple[str, str], int] or None
+        Reported orders in canonical atom-name identity, independent of orientation.
+
+    Returns
+    -------
+    tuple[BondDefinition, ...]
+        Integral covalent orders in native edge order, retaining aromatic identity.
+        The chosen resonance form need not be identical across native versions.
+
+    Raises
+    ------
+    ValueError
+        Names are missing, colliding or blank, the graph cannot be kekulized, or
+        a query or non-covalent bond cannot be represented by BondDefinition.
+    BondOrderConstraintError
+        Reported orders cannot preserve the resolved chemistry.
+    RdkitUnavailableError
+        RDKit is not operational.
+    """
+
+    if Chem is None:
+        raise RdkitUnavailableError("graph projection requires operational RDKit")
+    if any(bond.GetBondType() == Chem.BondType.DATIVE for bond in molecule.GetBonds()):
+        raise ValueError("native bond type is not resolved covalent chemistry")
+    return native_bond_projection_from_molecule(
+        molecule,
+        atom_names_by_index=atom_names_by_index,
+        bond_order_constraints=bond_order_constraints,
+    ).covalent_bonds
+
+
+def native_bond_projection_from_molecule(
+    molecule: "Mol",
+    *,
+    atom_names_by_index: Mapping[int, str],
+    bond_order_constraints: Mapping[tuple[str, str], int] | None = None,
+) -> NativeBondProjection:
+    """Project covalent and oriented dative relationships without losing either.
+
+    Parameters
+    ----------
+    molecule : Mol
+        Resolved native chemistry; the input is not modified.
+    atom_names_by_index : Mapping[int, str]
+        Complete native-index to canonical atom-name correspondence.
+    bond_order_constraints : Mapping[tuple[str, str], int] or None
+        Reported integral covalent orders keyed by named endpoints.
+
+    Returns
+    -------
+    NativeBondProjection
+        Joint covalent and coordination products in their native edge order.
+        Dative direction is retained; this projection does not certify a donor
+        motif or force-field support.
+
+    Raises
+    ------
+    ValueError
+        Names, queries or native relationship types cannot be represented.
+    BondOrderConstraintError
+        Reported orders cannot preserve resolved covalent chemistry.
+    RdkitUnavailableError
+        RDKit is not operational.
+    """
+    chem = Chem
+    if chem is None:
+        raise RdkitUnavailableError("graph projection requires operational RDKit")
+
+    if set(atom_names_by_index) != set(range(molecule.GetNumAtoms())):
+        raise ValueError("native graph requires a complete atom-name mapping")
+    names = tuple(
+        atom_names_by_index[index].strip().upper()
+        for index in range(molecule.GetNumAtoms())
+    )
+    if any(not name for name in names) or len(set(names)) != len(names):
+        raise ValueError("native graph atom names must be nonblank and unique")
+    if any(atom.HasQuery() for atom in molecule.GetAtoms()):
+        raise ValueError("query chemistry is not a resolved covalent graph")
+
+    order_by_type = {
+        chem.BondType.SINGLE: 1,
+        chem.BondType.DOUBLE: 2,
+        chem.BondType.TRIPLE: 3,
+        chem.BondType.QUADRUPLE: 4,
+    }
+    supported_types = frozenset(
+        (*order_by_type, chem.BondType.AROMATIC, chem.BondType.DATIVE)
+    )
+    if any(
+        bond.HasQuery() or bond.GetBondType() not in supported_types
+        for bond in molecule.GetBonds()
+    ):
+        raise ValueError("native bond type is not resolved covalent chemistry")
+
+    native_constraints = {}
+    indices = {name: index for index, name in enumerate(names)}
+    for (first, second), order in (bond_order_constraints or {}).items():
+        if first not in indices or second not in indices:
+            raise BondOrderConstraintError(
+                "bond order constraint refers to an absent atom name"
+            )
+        native_constraints[(indices[first], indices[second])] = order
+    projected = kekulized_molecule(molecule, bond_order_constraints=native_constraints)
+    definitions: list[BondDefinition] = []
+    coordination: list[CoordinationBondDefinition] = []
+    for bond in projected.GetBonds():
+        if bond.GetBondType() == chem.BondType.DATIVE:
+            coordination.append(
+                CoordinationBondDefinition(
+                    donor_atom_name=names[bond.GetBeginAtomIdx()],
+                    acceptor_atom_name=names[bond.GetEndAtomIdx()],
+                )
+            )
+            continue
+        order = order_by_type.get(bond.GetBondType())
+        if order is None:
+            raise ValueError("native aromatic bond has no integral covalent order")
+        definitions.append(
+            BondDefinition(
+                atom_name_1=names[bond.GetBeginAtomIdx()],
+                atom_name_2=names[bond.GetEndAtomIdx()],
+                order=order,
+                aromatic=bond.GetIsAromatic(),
+            )
+        )
+
+    return NativeBondProjection(tuple(definitions), tuple(coordination))

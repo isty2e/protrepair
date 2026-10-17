@@ -14,15 +14,23 @@ except ImportError:  # pragma: no cover - exercised by availability checks
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.inference.rdkit_graph import (
+    NativeBondProjection,
+    covalent_bond_definitions_from_molecule,
     molecule_with_pose_stereochemistry,
 )
 from protrepair.chemistry.inference.rdkit_hydrogen_geometry import (
     add_hydrogens_preserving_stereochemistry,
 )
+from protrepair.chemistry.inference.retained_non_polymer_evidence import (
+    selected_graph_coordination_bonds,
+)
+from protrepair.chemistry.single_atom_inorganic import RetainedAtomicSite
 from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import Vec3
+from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
+from protrepair.structure.labels import AtomRef, ResidueId
 
 if TYPE_CHECKING:
     from rdkit.Chem.rdchem import Atom, Bond, Mol
@@ -56,6 +64,40 @@ class RetainedNonPolymerRdkitFallbackInferenceResult:
     hydrogen_bond_definitions: tuple[BondDefinition, ...]
     hydrogen_name_projection_candidate_count: int
     hydrogen_name_projection_candidate_limit: int
+
+    def coordination_bonds(
+        self, structure: ProteinStructure, residue_id: ResidueId
+    ) -> tuple[tuple[AtomRef, AtomRef], ...]:
+        """Bind inferred donor chemistry without converting it to an override.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Snapshot retaining current and original coordination declarations.
+        residue_id : ResidueId
+            Stable identity of this inferred residue.
+
+        Returns
+        -------
+        tuple[tuple[AtomRef, AtomRef], ...]
+            Admitted typed coordination pairs, independent of force-field support.
+
+        Raises
+        ------
+        ValueError
+            Inferred chemistry cannot preserve source donor or partner evidence.
+        """
+        return selected_graph_coordination_bonds(
+            structure,
+            residue_id=residue_id,
+            molecule=self.hydrogenated_molecule,
+            atom_names_by_index={
+                atom.GetIdx(): _rdkit_atom_name(atom)
+                for atom in self.hydrogenated_molecule.GetAtoms()
+                if atom.GetAtomicNum() != 1
+            },
+            projection=NativeBondProjection(self.heavy_bond_definitions, ()),
+        )
 
     def projected_hydrogen_atom_names(self) -> tuple[str, ...]:
         """Return final H names in RDKit-generated hydrogen atom order."""
@@ -126,6 +168,7 @@ def infer_retained_non_polymer_rdkit_fallback(
     present_hydrogen_atom_names: tuple[str, ...] | None = None,
     hydrogen_position_by_name: Mapping[str, Vec3] | None = None,
     hydrogen_anchor_by_name: Mapping[str, str] | None = None,
+    bond_order_constraints: Mapping[tuple[str, str], int] | None = None,
 ) -> RetainedNonPolymerRdkitFallbackInferenceResult:
     """Infer current chemistry and project generated H onto retained identities.
 
@@ -149,6 +192,9 @@ def infer_retained_non_polymer_rdkit_fallback(
         same-parent pairs compatible with fresh native chemistry. Missing or
         incompatible parent groups retain unconstrained coordinate matching;
         current graph conformance is checked independently of this inference.
+    bond_order_constraints : Mapping[tuple[str, str], int] or None
+        Reported local heavy orders, constraining resonance without changing
+        the inferred H inventory, charges or non-aromatic chemistry.
 
     Returns
     -------
@@ -212,7 +258,7 @@ def infer_retained_non_polymer_rdkit_fallback(
         hydrogen_atom_names=resolved_hydrogen_atom_names,
         hydrogen_name_projection=hydrogen_name_projection.projection,
         heavy_bond_definitions=_heavy_bond_definitions_from_molecule(
-            heavy_atom_molecule
+            heavy_atom_molecule, bond_order_constraints=bond_order_constraints
         ),
         hydrogen_bond_definitions=_projected_hydrogen_bond_definitions(
             hydrogenated_molecule,
@@ -277,21 +323,18 @@ def retained_non_polymer_rdkit_fallback_heavy_bond_definitions(
 
 def _heavy_bond_definitions_from_molecule(
     heavy_atom_molecule: "Mol",
+    *,
+    bond_order_constraints: Mapping[tuple[str, str], int] | None = None,
 ) -> tuple[BondDefinition, ...]:
     """Return heavy-atom bond definitions from one RDKit heavy pose."""
 
-    return tuple(
-        BondDefinition(
-            atom_name_1=_rdkit_atom_name(
-                heavy_atom_molecule.GetAtomWithIdx(bond.GetBeginAtomIdx())
-            ),
-            atom_name_2=_rdkit_atom_name(
-                heavy_atom_molecule.GetAtomWithIdx(bond.GetEndAtomIdx())
-            ),
-            order=max(1, round(bond.GetBondTypeAsDouble())),
-            aromatic=bond.GetIsAromatic(),
-        )
-        for bond in heavy_atom_molecule.GetBonds()
+    return covalent_bond_definitions_from_molecule(
+        heavy_atom_molecule,
+        atom_names_by_index={
+            atom.GetIdx(): _rdkit_atom_name(atom)
+            for atom in heavy_atom_molecule.GetAtoms()
+        },
+        bond_order_constraints=bond_order_constraints,
     )
 
 
@@ -301,21 +344,17 @@ def retained_non_polymer_rdkit_fallback_hydrogen_bond_definitions(
     """Return generated H-heavy bond definitions from an RDKit fallback molecule."""
 
     atom_names_by_index = _rdkit_fallback_atom_names_by_index(hydrogenated_molecule)
+    hydrogen_names = frozenset(
+        atom_names_by_index[atom.GetIdx()]
+        for atom in hydrogenated_molecule.GetAtoms()
+        if atom.GetAtomicNum() == 1
+    )
     return tuple(
-        BondDefinition(
-            atom_name_1=atom_names_by_index[begin_atom.GetIdx()],
-            atom_name_2=atom_names_by_index[end_atom.GetIdx()],
-            order=max(1, round(bond.GetBondTypeAsDouble())),
-            aromatic=bond.GetIsAromatic(),
+        bond
+        for bond in covalent_bond_definitions_from_molecule(
+            hydrogenated_molecule, atom_names_by_index=atom_names_by_index
         )
-        for bond in hydrogenated_molecule.GetBonds()
-        for begin_atom, end_atom in (
-            (
-                hydrogenated_molecule.GetAtomWithIdx(bond.GetBeginAtomIdx()),
-                hydrogenated_molecule.GetAtomWithIdx(bond.GetEndAtomIdx()),
-            ),
-        )
-        if (begin_atom.GetAtomicNum() == 1) != (end_atom.GetAtomicNum() == 1)
+        if (bond.atom_name_1 in hydrogen_names) != (bond.atom_name_2 in hydrogen_names)
     )
 
 
@@ -502,6 +541,8 @@ def _retained_non_polymer_rdkit_pose_molecule(
 
     assert Chem is not None
 
+    atomic_site = RetainedAtomicSite(residue_site)
+    atomic_site.require_unambiguous_hydrogenation()
     heavy_atom_pdb_block = _retained_non_polymer_heavy_atom_pdb_block(
         residue_site,
         residue_geometry,
@@ -538,6 +579,9 @@ def _retained_non_polymer_rdkit_pose_molecule(
             continue
 
         atom.SetFormalCharge(formal_charge)
+
+    if atomic_site.is_monatomic_ion():
+        pose_molecule.GetAtomWithIdx(0).SetNoImplicit(True)
 
     _apply_high_confidence_fallback_bond_orders(
         pose_molecule,

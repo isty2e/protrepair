@@ -690,6 +690,8 @@ def pras_polymer_microstate_sites(
         Catalogued side-chain sites plus backbone N/C sites. Unbonded outer
         chain ends receive a marked free-terminal preparation assumption; current
         external relationships and original evidence cannot be overridden by it.
+        CYS uses a microstate site here only with a current or original typed
+        coordination context; ordinary CYS retains its fixed-template path.
         No pKa prediction or biological completeness claim is made.
 
     Raises
@@ -706,7 +708,43 @@ def pras_polymer_microstate_sites(
         )
         is not None
     ):
-        sites.append(PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN))
+        residue = context.source.constitution.residue_or_ligand(residue_id)
+        covalent_sulfur = (
+            template.component_id == "CYS"
+            and residue is not None
+            and residue.has_atom_site("SG")
+            and any(
+                bond.relationship_type
+                not in (
+                    BondRelationshipType.HYDROGEN_BOND,
+                    BondRelationshipType.METAL_COORDINATION,
+                )
+                for bond in context.external_heavy_bonds(AtomRef(residue_id, "SG"))
+            )
+        )
+        coordinated_sulfur = template.component_id != "CYS" or (
+            residue is not None
+            and residue.has_atom_site("SG")
+            and (
+                any(
+                    bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+                    for bond in context.external_heavy_bonds(AtomRef(residue_id, "SG"))
+                )
+                or (
+                    (observation := context.source.provenance.ingress.observation)
+                    is not None
+                    and any(
+                        bond.relationship_type
+                        is BondRelationshipType.METAL_COORDINATION
+                        for bond in observation.bonds_for_atom(
+                            AtomRef(residue_id, "SG")
+                        )
+                    )
+                )
+            )
+        )
+        if not covalent_sulfur and coordinated_sulfur:
+            sites.append(PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN))
     sites.extend(
         context.backbone_site(residue_id, template, kind, assume_free_chain_ends=True)
         for kind in (PolymerChemicalSite.BACKBONE_N, PolymerChemicalSite.BACKBONE_C)
@@ -741,6 +779,8 @@ def pras_microstate_preferences(
     """
     component = site.template.component_id
     if site.kind is PolymerChemicalSite.SIDECHAIN:
+        if component == "CYS":
+            return (MicrostateConstraints(charges=(("SG", 0),)),)
         if component == "ARG":
             return (
                 MicrostateConstraints(hydrogens=(("NE", 1), ("NH1", 2), ("NH2", 2))),

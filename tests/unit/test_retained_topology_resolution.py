@@ -652,6 +652,9 @@ def test_external_relationship_is_preserved_without_becoming_a_local_h_anchor(
     if covalent_attachment:
         assert "external" in fact.chemistry_failure_reason
         assert not fact.requires_topology_resolution()
+    elif relationship is BondRelationshipType.METAL_COORDINATION:
+        assert "coordination" in fact.chemistry_failure_reason
+        assert not fact.requires_topology_resolution()
     else:
         assert fact.requires_topology_resolution() is not resolved_local
     result = resolve_retained_non_polymer_topology(
@@ -660,7 +663,7 @@ def test_external_relationship_is_preserved_without_becoming_a_local_h_anchor(
     assert (
         result.structure.topology.bond_between(AtomIndex(2), AtomIndex(6)) == external
     )
-    if covalent_attachment:
+    if covalent_attachment or relationship is BondRelationshipType.METAL_COORDINATION:
         assert result.structure is source
         assert not result.repairs
     else:

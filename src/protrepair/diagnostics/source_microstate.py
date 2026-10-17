@@ -9,7 +9,7 @@ from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     retained_non_polymer_rdkit_fallback_heavy_bond_definitions,
 )
-from protrepair.chemistry.single_atom_inorganic import is_single_atom_inorganic_residue
+from protrepair.chemistry.single_atom_inorganic import RetainedAtomicSite
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
@@ -400,7 +400,7 @@ def _microstate_classification_for_residue(
     """Return the orthogonal microstate classification for one residue."""
 
     if residue_site.is_hetero:
-        if _is_known_single_atom_inorganic_species(residue_site):
+        if RetainedAtomicSite(residue_site).is_monatomic_ion():
             return MicrostateClassification(
                 structural_role=MicrostateStructuralRole.SINGLE_ATOM_INORGANIC,
                 chemistry_support_mode=MicrostateChemistrySupportMode.NONE,
@@ -442,12 +442,6 @@ def _residue_contains_explicit_hydrogen(residue_site: ResidueSite) -> bool:
     """Return whether one residue already carries explicit hydrogen evidence."""
 
     return any(atom_site.is_hydrogen() for atom_site in residue_site.atom_sites)
-
-
-def _is_known_single_atom_inorganic_species(residue_site: ResidueSite) -> bool:
-    """Return whether one residue should be treated as a single-atom ion/metal."""
-
-    return is_single_atom_inorganic_residue(residue_site)
 
 
 def _collect_standard_polymer_carboxylate_like_motif_evidence(

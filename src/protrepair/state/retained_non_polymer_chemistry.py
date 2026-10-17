@@ -16,6 +16,7 @@ from protrepair.chemistry.component.topology import (
 )
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     require_retained_non_polymer_evidence_stereochemistry,
+    retained_non_polymer_evidence_coordination_bonds,
     retained_non_polymer_evidence_expected_hydrogen_atom_names,
     retained_non_polymer_evidence_external_bonds,
     retained_non_polymer_evidence_formal_charge_requirements,
@@ -36,6 +37,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 from protrepair.chemistry.retained_non_polymer.template_binding import (
     RetainedTemplateBinding,
 )
+from protrepair.chemistry.single_atom_inorganic import RetainedAtomicSite
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
@@ -48,6 +50,7 @@ class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
 
     TEMPLATE = "template"
     EXTERNAL_OVERRIDE = "external_override"
+    ATOMIC_INVENTORY = "atomic_inventory"
     RDKIT_FALLBACK = "rdkit_fallback"
     UNRESOLVED = "unresolved"
 
@@ -70,6 +73,7 @@ class RetainedNonPolymerChemistryResolution:
     formal_charge_requirements: tuple[tuple[str, int], ...] = ()
     external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     context_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
+    coordination_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     failure_reason: str = ""
     rdkit_backend_version: str | None = None
     hydrogen_name_projection_candidate_count: int = 0
@@ -173,6 +177,38 @@ class RetainedNonPolymerChemistryResolution:
             return False
         return True
 
+    def has_coordination_topology(self, structure: ProteinStructure) -> bool:
+        """Check every required typed physical coordination relationship.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Current graph, whose atom slots may differ from the evidence snapshot.
+
+        Returns
+        -------
+        bool
+            Whether all stable endpoint pairs exist as non-aromatic metal
+            coordination without a covalent order. Covalent scaffold completeness
+            does not substitute for this relationship check.
+        """
+        for first, second in self.coordination_bonds:
+            indices = tuple(
+                structure.constitution.resolve_atom_index(ref)
+                for ref in (first, second)
+            )
+            if indices[0] is None or indices[1] is None:
+                return False
+            bond = structure.topology.bond_between(indices[0], indices[1])
+            if (
+                bond is None
+                or bond.relationship_type is not BondRelationshipType.METAL_COORDINATION
+                or bond.order is not None
+                or bond.aromatic
+            ):
+                return False
+        return True
+
     def has_hydrogen_topology(
         self, structure: ProteinStructure, residue: ResidueSite
     ) -> bool:
@@ -265,6 +301,23 @@ class RetainedNonPolymerChemistryResolution:
 
         resolved = self.source.is_resolved()
         if (
+            self.source is RetainedNonPolymerChemistryEvidenceSource.ATOMIC_INVENTORY
+            and (
+                len(self.expected_heavy_atom_names) != 1
+                or len(self.heavy_atom_elements) != 1
+                or self.expected_hydrogen_atom_names
+                or self.heavy_bond_definitions
+                or self.hydrogen_bond_definitions
+                or self.formal_charge_requirements
+                or self.external_bonds
+                or self.context_bonds
+                or self.coordination_bonds
+            )
+        ):
+            raise ValueError(
+                "atomic inventory must describe one atom without molecular chemistry"
+            )
+        if (
             self.source is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
             and self.expected_hydrogen_atom_names
         ):
@@ -280,6 +333,7 @@ class RetainedNonPolymerChemistryResolution:
             or self.formal_charge_requirements
             or self.external_bonds
             or self.context_bonds
+            or self.coordination_bonds
         ):
             raise ValueError(
                 "unresolved retained non-polymer chemistry must not carry "
@@ -424,6 +478,9 @@ def _resolve_retained_non_polymer_chemistry_source(
             external_bonds = retained_non_polymer_evidence_external_bonds(
                 evidence, structure
             )
+            coordination_bonds = retained_non_polymer_evidence_coordination_bonds(
+                evidence, structure
+            )
             require_retained_non_polymer_evidence_stereochemistry(
                 evidence,
                 residue_geometry,
@@ -437,8 +494,11 @@ def _resolve_retained_non_polymer_chemistry_source(
             evidence_expected_hydrogen_atom_names = (
                 retained_non_polymer_evidence_expected_hydrogen_atom_names(evidence)
             )
-            heavy_bond_definitions = (
-                retained_non_polymer_evidence_heavy_bond_definitions(evidence)
+            heavy_bonds = retained_non_polymer_evidence_heavy_bond_definitions(
+                evidence,
+                bond_order_constraints=structure.topology.residue_source_heavy_bond_orders(
+                    constitution=structure.constitution, residue_index=residue_index
+                ),
             )
             hydrogen_bond_definitions = (
                 retained_non_polymer_evidence_hydrogen_bond_definitions(evidence)
@@ -460,11 +520,12 @@ def _resolve_retained_non_polymer_chemistry_source(
                 expected_hydrogen_atom_names=evidence_expected_hydrogen_atom_names,
                 present_hydrogen_atom_names=present_hydrogen_atom_names,
             ),
-            heavy_bond_definitions=heavy_bond_definitions,
+            heavy_bond_definitions=heavy_bonds,
             hydrogen_bond_definitions=hydrogen_bond_definitions,
             heavy_atom_elements=heavy_atom_elements,
             formal_charge_requirements=charge_requirements,
             external_bonds=external_bonds,
+            coordination_bonds=coordination_bonds,
         )
 
     template = component_library.get(residue.component_id)
@@ -515,9 +576,27 @@ def _resolve_retained_non_polymer_chemistry_source(
             ),
             formal_charge_requirements=template.heavy_atom_charge_requirements(),
             external_bonds=binding.external_bonds,
+            coordination_bonds=binding.coordination_bonds,
             context_bonds=()
             if binding.michael is None
             else binding.michael.context_bonds(),
+        )
+
+    atomic_site = RetainedAtomicSite(residue)
+    try:
+        atomic_site.require_unambiguous_hydrogenation()
+        if atomic_site.is_monatomic_ion():
+            atomic_site.require_source_context(structure)
+            atom = residue.atom_sites[0]
+            return RetainedNonPolymerChemistryResolution(
+                source=RetainedNonPolymerChemistryEvidenceSource.ATOMIC_INVENTORY,
+                expected_heavy_atom_names=(atom.name,),
+                heavy_atom_elements=(atom.element,),
+            )
+    except ValueError as error:
+        return RetainedNonPolymerChemistryResolution(
+            source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
+            failure_reason=str(error),
         )
 
     if not allow_rdkit_fallback:
@@ -539,10 +618,16 @@ def _resolve_retained_non_polymer_chemistry_source(
                 for atom_site in residue.atom_sites
                 if atom_site.is_hydrogen()
             },
+            bond_order_constraints=structure.topology.residue_source_heavy_bond_orders(
+                constitution=structure.constitution, residue_index=residue_index
+            ),
             hydrogen_anchor_by_name=structure.topology.residue_hydrogen_anchor_by_name(
                 constitution=structure.constitution,
                 residue_index=residue_index,
             ),
+        )
+        coordination_bonds = fallback_inference_result.coordination_bonds(
+            structure, residue.residue_id
         )
     except (RuntimeError, ValueError) as error:
         return RetainedNonPolymerChemistryResolution(
@@ -552,6 +637,7 @@ def _resolve_retained_non_polymer_chemistry_source(
 
     return RetainedNonPolymerChemistryResolution(
         source=RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK,
+        coordination_bonds=coordination_bonds,
         rdkit_backend_version=fallback_inference_result.rdkit_backend_version,
         expected_hydrogen_atom_names=(fallback_inference_result.hydrogen_atom_names),
         heavy_bond_definitions=fallback_inference_result.heavy_bond_definitions,

@@ -170,6 +170,7 @@ def place_polymer_microstate_hydrogens(
         override=override,
         applied_choice=applied,
         preferences=preferences,
+        context=context,
     )
 
 

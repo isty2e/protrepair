@@ -844,10 +844,8 @@ def test_retained_non_polymer_evidence_preserves_partial_source_h_names() -> Non
     )
 
 
-def test_retained_non_polymer_evidence_does_not_preserve_overpopulated_source_h() -> (
-    None
-):
-    """Incompatible source H overpopulation should not be preserved."""
+def test_retained_non_polymer_evidence_refuses_overpopulated_source_h() -> None:
+    """An incompatible selected inventory does not authorize deleting source H."""
 
     residue_id = ResidueId("L", 1)
     structure = build_structure(
@@ -885,7 +883,9 @@ def test_retained_non_polymer_evidence_does_not_preserve_overpopulated_source_h(
     )
 
     hydrogen_names = _hydrogen_atom_names(result.structure, residue_id)
-    assert hydrogen_names == ("H001", "H002", "H003", "H004")
+    assert result.structure is structure
+    assert not result.repairs and result.issues
+    assert hydrogen_names == ("HS1", "HS2", "HS3", "HS4", "HS5")
     assert all(
         not _has_topology_bond(
             result.structure,

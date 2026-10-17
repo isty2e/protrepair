@@ -532,6 +532,16 @@ class StructureChemistryObservation:
         )
         hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
         if (
+            hydrogen_expectation_resolution.source
+            is RetainedNonPolymerChemistryEvidenceSource.ATOMIC_INVENTORY
+        ):
+            heavy_topology_source = hydrogen_expectation_resolution.source
+            heavy_atom_topology_availability_state = (
+                TopologyAvailabilityState.PRESENT
+                if hydrogen_expectation_resolution.has_expected_heavy_scaffold(residue)
+                else TopologyAvailabilityState.ABSENT
+            )
+        elif (
             evidence is not None
             and hydrogen_expectation_resolution.source
             is RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
@@ -629,8 +639,13 @@ class StructureChemistryObservation:
         ):
             heavy_atom_topology_availability_state = TopologyAvailabilityState.ABSENT
 
-        if not hydrogen_expectation_resolution.has_context_bond_topology(
-            self.context_structure
+        if not (
+            hydrogen_expectation_resolution.has_context_bond_topology(
+                self.context_structure
+            )
+            and hydrogen_expectation_resolution.has_coordination_topology(
+                self.context_structure
+            )
         ):
             heavy_atom_topology_availability_state = TopologyAvailabilityState.ABSENT
 

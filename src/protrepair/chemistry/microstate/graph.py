@@ -15,7 +15,7 @@ class MicrostateAtom:
     name : str
         Canonical heavy-atom name.
     element : str
-        C, N or O; this is a closed-shell site model, not a general valence table.
+        C, N, O or divalent S; this is not a general valence table.
     charge : int
         Integral formal charge, not partial force-field charge.
     hydrogens : int
@@ -48,7 +48,7 @@ class MicrostateAtom:
         self.closed_shell_valence()
 
     def closed_shell_valence(self) -> int:
-        """Return this model's allowed C/N/O valence.
+        """Return this model's allowed closed-shell valence.
 
         Returns
         -------
@@ -64,7 +64,7 @@ class MicrostateAtom:
             return 4
         if self.element == "N" and self.charge in (0, 1):
             return 3 + self.charge
-        if self.element == "O" and self.charge in (-1, 0):
+        if self.element in {"O", "S"} and self.charge in (-1, 0):
             return 2 + self.charge
         raise ValueError("unsupported closed-shell microstate element/charge")
 
@@ -150,7 +150,7 @@ class MicrostateGraph:
         Parameters
         ----------
         elements : Mapping[str, str]
-            Canonical site atoms and C/N/O elements.
+            Canonical site atoms and C/N/O/divalent-S elements.
         bonds : tuple[BondDefinition, ...]
             Internal integral bond orders.
         charges : Mapping[str, int]

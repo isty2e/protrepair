@@ -125,6 +125,18 @@ def standard_microstate_candidates(
                 for imine in ("NH2", "NH1", "NE")
             )
         )
+    if component_id == "CYS":
+        return MicrostateSite(
+            tuple(
+                MicrostateGraph.from_heavy_graph(
+                    elements={"SG": "S"},
+                    bonds=(),
+                    charges={"SG": charge},
+                    boundary_orders={"SG": 1},
+                )
+                for charge in (0, -1)
+            )
+        )
     if component_id == "HIS":
         return MicrostateSite(
             tuple(

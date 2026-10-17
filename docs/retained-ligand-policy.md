@@ -84,6 +84,48 @@ Both sulfur endpoints must have compatible source charges and no competing
 external covalent or untyped attachment at SG. Links at another atom on the
 partner residue do not consume the sulfur's attachment site.
 
+### Explicit Coordination Chemistry
+
+Mapped SMILES can describe covalent bonds and directed donor-to-metal bonds in
+the same component. ProtRepair keeps those relationships separate: a dative
+bond does not consume the donor's covalent valence. An untyped source connection
+can acquire a compatible selected relationship while retaining its original
+metadata. An explicitly covalent declaration is not silently changed to dative.
+
+Retained nitrogen preparation supports unprotonated aromatic N with two carbon
+neighbors for Fe, Zn, Cu, Co, Ni, Mn, Cd and Hg, and primary sulfonamidate
+`NH(-1)` for Zn. These are bounded preparation capabilities, not a complete
+catalogue of chemically possible donors. Active templates, mapped overrides and
+fallback inference must fit the admitted donor chemistry and preserve current
+and original H/D/T, known charges and declared partners. Unsupported donors or
+missing original partners leave that residue unchanged. Generated donor H can
+use a validated partner position as a placement anchor; this does not move the
+heavy atoms or authorize moving deposited H.
+
+Standard polymer sites have their own rules. Typed HIS coordination excludes H
+on the donating ring N. Supported ASP/GLU oxygen and linked peptide carbonyl
+coordination do not select an acid/anion state. Coordinated CYS can retain
+source-supported thiol or thiolate chemistry; coordination alone does not
+establish its protonation. Ordinary uncoordinated CYS keeps its existing H
+placement path. None of these rules estimates pKa or metal oxidation state.
+Multiple HIS ring donors or unsupported donor/partner combinations remain
+unresolved rather than forcing the standard site into a different chemistry.
+
+Readiness checks the selected coordination relationships even when all H are
+already present. The H or topology-only transformer publishes the admitted graph
+without losing source connection metadata. Automatic selection of a bound
+ligand microstate and metal-site force-field support remain unsupported by this
+preparation path.
+
+### Atomic Ions
+
+A retained single metal or halogen atom has a zero-H inventory, even when organic
+RDKit fallback is disabled. Its charge stays as supplied, including unknown;
+zero-H applicability is not an oxidation-state assignment. If H/D/T accompanies
+that heavy atom, a molecular template or mapped evidence is needed. The atomic
+rule does not invent a hydride or hydrogen halide, or hide source atoms removed
+from the current inventory.
+
 ### Glycosidic Links
 
 An explicit single covalent link can select a pyranose product inventory.

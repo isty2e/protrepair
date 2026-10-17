@@ -10,7 +10,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
     evidence_by_residue_id,
 )
-from protrepair.chemistry.single_atom_inorganic import is_single_atom_inorganic_residue
+from protrepair.chemistry.single_atom_inorganic import RetainedAtomicSite
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
     RetainedNonPolymerChemistryResolution,
@@ -42,8 +42,7 @@ class LocalBondPlanningSupportResolution:
 
     def __post_init__(self) -> None:
         if (
-            self.mode
-            is not LocalBondPlanningSupportMode.TEMPLATE_LESS_PASSIVE_CONTEXT
+            self.mode is not LocalBondPlanningSupportMode.TEMPLATE_LESS_PASSIVE_CONTEXT
             and self.fallback_bond_definitions
         ):
             raise ValueError(
@@ -100,7 +99,7 @@ def resolve_local_bond_planning_support(
         in movable_atom_index_set
         for atom_site in residue_site.atom_sites
     )
-    if is_single_atom_inorganic_residue(residue_site):
+    if RetainedAtomicSite(residue_site).is_monatomic_ion():
         if residue_has_movable_atom:
             return LocalBondPlanningSupportResolution(
                 mode=LocalBondPlanningSupportMode.UNSUPPORTED,

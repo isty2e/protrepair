@@ -411,6 +411,7 @@ class MicrostateSite:
         *,
         override: MicrostateConstraints | None = None,
         preferences: tuple[MicrostateConstraints, ...] = (),
+        requirements: MicrostateConstraints | None = None,
     ) -> MicrostateResolution:
         """Intersect evidence before choosing a resonance representation.
 
@@ -425,6 +426,9 @@ class MicrostateSite:
             source-compatible candidates only if the intersection is nonempty.
             Preferences never restore eliminated candidates or override evidence;
             an explicit override bypasses them.
+        requirements : MicrostateConstraints or None
+            Physical feasibility constraints on the candidate domain. Evidence,
+            overrides and preferences cannot restore excluded candidates.
 
         Returns
         -------
@@ -436,8 +440,17 @@ class MicrostateSite:
         ValueError
             An empty override would grant unqualified source-replacement authority.
         """
+        feasible = (
+            self.candidates
+            if requirements is None or requirements.is_empty()
+            else tuple(
+                graph
+                for graph in self.candidates
+                if requirements.violations(graph).is_empty()
+            )
+        )
         source_matches = tuple(
-            graph for graph in self.candidates if source.violations(graph).is_empty()
+            graph for graph in feasible if source.violations(graph).is_empty()
         )
         basis = MicrostateSelectionBasis.EVIDENCE
         candidates = source_matches
@@ -447,9 +460,7 @@ class MicrostateSite:
                     "microstate override must specify chemical constraints"
                 )
             requested = tuple(
-                graph
-                for graph in self.candidates
-                if override.violations(graph).is_empty()
+                graph for graph in feasible if override.violations(graph).is_empty()
             )
             candidates = (
                 tuple(graph for graph in requested if graph in source_matches)
@@ -469,11 +480,15 @@ class MicrostateSite:
 
         if not candidates:
             return MicrostateResolution(
-                MicrostateResolutionStatus.CONFLICT, basis=basis
+                MicrostateResolutionStatus.CONFLICT,
+                basis=basis,
             )
-        if len({graph.protonation_key() for graph in candidates}) > 1:
+        state_count = len({graph.protonation_key() for graph in candidates})
+        if state_count > 1:
             return MicrostateResolution(
-                MicrostateResolutionStatus.AMBIGUOUS, candidates, basis
+                MicrostateResolutionStatus.AMBIGUOUS,
+                candidates,
+                basis,
             )
         return MicrostateResolution(
             MicrostateResolutionStatus.RESOLVED,

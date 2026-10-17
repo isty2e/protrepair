@@ -4,6 +4,10 @@
 
 ### Changed
 
+- prepare explicitly selected retained coordination chemistry with separate
+  covalent and dative bonds, source-compatible nitrogen donor checks and
+  coordination-aware readiness; validate standard O/HIS/CYS donor contexts
+  without predicting metal charge or enabling a metal force field
 - prepare graph-qualified terminal-acrylamide/CYS products from explicit covalent
   attachments, with coupled H inventories and product bond orders; add QS7
   precursor data. Keep mapped stereo and source atoms, and omit inapplicable
@@ -35,6 +39,11 @@
 
 ### Fixed
 
+- avoid inferring hydrides or hydrogen halides for retained monatomic metal and
+  halogen inventories; preserve unknown charges and require molecular evidence
+  when source H/D/T is present
+- prevent selected retained chemistry from discarding excess source H or hiding
+  original donor charges and coordination partners
 - resolve exclusive neutral CYS SG--SG source connections, including CONECT-only
   disulfides, through the topology transformer while retaining source metadata;
   avoid adding thiol H without leaving these supported pairs permanently partial
