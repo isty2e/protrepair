@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 from protrepair.errors import ModelInvariantError
-from protrepair.structure.constitution import StructureConstitution
+from protrepair.structure.constitution import ResidueSite, StructureConstitution
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
@@ -263,6 +263,36 @@ class StructureObservation:
         """
         atom_index = self.constitution.resolve_atom_index(atom_ref)
         return None if atom_index is None else self.topology.formal_charge(atom_index)
+
+    def heavy_atoms_are_preserved_in(self, residue: ResidueSite) -> bool:
+        """Check that original heavy identities survive in a current residue.
+
+        Parameters
+        ----------
+        residue : ResidueSite
+            Current atom inventory, matched to the observation by residue ID.
+
+        Returns
+        -------
+        bool
+            Every observed heavy name and element/isotope identity is retained.
+            Additional current atoms are allowed; an unobserved residue supplies
+            no contrary evidence. This does not certify scaffold completeness,
+            chemistry, geometry or preservation of source hydrogens.
+        """
+        original = self.constitution.residue_or_ligand(residue.residue_id)
+        if original is None:
+            return True
+        current_identities = {
+            (atom.name, atom.element_identity)
+            for atom in residue.atom_sites
+            if not atom.is_hydrogen()
+        }
+        return all(
+            (atom.name, atom.element_identity) in current_identities
+            for atom in original.atom_sites
+            if not atom.is_hydrogen()
+        )
 
     def hydrogen_atoms(self, residue_id: ResidueId) -> tuple[AtomRef, ...]:
         """Return observed H/D/T identities for one original residue.
