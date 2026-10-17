@@ -159,6 +159,65 @@ def test_topology_only_does_not_half_publish_a_missing_product_h_inventory():
     assert result.issues and result.structure is source
 
 
+@pytest.mark.parametrize(
+    "provenance", (BondProvenance.TEMPLATE_RESOLVED, BondProvenance.SOURCE_EXPLICIT)
+)
+@pytest.mark.parametrize("topology_only", (False, True))
+def test_admitted_unknown_cysteine_context_publishes_covalent_chemistry(
+    provenance, topology_only
+):
+    source = _source()
+    if topology_only:
+        source = add_retained_non_polymer_hydrogens(source).structure
+    indices = tuple(
+        source.constitution.atom_index(AtomRef(CYSTEINE, name)) for name in ("CB", "SG")
+    )
+    original = source.topology.bond_between(*indices)
+    assert original is not None
+    metadata = (
+        SourceBondMetadata(
+            record_type=SourceBondRecordType.PDB_CONECT, reported_order=1
+        )
+        if provenance is BondProvenance.SOURCE_EXPLICIT
+        else None
+    )
+    unknown = replace(
+        original,
+        relationship_type=BondRelationshipType.UNKNOWN,
+        provenance=provenance,
+        source_metadata=metadata,
+    )
+    source = _with_bonds(
+        source,
+        tuple(
+            unknown if bond.endpoint_pair() == unknown.endpoint_pair() else bond
+            for bond in source.topology.bonds
+        ),
+    )
+
+    result = (
+        resolve_retained_non_polymer_topology(source, build_default_component_library())
+        if topology_only
+        else add_retained_non_polymer_hydrogens(source)
+    )
+
+    assert not result.issues
+    assert _binding(result.structure).cysteine_is_realized()
+    published = result.structure.topology.bond_between(
+        *(
+            result.structure.constitution.atom_index(AtomRef(CYSTEINE, name))
+            for name in ("CB", "SG")
+        )
+    )
+    assert published is not None
+    assert published.relationship_type is BondRelationshipType.COVALENT
+    assert published.order == 1
+    if metadata is not None:
+        assert published.provenance is provenance
+        assert published.source_metadata == metadata
+    _assert_original_preserved(source, result.structure)
+
+
 def test_unlinked_qs7_remains_the_isolated_alkene():
     source = _source(linked=False)
     result = add_retained_non_polymer_hydrogens(source)

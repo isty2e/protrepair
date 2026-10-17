@@ -1544,7 +1544,7 @@ def _retained_non_polymer_topology_bonds_for_plan(
                 second_index,
                 order=1,
                 relationship_type=BondRelationshipType.COVALENT
-                if current is None
+                if current is None or (first, second) in plan.context_bonds
                 else current.relationship_type,
                 provenance=plan.provenance,
             )
