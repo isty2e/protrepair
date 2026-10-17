@@ -209,8 +209,9 @@ known CYS carbon H, but it keeps the residue's H readiness partial.
 
 Once the product graph is realized, the matching bundled dictionary excludes
 the isolated alkene's reaction-site bond, angle and plane targets. Native FF
-parameters act on the product graph; unrelated targets remain in place. Distinct
-caller-supplied restraint dictionaries are unchanged. Native parameter coverage
+parameters act on the product graph; unrelated targets remain in place. A caller
+dictionary equal in value to the bundled precursor receives the same projection;
+dictionaries with different target values are unchanged. Native parameter coverage
 does not establish good optimization or conformational quality.
 
 Missing scaffold atoms, incompatible source H, charges, reported orders or stereo,

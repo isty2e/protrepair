@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from rdkit import Chem
 from rdkit.Chem import rdForceFieldHelpers
+from tests.support.cysteine_michael_adduct import CYSTEINE, LIGAND, qs7_source
 from tests.support.refinement_contract import build_continuous_relaxation_problem
 
 from protrepair.api import process_structure
@@ -49,6 +50,45 @@ from protrepair.workflow.contracts import (
     StructureIngressOptions,
     requested_process_goal,
 )
+
+
+def test_unprepared_adduct_selects_full_h_prerequisite_not_topology_only():
+    source = qs7_source()
+    library = build_default_component_library()
+    directive = RepairLocalRefinementDirective.from_atom_refs(
+        tuple(
+            source.constitution.atom_ref_at(i)
+            for i, _ in source.geometry.iter_positions()
+        ),
+        binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.MMFF),
+    )
+    observation = StructureChemistryObservation(source, component_library=library)
+    targets = repair_stage._local_refinement_prerequisite_targets(
+        source,
+        local_refinement=directive,
+        component_library=library,
+        allow_retained_non_polymer_rdkit_fallback=True,
+        retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation=observation,
+    )
+    assert LIGAND in targets.retained_non_polymer_hydrogen_residue_ids
+    assert LIGAND not in targets.retained_non_polymer_topology_residue_ids
+
+    staged, _ = repair_stage._apply_local_refinement_prerequisites(
+        TransformationResult(source, (), ()),
+        local_refinement=directive,
+        component_library=library,
+        allow_retained_non_polymer_rdkit_fallback=True,
+        retained_non_polymer_chemistry_evidence=(),
+    )
+    ligand = staged.structure.constitution.residue_or_ligand(LIGAND)
+    assert ligand is not None
+    assert sum(a.is_hydrogen() for a in ligand.atom_sites) == 24
+    assert CysteineMichaelAdductBinding(
+        staged.structure, ligand, library.require("QS7"), library
+    ).cysteine_is_realized()
+    cysteine = staged.structure.constitution.residue_or_ligand(CYSTEINE)
+    assert cysteine is not None and not cysteine.has_atom_site("HG")
 
 
 @pytest.fixture(scope="module")
