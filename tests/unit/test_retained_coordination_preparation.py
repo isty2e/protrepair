@@ -1154,3 +1154,138 @@ def test_selected_component_reference_is_defensive_against_native_mutation():
     second = component_reference_molecule(semantics.component)
     assert Chem.MolToSmiles(second) == expected
     assert second.GetAtomWithIdx(0).GetFormalCharge() == 0
+
+
+@pytest.mark.parametrize("external", (False, True))
+@pytest.mark.parametrize("missing", ("N1", "FE"))
+def test_missing_mapped_coordination_endpoint_is_residue_local(external, missing):
+    source = _external_source() if external else _source(typed=True, reverse_slots=True)
+    missing_id = ResidueId("M", 1) if external and missing == "FE" else LIGAND_ID
+    source = source.without_atom_refs((AtomRef(missing_id, missing),))
+    evidence = _external_evidence() if external else _evidence()
+    residue = source.constitution.residue_or_ligand(LIGAND_ID)
+    assert residue is not None
+    resolution = resolve_retained_non_polymer_chemistry(
+        source, residue, component_library=ComponentLibrary({}), evidence=evidence
+    )
+    assert not resolution.source.is_resolved()
+    assert resolution.failure_reason
+    for transform in (
+        add_retained_non_polymer_hydrogens,
+        resolve_retained_non_polymer_topology,
+    ):
+        result = transform(source, ComponentLibrary({}), chemistry_evidence=(evidence,))
+        assert result.structure is source
+        assert not result.repairs and result.issues
+
+
+def test_incomplete_mapped_donor_does_not_abort_a_valid_neighbor():
+    source = _source(typed=True).without_atom_refs((AtomRef(LIGAND_ID, "N1"),))
+    neighbor_id = ResidueId("L", 2)
+    neighbor, geometry, charges = residue_payload(
+        component_id="MTH",
+        residue_id=neighbor_id,
+        is_hetero=True,
+        atoms=(atom_payload("C1", "C", Vec3(20, 0, 0)),),
+    )
+    source = source.with_ligand_facets(
+        ligand_sites=(*source.constitution.ligands, neighbor),
+        ligand_geometries=(
+            source.residue_geometry(source.constitution.residue_index(LIGAND_ID)),
+            geometry,
+        ),
+        ligand_formal_charge_payloads=(
+            source.residue_formal_charge_by_atom_name(
+                source.constitution.residue_index(LIGAND_ID)
+            ),
+            charges,
+        ),
+    )
+    result = add_retained_non_polymer_hydrogens(
+        source, ComponentLibrary({}), chemistry_evidence=(_evidence(),)
+    )
+    assert result.structure.constitution.residue_or_ligand(LIGAND_ID) == (
+        source.constitution.residue_or_ligand(LIGAND_ID)
+    )
+    assert result.structure.residue_geometry(
+        result.structure.constitution.residue_index(LIGAND_ID)
+    ) == source.residue_geometry(source.constitution.residue_index(LIGAND_ID))
+    neighbor = result.structure.constitution.residue_or_ligand(neighbor_id)
+    assert neighbor is not None
+    assert sum(atom.is_hydrogen() for atom in neighbor.atom_sites) == 4
+    assert any(issue.residue_id == LIGAND_ID for issue in result.issues)
+
+
+@pytest.mark.parametrize("route", ("template", "evidence"))
+@pytest.mark.parametrize("isotope", ("H", "D", "T"))
+@pytest.mark.parametrize("change", ("none", "remove", "replace_isotope"))
+def test_allowed_original_donor_h_retains_its_identity(route, isotope, change):
+    smiles = "CS(=O)(=O)[NH-]"
+    source, library, donor = _selected_donor_case(smiles)
+    source = add_retained_non_polymer_hydrogens(
+        source, library, target_residue_ids=frozenset((LIGAND_ID,))
+    ).structure
+    index = source.constitution.residue_index(LIGAND_ID)
+    parents = source.topology.residue_hydrogen_anchor_by_name(
+        constitution=source.constitution, residue_index=index
+    )
+    name = next(name for name, parent in parents.items() if parent == donor.atom_name)
+    residue = source.constitution.residue_site_at(index)
+    source = source.with_updated_residue_facets(
+        replace(
+            residue,
+            atom_sites=tuple(
+                AtomSite(atom.name, isotope) if atom.name == name else atom
+                for atom in residue.atom_sites
+            ),
+        ),
+        residue_geometry=source.residue_geometry(index),
+        formal_charge_by_atom_name=source.residue_formal_charge_by_atom_name(index),
+    )
+    source = _observed(source)
+    evidence = (
+        RetainedNonPolymerChemistryOverride(
+            LIGAND_ID, smiles, library.require("QDN").expected_heavy_atom_names()
+        ).to_evidence()
+        if route == "evidence"
+        else None
+    )
+    if change == "remove":
+        source = source.without_atom_refs((AtomRef(LIGAND_ID, name),))
+    elif change == "replace_isotope":
+        residue = source.constitution.residue_site_at(index)
+        source = source.with_updated_residue_facets(
+            replace(
+                residue,
+                atom_sites=tuple(
+                    AtomSite(atom.name, "D" if isotope == "H" else "H")
+                    if atom.name == name
+                    else atom
+                    for atom in residue.atom_sites
+                ),
+            ),
+            residue_geometry=source.residue_geometry(index),
+            formal_charge_by_atom_name=source.residue_formal_charge_by_atom_name(index),
+        )
+    residue = source.constitution.residue_or_ligand(LIGAND_ID)
+    assert residue is not None
+    active_library = ComponentLibrary({}) if evidence is not None else library
+    resolution = resolve_retained_non_polymer_chemistry(
+        source, residue, component_library=active_library, evidence=evidence
+    )
+    result = add_retained_non_polymer_hydrogens(
+        source,
+        active_library,
+        chemistry_evidence=() if evidence is None else (evidence,),
+        target_residue_ids=frozenset((LIGAND_ID,)),
+    )
+    if change == "none":
+        assert resolution.source.is_resolved()
+        assert not result.issues
+        assert result.structure.constitution.resolve_atom_site(
+            AtomRef(LIGAND_ID, name)
+        ) == source.constitution.resolve_atom_site(AtomRef(LIGAND_ID, name))
+    else:
+        assert not resolution.source.is_resolved()
+        assert result.structure is source
+        assert not result.repairs and result.issues

@@ -762,3 +762,76 @@ def test_removing_original_conflicting_h_does_not_clear_donor_evidence(
         place_polymer_microstate_hydrogens(
             PolymerMicrostateContext(stripped), HIS, _site()
         )
+
+
+@pytest.mark.parametrize("change", ("none", "remove", "rebind", "retype"))
+@pytest.mark.parametrize("reverse", (False, True))
+def test_original_histidine_partner_survives_current_rebinding(
+    histidine_pdb: str, change: str, reverse: bool
+) -> None:
+    source = _source(histidine_pdb, reverse=reverse)
+    index = source.constitution.residue_index(METAL)
+    source = source.with_updated_residue_facets(
+        source.constitution.residue_site_at(index).with_atom_site(
+            AtomSite("FE2", "FE")
+        ),
+        residue_geometry=source.residue_geometry(index).with_atom_geometry(
+            "FE2", AtomGeometry(Vec3(31, 30, 30))
+        ),
+    )
+    site = _site()
+    selected = PolymerMicrostateContext(source).resolve(HIS, site)
+    assert selected.graph is not None
+    original = next(
+        b
+        for b in source.topology.bonds
+        if b.relationship_type is BondRelationshipType.METAL_COORDINATION
+    )
+    replacement = (
+        TopologyBond(
+            source.constitution.atom_index(AtomRef(HIS, "NE2")),
+            source.constitution.atom_index(AtomRef(METAL, "FE2")),
+            order=None,
+            relationship_type=BondRelationshipType.METAL_COORDINATION,
+            provenance=BondProvenance.REPAIR_INFERRED,
+        )
+        if change == "rebind"
+        else replace(original, relationship_type=BondRelationshipType.HYDROGEN_BOND)
+        if change == "retype"
+        else original
+    )
+    topology = StructureTopology(
+        constitution=source.constitution,
+        atom_topologies=source.topology.atom_topologies,
+        bonds=tuple(
+            replacement if b == original else b
+            for b in source.topology.bonds
+            if change != "remove" or b != original
+        ),
+    )
+    changed = ProteinStructure.from_payload(
+        constitution=source.constitution,
+        geometry=source.geometry,
+        topology=topology,
+        provenance=source.provenance,
+        polymer_blueprint=source.polymer_blueprint,
+    )
+    context = PolymerMicrostateContext(changed)
+    resolution = context.resolve(HIS, site)
+    if change == "none":
+        assert resolution.graph is not None
+    else:
+        assert resolution.status is MicrostateResolutionStatus.UNSUPPORTED
+        target = next(
+            target
+            for target in PolymerMicrostatePreparation(
+                context, build_default_component_library()
+            ).targets_for(HIS)
+            if target.site.kind is PolymerChemicalSite.SIDECHAIN
+        )
+        assert target.resolution.status is MicrostateResolutionStatus.UNSUPPORTED
+        assert not target.is_realized()
+        with pytest.raises(ValueError, match="original coordination"):
+            context.hydrogen_attachments(HIS, site, selected)
+        with pytest.raises(ValueError, match="original coordination"):
+            PolymerMicrostatePatch(changed, HIS, site, ())

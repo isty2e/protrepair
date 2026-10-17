@@ -755,3 +755,53 @@ def test_source_acid_h_conflicting_with_declared_double_bond_is_not_suppressed()
     assert result.status is MicrostateResolutionStatus.CONFLICT
     with pytest.raises(ValueError):
         _prepare(source)
+
+
+@pytest.mark.parametrize(
+    "component,donor,carbonyl",
+    (
+        ("ASP", "OD1", False),
+        ("GLU", "OE2", False),
+        ("ALA", "O", True),
+    ),
+)
+def test_original_oxygen_partner_is_not_only_a_generic_constraint(
+    component, donor, carbonyl
+):
+    source = _source(component, (donor,), carbonyl=carbonyl)
+    changed = _with_topology(
+        source,
+        tuple(
+            b
+            for b in source.topology.bonds
+            if b.relationship_type is not BondRelationshipType.METAL_COORDINATION
+        ),
+    )
+    site = _site(changed, carbonyl=carbonyl)
+    result = PolymerMicrostateContext(changed).resolve(
+        TARGET, site, preferences=pras_microstate_preferences(site)
+    )
+    assert result.status is MicrostateResolutionStatus.UNSUPPORTED
+    with pytest.raises(ValueError, match="original coordination"):
+        _prepare(changed, carbonyl=carbonyl)
+
+
+def test_lost_sidechain_coordination_does_not_block_an_intact_backbone_site():
+    source = _source("ASP", ("OD1", "O"), carbonyl=True)
+    oxygen = source.constitution.atom_index(AtomRef(TARGET, "OD1"))
+    changed = _with_topology(
+        source,
+        tuple(
+            b
+            for b in source.topology.bonds
+            if b.relationship_type is not BondRelationshipType.METAL_COORDINATION
+            or oxygen not in b.endpoint_pair()
+        ),
+    )
+    context = PolymerMicrostateContext(changed)
+    sidechain = context.resolve(TARGET, _site(changed))
+    assert sidechain.status is MicrostateResolutionStatus.UNSUPPORTED
+    backbone_site = _site(changed, carbonyl=True)
+    assert context.resolve(
+        TARGET, backbone_site, preferences=pras_microstate_preferences(backbone_site)
+    ).graph

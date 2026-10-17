@@ -420,6 +420,13 @@ def selected_graph_coordination_bonds(
             ),
         )
     }
+    for pair in pairs.values():
+        for ref in pair:
+            if structure.constitution.resolve_atom_index(ref) is None:
+                raise CoordinationEvidenceConflictError(
+                    "selected coordination has a missing mapped endpoint "
+                    f"at {ref.display_token()}"
+                )
     template = molecule
     indices = {name: index for index, name in atom_names_by_index.items()}
     partners_by_donor = {
@@ -509,10 +516,14 @@ def selected_graph_coordination_bonds(
                 raise CoordinationEvidenceConflictError(
                     "selected coordination has a missing mapped partner"
                 )
-            current_indices = tuple(
-                structure.constitution.atom_index(ref) for ref in refs
+            first_index, second_index = (
+                structure.constitution.resolve_atom_index(ref) for ref in refs
             )
-            current = structure.topology.bond_between(*current_indices)
+            if first_index is None or second_index is None:
+                raise CoordinationEvidenceConflictError(
+                    "original coordination has a missing current endpoint"
+                )
+            current = structure.topology.bond_between(first_index, second_index)
             if (
                 current is None
                 or current.relationship_type
@@ -614,6 +625,18 @@ def selected_graph_coordination_bonds(
                     if observation.constitution.atom_ref_at(index) != donor
                 )
                 if observation.constitution.atom_site_at(other).is_hydrogen():
+                    original_atom = observation.constitution.atom_site_at(other)
+                    ref = observation.constitution.atom_ref_at(other)
+                    current_atom = structure.constitution.resolve_atom_site(ref)
+                    if (
+                        current_atom is None
+                        or current_atom.element_identity
+                        != original_atom.element_identity
+                    ):
+                        raise CoordinationEvidenceConflictError(
+                            "selected coordination cannot hide original donor "
+                            f"hydrogen identity at {ref.display_token()}"
+                        )
                     original_hydrogens.add(other)
             if len(original_hydrogens) > hydrogen_count:
                 raise CoordinationEvidenceConflictError(

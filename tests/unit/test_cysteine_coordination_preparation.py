@@ -238,3 +238,30 @@ def test_uncoordinated_cysteine_keeps_the_existing_fixed_hydrogen_path():
         target.site.kind is PolymerChemicalSite.SIDECHAIN
         for target in prepared.targets_for(CYS)
     )
+
+
+@pytest.mark.parametrize("missing_partner", (False, True))
+def test_original_cysteine_coordination_cannot_disappear(missing_partner):
+    source = _source(charge=-1)
+    if missing_partner:
+        changed = source.without_atom_refs((AtomRef(METAL, "X"),))
+    else:
+        changed = ProteinStructure.from_payload(
+            constitution=source.constitution,
+            geometry=source.geometry,
+            topology=StructureTopology(
+                constitution=source.constitution,
+                atom_topologies=source.topology.atom_topologies,
+                bonds=tuple(
+                    b
+                    for b in source.topology.bonds
+                    if b.relationship_type
+                    is not BondRelationshipType.METAL_COORDINATION
+                ),
+            ),
+            provenance=source.provenance,
+            polymer_blueprint=source.polymer_blueprint,
+        )
+    resolution = PolymerMicrostateContext(changed).resolve(CYS, _site())
+    assert resolution.status is MicrostateResolutionStatus.UNSUPPORTED
+    assert any("original coordination" in detail for detail in resolution.details)

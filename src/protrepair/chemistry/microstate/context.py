@@ -218,7 +218,8 @@ class PolymerMicrostateContext:
         ResidueNotFoundError
             The residue is absent from this snapshot.
         ValueError
-            Current typed coordination cannot be interpreted by this site grammar.
+            Current typed coordination cannot be interpreted by this site grammar,
+            or an original site partner relationship is missing or changed.
         """
         constitution = self.source.constitution
         bonds = tuple(
@@ -231,7 +232,48 @@ class PolymerMicrostateContext:
                 if bond.relationship_type is BondRelationshipType.METAL_COORDINATION
             )
         )
-        return site.coordination_requirements(residue_id, constitution, bonds)
+        requirements = site.coordination_requirements(residue_id, constitution, bonds)
+        observation = self.source.provenance.ingress.observation
+        original_bonds = (
+            ()
+            if observation is None
+            else tuple(
+                bond
+                for bond in observation.bonds_for_residue(residue_id)
+                if bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+            )
+        )
+        if original_bonds:
+            assert observation is not None
+            catalog = site.candidates()
+            names = (
+                set()
+                if catalog is None
+                else {atom.name for atom in catalog.candidates[0].atoms}
+            )
+            current_pairs = {
+                frozenset(
+                    constitution.atom_ref_at(index) for index in bond.endpoint_pair()
+                )
+                for bond in bonds
+            }
+            for bond in original_bonds:
+                refs = tuple(
+                    observation.constitution.atom_ref_at(index)
+                    for index in bond.endpoint_pair()
+                )
+                if (
+                    any(
+                        ref.residue_id == residue_id and ref.atom_name in names
+                        for ref in refs
+                    )
+                    and frozenset(refs) not in current_pairs
+                ):
+                    raise ValueError(
+                        "original coordination partner relationship "
+                        "is missing or changed"
+                    )
+        return requirements
 
     def backbone_site(
         self,
