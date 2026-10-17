@@ -364,7 +364,7 @@ def test_polymer_hydrogen_topology_preserves_existing_source_h_bond() -> None:
         pytest.param(
             2.0,
             BondRelationshipType.UNKNOWN,
-            True,
+            False,
             id="close-unknown",
         ),
         pytest.param(
@@ -404,6 +404,14 @@ def test_cysteine_hg_depends_on_topology_disulfide_semantics(
 
     assert first_residue.has_atom_site("HG") is expect_hg
     assert second_residue.has_atom_site("HG") is expect_hg
+
+    if relationship_type is BondRelationshipType.UNKNOWN:
+        observation = ProteinStructureObservation.from_structure(result.structure)
+        assert observation.hydrogen_coverage_state is HydrogenCoverageState.PARTIAL
+        for residue in (first_residue, second_residue):
+            assert {"HA", "HB2", "HB3"}.issubset(residue.atom_site_names())
+        assert result.issues
+        assert result.structure.provenance.ingress is structure.provenance.ingress
 
 
 def test_disulfide_cysteine_without_hg_counts_as_complete_hydrogen_coverage() -> None:

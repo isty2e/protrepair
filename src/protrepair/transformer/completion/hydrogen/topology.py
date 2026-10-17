@@ -60,12 +60,15 @@ def resolve_fixed_hydrogen_topology(
             try:
                 fixed_context = prepared.fixed_hydrogen_context(residue.residue_id)
                 if fixed_context is not None and fixed_context.failure_reason:
+                    unresolved = ", ".join(
+                        sorted(fixed_context.unresolved_parent_names)
+                    )
                     issues.append(
                         ValidationIssue.for_residue(
                             kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
                             severity=IssueSeverity.WARNING,
                             message=(
-                                "linked polymer H at ND2 left unresolved: "
+                                f"linked polymer H at {unresolved} left unresolved: "
                                 f"{fixed_context.failure_reason}"
                             ),
                             residue_id=residue.residue_id,

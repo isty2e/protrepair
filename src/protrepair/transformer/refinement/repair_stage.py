@@ -288,7 +288,7 @@ def _apply_local_refinement_prerequisites(
         allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
         retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
     )
-    # Heavy, terminal, polymer H, retained H, and retained topology prerequisites.
+    # Heavy, terminal, retained topology/H, then polymer H prerequisites.
     for _ in range(5):
         observation = observation.for_structure(staged_result.structure)
         prerequisite_targets = _local_refinement_prerequisite_targets(
@@ -340,21 +340,29 @@ def _apply_local_refinement_prerequisites(
             )
             continue
 
-        if prerequisite_targets.hydrogen_residue_ids:
-            from protrepair.transformer.completion.hydrogen.core import (
-                materialize_hydrogens_core,
+        # A retained product establishes its polymer partner's valence.
+        # Reobserve after any publication; a refused attempt must not starve
+        # independent prerequisite work on this unchanged snapshot.
+        if prerequisite_targets.retained_non_polymer_topology_residue_ids:
+            from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (  # noqa: E501
+                resolve_retained_non_polymer_topology,
             )
 
-            hydrogen_result = materialize_hydrogens_core(
+            topology_result = resolve_retained_non_polymer_topology(
                 staged_result.structure,
-                component_library=component_library,
-                target_residue_ids=frozenset(prerequisite_targets.hydrogen_residue_ids),
+                component_library,
+                target_residue_ids=frozenset(
+                    prerequisite_targets.retained_non_polymer_topology_residue_ids
+                ),
+                chemistry_evidence=retained_non_polymer_chemistry_evidence,
+                allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
             )
+            previous_structure = staged_result.structure
             staged_result = _merge_completion_stage_result(
-                staged_result,
-                stage_result=hydrogen_result,
+                staged_result, stage_result=topology_result
             )
-            continue
+            if staged_result.structure is not previous_structure:
+                continue
 
         if prerequisite_targets.retained_non_polymer_hydrogen_residue_ids:
             from protrepair.transformer.completion.retained_non_polymer_hydrogen import (  # noqa: E501
@@ -384,28 +392,26 @@ def _apply_local_refinement_prerequisites(
                 staged_result,
             ):
                 return staged_result, observation.for_structure(staged_result.structure)
+            if staged_result.structure is not previous_staged_result.structure:
+                continue
+
+        if prerequisite_targets.hydrogen_residue_ids:
+            from protrepair.transformer.completion.hydrogen.core import (
+                materialize_hydrogens_core,
+            )
+
+            hydrogen_result = materialize_hydrogens_core(
+                staged_result.structure,
+                component_library=component_library,
+                target_residue_ids=frozenset(prerequisite_targets.hydrogen_residue_ids),
+            )
+            staged_result = _merge_completion_stage_result(
+                staged_result,
+                stage_result=hydrogen_result,
+            )
             continue
 
-        if prerequisite_targets.retained_non_polymer_topology_residue_ids:
-            from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (  # noqa: E501
-                resolve_retained_non_polymer_topology,
-            )
-
-            topology_result = resolve_retained_non_polymer_topology(
-                staged_result.structure,
-                component_library,
-                target_residue_ids=frozenset(
-                    prerequisite_targets.retained_non_polymer_topology_residue_ids
-                ),
-                chemistry_evidence=retained_non_polymer_chemistry_evidence,
-                allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
-            )
-            previous_structure = staged_result.structure
-            staged_result = _merge_completion_stage_result(
-                staged_result, stage_result=topology_result
-            )
-            if staged_result.structure is previous_structure:
-                break
+        break
 
     return staged_result, observation.for_structure(staged_result.structure)
 

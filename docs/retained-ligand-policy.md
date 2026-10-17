@@ -185,6 +185,40 @@ hydrogen inventory, charges and stereochemistry, used by both preparation and
 readiness. Revisit this limitation before extending the resolver's support to
 alternate fixed-template aromatic forms.
 
+## Cysteine-Linked Terminal Acrylamides
+
+A complete selected terminal acrylamide can describe a product when its beta
+carbon has one explicit covalent link to polymer CYS SG. ProtRepair identifies
+the neutral N--C(=O)--CH=CH2 motif from the graph, not the component ID or ligand
+atom names. A close C--S contact alone does not establish this chemistry.
+
+The product has two methylene carbons, a single alpha--beta bond, and neutral
+sulfur with two single heavy bonds and no thiol H. For example, the isolated
+[QS7 CCD record](https://files.rcsb.org/ligands/download/QS7.cif) has 23 H; its
+Cys552-linked product in [6V9C](https://www.rcsb.org/structure/6V9C) has 24 ligand
+H. The covalent modification is reported in the
+[FGFR4 study](https://doi.org/10.1021/acsmedchemlett.9b00601).
+
+Reaction-site H are placed against the current carbon and sulfur coordinates.
+The all-protium methylene groups introduce no new stereocenter; declared ligand
+centers elsewhere must retain their mapped 3D orientation. Deposited atoms, H/D/T,
+coordinates, scalar values, known charges and link metadata are preserved.
+Only provably generated thiol H can be removed, together with successful ligand
+product publication. Unresolved SG chemistry does not suppress independently
+known CYS carbon H, but it keeps the residue's H readiness partial.
+
+Once the product graph is realized, the matching bundled dictionary excludes
+the isolated alkene's reaction-site bond, angle and plane targets. Native FF
+parameters act on the product graph; unrelated targets remain in place. Distinct
+caller-supplied restraint dictionaries are unchanged. Native parameter coverage
+does not establish good optimization or conformational quality.
+
+Missing scaffold atoms, incompatible source H, charges, reported orders or stereo,
+and multiple covalent attachments leave preparation unresolved with a diagnostic.
+Residue-local SMILES overrides cannot describe this coupled product. Other
+electrophiles, substituted reaction-site carbons, other nucleophiles, pKa and
+reaction kinetics are outside this support boundary.
+
 ## Incomplete Templates
 
 A template can place hydrogens on compatible heavy atoms that are present, even

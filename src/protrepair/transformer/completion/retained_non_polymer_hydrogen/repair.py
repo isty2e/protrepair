@@ -116,6 +116,7 @@ class _RetainedNonPolymerTopologyPlan:
     provenance: BondProvenance
     formal_charge_requirements: tuple[tuple[str, int], ...] = ()
     external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
+    context_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
 
     def requires_unlinked_scaffold(self, heavy_atom_names: Collection[str]) -> bool:
         """An admitted zero-H graph cannot acquire extra covalent bonds."""
@@ -308,6 +309,7 @@ def _execute_retained_non_polymer_hydrogen_stage(
         try:
             template_binding = None
             replaceable_hydrogens = ()
+            thiol_hydrogens = ()
             evidence_external_bonds = ()
             evidence = chemistry_evidence_by_residue_id.get(ligand.residue_id)
             template = component_library.get(ligand.component_id)
@@ -325,6 +327,9 @@ def _execute_retained_non_polymer_hydrogen_stage(
                     replaceable_hydrogens = (
                         template_binding.glycosidic.excess_generated_hydrogen_names()
                     )
+                    adduct = template_binding.michael
+                    if adduct is not None:
+                        thiol_hydrogens = adduct.excess_generated_thiol_hydrogen_names()
                 else:
                     RetainedCovalentContext(
                         structure, ligand.residue_id
@@ -374,6 +379,21 @@ def _execute_retained_non_polymer_hydrogen_stage(
                             result.topology_plan.bond_definitions, result.payload
                         ),
                     )
+                    if template_binding.michael is not None:
+                        template_binding.michael.require_ligand_stereochemistry(
+                            result.payload.residue_geometry,
+                            _hydrogen_anchor_by_name(
+                                result.topology_plan.bond_definitions, result.payload
+                            ),
+                        )
+                        result = replace(
+                            result,
+                            topology_plan=replace(
+                                result.topology_plan,
+                                context_bonds=template_binding.michael.context_bonds(),
+                            ),
+                        )
+                assert result.topology_plan is not None
                 _require_compatible_topology_plan(
                     structure,
                     result.topology_plan,
@@ -384,7 +404,9 @@ def _execute_retained_non_polymer_hydrogen_stage(
                 issues.append(_retained_chemistry_conflict_issue(ligand, error))
                 continue
         if topology_only and result.payload is not None:
-            if not _preserves_atom_payload(source_payload, result.payload):
+            if thiol_hydrogens or not _preserves_atom_payload(
+                source_payload, result.payload
+            ):
                 issues.extend(result.issues)
                 issues.append(
                     _retained_chemistry_conflict_issue(
@@ -406,6 +428,26 @@ def _execute_retained_non_polymer_hydrogen_stage(
             )
         if result.topology_plan is not None:
             topology_plans.append(result.topology_plan)
+        if thiol_hydrogens and result.payload is not None:
+            assert template_binding is not None and template_binding.michael is not None
+            partner_id = template_binding.michael.sulfur.residue_id
+            hydrogenated_payloads.append(
+                _payload_for_structure(structure, partner_id).without_atom_sites(
+                    thiol_hydrogens
+                )
+            )
+            repairs.append(
+                RepairEvent.for_residue(
+                    kind=RepairEventKind.HYDROGENS_REMOVED,
+                    residue_id=partner_id,
+                    component_id="CYS",
+                    atom_names=thiol_hydrogens,
+                    details=(
+                        "removed generated thiol H with the coupled "
+                        "Michael thioether product"
+                    ),
+                )
+            )
         if replaceable_hydrogens and result.payload is not None:
             repairs.append(
                 RepairEvent.for_residue(
@@ -761,6 +803,7 @@ def _hydrogenate_retained_non_polymer_payload(
                 template=template,
                 placement_directive=placement_directive,
                 is_disulfide_bonded=is_disulfide_bonded,
+                template_binding=template_binding,
             )
             if hydrogenated_payload is None:
                 return _RetainedNonPolymerHydrogenPayloadResult(
@@ -1490,7 +1533,7 @@ def _retained_non_polymer_topology_bonds_for_plan(
             )
         )
 
-    for first, second in plan.external_bonds:
+    for first, second in (*plan.external_bonds, *plan.context_bonds):
         first_index, second_index = (
             structure.constitution.atom_index(ref) for ref in (first, second)
         )
@@ -1568,6 +1611,18 @@ def _require_compatible_topology_plan(
     RetainedCovalentContext(structure, plan.residue_id).require_admitted(
         plan.external_bonds
     )
+    for first, second in plan.context_bonds:
+        indices = tuple(
+            structure.constitution.atom_index(ref) for ref in (first, second)
+        )
+        existing = structure.topology.bond_between(*indices)
+        if (
+            existing is not None
+            and existing.provenance is BondProvenance.SOURCE_EXPLICIT
+        ):
+            existing.with_resolved_chemistry(
+                TopologyBond(*indices, order=1, provenance=plan.provenance)
+            )
     residue_index = structure.constitution.residue_index(plan.residue_id)
     _require_compatible_formal_charges(
         dict(structure.residue_formal_charge_by_atom_name(residue_index)),
@@ -1726,6 +1781,7 @@ def _apply_retained_non_polymer_hydrogen_directive(
     placement_directive: StaticHydrogenPlacementDirective
     | RigidHydrogenPlacementDirective,
     is_disulfide_bonded: bool,
+    template_binding: RetainedTemplateBinding | None = None,
 ) -> CompletionResiduePayload | None:
     """Return one hydrogenated retained non-polymer payload."""
 
@@ -1764,6 +1820,10 @@ def _apply_retained_non_polymer_hydrogen_directive(
             "ideal-geometry semantics"
         )
 
+    michael = None if template_binding is None else template_binding.michael
+    reaction_names = (
+        frozenset() if michael is None else michael.reaction_hydrogen_names()
+    )
     patch = generate_component_hydrogen_patch(
         residue=payload,
         patch=OrderedAtomPatch.from_residue_payload(
@@ -1772,9 +1832,27 @@ def _apply_retained_non_polymer_hydrogen_directive(
         ),
         semantics=semantics,
         skip_hydrogens_with_absent_anchors=True,
+        selected_hydrogen_names=(
+            None
+            if michael is None
+            else frozenset(template.expected_hydrogen_atom_names()).difference(
+                reaction_names
+            )
+        ),
     )
     if patch is None:
         return None
+    if michael is not None:
+        try:
+            reaction_hydrogens = michael.reaction_hydrogen_positions(
+                payload.residue_geometry
+            )
+        except (GeometryPlacementError, KeyError):
+            return None
+        patch = patch.append_atoms(
+            tuple(name for name, _ in reaction_hydrogens),
+            tuple(position for _, position in reaction_hydrogens),
+        )
 
     # Selected chemistry, not the spelling of a mapped H name, owns its element.
     patch = OrderedAtomPatch(

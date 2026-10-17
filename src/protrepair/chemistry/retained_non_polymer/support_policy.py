@@ -20,6 +20,7 @@ SUPPORTED_BUNDLED_RETAINED_NON_POLYMER_HYDROGENATION_COMPONENT_IDS: frozenset[st
             "NAG",
             "NAP",
             "PLP",
+            "QS7",
             "SAH",
             "SAM",
             "SAN",

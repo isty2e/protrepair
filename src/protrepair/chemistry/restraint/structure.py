@@ -6,6 +6,12 @@ from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.restraint.library import RestraintLibrary
 from protrepair.chemistry.restraint.template import ResidueRestraintTemplate
+from protrepair.chemistry.retained_non_polymer.michael_adduct import (
+    CysteineMichaelAdductBinding,
+)
+from protrepair.chemistry.retained_non_polymer.registry import (
+    build_bundled_retained_non_polymer_restraint_library,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 
@@ -73,5 +79,27 @@ class StructureRestraints:
                 resolution = self._context.resolve(residue_id, site)
                 graph = self._context.realized_heavy_graph(residue_id, site, resolution)
             template = template.for_sidechain_graph(graph)
+        if (
+            template is not None
+            and template
+            == build_bundled_retained_non_polymer_restraint_library().get(
+                residue.component_id
+            )
+            and self._structure.topology.inter_residue_bonds_for_residue(
+                constitution=constitution,
+                residue_index=constitution.residue_index(residue_id),
+            )
+        ):
+            component = self._components.get(residue.component_id)
+            if component is not None:
+                try:
+                    binding = CysteineMichaelAdductBinding(
+                        self._structure, residue, component, self._components
+                    )
+                except ValueError:
+                    pass
+                else:
+                    template = binding.applicable_restraints(template)
+
         self._resolved[residue_id] = template
         return template

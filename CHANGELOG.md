@@ -4,6 +4,13 @@
 
 ### Changed
 
+- prepare graph-qualified terminal-acrylamide/CYS products from explicit covalent
+  attachments, with coupled H inventories and product bond orders; add QS7
+  precursor data. Keep mapped stereo and source atoms, and omit inapplicable
+  isolated alkene restraints only after the product graph is realized
+- leave SG H unresolved for unsupported or untyped cysteine attachments rather
+  than assigning the isolated thiol inventory; independently known carbon H
+  remain available and readiness reports the unresolved site
 - prepare graph-qualified pyranose links to alcohol acceptors or polymer ASN
   using the coupled product inventory, with source-preserving stereo checks;
   add BMA, FUC, FUL, GAL, GNX and IDY component data. Unsupported residues remain
