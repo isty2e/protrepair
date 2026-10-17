@@ -4,6 +4,11 @@
 
 ### Changed
 
+- prefer source-compatible thiolate for a single stock-qualified CYS SG--heme
+  Fe site, while retaining source thiol H/D/T and neutral sulfur charges;
+  leave other coordinated CYS unresolved without source evidence or an explicit
+  choice, rather than supplying a neutral default. Ordinary CYS placement and
+  metal charge/force-field support are unchanged
 - prepare registered coordinated components even with organic RDKit fallback
   disabled, when no active template or override applies; first choose
   source-compatible ligand states by the documented preferences, then publish

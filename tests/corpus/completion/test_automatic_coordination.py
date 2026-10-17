@@ -317,11 +317,16 @@ def test_1f4t_pim_goals_are_reobserved_without_claiming_full_metal_site(source_1
         assert target.is_realized()
         assert target.resolution.basis is MicrostateSelectionBasis.DEFAULT
         assert target.resolution.graph is not None
-        # Automatic ligand preparation does not select a polymer thiolate state.
-        assert target.resolution.graph.atom("SG").charge == 0
-        assert target.resolution.graph.atom("SG").hydrogens == 1
+        assert target.resolution.graph.atom("SG").charge == -1
+        assert target.resolution.graph.atom("SG").hydrogens == 0
         cysteine_site = result.structure.constitution.residue_or_ligand(cysteine)
-        assert cysteine_site is not None and cysteine_site.has_atom_site("HG")
+        assert cysteine_site is not None and not cysteine_site.has_atom_site("HG")
+        assert (
+            result.structure.topology.formal_charge(
+                result.structure.constitution.atom_index(AtomRef(cysteine, "SG"))
+            )
+            == -1
+        )
         sulfur = result.structure.constitution.atom_index(AtomRef(cysteine, "SG"))
         bond = result.structure.topology.bond_between(sulfur, metal)
         original = source_1f4t.topology.bond_between(
