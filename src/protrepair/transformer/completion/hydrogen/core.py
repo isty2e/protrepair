@@ -333,6 +333,7 @@ def _fixed_hydrogens(
             binding = fixed_context.glycosidic
             template = fixed_context.template
             if fixed_context.failure_reason:
+                unresolved = ", ".join(sorted(fixed_context.unresolved_parent_names))
                 issues.append(
                     ValidationIssue.for_residue(
                         kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
@@ -340,7 +341,7 @@ def _fixed_hydrogens(
                         residue_id=payload.residue_id,
                         component_id=payload.component_id,
                         message=(
-                            "linked polymer H at ND2 left unresolved: "
+                            f"linked polymer H at {unresolved} left unresolved: "
                             f"{fixed_context.failure_reason}"
                         ),
                     )

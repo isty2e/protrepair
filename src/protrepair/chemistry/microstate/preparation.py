@@ -19,12 +19,21 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateResolution,
     MicrostateResolutionStatus,
 )
+from protrepair.chemistry.retained_non_polymer.covalent_context import (
+    RetainedCovalentContext,
+)
 from protrepair.chemistry.retained_non_polymer.glycosidic import (
     GlycosidicTemplateBinding,
 )
+from protrepair.chemistry.retained_non_polymer.michael_adduct import (
+    CysteineMichaelAdductBinding,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite
-from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
+from protrepair.structure.disulfide import (
+    disulfide_atom_ref_pair,
+    disulfide_bonded_cysteine_residue_ids,
+)
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import BondRelationshipType, TopologyBond
 
@@ -148,7 +157,7 @@ class PolymerSitePreparation:
 
 @dataclass(frozen=True, slots=True, init=False)
 class FixedPolymerHydrogenContext:
-    """Select fixed H while retaining uncertainty at a linked amide parent.
+    """Select fixed H while retaining uncertainty at unresolved linked parents.
 
     Parameters
     ----------
@@ -160,17 +169,20 @@ class FixedPolymerHydrogenContext:
         Isolated fixed-H chemistry.
     component_library : ComponentLibrary
         Partner definitions for contextual ASN chemistry.
+    cysteine_adduct : CysteineMichaelAdductBinding or None
+        Realized product selected for this polymer site, when available.
 
     Notes
     -----
-    Failed ASN binding leaves ND2 unresolved, not neutral primary-amide
-    chemistry. Other fixed parents retain their independently selected H.
+    Failed ASN binding leaves ND2 unresolved; an unrealized CYS product leaves
+    SG unresolved. Other fixed parents retain their independently selected H.
     This value does not place atoms or certify completed H coverage.
     """
 
     isolated_template: ResidueTemplate
     glycosidic: GlycosidicTemplateBinding | None
     failure_reason: str
+    _unresolved_parent_names: frozenset[str]
 
     def __init__(
         self,
@@ -178,13 +190,43 @@ class FixedPolymerHydrogenContext:
         residue_id: ResidueId,
         template: ResidueTemplate,
         component_library: ComponentLibrary,
+        *,
+        cysteine_adduct: CysteineMichaelAdductBinding | None = None,
     ) -> None:
+        if cysteine_adduct is not None:
+            template = cysteine_adduct.cysteine_template
         object.__setattr__(self, "isolated_template", template)
         object.__setattr__(self, "glycosidic", None)
         object.__setattr__(self, "failure_reason", "")
+        object.__setattr__(self, "_unresolved_parent_names", frozenset())
         residue = context.source.constitution.residue_or_ligand(residue_id)
         if residue is None:
             raise ValueError("fixed H preparation requires a present residue")
+        if residue.component_id == "CYS" and residue.has_atom_site("SG"):
+            external = context.external_heavy_bonds(AtomRef(residue_id, "SG"))
+            if (
+                cysteine_adduct is None
+                and not any(
+                    disulfide_atom_ref_pair(context.source.constitution, bond)
+                    is not None
+                    for bond in external
+                )
+                and any(
+                    bond.relationship_type
+                    not in (
+                        BondRelationshipType.HYDROGEN_BOND,
+                        BondRelationshipType.METAL_COORDINATION,
+                    )
+                    for bond in external
+                )
+            ):
+                object.__setattr__(
+                    self,
+                    "failure_reason",
+                    "contextual cysteine product is unsupported or not yet realized",
+                )
+                object.__setattr__(self, "_unresolved_parent_names", frozenset(("SG",)))
+            return
         if residue.component_id != "ASN" or not residue.has_atom_site("ND2"):
             return
         if not any(
@@ -202,6 +244,7 @@ class FixedPolymerHydrogenContext:
             )
         except ValueError as error:
             object.__setattr__(self, "failure_reason", str(error))
+            object.__setattr__(self, "_unresolved_parent_names", frozenset(("ND2",)))
         else:
             object.__setattr__(self, "glycosidic", binding)
 
@@ -227,9 +270,9 @@ class FixedPolymerHydrogenContext:
         Returns
         -------
         frozenset[str]
-            ND2 when linked ASN chemistry could not be selected, otherwise empty.
+            SG or ND2 when the corresponding linked chemistry is unresolved.
         """
-        return frozenset(("ND2",)) if self.failure_reason else frozenset()
+        return self._unresolved_parent_names
 
     def hydrogen_atom_names(self) -> tuple[str, ...]:
         """Return only H identities with a resolved parent inventory.
@@ -283,6 +326,7 @@ class PolymerMicrostatePreparation:
     component_library: ComponentLibrary
     _disulfides: frozenset[ResidueId]
     _coordinate_dependent: bool
+    _cysteine_adducts: Mapping[ResidueId, CysteineMichaelAdductBinding]
 
     def __init__(
         self,
@@ -295,6 +339,37 @@ class PolymerMicrostatePreparation:
         | None = None,
     ) -> None:
         pending = {} if requests is None else dict(requests)
+        adducts = {}
+        coordinate_dependent_adducts = False
+        for ligand in context.source.constitution.ligands:
+            attachments = RetainedCovalentContext(
+                context.source, ligand.residue_id
+            ).attachments
+            if not any(
+                bond.relationship_type is BondRelationshipType.COVALENT
+                and outside.atom_name == "SG"
+                and (
+                    partner := context.source.constitution.residue_or_ligand(
+                        outside.residue_id
+                    )
+                )
+                is not None
+                and partner.component_id == "CYS"
+                for bond, _, outside in attachments
+            ):
+                continue
+            coordinate_dependent_adducts = True
+            ligand_template = component_library.get(ligand.component_id)
+            if ligand_template is None:
+                continue
+            try:
+                binding = CysteineMichaelAdductBinding(
+                    context.source, ligand, ligand_template, component_library
+                )
+                if binding.cysteine_is_realized():
+                    adducts[binding.sulfur.residue_id] = binding
+            except ValueError:
+                continue
         targets = {}
         for chain in context.source.constitution.chains:
             for residue in chain.residues:
@@ -372,7 +447,12 @@ class PolymerMicrostatePreparation:
                     updated if entry is target else entry
                     for entry in targets[target.residue_id]
                 )
-        object.__setattr__(self, "_coordinate_dependent", bool(unresolved_histidines))
+        object.__setattr__(
+            self,
+            "_coordinate_dependent",
+            bool(unresolved_histidines) or coordinate_dependent_adducts,
+        )
+        object.__setattr__(self, "_cysteine_adducts", MappingProxyType(adducts))
         object.__setattr__(self, "_targets", MappingProxyType(targets))
         object.__setattr__(self, "context", context)
         object.__setattr__(self, "component_library", component_library)
@@ -426,7 +506,11 @@ class PolymerMicrostatePreparation:
         if template is None:
             return None
         return FixedPolymerHydrogenContext(
-            self.context, residue_id, template, self.component_library
+            self.context,
+            residue_id,
+            template,
+            self.component_library,
+            cysteine_adduct=self._cysteine_adducts.get(residue_id),
         )
 
     def fixed_hydrogen_atom_sites(

@@ -185,7 +185,8 @@ def disulfide_topology_resolution_proposals(
     return (
         WorkflowActionProposal(
             transformer=DisulfideTopologyResolutionTransformer(
-                candidates=domain.disulfide_topology_facts.promotable_candidates
+                candidates=domain.disulfide_topology_facts.promotable_candidates,
+                source_atom_ref_pairs=domain.disulfide_topology_facts.source_atom_ref_pairs,
             ),
             capability=DISULFIDE_TOPOLOGY_RESOLUTION_CAPABILITY,
         ),

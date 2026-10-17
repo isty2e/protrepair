@@ -629,7 +629,7 @@ class StructureChemistryObservation:
         ):
             heavy_atom_topology_availability_state = TopologyAvailabilityState.ABSENT
 
-        if not hydrogen_expectation_resolution.has_external_bond_topology(
+        if not hydrogen_expectation_resolution.has_context_bond_topology(
             self.context_structure
         ):
             heavy_atom_topology_availability_state = TopologyAvailabilityState.ABSENT

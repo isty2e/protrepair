@@ -4,6 +4,13 @@
 
 ### Changed
 
+- prepare graph-qualified terminal-acrylamide/CYS products from explicit covalent
+  attachments, with coupled H inventories and product bond orders; add QS7
+  precursor data. Keep mapped stereo and source atoms, and omit inapplicable
+  isolated alkene restraints only after the product graph is realized
+- leave SG H unresolved for unsupported cysteine attachments, including untyped
+  links without an admitted disulfide graph, rather than assigning the isolated
+  thiol inventory; independently known carbon H remain available
 - prepare graph-qualified pyranose links to alcohol acceptors or polymer ASN
   using the coupled product inventory, with source-preserving stereo checks;
   add BMA, FUC, FUL, GAL, GNX and IDY component data. Unsupported residues remain
@@ -28,6 +35,13 @@
 
 ### Fixed
 
+- resolve exclusive neutral CYS SG--SG source connections, including CONECT-only
+  disulfides, through the topology transformer while retaining source metadata;
+  avoid adding thiol H without leaving these supported pairs permanently partial
+- publish admitted Michael-product CB--SG context bonds as covalent, including
+  API-built UNKNOWN bonds, without losing source connection metadata; reject
+  contradictory noncovalent context and include missing or unresolved partner
+  bonds in readiness even when the ligand H inventory is complete
 - retain the remaining ASN amide H when a custom placement operation has grouped
   outputs, compare glycosidic precursor bonds independently of endpoint order,
   and report invalid native component references as local chemistry failures

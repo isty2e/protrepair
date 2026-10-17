@@ -14,6 +14,9 @@ from protrepair.chemistry.retained_non_polymer.covalent_context import (
 from protrepair.chemistry.retained_non_polymer.glycosidic import (
     GlycosidicTemplateBinding,
 )
+from protrepair.chemistry.retained_non_polymer.michael_adduct import (
+    CysteineMichaelAdductBinding,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import AtomRef
@@ -40,7 +43,8 @@ class RetainedTemplateBinding:
     Neutral aldehyde templates support one deposited carbonyl C--polymer N
     substitution, using the canonical backbone atom names C and N.
     Graph-qualified pyranoses use substituted anomeric carbons and occupied
-    hydroxyl valences. Remaining templates require an isolated covalent context,
+    hydroxyl valences. Terminal acrylamides can bind an explicit polymer CYS SG.
+    Remaining templates require an isolated covalent context,
     except canonical CYS SG--SG disulfides. Typed hydrogen bonds and metal
     coordination are not substitutions.
     This binding does not mutate source atoms or resolve a deposited bond.
@@ -54,6 +58,7 @@ class RetainedTemplateBinding:
     template: ResidueTemplate
     external_bonds: tuple[tuple[AtomRef, AtomRef], ...]
     glycosidic: GlycosidicTemplateBinding
+    michael: CysteineMichaelAdductBinding | None
 
     def __init__(
         self,
@@ -69,8 +74,21 @@ class RetainedTemplateBinding:
         template = glycosidic.template
         object.__setattr__(self, "template", template)
         object.__setattr__(self, "external_bonds", glycosidic.external_bonds)
+        object.__setattr__(self, "michael", None)
         context = RetainedCovalentContext(structure, residue.residue_id)
         if not context.attachments:
+            return
+        try:
+            michael = CysteineMichaelAdductBinding(
+                structure, residue, template, component_library
+            )
+        except ValueError:
+            pass
+        else:
+            object.__setattr__(self, "michael", michael)
+            object.__setattr__(self, "template", michael.template)
+            object.__setattr__(self, "external_bonds", michael.external_bonds())
+            context.require_admitted(self.external_bonds)
             return
         self._bind_acyl(structure, residue, template, component_library, context)
         if residue.component_id == "CYS" and len(context.attachments) == 1:

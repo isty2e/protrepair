@@ -69,6 +69,7 @@ class RetainedNonPolymerChemistryResolution:
     heavy_atom_elements: tuple[str, ...] = ()
     formal_charge_requirements: tuple[tuple[str, int], ...] = ()
     external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
+    context_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     failure_reason: str = ""
     rdkit_backend_version: str | None = None
     hydrogen_name_projection_candidate_count: int = 0
@@ -98,8 +99,8 @@ class RetainedNonPolymerChemistryResolution:
             )
         )
 
-    def has_external_bond_topology(self, structure: ProteinStructure) -> bool:
-        """Check that admitted external chemistry has been realized.
+    def has_context_bond_topology(self, structure: ProteinStructure) -> bool:
+        """Check admitted attachments and partner-local product bonds.
 
         Parameters
         ----------
@@ -109,10 +110,11 @@ class RetainedNonPolymerChemistryResolution:
         Returns
         -------
         bool
-            Whether every required attachment is covalent-like, single and
-            non-aromatic. A deposited LINK without order is insufficient.
+            Whether every required bond is single and non-aromatic. External
+            attachments may be covalent or disulfide; partner-local bonds must
+            be covalent. Unresolved and missing bonds are not conformance.
         """
-        for first, second in self.external_bonds:
+        for first, second in (*self.external_bonds, *self.context_bonds):
             indices = tuple(
                 structure.constitution.resolve_atom_index(ref)
                 for ref in (first, second)
@@ -126,6 +128,10 @@ class RetainedNonPolymerChemistryResolution:
                 not in (BondRelationshipType.COVALENT, BondRelationshipType.DISULFIDE)
                 or bond.order != 1
                 or bond.aromatic
+                or (
+                    (first, second) in self.context_bonds
+                    and bond.relationship_type is not BondRelationshipType.COVALENT
+                )
             ):
                 return False
         return True
@@ -273,6 +279,7 @@ class RetainedNonPolymerChemistryResolution:
             or self.heavy_atom_elements
             or self.formal_charge_requirements
             or self.external_bonds
+            or self.context_bonds
         ):
             raise ValueError(
                 "unresolved retained non-polymer chemistry must not carry "
@@ -508,6 +515,9 @@ def _resolve_retained_non_polymer_chemistry_source(
             ),
             formal_charge_requirements=template.heavy_atom_charge_requirements(),
             external_bonds=binding.external_bonds,
+            context_bonds=()
+            if binding.michael is None
+            else binding.michael.context_bonds(),
         )
 
     if not allow_rdkit_fallback:

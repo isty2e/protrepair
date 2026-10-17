@@ -14,6 +14,8 @@ from protrepair.structure.disulfide import disulfide_atom_ref_pairs
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
     TopologyBond,
     is_covalent_like_relationship,
 )
@@ -82,9 +84,7 @@ class DisulfideEndpointMultiplicityContradiction:
                 "disulfide endpoint contradictions require an AtomRef endpoint"
             )
         if self.sulfur_atom_ref.atom_name != "SG":
-            raise ValueError(
-                "disulfide endpoint contradictions require an SG endpoint"
-            )
+            raise ValueError("disulfide endpoint contradictions require an SG endpoint")
 
         raw_pairs = tuple(self.disulfide_atom_ref_pairs)
         if any(not isinstance(pair, tuple) or len(pair) != 2 for pair in raw_pairs):
@@ -104,10 +104,7 @@ class DisulfideEndpointMultiplicityContradiction:
             raise ValueError(
                 "disulfide endpoint contradictions require multiple relationships"
             )
-        if any(
-            pair[0] >= pair[1]
-            for pair in pairs
-        ):
+        if any(pair[0] >= pair[1] for pair in pairs):
             raise ValueError(
                 "disulfide endpoint contradictions require canonical AtomRef pairs"
             )
@@ -188,7 +185,31 @@ class DisulfideEndpointMultiplicityContradiction:
 
 @dataclass(frozen=True, slots=True)
 class StructureDisulfideTopologyFacts:
-    """Planner-readable disulfide evidence and canonical contradictions."""
+    """Planner-readable disulfide evidence and canonical contradictions.
+
+    Parameters
+    ----------
+    carrier : ProteinStructure
+        Snapshot owning the observations; derivation does not change it.
+    promotable_candidates : tuple[LikelyDisulfideBond, ...]
+        Independent geometric candidates not blocked by canonical topology.
+    conflicts : tuple[DisulfideTopologyConflict, ...]
+        Geometric evidence that contradicts a canonical relationship.
+    ambiguous_findings : tuple[AmbiguousDisulfideFinding, ...]
+        Sulfur neighborhoods with multiple geometric partners.
+    endpoint_multiplicity_contradictions : tuple
+        Canonical disulfides sharing a sulfur endpoint.
+    source_atom_ref_pairs : tuple[tuple[AtomRef, AtomRef], ...]
+        Independent, graph-qualified untyped source pairs. These do not depend
+        on a geometric cutoff and share no endpoint with geometric candidates.
+
+    Raises
+    ------
+    TypeError
+        Endpoint multiplicity contradictions have an invalid type.
+    ValueError
+        Candidate pairs are invalid, repeated, overlapping or contradictory.
+    """
 
     carrier: ProteinStructure
     promotable_candidates: tuple[LikelyDisulfideBond, ...]
@@ -198,11 +219,21 @@ class StructureDisulfideTopologyFacts:
         DisulfideEndpointMultiplicityContradiction,
         ...,
     ] = ()
+    source_atom_ref_pairs: tuple[tuple[AtomRef, AtomRef], ...] = ()
 
     def __post_init__(self) -> None:
         promotable_candidates = tuple(self.promotable_candidates)
         conflicts = tuple(self.conflicts)
         ambiguous_findings = tuple(self.ambiguous_findings)
+        source_pairs = tuple(sorted(self.source_atom_ref_pairs))
+        if any(
+            len(pair) != 2
+            or pair[0] >= pair[1]
+            or pair[0].residue_id == pair[1].residue_id
+            or any(ref.atom_name != "SG" for ref in pair)
+            for pair in source_pairs
+        ):
+            raise ValueError("source disulfide candidates require canonical SG pairs")
         raw_endpoint_multiplicity_contradictions = tuple(
             self.endpoint_multiplicity_contradictions
         )
@@ -213,9 +244,7 @@ class StructureDisulfideTopologyFacts:
             )
             for contradiction in raw_endpoint_multiplicity_contradictions
         ):
-            raise TypeError(
-                "endpoint multiplicity contradictions require typed values"
-            )
+            raise TypeError("endpoint multiplicity contradictions require typed values")
         endpoint_multiplicity_contradictions = tuple(
             sorted(
                 raw_endpoint_multiplicity_contradictions,
@@ -234,11 +263,9 @@ class StructureDisulfideTopologyFacts:
             residue_id
             for candidate in promotable_candidates
             for residue_id in candidate.residue_pair()
-        )
+        ) + tuple(ref.residue_id for pair in source_pairs for ref in pair)
         if len(set(promotable_residue_ids)) != len(promotable_residue_ids):
-            raise ValueError(
-                "promotable disulfide candidates must not share endpoints"
-            )
+            raise ValueError("promotable disulfide candidates must not share endpoints")
         if len(set(conflict_pairs)) != len(conflict_pairs):
             raise ValueError("disulfide topology conflicts must not repeat")
         if set(promotable_pairs).intersection(conflict_pairs):
@@ -256,6 +283,7 @@ class StructureDisulfideTopologyFacts:
         object.__setattr__(self, "promotable_candidates", promotable_candidates)
         object.__setattr__(self, "conflicts", conflicts)
         object.__setattr__(self, "ambiguous_findings", ambiguous_findings)
+        object.__setattr__(self, "source_atom_ref_pairs", source_pairs)
         object.__setattr__(
             self,
             "endpoint_multiplicity_contradictions",
@@ -267,11 +295,13 @@ class StructureDisulfideTopologyFacts:
         cls,
         structure: ProteinStructure,
     ) -> "StructureDisulfideTopologyFacts":
-        """Resolve geometric disulfide evidence against canonical topology."""
+        """Assess geometric and explicit graph evidence without mutating topology."""
 
+        source_pairs = cls._source_disulfide_pairs(structure)
+        source_endpoints = {ref.residue_id for pair in source_pairs for ref in pair}
         raw_likely_candidates, _ = detect_disulfide_topology(structure)
-        likely_candidates, ambiguous_findings = (
-            detect_unassigned_disulfide_evidence(structure)
+        likely_candidates, ambiguous_findings = detect_unassigned_disulfide_evidence(
+            structure
         )
         promotable_candidates: list[LikelyDisulfideBond] = []
         conflicts_by_pair: dict[
@@ -285,11 +315,15 @@ class StructureDisulfideTopologyFacts:
             for candidate in (*raw_likely_candidates, *likely_candidates)
         }
         for candidate in candidates_by_pair.values():
+            if set(candidate.residue_pair()).intersection(source_endpoints):
+                continue
             conflict = _candidate_topology_conflict(structure, candidate)
             if conflict is not None:
                 conflicts_by_pair[candidate.residue_pair()] = conflict
 
         for candidate in likely_candidates:
+            if set(candidate.residue_pair()).intersection(source_endpoints):
+                continue
             if candidate.residue_pair() in conflicts_by_pair:
                 continue
             if _candidate_is_already_resolved(structure, candidate):
@@ -301,17 +335,133 @@ class StructureDisulfideTopologyFacts:
             promotable_candidates=tuple(promotable_candidates),
             conflicts=tuple(conflicts_by_pair.values()),
             ambiguous_findings=ambiguous_findings,
+            source_atom_ref_pairs=source_pairs,
             endpoint_multiplicity_contradictions=(
-                DisulfideEndpointMultiplicityContradiction.all_from_structure(
-                    structure
-                )
+                DisulfideEndpointMultiplicityContradiction.all_from_structure(structure)
             ),
         )
 
     def has_promotable_candidates(self) -> bool:
         """Return whether explicit topology resolution can make progress."""
 
-        return bool(self.promotable_candidates)
+        return bool(self.promotable_candidates or self.source_atom_ref_pairs)
+
+    def promotable_candidate_count(self) -> int:
+        """Count independent resolutions across geometric and source evidence.
+
+        Returns
+        -------
+        int
+            Number of topology transitions currently available.
+        """
+
+        return len(self.promotable_candidates) + len(self.source_atom_ref_pairs)
+
+    @staticmethod
+    def _source_disulfide_pairs(
+        structure: ProteinStructure,
+    ) -> tuple[tuple[AtomRef, AtomRef], ...]:
+        constitution = structure.constitution
+        candidates = tuple(
+            bond
+            for bond in structure.topology.bonds
+            if bond.provenance is BondProvenance.SOURCE_EXPLICIT
+            and bond.relationship_type is BondRelationshipType.UNKNOWN
+            and bond.order in (None, 1)
+            and not bond.aromatic
+            and all(
+                constitution.atom_ref_at(index).atom_name == "SG"
+                for index in bond.endpoint_pair()
+            )
+        )
+        if not candidates:
+            return ()
+        endpoints = {index for bond in candidates for index in bond.endpoint_pair()}
+        incident: dict[AtomIndex, list[TopologyBond]] = {}
+        for bond in structure.topology.bonds:
+            if bond.relationship_type in {
+                BondRelationshipType.HYDROGEN_BOND,
+                BondRelationshipType.METAL_COORDINATION,
+            }:
+                continue
+            for index in bond.endpoint_pair():
+                if index in endpoints:
+                    incident.setdefault(index, []).append(bond)
+
+        pairs = []
+        for bond in candidates:
+            refs = tuple(constitution.atom_ref_at(i) for i in bond.endpoint_pair())
+            if refs[0].residue_id == refs[1].residue_id:
+                continue
+            if not all(
+                StructureDisulfideTopologyFacts._source_sulfur_is_compatible(
+                    structure, index, ref, bond, incident.get(index, [])
+                )
+                for index, ref in zip(bond.endpoint_pair(), refs, strict=True)
+            ):
+                continue
+            try:
+                bond.with_resolved_chemistry(
+                    TopologyBond(
+                        *bond.endpoint_pair(),
+                        relationship_type=BondRelationshipType.DISULFIDE,
+                        provenance=BondProvenance.EVIDENCE_RESOLVED,
+                    )
+                )
+            except ValueError:
+                continue
+            pairs.append(tuple(sorted(refs)))
+        return tuple(sorted(pairs))
+
+    @staticmethod
+    def _source_sulfur_is_compatible(
+        structure: ProteinStructure,
+        index: AtomIndex,
+        ref: AtomRef,
+        pair_bond: TopologyBond,
+        incident: list[TopologyBond],
+    ) -> bool:
+        constitution = structure.constitution
+        residue = constitution.residue_site_at(
+            constitution.residue_index(ref.residue_id)
+        )
+        if (
+            ref.atom_name != "SG"
+            or residue.component_id != "CYS"
+            or constitution.atom_site_at(index).element != "S"
+            or structure.topology.formal_charge(index) not in (None, 0)
+            or not residue.has_atom_site("CB")
+            or any(
+                residue.has_atom_site(name)
+                for name in _CYSTEINE_THIOL_HYDROGEN_ATOM_NAMES
+            )
+            or len(incident) != 2
+        ):
+            return False
+        carbon_index = constitution.atom_index(AtomRef(ref.residue_id, "CB"))
+        if constitution.atom_site_at(
+            carbon_index
+        ).element != "C" or structure.topology.formal_charge(carbon_index) not in (
+            None,
+            0,
+        ):
+            return False
+        carbon_bond = next((bond for bond in incident if bond != pair_bond), None)
+        if (
+            carbon_bond is None
+            or not carbon_bond.involves(carbon_index)
+            or carbon_bond.relationship_type is not BondRelationshipType.COVALENT
+            or carbon_bond.order != 1
+            or carbon_bond.aromatic
+        ):
+            return False
+        try:
+            carbon_bond.with_resolved_chemistry(
+                TopologyBond(*carbon_bond.endpoint_pair())
+            )
+        except ValueError:
+            return False
+        return True
 
     def has_endpoint_multiplicity_contradictions(self) -> bool:
         """Return whether any canonical disulfide endpoint has multiple partners."""
@@ -445,9 +595,7 @@ class StructureDisulfideHydrogenFacts:
     ) -> tuple[AtomRef, ...]:
         """Return thiol H/D/T atoms incompatible with one disulfide sulfur."""
 
-        residue_index = structure.constitution.residue_index(
-            sulfur_atom_ref.residue_id
-        )
+        residue_index = structure.constitution.residue_index(sulfur_atom_ref.residue_id)
         residue_site = structure.constitution.residue_site_at(residue_index)
         forbidden_atom_refs = {
             AtomRef(residue_site.residue_id, atom_site.name)
@@ -524,9 +672,7 @@ def _candidate_topology_conflict(
 
     return DisulfideTopologyConflict(
         candidate=candidate,
-        reason=(
-            DisulfideTopologyConflictReason.ENDPOINT_HAS_OTHER_COVALENT_PARTNER
-        ),
+        reason=(DisulfideTopologyConflictReason.ENDPOINT_HAS_OTHER_COVALENT_PARTNER),
         conflicting_atom_ref_pairs=tuple(
             _bond_atom_ref_pair(structure, bond) for bond in competing_bonds
         ),
@@ -551,12 +697,8 @@ def _candidate_atom_indices(
     """Return canonical SG atom slots for one geometry candidate."""
 
     return (
-        structure.constitution.atom_index(
-            AtomRef(candidate.left_residue_id, "SG")
-        ),
-        structure.constitution.atom_index(
-            AtomRef(candidate.right_residue_id, "SG")
-        ),
+        structure.constitution.atom_index(AtomRef(candidate.left_residue_id, "SG")),
+        structure.constitution.atom_index(AtomRef(candidate.right_residue_id, "SG")),
     )
 
 
