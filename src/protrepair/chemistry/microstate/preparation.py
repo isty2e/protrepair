@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
+from protrepair.chemistry.component.defaults import build_default_component_library
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.microstate.catalog import (
@@ -391,17 +392,20 @@ class PolymerMicrostatePreparation:
                 ):
                     key = (residue.residue_id, site.kind)
                     retain = key not in pending
+                    preferences = pras_microstate_preferences(site)
+                    if site.kind is PolymerChemicalSite.SIDECHAIN:
+                        if template.component_id == "HIS":
+                            preferences = preferences[:1]
+                        elif template.component_id == "CYS":
+                            preferences = _cysteine_microstate_preferences(
+                                context, residue.residue_id, component_library
+                            )
                     entries.append(
                         PolymerSitePreparation(
                             context,
                             residue.residue_id,
                             site,
-                            preferences=(
-                                pras_microstate_preferences(site)[:1]
-                                if template.component_id == "HIS"
-                                and site.kind is PolymerChemicalSite.SIDECHAIN
-                                else pras_microstate_preferences(site)
-                            ),
+                            preferences=preferences,
                             override=pending.pop(key, None),
                             retain_applied_choice=retain,
                         )
@@ -814,3 +818,45 @@ def pras_microstate_preferences(
             return (MicrostateConstraints(hydrogens=(("O", 0), ("OXT", 0))),)
 
     return ()
+
+
+def _cysteine_microstate_preferences(
+    context: PolymerMicrostateContext,
+    residue_id: ResidueId,
+    component_library: ComponentLibrary,
+) -> tuple[MicrostateConstraints, ...]:
+    sulfur = AtomRef(residue_id, "SG")
+    if context.source.constitution.resolve_atom_index(sulfur) is None:
+        return ()
+    coordination = tuple(
+        bond
+        for bond in context.external_heavy_bonds(sulfur)
+        if bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+    )
+    if len(coordination) != 1:
+        return ()
+    partner = next(
+        context.source.constitution.atom_ref_at(index)
+        for index in coordination[0].endpoint_pair()
+        if context.source.constitution.atom_ref_at(index) != sulfur
+    )
+    residue = context.source.constitution.residue_or_ligand(partner.residue_id)
+    if residue is None or residue.component_id != "HEM" or partner.atom_name != "FE":
+        return ()
+    template = component_library.get("HEM")
+    stock = build_default_component_library().get("HEM")
+    if (
+        template is None
+        or template != stock
+        or not template.has_complete_heavy_scaffold(residue)
+    ):
+        return ()
+
+    observation = context.source.provenance.ingress.observation
+    if observation is not None and not observation.heavy_atoms_are_preserved_in(
+        residue
+    ):
+        return ()
+
+    # A preparation preference never excludes source-compatible neutral thiol.
+    return (MicrostateConstraints(charges=(("SG", -1),)),)

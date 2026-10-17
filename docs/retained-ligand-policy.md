@@ -106,9 +106,39 @@ heavy atoms or authorize moving deposited H.
 Standard polymer sites have their own rules. Typed HIS coordination excludes H
 on the donating ring N. Supported ASP/GLU oxygen and linked peptide carbonyl
 coordination do not select an acid/anion state. Coordinated CYS can retain
-source-supported thiol or thiolate chemistry; coordination alone does not
-establish its protonation. Ordinary uncoordinated CYS keeps its existing H
-placement path. None of these rules estimates pKa or metal oxidation state.
+source-supported thiol or thiolate chemistry. With one typed `SG--HEM.FE` link,
+polymer preparation prefers thiolate (`SG -1`, no sulfur H) when the active HEM
+template is stock-compatible and its complete heavy scaffold preserves the
+original atom identities. Source H/D/T or a known neutral sulfur charge instead
+selects neutral thiol. Other admitted metal partners, incomplete or custom HEM
+chemistry supply no default; without source evidence or an explicit choice,
+sulfur protonation remains unresolved.
+
+This removes the neutral thiol default at non-heme metal sites, including Zn--CYS.
+With neither source H nor known SG charge, preparation adds no HG, leaves SG
+charge unknown and warns for each unresolved residue. Unresolved sites do not
+contribute an expected H inventory, so the H goal can still be satisfied; that
+does not certify their protonation. Local refinement refuses an execution region
+containing an unresolved polymer microstate, including fixed context residues.
+For example, in 6NBB, selecting A:46 also includes unresolved A:174 and is refused.
+
+The public API has no CYS protonation selector. To resolve an admitted site,
+provide chemically consistent SG formal charge or attached H in the input:
+`SG -1` selects thiolate, while `SG 0` or source H selects neutral thiol.
+For PDB input, charge columns 79 and 80 accept `1-` for thiolate and `0+` or
+`0-` for explicit zero; a blank field is unknown, not neutral. Supplying HG is
+another way to specify a thiol. In mmCIF, use `-1` or `0` in
+`_atom_site.pdbx_formal_charge`.
+Contradictory charge and H are reported as conflicts. An explicit choice here
+refers to the internal microstate model, not an additional public request option.
+Resolving protonation alone does not establish metal-site force-field support.
+
+This is a preparation convention, not a universal rule for heme proteins:
+[neutral thiol ligation has experimental support](https://doi.org/10.1073/pnas.0737142100).
+Saved compatible choices retain their authority; resetting a choice reconsiders
+the original evidence and current preparation preferences. Ordinary uncoordinated
+CYS keeps its existing H placement path. None of these rules estimates pKa or
+metal oxidation state.
 Multiple HIS ring donors or unsupported donor/partner combinations remain
 unresolved rather than forcing the standard site into a different chemistry.
 
@@ -148,9 +178,10 @@ placements, including `NB`/`ND`, are not normalized and may be refused even when
 they describe chemically equivalent forms. Carboxylate alternatives do not
 extend that coverage to macrocycle resonance representations.
 
-Automatic ligand preparation does not select a polymer thiolate state. Under
-the existing CYS policy, a neutral heme-bound CYS can retain HG. A complete H
-inventory does not establish that the metal-site protonation is correct.
+The ligand catalogue and the polymer heme--CYS preference are separate chemistry
+decisions. A complete H inventory does not validate the metal site's protonation,
+oxidation state or potential; a source-supported neutral heme-bound CYS may still
+retain its sulfur H.
 
 Fresh readiness checks the realized H, charges and typed relationships, including
 when no new H is needed. Supported ligands can supply a fixed passive calculation

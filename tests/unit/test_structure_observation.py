@@ -15,6 +15,7 @@ from protrepair.io import read_structure, read_structure_string, write_structure
 from protrepair.io.ingress_policy import OccupancyPolicy, StructureNormalizationPolicy
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state import HydrogenCoverageState
+from protrepair.structure.constitution import AtomSite
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
 from protrepair.structure.provenance import (
@@ -325,6 +326,47 @@ def test_observation_keeps_original_identity_after_rename_and_reorder() -> None:
     )
     assert observation.geometry.atom_geometry(AtomIndex(0)).position == Vec3(0, 0, 0)
     assert changed.residue_geometry(ResidueIndex(0)).position("NX") == Vec3(8, 9, 10)
+
+
+@pytest.mark.parametrize(
+    "change, expected",
+    (
+        ("missing", False),
+        ("renamed", False),
+        ("element", False),
+        ("hydrogen", False),
+        ("reordered", True),
+        ("extra", True),
+        ("removed_hydrogen", True),
+        ("unobserved", True),
+    ),
+)
+def test_observed_heavy_survival_is_a_name_element_subset_not_full_inventory(
+    change: str, expected: bool
+) -> None:
+    source = read_structure_string(_source_pdb(), FileFormat.PDB)
+    observation = source.provenance.ingress.observation
+    assert observation is not None
+    residue = source.constitution.residue_site_at(ResidueIndex(0))
+    if change == "missing":
+        changed = residue.without_atom_sites(("CA",))
+    elif change == "renamed":
+        changed = residue.without_atom_sites(("CA",)).with_atom_site(
+            AtomSite("CX", "C")
+        )
+    elif change == "element":
+        changed = residue.with_atom_site(AtomSite("CA", "O"))
+    elif change == "hydrogen":
+        changed = residue.with_atom_site(AtomSite("CA", "D"))
+    elif change == "reordered":
+        changed = replace(residue, atom_sites=tuple(reversed(residue.atom_sites)))
+    elif change == "extra":
+        changed = residue.with_atom_site(AtomSite("EXTRA", "C"))
+    elif change == "removed_hydrogen":
+        changed = residue.without_atom_sites(("H1",))
+    else:
+        changed = residue.with_residue_id(ResidueId("Z", 50))
+    assert observation.heavy_atoms_are_preserved_in(changed) is expected
 
 
 def test_terminal_and_faspr_projection_do_not_replace_source_observation(
