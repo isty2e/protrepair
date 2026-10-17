@@ -114,6 +114,21 @@ selects neutral thiol. Other admitted metal partners, incomplete or custom HEM
 chemistry supply no default; without source evidence or an explicit choice,
 sulfur protonation remains unresolved.
 
+This removes the neutral thiol default at non-heme metal sites, including Zn--CYS.
+With neither source H nor known SG charge, preparation adds no HG, leaves SG
+charge unknown and warns for each unresolved residue. Unresolved sites do not
+contribute an expected H inventory, so the H goal can still be satisfied; that
+does not certify their protonation. Local refinement refuses an execution region
+containing an unresolved polymer microstate, including fixed context residues.
+For example, in 6NBB, selecting A:46 also includes unresolved A:174 and is refused.
+
+The public API has no CYS protonation selector. To resolve an admitted site,
+provide chemically consistent SG formal charge or attached H in the input:
+`SG -1` selects thiolate, while `SG 0` or source H selects neutral thiol.
+Contradictory charge and H are reported as conflicts. An explicit choice here
+refers to the internal microstate model, not an additional public request option.
+Resolving protonation alone does not establish metal-site force-field support.
+
 This is a preparation convention, not a universal rule for heme proteins:
 [neutral thiol ligation has experimental support](https://doi.org/10.1073/pnas.0737142100).
 Saved compatible choices retain their authority; resetting a choice reconsiders
