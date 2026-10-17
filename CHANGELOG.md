@@ -4,6 +4,11 @@
 
 ### Changed
 
+- prepare registered coordinated components from source-compatible mapped
+  alternatives when no active template or override applies; publish only common
+  H, bond and charge assignments, preserving unknown metal charge and source
+  atoms. Report automatic preparation separately from explicit overrides and
+  organic inference, without enabling metal-site force-field optimization
 - prepare explicitly selected retained coordination chemistry with separate
   covalent and dative bonds, source-compatible nitrogen donor checks and
   coordination-aware readiness; validate standard O/HIS/CYS donor contexts

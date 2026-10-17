@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "components": [
+    {
+      "component_id": "AZM",
+      "heavy_atom_names": ["C1", "S1", "N1", "O1", "O2", "N3", "N2", "C2", "N4", "C3", "C4", "O3", "S2"],
+      "smiles_states": ["c1(S([NH-])(=O)=O)nnc(NC(C)=O)s1"],
+      "provenance": "CCD AZM heavy graph, with the Zn-bound ionized sulfonamide NH reported by Whittington et al., PNAS 2001, DOI 10.1073/pnas.161301298. Requires actual typed Zn coordination; not isolated AZM protonation or a metal potential."
+    },
+    {
+      "component_id": "IMD",
+      "heavy_atom_names": [
+        "N1",
+        "C2",
+        "N3",
+        "C4",
+        "C5"
+      ],
+      "smiles_states": [
+        "n1c[nH]cc1",
+        "[nH]1cncc1",
+        "n1c[n-]cc1",
+        "[n-]1cncc1"
+      ],
+      "provenance": "Mapped source-qualified coordinated component preparation hypotheses; not a pKa, oxidation-state or native force-field assignment."
+    },
+    {
+      "component_id": "PIM",
+      "heavy_atom_names": [
+        "N1",
+        "C2",
+        "N3",
+        "C4",
+        "C5",
+        "C6",
+        "C7",
+        "C8",
+        "C9",
+        "C10",
+        "C11"
+      ],
+      "smiles_states": [
+        "n1c[nH]cc1-c2ccccc2",
+        "[nH]1cncc1-c2ccccc2",
+        "n1c[n-]cc1-c2ccccc2",
+        "[n-]1cncc1-c2ccccc2"
+      ],
+      "provenance": "Mapped source-qualified coordinated component preparation hypotheses; not a pKa, oxidation-state or native force-field assignment."
+    },
+    {
+      "component_id": "CPZ",
+      "heavy_atom_names": [
+        "N1",
+        "C5",
+        "N3",
+        "C4",
+        "C6",
+        "C7",
+        "C8",
+        "C9",
+        "CL",
+        "C10",
+        "C11",
+        "C2"
+      ],
+      "smiles_states": [
+        "n1c[nH]c(-c2ccc(Cl)cc2)c1",
+        "[nH]1cnc(-c2ccc(Cl)cc2)c1",
+        "n1c[n-]c(-c2ccc(Cl)cc2)c1",
+        "[n-]1cnc(-c2ccc(Cl)cc2)c1"
+      ],
+      "provenance": "Mapped source-qualified coordinated component preparation hypotheses; not a pKa, oxidation-state or native force-field assignment."
+    },
+    {
+      "component_id": "HME",
+      "heavy_atom_names": [
+        "FE",
+        "NC",
+        "C4C",
+        "C3C",
+        "CAC",
+        "CBC",
+        "C2C",
+        "CMC",
+        "C1C",
+        "C4B",
+        "NB",
+        "C1B",
+        "CHB",
+        "CHA",
+        "C4A",
+        "NA",
+        "C1A",
+        "C2A",
+        "CAA",
+        "CBA",
+        "CGA",
+        "O1A",
+        "O2A",
+        "C3A",
+        "CMA",
+        "C4D",
+        "ND",
+        "C1D",
+        "CHD",
+        "CHC",
+        "C2D",
+        "CMD",
+        "C3D",
+        "CAD",
+        "CBD",
+        "CGD",
+        "O1D",
+        "O2D",
+        "C2B",
+        "CAB",
+        "CBB",
+        "C3B",
+        "CMB"
+      ],
+      "smiles_states": [
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC([O-])=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC([O-])=O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC([O-])=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC([O-])=O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC([O-])=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)[O-])C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC([O-])=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)[O-])C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC([O-])=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(O)=O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC([O-])=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(O)=O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC([O-])=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC([O-])=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)[O-])c1C)c1[n]->3c(cc5)C(C)=C1CCC([O-])=O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)[O-])c1C)c1[n]->3c(cc5)C(C)=C1CCC([O-])=O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)[O-])c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)[O-])C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)[O-])c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)[O-])C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)[O-])c1C)c1[n]->3c(cc5)C(C)=C1CCC(O)=O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)[O-])c1C)c1[n]->3c(cc5)C(C)=C1CCC(O)=O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)[O-])c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)[O-])c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(O)=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC([O-])=O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(O)=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC([O-])=O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(O)=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)[O-])C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(O)=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)[O-])C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(O)=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(O)=O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(O)=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(O)=O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(O)=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(O)=O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)O)c1C)c1[n]->3c(cc5)C(C)=C1CCC([O-])=O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)O)c1C)c1[n]->3c(cc5)C(C)=C1CCC([O-])=O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)[O-])C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)[O-])C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(O)=O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(O)=O)C(CC)=C4C",
+        "[Fe+2]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)O)C(CC)=C4C",
+        "[Fe+3]123<-[n-]4c5c(CC)c(C)c4c4[n]->1c(ccc1[n-]->2c(c(CCC(=O)O)c1C)c1[n]->3c(cc5)C(C)=C1CCC(=O)O)C(CC)=C4C"
+      ],
+      "provenance": "Mapped source-qualified coordinated component preparation hypotheses; not a pKa, oxidation-state or native force-field assignment."
+    }
+  ]
+}

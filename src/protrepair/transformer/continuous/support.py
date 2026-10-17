@@ -18,7 +18,7 @@ from protrepair.state.retained_non_polymer_chemistry import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 
@@ -137,57 +137,12 @@ def resolve_local_bond_planning_support(
     explicit_evidence = evidence_by_residue_id(
         retained_non_polymer_chemistry_evidence
     ).get(residue_site.residue_id)
-    if explicit_evidence is not None:
-        chemistry_resolution = _retained_non_polymer_chemistry_resolution(
-            snapshot.structure,
-            residue_site,
-            component_library=component_library,
-            evidence=explicit_evidence,
-            resolution_by_residue_id=(
-                retained_non_polymer_chemistry_resolution_by_residue_id
-            ),
-        )
-        passive_bond_definitions = _passive_context_heavy_bond_definitions(
-            residue_site,
-            chemistry_resolution.heavy_bond_definitions,
-        )
-        if (
-            chemistry_resolution.source
-            is not RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
-            or passive_bond_definitions is None
-        ):
-            return LocalBondPlanningSupportResolution(
-                mode=LocalBondPlanningSupportMode.UNSUPPORTED,
-                blocker_message=_retained_non_polymer_support_blocker_message(
-                    residue_site,
-                    reason=chemistry_resolution.failure_reason,
-                    prefix=(
-                        "continuous relaxation could not derive passive retained "
-                        "non-polymer bond support from explicit chemistry evidence"
-                    ),
-                ),
-            )
-        return LocalBondPlanningSupportResolution(
-            mode=LocalBondPlanningSupportMode.TEMPLATE_LESS_PASSIVE_CONTEXT,
-            fallback_bond_definitions=passive_bond_definitions,
-        )
-
-    if not allow_retained_non_polymer_rdkit_fallback:
-        return LocalBondPlanningSupportResolution(
-            mode=LocalBondPlanningSupportMode.UNSUPPORTED,
-            blocker_message=(
-                "continuous relaxation requires retained non-polymer passive "
-                "context bond support, but RDKit fallback is disabled: "
-                f"{residue_site.component_id} "
-                f"({residue_site.residue_id.display_token()})"
-            ),
-        )
-
     chemistry_resolution = _retained_non_polymer_chemistry_resolution(
         snapshot.structure,
         residue_site,
         component_library=component_library,
-        evidence=None,
+        evidence=explicit_evidence,
+        allow_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
         resolution_by_residue_id=(
             retained_non_polymer_chemistry_resolution_by_residue_id
         ),
@@ -195,10 +150,17 @@ def resolve_local_bond_planning_support(
     passive_bond_definitions = _passive_context_heavy_bond_definitions(
         residue_site,
         chemistry_resolution.heavy_bond_definitions,
+        coordination_bonds=chemistry_resolution.coordination_bonds,
     )
+    allowed_sources = (
+        {RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE}
+        if explicit_evidence is not None
+        else {RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION}
+    )
+    if explicit_evidence is None and allow_retained_non_polymer_rdkit_fallback:
+        allowed_sources.add(RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK)
     if (
-        chemistry_resolution.source
-        is not RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
+        chemistry_resolution.source not in allowed_sources
         or passive_bond_definitions is None
     ):
         return LocalBondPlanningSupportResolution(
@@ -207,7 +169,13 @@ def resolve_local_bond_planning_support(
                 residue_site,
                 reason=chemistry_resolution.failure_reason,
                 prefix=(
-                    "continuous relaxation could not derive RDKit fallback "
+                    "continuous relaxation could not derive passive retained "
+                    "non-polymer bond support from explicit chemistry evidence"
+                    if explicit_evidence is not None
+                    else "continuous relaxation requires retained non-polymer passive "
+                    "context bond support, but RDKit fallback is disabled"
+                    if not allow_retained_non_polymer_rdkit_fallback
+                    else "continuous relaxation could not derive RDKit fallback "
                     "passive retained non-polymer bond support"
                 ),
             ),
@@ -225,6 +193,7 @@ def _retained_non_polymer_chemistry_resolution(
     *,
     component_library: ComponentLibrary,
     evidence: RetainedNonPolymerChemistryEvidence | None,
+    allow_rdkit_fallback: bool,
     resolution_by_residue_id: Mapping[
         ResidueId,
         RetainedNonPolymerChemistryResolution,
@@ -243,6 +212,7 @@ def _retained_non_polymer_chemistry_resolution(
         residue_site,
         component_library=component_library,
         evidence=evidence,
+        allow_rdkit_fallback=allow_rdkit_fallback,
     )
 
 
@@ -267,6 +237,8 @@ def _retained_non_polymer_support_blocker_message(
 def _passive_context_heavy_bond_definitions(
     residue_site: ResidueSite,
     bond_definitions: tuple[BondDefinition, ...],
+    *,
+    coordination_bonds: tuple[tuple[AtomRef, AtomRef], ...] = (),
 ) -> tuple[BondDefinition, ...] | None:
     """Return connected heavy-bond support for passive template-less context."""
 
@@ -292,6 +264,17 @@ def _passive_context_heavy_bond_definitions(
         neighbors_by_atom_name[bond_definition.atom_name_2].add(
             bond_definition.atom_name_1
         )
+
+    # Coordination connects a passive scaffold, but is not a covalent FF bond.
+    for first, second in coordination_bonds:
+        if (
+            first.residue_id == residue_site.residue_id
+            and second.residue_id == residue_site.residue_id
+            and first.atom_name in heavy_atom_names
+            and second.atom_name in heavy_atom_names
+        ):
+            neighbors_by_atom_name[first.atom_name].add(second.atom_name)
+            neighbors_by_atom_name[second.atom_name].add(first.atom_name)
 
     seed_atom_name = next(iter(heavy_atom_names))
     visited_atom_names: set[str] = set()

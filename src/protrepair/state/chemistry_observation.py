@@ -541,14 +541,11 @@ class StructureChemistryObservation:
                 if hydrogen_expectation_resolution.has_expected_heavy_scaffold(residue)
                 else TopologyAvailabilityState.ABSENT
             )
-        elif (
-            evidence is not None
-            and hydrogen_expectation_resolution.source
-            is RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
-        ):
-            heavy_topology_source = (
-                RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
-            )
+        elif hydrogen_expectation_resolution.source in {
+            RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE,
+            RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION,
+        }:
+            heavy_topology_source = hydrogen_expectation_resolution.source
             present_heavy_atom_names = {
                 atom_site.name
                 for atom_site in residue.atom_sites
@@ -557,13 +554,16 @@ class StructureChemistryObservation:
             expected_heavy_atom_elements = (
                 hydrogen_expectation_resolution.heavy_atom_elements
             )
-            heavy_atom_names_present = set(evidence.heavy_atom_names).issubset(
+            expected_heavy_atom_names = (
+                hydrogen_expectation_resolution.expected_heavy_atom_names
+            )
+            heavy_atom_names_present = set(expected_heavy_atom_names).issubset(
                 present_heavy_atom_names
             )
             heavy_atom_elements_match = all(
                 residue.atom_site(atom_name).element == expected_element
                 for atom_name, expected_element in zip(
-                    evidence.heavy_atom_names,
+                    expected_heavy_atom_names,
                     expected_heavy_atom_elements,
                     strict=True,
                 )

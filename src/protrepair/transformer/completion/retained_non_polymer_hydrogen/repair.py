@@ -25,6 +25,10 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
 )
+from protrepair.chemistry.retained_non_polymer.coordination import (
+    CoordinatedComponentPreparation,
+    coordinated_component_preparation,
+)
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
@@ -324,6 +328,29 @@ def _execute_retained_non_polymer_hydrogen_stage(
             evidence_coordination_bonds = ()
             evidence = chemistry_evidence_by_residue_id.get(ligand.residue_id)
             template = component_library.get(ligand.component_id)
+            coordination_preparation = None
+            if evidence is None:
+                try:
+                    coordination_preparation = coordinated_component_preparation(
+                        structure, ligand, component_library
+                    )
+                except (ValueError, RuntimeError) as error:
+                    issues.append(
+                        ValidationIssue.for_residue(
+                            kind=ValidationIssueKind.UNSUPPORTED_HYDROGENATION,
+                            severity=IssueSeverity.WARNING,
+                            residue_id=ligand.residue_id,
+                            component_id=ligand.component_id,
+                            message=(
+                                "Coordinated component preparation unavailable "
+                                f"({error}); "
+                                "leaving residue unchanged"
+                            ),
+                        )
+                    )
+                    continue
+                if coordination_preparation is not None:
+                    evidence = coordination_preparation.hydrogenation_template
             try:
                 if evidence is not None:
                     evidence_external_bonds = (
@@ -368,9 +395,8 @@ def _execute_retained_non_polymer_hydrogen_stage(
             result = _hydrogenate_retained_non_polymer_payload(
                 source_payload.without_atom_sites(_hydrogen_atom_names(source_payload)),
                 component_library=component_library,
-                chemistry_evidence=chemistry_evidence_by_residue_id.get(
-                    ligand.residue_id
-                ),
+                chemistry_evidence=evidence,
+                coordination_preparation=coordination_preparation,
                 source_payload=source_payload.without_atom_sites(replaceable_hydrogens),
                 source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
                 source_explicit_hydrogen_anchor_by_name=(
@@ -488,6 +514,27 @@ def _execute_retained_non_polymer_hydrogen_stage(
             )
         if result.topology_plan is not None:
             topology_plans.append(result.topology_plan)
+            if coordination_preparation is not None:
+                unresolved = coordination_preparation.unresolved_charge_atom_names()
+                issues.append(
+                    ValidationIssue.for_residue(
+                        kind=ValidationIssueKind.COORDINATED_COMPONENT_PREPARATION,
+                        severity=IssueSeverity.INFO,
+                        residue_id=ligand.residue_id,
+                        component_id=ligand.component_id,
+                        message=(
+                            "Source-compatible coordinated component preparation; "
+                            "selected ligand hypotheses do not predict pKa, metal "
+                            "oxidation state or a metal-site potential"
+                            + (
+                                "; charge remains unresolved for "
+                                + ", ".join(unresolved)
+                                if unresolved
+                                else ""
+                            )
+                        ),
+                    )
+                )
         if thiol_hydrogens and result.payload is not None:
             assert template_binding is not None and template_binding.michael is not None
             partner_id = template_binding.michael.sulfur.residue_id
@@ -691,6 +738,7 @@ def _hydrogenate_retained_non_polymer_payload(
     *,
     component_library: ComponentLibrary,
     chemistry_evidence: RetainedNonPolymerChemistryEvidence | None = None,
+    coordination_preparation: CoordinatedComponentPreparation | None = None,
     source_payload: CompletionResiduePayload | None = None,
     source_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
     source_explicit_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
@@ -804,8 +852,12 @@ def _hydrogenate_retained_non_polymer_payload(
                     + projection.hydrogen_bond_definitions,
                 ),
                 provenance=BondProvenance.EVIDENCE_RESOLVED,
-                formal_charge_requirements=retained_non_polymer_evidence_formal_charge_requirements(
-                    chemistry_evidence
+                formal_charge_requirements=(
+                    coordination_preparation.formal_charge_requirements()
+                    if coordination_preparation is not None
+                    else retained_non_polymer_evidence_formal_charge_requirements(
+                        chemistry_evidence
+                    )
                 ),
                 external_bonds=evidence_external_bonds,
                 coordination_bonds=tuple(

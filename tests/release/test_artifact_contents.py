@@ -77,6 +77,7 @@ def test_built_wheel_contains_runtime_assets_and_notices(
         "protrepair/chemistry/radii.py",
         "protrepair/chemistry/resources/nonstandard_components.json.gz",
         "protrepair/chemistry/resources/retained_non_polymer_components.json.gz",
+        "protrepair/chemistry/resources/coordination_microstates.json",
         "protrepair/packing/faspr/bin/FASPR",
         "protrepair/packing/faspr/bin/dun2010bbdep.bin",
     } <= names
@@ -186,6 +187,10 @@ def test_built_sdist_contains_release_sources_and_vendor_snapshot(
     assert _has_suffix(
         names,
         "/src/protrepair/chemistry/resources/retained_non_polymer_components.json.gz",
+    )
+    assert _has_suffix(
+        names,
+        "/src/protrepair/chemistry/resources/coordination_microstates.json",
     )
     assert _has_suffix(names, "/constraints/release.txt")
     assert _has_suffix(names, "/docs/release-checklist.md")
