@@ -233,6 +233,63 @@ def test_unlinked_qs7_remains_the_isolated_alkene():
     assert bond is not None and bond.order == 2
 
 
+@pytest.mark.parametrize(
+    "relationship",
+    (BondRelationshipType.METAL_COORDINATION, BondRelationshipType.HYDROGEN_BOND),
+)
+@pytest.mark.parametrize(
+    "provenance",
+    (
+        BondProvenance.TEMPLATE_RESOLVED,
+        BondProvenance.EVIDENCE_RESOLVED,
+        BondProvenance.SOURCE_EXPLICIT,
+    ),
+)
+@pytest.mark.parametrize("topology_only", (False, True))
+def test_noncovalent_cysteine_context_is_not_silently_replaced(
+    relationship, provenance, topology_only
+):
+    source = _source()
+    if topology_only:
+        source = add_retained_non_polymer_hydrogens(source).structure
+    indices = tuple(
+        source.constitution.atom_index(AtomRef(CYSTEINE, name)) for name in ("CB", "SG")
+    )
+    original = source.topology.bond_between(*indices)
+    assert original is not None
+    contradictory = replace(
+        original,
+        relationship_type=relationship,
+        provenance=provenance,
+        source_metadata=SourceBondMetadata(
+            record_type=SourceBondRecordType.MMCIF_STRUCT_CONN,
+            reported_relationship_type=relationship,
+        )
+        if provenance is BondProvenance.SOURCE_EXPLICIT
+        else None,
+    )
+    source = _with_bonds(
+        source,
+        tuple(
+            contradictory
+            if bond.endpoint_pair() == contradictory.endpoint_pair()
+            else bond
+            for bond in source.topology.bonds
+        ),
+    )
+
+    result = (
+        resolve_retained_non_polymer_topology(source, build_default_component_library())
+        if topology_only
+        else add_retained_non_polymer_hydrogens(source)
+    )
+
+    assert result.issues
+    assert result.structure is source
+    with pytest.raises(ValueError):
+        _binding(source)
+
+
 def test_realized_product_uses_only_applicable_default_restraints():
     library = build_default_component_library()
     restraints = build_default_restraint_library()

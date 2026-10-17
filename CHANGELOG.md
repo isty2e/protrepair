@@ -39,7 +39,9 @@
   disulfides, through the topology transformer while retaining source metadata;
   avoid adding thiol H without leaving these supported pairs permanently partial
 - publish admitted Michael-product CB--SG context bonds as covalent, including
-  API-built UNKNOWN bonds, without losing source connection metadata
+  API-built UNKNOWN bonds, without losing source connection metadata; reject
+  contradictory noncovalent context and include missing or unresolved partner
+  bonds in readiness even when the ligand H inventory is complete
 - retain the remaining ASN amide H when a custom placement operation has grouped
   outputs, compare glycosidic precursor bonds independently of endpoint order,
   and report invalid native component references as local chemistry failures

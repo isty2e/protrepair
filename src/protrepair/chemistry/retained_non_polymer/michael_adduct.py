@@ -462,6 +462,15 @@ class CysteineMichaelAdductBinding:
         structure = self._structure
         constitution = structure.constitution
         beta_carbon = AtomRef(self.sulfur.residue_id, "CB")
+        for first, second in self.context_bonds():
+            first_index = constitution.atom_index(first)
+            second_index = constitution.atom_index(second)
+            existing = structure.topology.bond_between(first_index, second_index)
+            if existing is not None:
+                existing.with_resolved_chemistry(
+                    TopologyBond(first_index, second_index)
+                )
+
         definitions = {
             frozenset((b.atom_name_1, b.atom_name_2)): b
             for b in self.template.definition.bonds

@@ -1616,10 +1616,7 @@ def _require_compatible_topology_plan(
             structure.constitution.atom_index(ref) for ref in (first, second)
         )
         existing = structure.topology.bond_between(*indices)
-        if (
-            existing is not None
-            and existing.provenance is BondProvenance.SOURCE_EXPLICIT
-        ):
+        if existing is not None:
             existing.with_resolved_chemistry(
                 TopologyBond(*indices, order=1, provenance=plan.provenance)
             )

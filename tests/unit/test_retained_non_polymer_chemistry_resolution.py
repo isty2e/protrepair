@@ -7,6 +7,7 @@ from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
     RetainedNonPolymerChemistryResolution,
 )
+from protrepair.structure.labels import AtomRef, ResidueId
 
 
 def test_unresolved_retained_chemistry_cannot_carry_resolved_facts() -> None:
@@ -26,6 +27,15 @@ def test_resolved_retained_chemistry_cannot_carry_failure_reason() -> None:
         RetainedNonPolymerChemistryResolution(
             source=RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE,
             failure_reason="bad smiles",
+        )
+
+
+def test_unresolved_retained_chemistry_cannot_carry_partner_bonds() -> None:
+    residue_id = ResidueId("A", 1)
+    with pytest.raises(ValueError, match="resolved topology"):
+        RetainedNonPolymerChemistryResolution(
+            source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
+            context_bonds=((AtomRef(residue_id, "CB"), AtomRef(residue_id, "SG")),),
         )
 
 

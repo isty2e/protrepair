@@ -207,6 +207,13 @@ Only provably generated thiol H can be removed, together with successful ligand
 product publication. Unresolved SG chemistry does not suppress independently
 known CYS carbon H, but it keeps the residue's H readiness partial.
 
+Readiness includes the partner-local CB--SG bond as well as the ligand graph
+and external C--S link. A complete H inventory does not hide a missing bond,
+unresolved relationship or unresolved order: the existing topology-only action
+can publish the admitted single bond without moving atoms. A noncovalent CB--SG
+relationship is a contradiction, regardless of provenance, and is not replaced
+silently.
+
 Once the product graph is realized, the matching bundled dictionary excludes
 the isolated alkene's reaction-site bond, angle and plane targets. Native FF
 parameters act on the product graph; unrelated targets remain in place. A caller

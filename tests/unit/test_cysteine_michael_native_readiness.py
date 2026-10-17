@@ -1,12 +1,19 @@
 """Actual covalent QS7 preparation admits native fields in unchanged context."""
 
+from dataclasses import replace
 from math import isfinite
 from pathlib import Path
 
 import pytest
 from rdkit import Chem
 from rdkit.Chem import rdForceFieldHelpers
-from tests.support.cysteine_michael_adduct import CYSTEINE, LIGAND, qs7_source
+from tests.support.cysteine_michael_adduct import (
+    CYSTEINE,
+    LIGAND,
+    assert_original_preserved,
+    qs7_source,
+    with_bonds,
+)
 from tests.support.refinement_contract import build_continuous_relaxation_problem
 
 from protrepair.api import process_structure
@@ -25,8 +32,15 @@ from protrepair.state.topology import TopologyAvailabilityState
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
-from protrepair.structure.topology import BondRelationshipType
+from protrepair.structure.topology import (
+    BondProvenance,
+    BondRelationshipType,
+    SourceBondMetadata,
+    SourceBondRecordType,
+)
+from protrepair.transformer.completion.policies import OrphanFragmentPolicy
 from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
+    add_retained_non_polymer_hydrogens,
     resolve_retained_non_polymer_topology,
 )
 from protrepair.transformer.continuous.binding import ManualContinuousRelaxationBinding
@@ -45,10 +59,23 @@ from protrepair.transformer.local import LocalScopeSpec
 from protrepair.transformer.refinement import repair_stage
 from protrepair.transformer.refinement.directive import RepairLocalRefinementDirective
 from protrepair.transformer.result import TransformationResult
+from protrepair.workflow.actions.context import TransformerExecutionContext
+from protrepair.workflow.actions.hydrogen_completion import (
+    HydrogenCompletionTransformer,
+)
+from protrepair.workflow.actions.retained_non_polymer_topology import (
+    RetainedNonPolymerTopologyResolutionTransformer,
+)
 from protrepair.workflow.contracts import (
     LigandPolicy,
+    RequestedGoalSet,
     StructureIngressOptions,
+    WorkflowTransformRequests,
     requested_process_goal,
+)
+from protrepair.workflow.planning.planner import (
+    WorkflowPlannerMemory,
+    plan_workflow_actions,
 )
 
 
@@ -89,6 +116,171 @@ def test_unprepared_adduct_selects_full_h_prerequisite_not_topology_only():
     ).cysteine_is_realized()
     cysteine = staged.structure.constitution.residue_or_ligand(CYSTEINE)
     assert cysteine is not None and not cysteine.has_atom_site("HG")
+
+
+@pytest.mark.parametrize(
+    ("relationship", "order", "source_explicit", "reverse_slots"),
+    (
+        (None, None, False, False),
+        (BondRelationshipType.UNKNOWN, 1, False, False),
+        (BondRelationshipType.UNKNOWN, None, True, False),
+        (BondRelationshipType.COVALENT, None, False, False),
+        (BondRelationshipType.COVALENT, None, True, False),
+        (BondRelationshipType.UNKNOWN, None, True, True),
+    ),
+)
+def test_complete_product_context_deficit_selects_graph_only_preparation(
+    relationship, order, source_explicit, reverse_slots
+):
+    library = build_default_component_library()
+    source = add_retained_non_polymer_hydrogens(qs7_source()).structure
+    initial_directive = RepairLocalRefinementDirective.from_atom_refs(
+        tuple(
+            source.constitution.atom_ref_at(i)
+            for i, _ in source.geometry.iter_positions()
+        ),
+        binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.MMFF),
+    )
+    prepared, _ = repair_stage._apply_local_refinement_prerequisites(
+        TransformationResult(source, (), ()),
+        local_refinement=initial_directive,
+        component_library=library,
+        allow_retained_non_polymer_rdkit_fallback=True,
+        retained_non_polymer_chemistry_evidence=(),
+    )
+    assert not prepared.issues
+    source = prepared.structure
+    if reverse_slots:
+        residue_index = source.constitution.residue_index(CYSTEINE)
+        cysteine = source.constitution.residue_site_at(residue_index)
+        source = source.with_updated_residue_facets(
+            replace(cysteine, atom_sites=tuple(reversed(cysteine.atom_sites))),
+            residue_geometry=source.residue_geometry(residue_index),
+            formal_charge_by_atom_name=source.residue_formal_charge_by_atom_name(
+                residue_index
+            ),
+        )
+    indices = tuple(
+        source.constitution.atom_index(AtomRef(CYSTEINE, name)) for name in ("CB", "SG")
+    )
+    original = source.topology.bond_between(*indices)
+    assert original is not None
+    changed = replace(
+        original,
+        order=order,
+        relationship_type=relationship or BondRelationshipType.UNKNOWN,
+        provenance=BondProvenance.SOURCE_EXPLICIT
+        if source_explicit
+        else BondProvenance.TEMPLATE_RESOLVED,
+        source_metadata=SourceBondMetadata(
+            record_type=SourceBondRecordType.PDB_CONECT, reported_order=order
+        )
+        if source_explicit
+        else None,
+    )
+    source = with_bonds(
+        source,
+        tuple(
+            changed if bond.endpoint_pair() == original.endpoint_pair() else bond
+            for bond in source.topology.bonds
+            if relationship is not None
+            or bond.endpoint_pair() != original.endpoint_pair()
+        ),
+    )
+    observation = StructureChemistryObservation(source, component_library=library)
+    _, chemistry = observation.projected_facts((LIGAND,))
+    fact = chemistry.retained_non_polymer_facts[0]
+
+    assert fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
+    assert (
+        fact.heavy_atom_topology_availability_state is TopologyAvailabilityState.ABSENT
+    )
+    assert fact.requires_topology_resolution()
+
+    directive = RepairLocalRefinementDirective.from_atom_refs(
+        tuple(
+            source.constitution.atom_ref_at(i)
+            for i, _ in source.geometry.iter_positions()
+        ),
+        binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.MMFF),
+    )
+    targets = repair_stage._local_refinement_prerequisite_targets(
+        source,
+        local_refinement=directive,
+        component_library=library,
+        allow_retained_non_polymer_rdkit_fallback=True,
+        retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation=observation,
+    )
+    assert LIGAND in targets.retained_non_polymer_topology_residue_ids
+    assert LIGAND not in targets.retained_non_polymer_hydrogen_residue_ids
+
+    goals = RequestedGoalSet(
+        (
+            requested_process_goal(
+                scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+            ),
+        )
+    )
+    context = TransformerExecutionContext(
+        component_library=library,
+        original_structure=source,
+        orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
+    )
+    planning = plan_workflow_actions(
+        source,
+        requested_goals=goals,
+        transform_requests=WorkflowTransformRequests(),
+    )
+    if not isinstance(
+        planning.transformers[0], RetainedNonPolymerTopologyResolutionTransformer
+    ):
+        attempted = planning.transformers[0]
+        assert isinstance(attempted, HydrogenCompletionTransformer)
+        unchanged = attempted.execute(
+            TransformationResult(source, (), ()), context=context
+        )
+        assert unchanged.structure == source
+        planning = plan_workflow_actions(
+            source,
+            requested_goals=goals,
+            transform_requests=WorkflowTransformRequests(),
+            planner_memory=WorkflowPlannerMemory().with_attempted_transformer(
+                attempted
+            ),
+        )
+    action = next(
+        action
+        for action in planning.transformers
+        if isinstance(action, RetainedNonPolymerTopologyResolutionTransformer)
+    )
+    repaired = action.execute(
+        TransformationResult(source, (), ()),
+        context=context,
+    )
+    assert not repaired.issues
+    assert repaired.structure.constitution == source.constitution
+    assert repaired.structure.geometry == source.geometry
+    assert_original_preserved(source, repaired.structure)
+    _, after = observation.for_structure(repaired.structure).projected_facts((LIGAND,))
+    assert (
+        after.retained_non_polymer_facts[0].heavy_atom_topology_availability_state
+        is TopologyAvailabilityState.PRESENT
+    )
+    assert not after.retained_non_polymer_facts[0].requires_topology_resolution()
+
+    staged, _ = repair_stage._apply_local_refinement_prerequisites(
+        TransformationResult(source, (), ()),
+        local_refinement=directive,
+        component_library=library,
+        allow_retained_non_polymer_rdkit_fallback=True,
+        retained_non_polymer_chemistry_evidence=(),
+    )
+    ligand = staged.structure.constitution.residue_or_ligand(LIGAND)
+    assert ligand is not None
+    assert CysteineMichaelAdductBinding(
+        staged.structure, ligand, library.require("QS7"), library
+    ).cysteine_is_realized()
 
 
 @pytest.fixture(scope="module")
