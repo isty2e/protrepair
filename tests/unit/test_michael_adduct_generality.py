@@ -449,7 +449,7 @@ def test_deposited_attachment_is_required_and_must_identify_the_beta_carbon(muta
     result = add_retained_non_polymer_hydrogens(
         changed, library, allow_retained_non_polymer_rdkit_fallback=False
     )
-    if mutation not in {"metal", "absent"}:
+    if mutation != "absent":
         assert result.issues and result.structure is changed
     else:
         assert not result.issues

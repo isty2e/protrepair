@@ -23,10 +23,20 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateSite,
     ObservedHydrogenAttachment,
 )
-from protrepair.structure.constitution import ResidueSite
-from protrepair.structure.labels import AtomRef
+from protrepair.structure.constitution import ResidueSite, StructureConstitution
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
-from protrepair.structure.topology import BondRelationshipType
+from protrepair.structure.topology import BondRelationshipType, TopologyBond
+
+_HISTIDINE_COORDINATION_METALS = frozenset(
+    {"FE", "ZN", "CU", "CO", "NI", "MN", "CD", "HG", "CA"}
+)
+_STANDARD_OXYGEN_COORDINATION_METALS = frozenset(
+    {"MG", "CA", "FE", "ZN", "CU", "CO", "NI", "MN", "CD", "HG"}
+)
+_CYSTEINE_COORDINATION_METALS = frozenset(
+    {"FE", "ZN", "CU", "CO", "NI", "MN", "CD", "HG"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +103,7 @@ class PolymerMicrostateSite:
         override: MicrostateConstraints | None = None,
         applied_choice: AppliedMicrostateChoice | None = None,
         preferences: tuple[MicrostateConstraints, ...] = (),
+        requirements: MicrostateConstraints | None = None,
     ) -> MicrostateResolution:
         """Resolve chemistry without treating generated atoms as source evidence.
 
@@ -112,6 +123,10 @@ class PolymerMicrostateSite:
             Current boundary endpoints still require validation by the caller.
         preferences : tuple[MicrostateConstraints, ...]
             Ordered preferences among source-compatible candidates only.
+
+        requirements : MicrostateConstraints or None
+            Physical donor constraints bound by the current snapshot. Original
+            coordination is enforced separately; overrides cannot bypass either.
 
         Returns
         -------
@@ -213,12 +228,185 @@ class PolymerMicrostateSite:
         if isinstance(evidence, MicrostateResolution):
             return evidence
         constraints, attachments, details = evidence
+        if observation is not None:
+            try:
+                original_requirements = self.coordination_requirements(
+                    residue.residue_id,
+                    observation.constitution,
+                    observation.bonds_for_residue(residue.residue_id),
+                )
+            except ValueError as error:
+                return MicrostateResolution(
+                    MicrostateResolutionStatus.UNSUPPORTED, details=(str(error),)
+                )
+            if not original_requirements.is_empty():
+                feasible = tuple(
+                    graph
+                    for graph in site.candidates
+                    if original_requirements.violations(graph).is_empty()
+                )
+                if not feasible:
+                    return MicrostateResolution(
+                        MicrostateResolutionStatus.UNSUPPORTED,
+                        details=("coordination is outside the standard site catalog",),
+                    )
+                site = MicrostateSite(feasible)
         if self.free_terminal_assumption:
             details = (*details, "free-terminal linkage is a preparation assumption")
+        resolution = site.resolve(
+            constraints,
+            override=override,
+            preferences=preferences,
+            requirements=requirements,
+        )
         return replace(
-            site.resolve(constraints, override=override, preferences=preferences),
-            details=details,
+            resolution,
+            details=(*resolution.details, *details),
             observed_hydrogens=attachments,
+        )
+
+    def coordination_requirements(
+        self,
+        residue_id: ResidueId,
+        constitution: StructureConstitution,
+        bonds: tuple[TopologyBond, ...],
+    ) -> MicrostateConstraints:
+        """Validate standard donors without assigning metal or acid protonation.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Standard polymer site identity in the supplied address space.
+        constitution : StructureConstitution
+            Atom identities used to interpret incident physical relationships.
+        bonds : tuple[TopologyBond, ...]
+            Incident edges for this residue, in that address space.
+
+        Returns
+        -------
+        MicrostateConstraints
+            Zero H at one supported HIS ring-N donor. Validated ASP/GLU O and
+            linked peptide carbonyl O and a single CYS SG donor add no H or
+            charge requirements. Empty also covers no site coordination.
+            Coordinate edges do not contribute covalent boundary valence.
+
+        Raises
+        ------
+        ValueError
+            Coordination touches an unsupported site, partner or donor motif.
+
+        Notes
+        -----
+        O donors admit MG/CA/FE/ZN/CU/CO/NI/MN/CD/HG, including bidentate and
+        bridging carboxyl groups. Their acid/anion state remains subject to the
+        catalog and source evidence, not inferred from coordination. HIS retains
+        its single ring-N donor and FE/ZN/CU/CO/NI/MN/CD/HG/CA partner grammar.
+        CYS admits one SG donor to FE/ZN/CU/CO/NI/MN/CD/HG; neutral thiol and
+        thiolate remain separate source-compatible candidates.
+        Neither grammar establishes metal charge, oxidation, pKa or FF support.
+        """
+        coordinate_bonds = tuple(
+            bond
+            for bond in bonds
+            if bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+        )
+        if not coordinate_bonds:
+            return MicrostateConstraints()
+        catalog = self.candidates()
+        names = (
+            set()
+            if catalog is None
+            else {atom.name for atom in catalog.candidates[0].atoms}
+        )
+        histidine = (
+            self.kind is PolymerChemicalSite.SIDECHAIN
+            and self.template.component_id == "HIS"
+        )
+        cysteine = (
+            self.kind is PolymerChemicalSite.SIDECHAIN
+            and self.template.component_id == "CYS"
+        )
+        if histidine:
+            donor_names = {"ND1", "NE2"}
+            donor_element = "N"
+            partner_elements = _HISTIDINE_COORDINATION_METALS
+        elif cysteine:
+            donor_names = {"SG"}
+            donor_element = "S"
+            partner_elements = _CYSTEINE_COORDINATION_METALS
+        elif self.kind is PolymerChemicalSite.SIDECHAIN and (
+            self.template.component_id in {"ASP", "GLU"}
+        ):
+            donor_names = (
+                {"OD1", "OD2"}
+                if self.template.component_id == "ASP"
+                else {"OE1", "OE2"}
+            )
+            donor_element = "O"
+            partner_elements = _STANDARD_OXYGEN_COORDINATION_METALS
+        elif (
+            self.kind is PolymerChemicalSite.BACKBONE_C
+            and self.linkage is PeptideLinkage.LINKED
+        ):
+            donor_names = {"O"}
+            donor_element = "O"
+            partner_elements = _STANDARD_OXYGEN_COORDINATION_METALS
+        else:
+            donor_names = set()
+            donor_element = ""
+            partner_elements = frozenset()
+
+        if donor_names:
+            heavy_names = set(self.template.expected_heavy_atom_names())
+            boundary_names = {
+                name
+                for bond in self.template.definition.bonds
+                if (bond.atom_name_1 in names) != (bond.atom_name_2 in names)
+                for name in (bond.atom_name_1, bond.atom_name_2)
+                if name in heavy_names
+                and (
+                    name != "OXT"
+                    or self.kind is not PolymerChemicalSite.BACKBONE_C
+                    or self.linkage is not PeptideLinkage.LINKED
+                )
+            }
+            names.update(boundary_names)
+        donors: set[str] = set()
+        for bond in coordinate_bonds:
+            first, second = (
+                constitution.atom_ref_at(index) for index in bond.endpoint_pair()
+            )
+            inside = tuple(
+                ref
+                for ref in (first, second)
+                if ref.residue_id == residue_id and ref.atom_name in names
+            )
+            if not inside:
+                continue
+            donor = inside[0]
+            partner = second if donor == first else first
+            donor_atom = constitution.resolve_atom_site(donor)
+            partner_atom = constitution.resolve_atom_site(partner)
+            if (
+                len(inside) != 1
+                or donor.atom_name not in donor_names
+                or donor_atom is None
+                or donor_atom.element != donor_element
+                or partner.residue_id == residue_id
+                or partner_atom is None
+                or partner_atom.element_identity.chemical_symbol not in partner_elements
+                or bond.order is not None
+                or bond.aromatic
+                or ((histidine or cysteine) and donor.atom_name in donors)
+            ):
+                raise ValueError("unsupported standard-site coordination boundary")
+            donors.add(donor.atom_name)
+        if histidine and len(donors) > 1:
+            raise ValueError(
+                "multiple histidine ring donors require unsupported chemistry"
+            )
+        return MicrostateConstraints(
+            hydrogens=tuple((name, 0) for name in donors) if histidine else ()
         )
 
     def _source_evidence(
@@ -325,7 +513,10 @@ class PolymerMicrostateSite:
                         details=("non-single source hydrogen bond order",),
                     )
                 continue
-            if bond.relationship_type is BondRelationshipType.HYDROGEN_BOND:
+            if bond.relationship_type in (
+                BondRelationshipType.HYDROGEN_BOND,
+                BondRelationshipType.METAL_COORDINATION,
+            ):
                 continue
             if bond.relationship_type not in (
                 BondRelationshipType.COVALENT,

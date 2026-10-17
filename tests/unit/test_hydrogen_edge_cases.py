@@ -370,7 +370,7 @@ def test_polymer_hydrogen_topology_preserves_existing_source_h_bond() -> None:
         pytest.param(
             2.0,
             BondRelationshipType.METAL_COORDINATION,
-            True,
+            False,
             id="close-metal-coordination",
         ),
         pytest.param(

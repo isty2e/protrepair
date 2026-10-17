@@ -64,14 +64,8 @@ class PolymerMicrostateContext:
     def __post_init__(self) -> None:
         if not isinstance(self.source, ProteinStructure):
             raise TypeError("microstate context requires a canonical structure")
-        by_atom: dict[AtomIndex, list[TopologyBond]] = defaultdict(list)
-        for bond in self.source.topology.bonds:
-            for index in bond.endpoint_pair():
-                by_atom[index].append(bond)
         object.__setattr__(
-            self,
-            "_bonds_by_atom",
-            MappingProxyType({index: tuple(bonds) for index, bonds in by_atom.items()}),
+            self, "_bonds_by_atom", self.source.topology.incident_bonds_by_atom()
         )
         overrides: dict[ResidueId, list[AppliedMicrostateChoice]] = defaultdict(list)
         for entry in self.source.provenance.microstate_choices:
@@ -186,13 +180,100 @@ class PolymerMicrostateContext:
                 MicrostateResolutionStatus.UNSUPPORTED,
                 details=("multiple applied choices overlap the current site",),
             )
+        try:
+            requirements = self.coordination_requirements(residue_id, site)
+        except ValueError as error:
+            return MicrostateResolution(
+                MicrostateResolutionStatus.UNSUPPORTED, details=(str(error),)
+            )
         return site.resolve(
             residue,
             self.source.provenance.ingress.observation,
             override=override,
             applied_choice=saved[0] if len(saved) == 1 else None,
             preferences=preferences,
+            requirements=requirements,
         )
+
+    def coordination_requirements(
+        self, residue_id: ResidueId, site: PolymerMicrostateSite
+    ) -> MicrostateConstraints:
+        """Bind the site's coordination grammar to this snapshot's incident edges.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Present site identity in this snapshot.
+        site : PolymerMicrostateSite
+            Active template and standard chemical decision unit.
+
+        Returns
+        -------
+        MicrostateConstraints
+            Additional donor-H feasibility constraints after edge admission.
+            Supported O coordination adds none; it is not protonation evidence.
+
+        Raises
+        ------
+        ResidueNotFoundError
+            The residue is absent from this snapshot.
+        ValueError
+            Current typed coordination cannot be interpreted by this site grammar,
+            or an original site partner relationship is missing or changed.
+        """
+        constitution = self.source.constitution
+        bonds = tuple(
+            dict.fromkeys(
+                bond
+                for index in constitution.atom_indices_for_residue_index(
+                    constitution.residue_index(residue_id)
+                )
+                for bond in self._bonds_by_atom.get(index, ())
+                if bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+            )
+        )
+        requirements = site.coordination_requirements(residue_id, constitution, bonds)
+        observation = self.source.provenance.ingress.observation
+        original_bonds = (
+            ()
+            if observation is None
+            else tuple(
+                bond
+                for bond in observation.bonds_for_residue(residue_id)
+                if bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+            )
+        )
+        if original_bonds:
+            assert observation is not None
+            catalog = site.candidates()
+            names = (
+                set()
+                if catalog is None
+                else {atom.name for atom in catalog.candidates[0].atoms}
+            )
+            current_pairs = {
+                frozenset(
+                    constitution.atom_ref_at(index) for index in bond.endpoint_pair()
+                )
+                for bond in bonds
+            }
+            for bond in original_bonds:
+                refs = tuple(
+                    observation.constitution.atom_ref_at(index)
+                    for index in bond.endpoint_pair()
+                )
+                if (
+                    any(
+                        ref.residue_id == residue_id and ref.atom_name in names
+                        for ref in refs
+                    )
+                    and frozenset(refs) not in current_pairs
+                ):
+                    raise ValueError(
+                        "original coordination partner relationship "
+                        "is missing or changed"
+                    )
+        return requirements
 
     def backbone_site(
         self,
@@ -334,6 +415,11 @@ class PolymerMicrostateContext:
         graph = resolution.graph
         if graph is None:
             raise ValueError("current chemistry requires a resolved microstate")
+        coordination = self.coordination_requirements(residue_id, site)
+        if not coordination.violations(graph).is_empty():
+            raise ValueError(
+                "current microstate violates coordination donor requirements"
+            )
         proposed_parents = {} if proposed_parents is None else proposed_parents
         if not set(proposed_parents.values()) <= {atom.name for atom in graph.atoms}:
             raise ValueError("proposed H parent is outside the microstate")
@@ -371,7 +457,10 @@ class PolymerMicrostateContext:
                     "current microstate heavy scaffold is incomplete or changed"
                 )
             for bond in bonds_by_atom.get(index, ()):
-                if bond.relationship_type is BondRelationshipType.HYDROGEN_BOND:
+                if bond.relationship_type in (
+                    BondRelationshipType.HYDROGEN_BOND,
+                    BondRelationshipType.METAL_COORDINATION,
+                ):
                     continue
                 other = (
                     bond.atom_index_2

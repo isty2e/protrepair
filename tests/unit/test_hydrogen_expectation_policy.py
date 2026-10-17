@@ -342,7 +342,7 @@ def test_hydrogen_expectation_model_respects_disabled_rdkit_fallback(
 
 
 def test_hydrogen_expectation_model_marks_metal_context_not_applicable() -> None:
-    """Single-center retained metals should resolve as fallback with no Hs."""
+    """Atomic inventory does not invoke organic hydrogen inference."""
 
     component_library = build_default_component_library()
     for template in build_retained_non_polymer_component_library().templates.values():
@@ -368,7 +368,7 @@ def test_hydrogen_expectation_model_marks_metal_context_not_applicable() -> None
     resolution = model.resolution_for_retained_non_polymer(ResidueId("L", 1))
 
     assert resolution.source is (
-        RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
+        RetainedNonPolymerChemistryEvidenceSource.ATOMIC_INVENTORY
     )
     assert resolution.expected_hydrogen_atom_names == ()
 

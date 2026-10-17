@@ -596,7 +596,9 @@ def test_topology_parent_query_distinguishes_connectivity_from_chemistry(
     )
 
     assert anchors == ({"H001": "C00"} if reusable else {})
-    assert _resolution(source).source.is_resolved()
+    assert _resolution(source).source.is_resolved() is (
+        relationship is not BondRelationshipType.METAL_COORDINATION
+    )
 
 
 @pytest.mark.parametrize("other_name", ("C01", "H002"))

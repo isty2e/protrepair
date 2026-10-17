@@ -146,6 +146,10 @@ def test_typed_noncovalent_context_is_not_an_external_covalent_adduct(
     result = add_retained_non_polymer_hydrogens(
         source, target_residue_ids=frozenset((ResidueId("L", 1),))
     )
+    if relationship is BondRelationshipType.METAL_COORDINATION:
+        # This fixture connects N/O to carbon, not to an admitted metal partner.
+        assert result.structure is source and result.issues and not result.repairs
+        return
     assert not result.issues or all(
         "inferred via RDKit" in issue.message for issue in result.issues
     )

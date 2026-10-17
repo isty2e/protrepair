@@ -243,7 +243,7 @@ def test_near_covalent_contact_and_disulfide_chemistry_remain_orthogonal(
     (
         (None, True),
         (BondRelationshipType.UNKNOWN, False),
-        (BondRelationshipType.METAL_COORDINATION, True),
+        (BondRelationshipType.METAL_COORDINATION, False),
         (BondRelationshipType.COVALENT, False),
         (BondRelationshipType.DISULFIDE, False),
     ),

@@ -93,6 +93,9 @@ class PolymerMicrostatePatch:
         A new override supersedes it. Omission does not inherit authority.
     preferences : tuple[MicrostateConstraints, ...]
         Ordered, source-compatible preparation preferences.
+    context : PolymerMicrostateContext or None
+        Optional existing index for the exact source snapshot. Omission builds
+        a fresh index; supplying it never bypasses current physical validation.
 
     Raises
     ------
@@ -100,7 +103,8 @@ class PolymerMicrostatePatch:
         The residue identity is absent from the source snapshot.
     ValueError
         The residue is not polymer, chemistry is unresolved, placements disagree
-        with the graph, or source H identities are unnecessarily replaced.
+        with the graph, source H identities are unnecessarily replaced, or
+        a supplied context belongs to a different snapshot.
     """
 
     source: ProteinStructure = field(repr=False, compare=False)
@@ -111,6 +115,7 @@ class PolymerMicrostatePatch:
     override: InitVar[MicrostateConstraints | None] = None
     applied_choice: InitVar[AppliedMicrostateChoice | None] = None
     preferences: InitVar[tuple[MicrostateConstraints, ...]] = ()
+    context: InitVar[PolymerMicrostateContext | None] = None
     resolution: MicrostateResolution = field(init=False)
 
     def __post_init__(
@@ -118,6 +123,7 @@ class PolymerMicrostatePatch:
         override: MicrostateConstraints | None,
         applied_choice: AppliedMicrostateChoice | None,
         preferences: tuple[MicrostateConstraints, ...],
+        context: PolymerMicrostateContext | None,
     ) -> None:
         index = self.source.constitution.residue_index(self.residue_id)
         if index.value >= (
@@ -126,12 +132,19 @@ class PolymerMicrostatePatch:
         ):
             raise ValueError("polymer microstate patches require a polymer residue")
         residue = self.source.constitution.residue_site_at(index)
+        if context is None:
+            context = PolymerMicrostateContext(self.source)
+        elif context.source is not self.source:
+            raise ValueError(
+                "microstate patch context requires the exact source snapshot"
+            )
         resolution = self.site.resolve(
             residue,
             self.source.provenance.ingress.observation,
             override=override,
             applied_choice=applied_choice,
             preferences=preferences,
+            requirements=context.coordination_requirements(self.residue_id, self.site),
         )
         graph = resolution.graph
         if graph is None:

@@ -1,11 +1,13 @@
 """Structure topology facets aligned to constitution-owned atom slots."""
 
 from bisect import bisect_left
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from math import isfinite
 from numbers import Real
+from types import MappingProxyType
 
 from protrepair.errors import ModelInvariantError
 from protrepair.structure.address_space import (
@@ -232,7 +234,8 @@ class TopologyBond:
         Parameters
         ----------
         expected : TopologyBond
-            Admitted covalent-like chemistry for these same endpoints.
+            Admitted covalent-like or typed metal-coordination chemistry for
+            these same endpoints. Coordination has no covalent order.
             An inferred order may change, but a reported source order may not.
 
         Returns
@@ -248,7 +251,15 @@ class TopologyBond:
         """
         if self.endpoint_pair() != expected.endpoint_pair():
             raise ValueError("resolved chemistry requires matching endpoints")
-        if not is_covalent_like_relationship(expected) or expected.order is None:
+        covalent = (
+            is_covalent_like_relationship(expected) and expected.order is not None
+        )
+        coordination = (
+            expected.relationship_type is BondRelationshipType.METAL_COORDINATION
+            and expected.order is None
+            and not expected.aromatic
+        )
+        if not (covalent or coordination):
             raise ValueError("expected bond chemistry must be resolved")
         if self.relationship_type not in {
             BondRelationshipType.UNKNOWN,
@@ -260,7 +271,14 @@ class TopologyBond:
             if self.source_metadata is not None
             else self.order
         )
-        if preserved_order is not None and preserved_order != expected.order:
+        # A reported single can describe dative multiplicity, not donor valence.
+        # Keep that declaration in metadata rather than an effective covalent order.
+        order_matches = (
+            preserved_order == 1 and self.source_metadata is not None
+            if coordination
+            else preserved_order == expected.order
+        )
+        if preserved_order is not None and not order_matches:
             raise ValueError("resolved chemistry conflicts with bond order")
         if (
             self.source_metadata is not None
@@ -400,6 +418,9 @@ class StructureTopology:
     _inter_residue_bonds_by_residue: (
         dict[ResidueIndex, tuple[TopologyBond, ...]] | None
     ) = field(init=False, repr=False, compare=False)
+    _incident_bonds_by_atom: dict[AtomIndex, tuple[TopologyBond, ...]] | None = field(
+        init=False, repr=False, compare=False, hash=False
+    )
 
     def __init__(
         self,
@@ -421,6 +442,7 @@ class StructureTopology:
             structure_topology._address_space_key,
         )
         object.__setattr__(self, "_inter_residue_bonds_by_residue", None)
+        object.__setattr__(self, "_incident_bonds_by_atom", None)
 
     @classmethod
     def _from_address_space_key(
@@ -454,6 +476,7 @@ class StructureTopology:
         )
         object.__setattr__(structure_topology, "bonds", deduplicated_bonds)
         object.__setattr__(structure_topology, "_inter_residue_bonds_by_residue", None)
+        object.__setattr__(structure_topology, "_incident_bonds_by_atom", None)
         return structure_topology
 
     def is_aligned_to(self, constitution: StructureConstitution) -> bool:
@@ -540,6 +563,33 @@ class StructureTopology:
                 return bond
 
         return None
+
+    def incident_bonds_by_atom(self) -> Mapping[AtomIndex, tuple[TopologyBond, ...]]:
+        """Return all incident relationships in canonical bond order.
+
+        Returns
+        -------
+        Mapping[AtomIndex, tuple[TopologyBond, ...]]
+            Read-only atom-slot projection of every stored relationship. Unbonded
+            slots are absent. This query neither admits chemistry nor reads geometry.
+
+        Notes
+        -----
+        The derived index is shared by callers of this immutable topology and
+        allocated only when queried. It does not participate in topology identity.
+        """
+        indexed = self._incident_bonds_by_atom
+        if indexed is None:
+            by_atom: dict[AtomIndex, list[TopologyBond]] = defaultdict(list)
+            for bond in self.bonds:
+                for atom_index in bond.endpoint_pair():
+                    by_atom[atom_index].append(bond)
+            indexed = {
+                atom_index: tuple(bonds) for atom_index, bonds in by_atom.items()
+            }
+            object.__setattr__(self, "_incident_bonds_by_atom", indexed)
+
+        return MappingProxyType(indexed)
 
     def covalent_like_endpoint_pairs(self) -> frozenset[tuple[AtomIndex, AtomIndex]]:
         """Return canonical endpoint pairs for all covalent-like topology bonds."""
@@ -741,6 +791,75 @@ class StructureTopology:
         return {
             name: anchor for name, anchor in anchors.items() if name not in unavailable
         }
+
+    def residue_source_heavy_bond_orders(
+        self,
+        *,
+        constitution: StructureConstitution,
+        residue_index: ResidueIndex,
+    ) -> Mapping[tuple[str, str], int]:
+        """Project reported local heavy orders, not effective inferred chemistry.
+
+        Parameters
+        ----------
+        constitution : StructureConstitution
+            This topology's atom address space.
+        residue_index : ResidueIndex
+            Residue whose intra-residue source covalent-like orders are requested.
+
+        Returns
+        -------
+        Mapping[tuple[str, str], int]
+            Canonical endpoint names mapped to reported integral orders.
+            Connectivity-only declarations, H/D/T, external attachments and
+            typed noncovalent contacts are excluded. Without source metadata,
+            a source-explicit bond's current order is its declaration.
+
+        Raises
+        ------
+        ModelInvariantError
+            The constitution and topology are not aligned.
+        """
+        if not self.is_aligned_to(constitution):
+            raise ModelInvariantError(
+                "source bond order projection requires matching constitution"
+            )
+        indices = constitution.atom_indices_for_residue_index(residue_index)
+        if not indices:
+            return {}
+        first_slot, last_slot = indices[0].value, indices[-1].value
+        begin = bisect_left(
+            self.bonds, first_slot, key=lambda bond: bond.atom_index_1.value
+        )
+        end = bisect_left(
+            self.bonds, last_slot + 1, key=lambda bond: bond.atom_index_1.value
+        )
+        orders = {}
+        for bond in self.bonds[begin:end]:
+            if (
+                bond.atom_index_2.value > last_slot
+                or bond.provenance is not BondProvenance.SOURCE_EXPLICIT
+                or bond.relationship_type
+                not in {
+                    BondRelationshipType.COVALENT,
+                    BondRelationshipType.DISULFIDE,
+                    BondRelationshipType.UNKNOWN,
+                }
+            ):
+                continue
+            first, second = (
+                constitution.atom_site_at(index) for index in bond.endpoint_pair()
+            )
+            if first.is_hydrogen() or second.is_hydrogen():
+                continue
+            order = (
+                bond.source_metadata.reported_order
+                if bond.source_metadata is not None
+                else bond.order
+            )
+            if order is not None:
+                orders[(first.name, second.name)] = order
+        return orders
 
 
 def _canonical_endpoint_pair(

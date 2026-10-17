@@ -45,7 +45,8 @@ def generate_hydrogen_patch(
         Static placement program or rotatable-group semantics.
     selected_hydrogen_names : frozenset[str] or None
         Static-program H names to evaluate; None evaluates the whole program.
-        Rotatable-group placement uses its own fixed inventory.
+        CYS omits thiol placement when HG is not selected. Other rotatable groups
+        use their own fixed inventory.
 
     Returns
     -------
@@ -69,6 +70,7 @@ def generate_hydrogen_patch(
         sidechain_atom_names, sidechain_coordinates = cysteine_sidechain_hydrogens(
             patch=patch,
             site=site,
+            selected_hydrogen_names=selected_hydrogen_names,
         )
     elif semantics.rotatable_kind is RotatableHydrogenKind.SER:
         sidechain_atom_names, sidechain_coordinates = serine_sidechain_hydrogens(
@@ -168,11 +170,14 @@ def cysteine_sidechain_hydrogens(
     *,
     patch: OrderedAtomPatch,
     site: HydrogenResidueSite,
+    selected_hydrogen_names: frozenset[str] | None = None,
 ) -> tuple[list[str], CoordinateBlock]:
     """Return ordered sidechain hydrogens for a cysteine residue."""
 
     atom_coordinates = patch.position_map()
-    if site.is_disulfide_bonded():
+    if site.is_disulfide_bonded() or (
+        selected_hydrogen_names is not None and "HG" not in selected_hydrogen_names
+    ):
         return evaluate_plan(DISULFIDE_CYSTEINE_PLAN, atom_coordinates)
 
     hydrogen = cysteine_thiol(

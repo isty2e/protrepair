@@ -765,11 +765,11 @@ def test_structure_chemistry_readiness_distinguishes_retained_non_polymer_modes(
     }
 
     assert retained_facts_by_component["ION"].heavy_topology_source is (
-        RetainedNonPolymerChemistryEvidenceSource.TEMPLATE
+        RetainedNonPolymerChemistryEvidenceSource.ATOMIC_INVENTORY
     )
     if RDKIT_AVAILABLE:
         assert retained_facts_by_component["ION"].hydrogen_expectation_source is (
-            RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
+            RetainedNonPolymerChemistryEvidenceSource.ATOMIC_INVENTORY
         )
         assert retained_facts_by_component["ION"].is_supported()
     else:

@@ -18,6 +18,7 @@ from protrepair.chemistry.component.topology import (
 )
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     require_retained_non_polymer_evidence_stereochemistry,
+    retained_non_polymer_evidence_coordination_bonds,
     retained_non_polymer_evidence_external_bonds,
     retained_non_polymer_evidence_formal_charge_requirements,
 )
@@ -34,6 +35,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 from protrepair.chemistry.retained_non_polymer.template_binding import (
     RetainedTemplateBinding,
 )
+from protrepair.chemistry.single_atom_inorganic import RetainedAtomicSite
 from protrepair.diagnostics.chemistry_contradictions import (
     diagnose_retained_non_polymer_template_chemistry_contradictions,
 )
@@ -46,6 +48,11 @@ from protrepair.diagnostics.kinds import (
     IssueSeverity,
     RepairEventKind,
     ValidationIssueKind,
+)
+from protrepair.errors import (
+    BondOrderConstraintError,
+    CoordinationEvidenceConflictError,
+    UnsupportedCoordinationChemistryError,
 )
 from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.structure.aggregate import ProteinStructure
@@ -89,6 +96,7 @@ from protrepair.transformer.result import TransformationResult
 from .rdkit_evidence import (
     hydrogenate_retained_non_polymer_payload_with_evidence_result as hydrogenate,
 )
+from .rdkit_evidence import place_coordinated_template_hydrogens
 
 _RDKIT_FALLBACK_VISIBILITY_DETAILS = (
     "retained non-polymer hydrogens inferred via RDKit coordinate/proximity fallback"
@@ -117,6 +125,7 @@ class _RetainedNonPolymerTopologyPlan:
     formal_charge_requirements: tuple[tuple[str, int], ...] = ()
     external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     context_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
+    coordination_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
 
     def requires_unlinked_scaffold(self, heavy_atom_names: Collection[str]) -> bool:
         """An admitted zero-H graph cannot acquire extra covalent bonds."""
@@ -135,6 +144,7 @@ class _RdkitFallbackHydrogenationResult:
     rdkit_backend_version: str
     heavy_bond_definitions: tuple[BondDefinition, ...]
     hydrogen_bond_definitions: tuple[BondDefinition, ...]
+    coordination_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,12 +321,18 @@ def _execute_retained_non_polymer_hydrogen_stage(
             replaceable_hydrogens = ()
             thiol_hydrogens = ()
             evidence_external_bonds = ()
+            evidence_coordination_bonds = ()
             evidence = chemistry_evidence_by_residue_id.get(ligand.residue_id)
             template = component_library.get(ligand.component_id)
             try:
                 if evidence is not None:
                     evidence_external_bonds = (
                         retained_non_polymer_evidence_external_bonds(
+                            evidence, structure
+                        )
+                    )
+                    evidence_coordination_bonds = (
+                        retained_non_polymer_evidence_coordination_bonds(
                             evidence, structure
                         )
                     )
@@ -331,12 +347,22 @@ def _execute_retained_non_polymer_hydrogen_stage(
                     if adduct is not None:
                         thiol_hydrogens = adduct.excess_generated_thiol_hydrogen_names()
                 else:
+                    atomic_site = RetainedAtomicSite(ligand)
+                    atomic_site.require_unambiguous_hydrogenation()
+                    if atomic_site.is_monatomic_ion():
+                        atomic_site.require_source_context(structure)
+                        continue
                     RetainedCovalentContext(
                         structure, ligand.residue_id
                     ).require_admitted()
             except (ValueError, RuntimeError) as error:
                 issues.append(
-                    _retained_chemistry_conflict_issue(ligand, ValueError(str(error)))
+                    _retained_chemistry_conflict_issue(
+                        ligand,
+                        error
+                        if isinstance(error, ValueError)
+                        else ValueError(str(error)),
+                    )
                 )
                 continue
             result = _hydrogenate_retained_non_polymer_payload(
@@ -356,6 +382,31 @@ def _execute_retained_non_polymer_hydrogen_stage(
                 ),
                 template_binding=template_binding,
                 evidence_external_bonds=evidence_external_bonds,
+                evidence_coordination_bonds=evidence_coordination_bonds,
+                source_structure=structure,
+                bond_order_constraints=structure.topology.residue_source_heavy_bond_orders(
+                    constitution=structure.constitution,
+                    residue_index=structure.constitution.residue_index(
+                        ligand.residue_id
+                    ),
+                ),
+                coordination_partner_positions={
+                    local.atom_name: structure.geometry.position(
+                        structure.constitution.atom_index(partner)
+                    )
+                    for pair in (
+                        evidence_coordination_bonds
+                        if evidence is not None
+                        else ()
+                        if template_binding is None
+                        else template_binding.coordination_bonds
+                    )
+                    for local, partner in (pair, tuple(reversed(pair)))
+                    if local.residue_id == ligand.residue_id
+                    and partner.residue_id != ligand.residue_id
+                    and source_payload.residue_site.atom_site(local.atom_name).element
+                    == "N"
+                },
             )
         except _SourceHydrogenReconciliationError as error:
             issues.append(
@@ -373,6 +424,15 @@ def _execute_retained_non_polymer_hydrogen_stage(
         if result.payload is not None and result.topology_plan is not None:
             try:
                 if template_binding is not None:
+                    result = replace(
+                        result,
+                        topology_plan=replace(
+                            result.topology_plan,
+                            coordination_bonds=template_binding.coordination_bonds,
+                        ),
+                    )
+                    assert result.payload is not None
+                    assert result.topology_plan is not None
                     template_binding.glycosidic.require_hydrogen_stereochemistry(
                         result.payload.residue_geometry,
                         _hydrogen_anchor_by_name(
@@ -638,6 +698,10 @@ def _hydrogenate_retained_non_polymer_payload(
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     template_binding: RetainedTemplateBinding | None = None,
     evidence_external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = (),
+    evidence_coordination_bonds: tuple[tuple[AtomRef, AtomRef], ...] = (),
+    source_structure: ProteinStructure | None = None,
+    bond_order_constraints: Mapping[tuple[str, str], int] | None = None,
+    coordination_partner_positions: Mapping[str, Vec3] | None = None,
 ) -> _RetainedNonPolymerHydrogenPayloadResult:
     """Hydrogenate one retained non-polymer residue when supported."""
 
@@ -646,6 +710,8 @@ def _hydrogenate_retained_non_polymer_payload(
             hydrogenation_result = hydrogenate(
                 payload,
                 evidence=chemistry_evidence,
+                bond_order_constraints=bond_order_constraints,
+                coordination_partner_positions=coordination_partner_positions,
             )
         except (RuntimeError, ValueError) as error:
             return _RetainedNonPolymerHydrogenPayloadResult(
@@ -679,6 +745,15 @@ def _hydrogenate_retained_non_polymer_payload(
             ),
         )
         hydrogenated_payload = reconciliation.payload
+        if source_payload is not None:
+            unpreserved = reconciliation.unpreserved_source_hydrogen_names(
+                source_payload
+            )
+            if unpreserved:
+                raise _SourceHydrogenReconciliationError(
+                    "explicit chemistry cannot preserve every source hydrogen",
+                    atom_names=unpreserved,
+                )
         try:
             require_retained_non_polymer_evidence_stereochemistry(
                 chemistry_evidence,
@@ -733,6 +808,18 @@ def _hydrogenate_retained_non_polymer_payload(
                     chemistry_evidence
                 ),
                 external_bonds=evidence_external_bonds,
+                coordination_bonds=tuple(
+                    (
+                        AtomRef(payload.residue_id, bond.donor_atom_name),
+                        AtomRef(payload.residue_id, bond.acceptor_atom_name),
+                    )
+                    for bond in hydrogenation_result.coordination_bond_definitions
+                )
+                + tuple(
+                    pair
+                    for pair in evidence_coordination_bonds
+                    if pair[0].residue_id != pair[1].residue_id
+                ),
             ),
         )
 
@@ -822,6 +909,32 @@ def _hydrogenate_retained_non_polymer_payload(
                     ),
                 )
 
+            if coordination_partner_positions and isinstance(
+                template.hydrogen_semantics, IdealGeometryHydrogenSemantics
+            ):
+                try:
+                    hydrogenated_payload = place_coordinated_template_hydrogens(
+                        hydrogenated_payload,
+                        template.hydrogen_semantics.component,
+                        coordination_partner_positions,
+                    )
+                except (GeometryPlacementError, RuntimeError, ValueError) as error:
+                    return _RetainedNonPolymerHydrogenPayloadResult(
+                        payload=None,
+                        repairs=(),
+                        issues=(
+                            ValidationIssue.for_residue(
+                                kind=ValidationIssueKind.UNSUPPORTED_HYDROGENATION,
+                                severity=IssueSeverity.WARNING,
+                                residue_id=payload.residue_id,
+                                component_id=payload.component_id,
+                                message=(
+                                    "Coordinated donor H placement failed "
+                                    f"({error}); leaving residue unchanged"
+                                ),
+                            ),
+                        ),
+                    )
             ordered_payload = hydrogenated_payload.reordered(
                 _retained_non_polymer_template_atom_order(
                     hydrogenated_payload,
@@ -962,6 +1075,8 @@ def _hydrogenate_retained_non_polymer_payload(
                 payload,
                 source_payload=source_payload,
                 source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
+                source_structure=source_structure,
+                bond_order_constraints=bond_order_constraints,
             )
         )
         hydrogenated_payload = hydrogenation_result.payload
@@ -1033,6 +1148,7 @@ def _hydrogenate_retained_non_polymer_payload(
                 + projection.hydrogen_bond_definitions,
             ),
             provenance=BondProvenance.REPAIR_INFERRED,
+            coordination_bonds=hydrogenation_result.coordination_bonds,
         ),
     )
 
@@ -1072,6 +1188,8 @@ def _hydrogenate_retained_non_polymer_payload_with_rdkit_fallback_result(
     *,
     source_payload: CompletionResiduePayload | None = None,
     source_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
+    source_structure: ProteinStructure | None = None,
+    bond_order_constraints: Mapping[tuple[str, str], int] | None = None,
 ) -> _RdkitFallbackHydrogenationResult:
     """Hydrogenate one payload and return fallback-inferred H anchors."""
 
@@ -1082,6 +1200,7 @@ def _hydrogenate_retained_non_polymer_payload_with_rdkit_fallback_result(
         present_hydrogen_atom_names=_hydrogen_atom_names(source_payload or payload),
         hydrogen_position_by_name=_hydrogen_position_by_name(source_payload),
         hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
+        bond_order_constraints=bond_order_constraints,
     )
     return _RdkitFallbackHydrogenationResult(
         payload=payload.apply_patch(
@@ -1096,6 +1215,11 @@ def _hydrogenate_retained_non_polymer_payload_with_rdkit_fallback_result(
         rdkit_backend_version=fallback_inference_result.rdkit_backend_version,
         heavy_bond_definitions=fallback_inference_result.heavy_bond_definitions,
         hydrogen_bond_definitions=fallback_inference_result.hydrogen_bond_definitions,
+        coordination_bonds=()
+        if source_structure is None
+        else fallback_inference_result.coordination_bonds(
+            source_structure, payload.residue_id
+        ),
     )
 
 
@@ -1549,6 +1673,16 @@ def _retained_non_polymer_topology_bonds_for_plan(
                 provenance=plan.provenance,
             )
         )
+    bonds.extend(
+        TopologyBond(
+            structure.constitution.atom_index(first),
+            structure.constitution.atom_index(second),
+            order=None,
+            relationship_type=BondRelationshipType.METAL_COORDINATION,
+            provenance=plan.provenance,
+        )
+        for first, second in plan.coordination_bonds
+    )
     return tuple(bonds)
 
 
@@ -1569,6 +1703,14 @@ def _merge_source_first_topology_bonds(
         endpoint_pair = bond.endpoint_pair()
         existing = merged.get(endpoint_pair)
         if existing is not None:
+            if (
+                bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+                and existing.relationship_type
+                is BondRelationshipType.METAL_COORDINATION
+                and existing.order is None
+                and not existing.aromatic
+            ):
+                continue
             merged[endpoint_pair] = (
                 existing.with_resolved_chemistry(bond)
                 if existing.provenance is BondProvenance.SOURCE_EXPLICIT
@@ -1620,6 +1762,20 @@ def _require_compatible_topology_plan(
             existing.with_resolved_chemistry(
                 TopologyBond(*indices, order=1, provenance=plan.provenance)
             )
+    for first, second in plan.coordination_bonds:
+        indices = tuple(
+            structure.constitution.atom_index(ref) for ref in (first, second)
+        )
+        existing = structure.topology.bond_between(*indices)
+        if existing is not None:
+            existing.with_resolved_chemistry(
+                TopologyBond(
+                    *indices,
+                    order=None,
+                    relationship_type=BondRelationshipType.METAL_COORDINATION,
+                    provenance=plan.provenance,
+                )
+            )
     residue_index = structure.constitution.residue_index(plan.residue_id)
     _require_compatible_formal_charges(
         dict(structure.residue_formal_charge_by_atom_name(residue_index)),
@@ -1637,6 +1793,10 @@ def _require_compatible_topology_plan(
         references = tuple(
             structure.constitution.atom_ref_at(index) for index in bond.endpoint_pair()
         )
+        if any(
+            frozenset(references) == frozenset(pair) for pair in plan.coordination_bonds
+        ):
+            continue
         external = any(ref.residue_id != plan.residue_id for ref in references)
         if external and any(
             frozenset(references) == frozenset(pair) for pair in plan.external_bonds
@@ -1712,6 +1872,15 @@ def _require_compatible_formal_charges(
 def _retained_chemistry_conflict_issue(
     residue: ResidueSite, error: ValueError
 ) -> ValidationIssue:
+    if isinstance(error, UnsupportedCoordinationChemistryError):
+        return ValidationIssue.for_residue(
+            kind=ValidationIssueKind.UNSUPPORTED_HYDROGENATION,
+            severity=IssueSeverity.WARNING,
+            residue_id=residue.residue_id,
+            component_id=residue.component_id,
+            message=f"Retained coordination preparation unsupported ({error}); "
+            "leaving residue unchanged",
+        )
     return ValidationIssue.for_residue(
         kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
         severity=IssueSeverity.WARNING,
@@ -1756,10 +1925,16 @@ def _topology_plan_for_bond_definitions(
     provenance: BondProvenance,
     formal_charge_requirements: tuple[tuple[str, int], ...] = (),
     external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = (),
+    coordination_bonds: tuple[tuple[AtomRef, AtomRef], ...] = (),
 ) -> _RetainedNonPolymerTopologyPlan | None:
     """Return retained ligand topology plan for validated bond definitions."""
 
-    if not bond_definitions and not formal_charge_requirements and not external_bonds:
+    if not (
+        bond_definitions
+        or formal_charge_requirements
+        or external_bonds
+        or coordination_bonds
+    ):
         return None
 
     return _RetainedNonPolymerTopologyPlan(
@@ -1768,6 +1943,7 @@ def _topology_plan_for_bond_definitions(
         provenance=provenance,
         formal_charge_requirements=formal_charge_requirements,
         external_bonds=external_bonds,
+        coordination_bonds=coordination_bonds,
     )
 
 
@@ -1912,6 +2088,15 @@ def _retained_non_polymer_hydrogen_fallback_issue(
 ) -> ValidationIssue:
     """Return one validation issue for a failed retained non-polymer fallback."""
 
+    if isinstance(
+        error,
+        (
+            BondOrderConstraintError,
+            CoordinationEvidenceConflictError,
+            UnsupportedCoordinationChemistryError,
+        ),
+    ):
+        return _retained_chemistry_conflict_issue(residue_site, error)
     reason = _retained_non_polymer_hydrogen_failure_reason(error)
     diagnosis = diagnose_component_support(
         residue_site.component_id,

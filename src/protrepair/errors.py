@@ -49,6 +49,14 @@ class RdkitProjectionError(ProtrepairError):
     """Raised when canonical chemistry cannot be faithfully projected to RDKit."""
 
 
+class UnsupportedCoordinationChemistryError(ProtrepairError, ValueError):
+    """Selected coordination chemistry is outside the preparation capability."""
+
+
+class CoordinationEvidenceConflictError(ProtrepairError, ValueError):
+    """Selected coordination conflicts with source inventory or relationships."""
+
+
 class UnsupportedFileFormatError(ProtrepairError):
     """Raised when a structure file format cannot be inferred or serialized."""
 

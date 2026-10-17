@@ -80,6 +80,46 @@ class BondDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class CoordinationBondDefinition:
+    """Named donor-to-acceptor coordination without an ordinary covalent order.
+
+    Parameters
+    ----------
+    donor_atom_name : str
+        Canonical donor identity within a component.
+    acceptor_atom_name : str
+        Distinct canonical acceptor identity within that component.
+
+    Raises
+    ------
+    ValueError
+        Either name is blank or both identify the same atom.
+    """
+
+    donor_atom_name: str
+    acceptor_atom_name: str
+
+    def __post_init__(self) -> None:
+        donor = self.donor_atom_name.strip().upper()
+        acceptor = self.acceptor_atom_name.strip().upper()
+        if not donor or not acceptor or donor == acceptor:
+            raise ValueError("coordination requires distinct nonblank atom names")
+        object.__setattr__(self, "donor_atom_name", donor)
+        object.__setattr__(self, "acceptor_atom_name", acceptor)
+
+    def endpoint_pair(self) -> tuple[str, str]:
+        """Return physical endpoint identity without discarding stored direction.
+
+        Returns
+        -------
+        tuple[str, str]
+            Sorted canonical names, independent of the stored donor/acceptor role.
+        """
+        first, second = sorted((self.donor_atom_name, self.acceptor_atom_name))
+        return first, second
+
+
+@dataclass(frozen=True, slots=True)
 class ForceFieldAtomParams:
     """Per-atom force-field parameters used by residue templates."""
 
@@ -144,9 +184,7 @@ class ChemicalComponentDefinition:
             bonds,
         )
         bond_hop_distances_by_atom_name_pair = (
-            build_bond_hop_distances_by_atom_name_pair(
-                bonded_atom_names_by_atom_name
-            )
+            build_bond_hop_distances_by_atom_name_pair(bonded_atom_names_by_atom_name)
         )
 
         object.__setattr__(self, "component_id", component_id)
@@ -257,9 +295,7 @@ def build_bond_hop_distances_by_atom_name_pair(
             bond_hop_distances_by_atom_name_pair[
                 (origin_atom_name, current_atom_name)
             ] = current_hops
-            for neighbor_atom_name in bonded_atom_names_by_atom_name[
-                current_atom_name
-            ]:
+            for neighbor_atom_name in bonded_atom_names_by_atom_name[current_atom_name]:
                 if neighbor_atom_name in visited:
                     continue
 

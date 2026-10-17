@@ -41,6 +41,31 @@ def require_compatible_component_reference(component: IdealizedComponent) -> Non
         raise ValueError(f"invalid component reference graph: {error}") from error
 
 
+def component_reference_molecule(component: IdealizedComponent) -> "Mol":
+    """Project a validated explicit component into a defensive native graph.
+
+    Parameters
+    ----------
+    component : IdealizedComponent
+        Complete named graph, H and charges, with any declared reference stereo.
+
+    Returns
+    -------
+    Mol
+        Separate sanitized graph in component atom order.
+
+    Raises
+    ------
+    ValueError
+        Graph or declared reference stereochemistry is incompatible.
+    RdkitUnavailableError
+        Native interpretation is unavailable.
+    """
+    require_compatible_component_reference(component)
+    assert Chem is not None
+    return Chem.Mol(_component_reference_molecule(component))
+
+
 @lru_cache(maxsize=128)
 def _component_reference_molecule(component: IdealizedComponent) -> "Mol":
     assert Chem is not None
