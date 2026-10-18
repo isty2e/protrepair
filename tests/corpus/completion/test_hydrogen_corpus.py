@@ -33,12 +33,12 @@ pytestmark = pytest.mark.corpus
     (
         pytest.param(
             Path("tests/fixtures/corpus/pdb2a1d.ent"),
-            "38a6ed1507560b0bd7d2ef7d965a9d3c77478ca78590f4bb993df684f2708e3d",
+            "b8474959152c79ca08b1290af70e6354f9094f2481580736f9f991664785d584",
             id="pdb2a1d",
         ),
         pytest.param(
             Path("tests/fixtures/corpus/pdb2xbi.ent"),
-            "6d0d227709e0b1e451c5cb375fe4a1b4302165f58b696f4ca4b7745f0d772fb9",
+            "6eb20361b7d703b9f45870dc3c6955aeb38d7db073b3d007ca8a7b4bac3fa49d",
             id="pdb2xbi",
         ),
     ),

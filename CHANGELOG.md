@@ -55,6 +55,8 @@
 
 ### Fixed
 
+- realize coupled polymer chemistry before scoring fixed rotatable H, so
+  protonation changes cannot leave stale acceptors in the placement environment
 - classify supported polar contacts from bonded chemistry rather than element
   or nearest-atom guesses, including intramolecular H bonds, while retaining
   the existing geometric cutoffs and source attachment authority; apply the

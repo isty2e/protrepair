@@ -231,7 +231,7 @@ def build_rotatable_hydrogen_environments(
     templates : Sequence[ResidueTemplate or None]
         Aligned placement templates and partial-charge parameters.
     polar_chemistry : PolarContactChemistry
-        Chemistry of the original structure, before existing H are removed.
+        Current full-structure chemistry, before H are omitted from payloads.
 
     Returns
     -------

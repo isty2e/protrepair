@@ -122,3 +122,8 @@ These are diagnostic heuristics, not universal chemical limits or a force-field
 energy model. Metal-bound, contradictory or insufficiently specified chemistry
 receives no exemption. A remaining warning is therefore not proof that the
 contact is physically impossible, and RDKit readability is assessed separately.
+
+Hydrogen completion applies coupled polymer site changes before building the
+fixed-H placement environment. Scoring therefore sees the chemistry actually
+applied, not an earlier protonation state or an unrealized preparation choice.
+Failed and untargeted sites keep their current state and existing diagnostics.

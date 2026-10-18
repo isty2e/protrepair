@@ -92,7 +92,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:VAL:A:1",
             last_residue="ATOM:HIS:A:64",
-            semantic_digest="fa438926271a07cc952fbee0fefac784aacda7620aab3fe2dc5d0103e3473b93",
+            semantic_digest="9575d35becf62338c6a60047d6ae4f7343dff3f4f8d14059363fa33afc3e3a2a",
         ),
         hydrogen_direct_summary=StructureSummary(
             chain_ids=("A",),
@@ -128,7 +128,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:VAL:A:1",
             last_residue="ATOM:HIS:A:64",
-            semantic_digest="f8d8e5ba3d6f7e96b7729e5a66f9025c5583a9bfe8e0dde183ddc84b51ee7a2a",
+            semantic_digest="2a3a6034e73e16f4f11377f112b295377e4dd2704621b40108d5690a557d9425",
         ),
     ),
     "1cjc-heavy-keep-ligand": RepresentativeCase(
@@ -248,7 +248,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:THR:A:6",
             last_residue="ATOM:HIS:A:460",
-            semantic_digest="791920e436e5626a000f87afd63c7725383d840a546bff32f6e24c1117352f8c",
+            semantic_digest="45111353ff81e81441ecf85b3d5220a6cf92060c60467e1b3e4479143e1b0224",
         ),
         hydrogen_direct_summary=StructureSummary(
             chain_ids=("A",),
@@ -286,7 +286,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:THR:A:6",
             last_residue="ATOM:HIS:A:460",
-            semantic_digest="fa160fb19b1078f0b4f49f0a51f1e06aa40099ab6a8a394e7baef30cc3ed66e2",
+            semantic_digest="ef16a9b642730b0b18a896b1bc1aabadffe41f7f763bd93797004998aa30dc1c",
         ),
     ),
     "1afc-hydrogen-his-protonated": RepresentativeCase(
@@ -382,7 +382,7 @@ REPRESENTATIVE_CASES: dict[str, RepresentativeCase] = {
             ),
             first_residue="ATOM:LYS:A:10",
             last_residue="ATOM:PRO:H:136",
-            semantic_digest="79ce9b91bfe7f91a6dd41da85bb953f2ea995976b6e741bcd58c01a7d791894d",
+            semantic_digest="cac367292dea663d8a1f195871062493db7c2eaa5588f2080d2b5ad67d0da631",
         ),
     ),
 }

@@ -66,7 +66,7 @@ class HydrogenCompletionEnvironment:
         templates : Sequence[ResidueTemplate or None]
             Templates aligned with the payloads.
         polar_chemistry : PolarContactChemistry
-            Original full-structure chemistry, including existing H evidence.
+            Current full-structure chemistry, including existing H evidence.
         disulfide_bonded_residue_ids : frozenset[ResidueId]
             Canonical disulfide members in this chain.
 
