@@ -1,6 +1,7 @@
 """Temporary peptide support graph construction and source-only projection."""
 
 from dataclasses import dataclass, replace
+from typing import TypeVar
 
 import numpy as np
 import numpy.typing as npt
@@ -36,6 +37,8 @@ from protrepair.transformer.continuous.peptide_boundary import (
 )
 from protrepair.transformer.continuous.shared import apply_position_updates
 
+ResultT = TypeVar("ResultT", bound=RegionTransformationResult)
+
 
 @dataclass(frozen=True, slots=True)
 class CappedRelaxationProblem:
@@ -55,9 +58,7 @@ class CappedRelaxationProblem:
     source_problem: ContinuousRelaxationProblem
     problem: ContinuousRelaxationProblem
 
-    def project_result(
-        self, result: RegionTransformationResult
-    ) -> RegionTransformationResult:
+    def project_result(self, result: ResultT) -> ResultT:
         """Discard support atoms and return only allowed original coordinate edits.
 
         Parameters
@@ -67,8 +68,8 @@ class CappedRelaxationProblem:
 
         Returns
         -------
-        RegionTransformationResult
-            Source constitution, topology and provenance, with a source-slot delta.
+        ResultT
+            Source fields and delta, preserving the concrete result and its facts.
 
         Raises
         ------
@@ -120,7 +121,8 @@ class CappedRelaxationProblem:
             )
             for boundary in self.plan.boundaries
         )
-        return RegionTransformationResult(
+        return replace(
+            result,
             refined_structure=projected,
             delta=StructureDelta(
                 before_constitution=source.constitution,
@@ -128,9 +130,6 @@ class CappedRelaxationProblem:
                 moved_atoms=tuple(MovedAtomDelta(index, index) for index in moved),
             ),
             issues=(*result.issues, *support_issues),
-            backend_name=result.backend_name,
-            backend_version=result.backend_version,
-            relaxation_executions=result.relaxation_executions,
         )
 
 

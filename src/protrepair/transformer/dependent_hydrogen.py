@@ -1,5 +1,8 @@
 """Dependent-hydrogen revalidation after accepted local refinement."""
 
+from dataclasses import replace
+from typing import TypeVar
+
 from protrepair.chemistry import ComponentLibrary, RestraintLibrary
 from protrepair.diagnostics.clashes import ClashDetectionBasis
 from protrepair.diagnostics.events import ValidationIssue
@@ -23,9 +26,11 @@ from protrepair.transformer.refinement.acceptance import (
     refinement_metrics_rejected,
 )
 
+ResultT = TypeVar("ResultT", bound=RegionTransformationResult)
+
 
 def revalidate_dependent_hydrogens_after_refinement(
-    result: RegionTransformationResult,
+    result: ResultT,
     *,
     selected_scope: Scope,
     component_library: ComponentLibrary,
@@ -33,7 +38,7 @@ def revalidate_dependent_hydrogens_after_refinement(
     current_metrics: RefinementAcceptanceMetrics | None = None,
     clash_basis: ClashDetectionBasis | None = None,
     pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
-) -> RegionTransformationResult:
+) -> ResultT:
     """Re-materialize stale dependent hydrogens only behind validation gates."""
 
     active_current_metrics = current_metrics
@@ -256,15 +261,16 @@ def _hydrogen_atom_indices_with_changed_positions(
 
 
 def _with_refreshed_hydrogen_coordinates(
-    result: RegionTransformationResult,
+    result: ResultT,
     *,
     candidate_structure: ProteinStructure,
     moved_hydrogen_atom_indices: tuple[AtomIndex, ...],
     appended_issues: tuple[ValidationIssue, ...],
-) -> RegionTransformationResult:
+) -> ResultT:
     """Return a result carrying accepted hydrogen-coordinate materialization."""
 
-    return RegionTransformationResult(
+    return replace(
+        result,
         refined_structure=candidate_structure,
         delta=StructureDelta(
             before_constitution=result.delta.before_constitution,
@@ -290,7 +296,4 @@ def _with_refreshed_hydrogen_coordinates(
             bond_topology_rewrites=result.delta.bond_topology_rewrites,
         ),
         issues=(*result.issues, *appended_issues),
-        backend_name=result.backend_name,
-        backend_version=result.backend_version,
-        relaxation_executions=result.relaxation_executions,
     )

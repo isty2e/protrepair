@@ -111,7 +111,12 @@ deviations. Angle restraints retain their separate five-degree minimum. These
 are calibration choices for optimization, not exact validity bounds or promises
 that every reported geometry issue will disappear.
 
-Local transformation results carry `relaxation_executions`: the actual bound
+The common region result owns structural edits and diagnostics, without depending
+on a particular transformation family. A continuous result associates its endpoint
+with one native invocation. A local refinement result can instead select a
+discrete candidate or the parent while retaining facts from other native attempts.
+
+Local refinement results carry `relaxation_executions`: the actual bound
 settings, source atoms allowed to move, native return code and runtime version
 for each observed minimization. Rejected and unselected candidates keep their
 records too. Separate calls remain distinct even with identical inputs; passing

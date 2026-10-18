@@ -27,6 +27,7 @@ from protrepair.transformer.refinement.local_pipeline.candidates import (
 from protrepair.transformer.refinement.local_pipeline.request import (
     LocalRefinementRequest,
 )
+from protrepair.transformer.refinement.result import LocalRefinementResult
 from protrepair.transformer.refinement.speculative_planning import (
     EvaluatedSpeculativeProposal,
     SpeculativeAdoptionDecision,
@@ -193,7 +194,9 @@ def assess_refinement_candidate_batch(
         relaxation_executions=tuple(
             execution
             for candidate in batch.executions
-            for execution in candidate.outcome.relaxation_executions
+            for execution in LocalRefinementResult.observed_executions(
+                candidate.outcome
+            )
         ),
     )
 

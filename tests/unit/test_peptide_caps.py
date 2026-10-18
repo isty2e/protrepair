@@ -44,6 +44,7 @@ from protrepair.transformer.continuous.readiness import (
     atom_scope_facts_continuous_relaxation_error,
     derive_atom_scope_continuous_relaxation_facts,
 )
+from protrepair.transformer.continuous.result import ContinuousRelaxationResult
 from protrepair.transformer.continuous.settings import (
     ContinuousRelaxationForceField,
     ContinuousRelaxationSettings,
@@ -144,10 +145,11 @@ def test_source_backed_caps_close_native_graph_and_preserve_source(intact, radiu
         capped.problem, minimizer_status=1, backend_version="test-runtime"
     )
     projected_result = capped.project_result(
-        replace(_result(model), relaxation_executions=(execution,))
+        ContinuousRelaxationResult.from_transformation(
+            _result(model), execution=execution
+        )
     )
-    assert projected_result.relaxation_executions == (execution,)
-    assert projected_result.relaxation_executions[0] is execution
+    assert projected_result.execution is execution
     projected = projected_result.refined_structure
     assert projected.constitution is intact.constitution
     assert projected.topology is intact.topology
@@ -326,8 +328,8 @@ def test_direct_transformer_uses_caps_and_returns_only_original_atoms(intact, me
         problem.region.snapshot, problem.region.atom_input
     )
     result = transformer.transform(context)
-    assert len(result.relaxation_executions) == 1
-    execution = result.relaxation_executions[0]
+    assert isinstance(result, ContinuousRelaxationResult)
+    execution = result.execution
     assert execution.settings is problem.spec
     assert execution.has_motion_scope(
         context.atom_input.observed_atom_scope(context.source_snapshot)

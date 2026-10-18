@@ -1,6 +1,6 @@
 """RDKit realization of the continuous local-relaxation backend seam."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from math import isfinite
 from typing import TYPE_CHECKING
 
@@ -38,6 +38,7 @@ from protrepair.transformer.continuous.domain import (
     PlannedBond,
 )
 from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
+from protrepair.transformer.continuous.result import ContinuousRelaxationResult
 from protrepair.transformer.continuous.settings import ContinuousRelaxationForceField
 from protrepair.transformer.continuous.shared import apply_position_updates
 
@@ -225,7 +226,7 @@ class RdkitContinuousRelaxationBackend:
         problem: ContinuousRelaxationProblem,
         *,
         restraint_library: RestraintLibrary,
-    ) -> RegionTransformationResult:
+    ) -> ContinuousRelaxationResult:
         """Execute one canonical continuous-relaxation problem through RDKit."""
 
         if Chem is None or rdBase is None or rdForceFieldHelpers is None:
@@ -273,7 +274,7 @@ class RdkitContinuousRelaxationBackend:
             if (distortion := guard.distortion(refined_structure)) is not None
         )
         if hydrogen_distortions:
-            return replace(
+            return ContinuousRelaxationResult.from_transformation(
                 rejected_original_structure_result(
                     problem,
                     catastrophic_distortions=tuple(
@@ -284,7 +285,7 @@ class RdkitContinuousRelaxationBackend:
                     ),
                     backend_version=rdBase.rdkitVersion,
                 ),
-                relaxation_executions=(execution,),
+                execution=execution,
             )
 
         chirality_changes = _rdkit_chirality_changes(
@@ -296,13 +297,13 @@ class RdkitContinuousRelaxationBackend:
             refined_structure=refined_structure,
         )
         if chirality_changes:
-            return replace(
+            return ContinuousRelaxationResult.from_transformation(
                 _rejected_chirality_change_result(
                     problem,
                     chirality_changes=chirality_changes,
                     backend_version=rdBase.rdkitVersion,
                 ),
-                relaxation_executions=(execution,),
+                execution=execution,
             )
 
         catastrophic_distortions = catastrophic_bond_distortions(
@@ -311,16 +312,16 @@ class RdkitContinuousRelaxationBackend:
             restraint_library=restraint_library,
         )
         if catastrophic_distortions:
-            return replace(
+            return ContinuousRelaxationResult.from_transformation(
                 rejected_original_structure_result(
                     problem,
                     catastrophic_distortions=catastrophic_distortions,
                     backend_version=rdBase.rdkitVersion,
                 ),
-                relaxation_executions=(execution,),
+                execution=execution,
             )
 
-        return RegionTransformationResult(
+        return ContinuousRelaxationResult(
             refined_structure=refined_structure,
             delta=StructureDelta(
                 before_constitution=problem.region.snapshot.structure.constitution,
@@ -336,7 +337,7 @@ class RdkitContinuousRelaxationBackend:
             issues=(),
             backend_name="rdkit",
             backend_version=rdBase.rdkitVersion,
-            relaxation_executions=(execution,),
+            execution=execution,
         )
 
 

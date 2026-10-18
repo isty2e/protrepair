@@ -16,6 +16,7 @@ from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
+from protrepair.transformer.continuous.result import ContinuousRelaxationResult
 from protrepair.transformer.continuous.settings import (
     ContinuousRelaxationProfile,
     ContinuousRelaxationSettings,
@@ -37,6 +38,7 @@ from protrepair.transformer.refinement.local_pipeline.lineage import (
 from protrepair.transformer.refinement.local_pipeline.request import (
     LocalRefinementRequest,
 )
+from protrepair.transformer.refinement.result import LocalRefinementResult
 from protrepair.transformer.refinement.speculative_planning import (
     EvaluatedSpeculativeProposal,
     SpeculativeExecution,
@@ -131,8 +133,9 @@ def _metrics(clashes):
 
 @pytest.mark.parametrize("accepted", (False, True))
 @pytest.mark.parametrize("failed_sibling", (False, True))
+@pytest.mark.parametrize("nested", (False, True))
 def test_local_selection_retains_unselected_and_rejected_native_returns(
-    local_request_and_candidate, monkeypatch, accepted, failed_sibling
+    local_request_and_candidate, monkeypatch, accepted, failed_sibling, nested
 ):
     request, first = local_request_and_candidate
     second, failing = replace(first), replace(first)
@@ -148,16 +151,18 @@ def test_local_selection_retains_unselected_and_rejected_native_returns(
             raise RefinementError("pre-native sibling failure")
         index = 0 if self is first else 1
         source = self.fallback_structure
-        return SpeculativeExecution(
-            self,
-            RegionTransformationResult(
-                source,
-                StructureDelta(source.constitution, source.constitution),
-                (),
-                str(index),
-                relaxation_executions=(records[index], records[index]),
-            ),
+        outcome: RegionTransformationResult = ContinuousRelaxationResult(
+            source,
+            StructureDelta(source.constitution, source.constitution),
+            (),
+            str(index),
+            execution=records[index],
         )
+        if nested:
+            outcome = LocalRefinementResult.from_selection(
+                outcome, relaxation_executions=(records[index],)
+            )
+        return SpeculativeExecution(self, outcome)
 
     def assess(candidate, *, request, before_metrics):
         rejection = (
@@ -222,9 +227,59 @@ def test_region_return_metadata_does_not_change_structure_value_semantics(
         source, StructureDelta(source.constitution, source.constitution), (), "fake"
     )
     record = _record()
-    with_metadata = replace(result, relaxation_executions=(record, record))
-    assert with_metadata == result
-    assert repr(with_metadata) == repr(result)
+    without_metadata = LocalRefinementResult.from_selection(
+        result, relaxation_executions=()
+    )
+    with_metadata = LocalRefinementResult.from_selection(
+        result, relaxation_executions=(record, record)
+    )
+    assert with_metadata == without_metadata
+    assert repr(with_metadata) == repr(without_metadata)
     assert with_metadata.relaxation_executions == (record,)
     with pytest.raises(TypeError, match="execution evidence"):
-        replace(result, relaxation_executions=(None,))
+        replace(with_metadata, relaxation_executions=(None,))
+
+
+def test_native_result_requires_one_fact_and_selection_retains_it(
+    local_request_and_candidate,
+):
+    _, candidate = local_request_and_candidate
+    source = candidate.fallback_structure
+    core = RegionTransformationResult(
+        source, StructureDelta(source.constitution, source.constitution), (), "rdkit"
+    )
+    record = _record()
+    native = ContinuousRelaxationResult.from_transformation(core, execution=record)
+    assert native.execution is record
+    assert native.refined_structure is core.refined_structure
+    assert native.delta is core.delta
+    assert native.issues == core.issues
+    assert native.backend_name == core.backend_name
+    assert native.backend_version == core.backend_version
+    with pytest.raises(TypeError, match="one native return"):
+        replace(native, execution=None)
+    with pytest.raises(ValueError, match="selected native return"):
+        LocalRefinementResult.from_selection(native, relaxation_executions=())
+    with pytest.raises(ValueError, match="selected native return"):
+        LocalRefinementResult.from_selection(native, relaxation_executions=(_record(),))
+    selected = LocalRefinementResult.from_selection(
+        native, relaxation_executions=(record, record)
+    )
+    assert selected.refined_structure is source
+    assert selected.relaxation_executions == (record,)
+    with pytest.raises(ValueError, match="selected native return"):
+        LocalRefinementResult.from_selection(selected, relaxation_executions=())
+    nested = LocalRefinementResult.from_selection(
+        selected, relaxation_executions=(record,)
+    )
+    assert nested.relaxation_executions == (record,)
+    other = _record()
+    multiple = LocalRefinementResult.from_selection(
+        selected, relaxation_executions=(record, other)
+    )
+    with pytest.raises(ValueError, match="selected native return"):
+        LocalRefinementResult.from_selection(multiple, relaxation_executions=(record,))
+    retained = LocalRefinementResult.from_selection(
+        multiple, relaxation_executions=(record, other, record)
+    )
+    assert retained.relaxation_executions == (record, other)

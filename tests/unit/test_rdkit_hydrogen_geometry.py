@@ -143,9 +143,8 @@ def test_native_guard_checks_canonical_xh_pairs_without_template_h_targets(
     assert not result.delta.moved_atoms
     assert len(result.issues) == 1
     assert f"native {method.value.upper()} X-H" in result.issues[0].message
-    assert len(result.relaxation_executions) == 1
-    assert result.relaxation_executions[0].settings is problem.spec
-    assert result.relaxation_executions[0].minimizer_status == 1
+    assert result.execution.settings is problem.spec
+    assert result.execution.minimizer_status == 1
 
 
 @pytest.mark.parametrize("method", list(ContinuousRelaxationForceField))

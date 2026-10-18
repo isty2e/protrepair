@@ -1,5 +1,11 @@
 """Tests for transformation artifact and delta contracts."""
 
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
 import pytest
 from tests.support.refinement_type_fixtures import build_toy_structure
 
@@ -17,6 +23,46 @@ from protrepair.transformer.artifacts import (
     ResidueTopologyRewrite,
     StructureDelta,
 )
+
+
+def test_region_result_can_be_constructed_without_continuous_initialization() -> None:
+    program = textwrap.dedent(
+        """
+        import builtins
+        import importlib
+        from tests.support.refinement_type_fixtures import build_toy_structure
+
+        module = importlib.import_module('protrepair.transformer.artifacts.result')
+        source = build_toy_structure()
+        original_import = builtins.__import__
+
+        def without_continuous(name, *args, **kwargs):
+            if name.startswith('protrepair.transformer.continuous'):
+                raise ImportError('continuous family initialization is unavailable')
+            return original_import(name, *args, **kwargs)
+
+        builtins.__import__ = without_continuous
+        try:
+            module = importlib.reload(module)
+            result = module.RegionTransformationResult(
+                source, module.StructureDelta(source.constitution, source.constitution),
+                (), 'discrete_preconditioning'
+            )
+            assert result.refined_structure is source
+            assert result.moved_atom_count() == 0
+        finally:
+            builtins.__import__ = original_import
+        """
+    )
+    root = Path(__file__).resolve().parents[2]
+    completed = subprocess.run(
+        (sys.executable, "-c", program),
+        cwd=root,
+        env={**os.environ, "PYTHONPATH": str(root / "src")},
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_refinement_result_normalizes_backend_name_and_moved_atom_deltas() -> None:

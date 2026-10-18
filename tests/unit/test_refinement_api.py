@@ -56,6 +56,7 @@ from protrepair.transformer.artifacts import (
 )
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
+from protrepair.transformer.continuous.result import ContinuousRelaxationResult
 from protrepair.transformer.continuous.settings import (
     ContinuousRelaxationConfig,
     ContinuousRelaxationForceField,
@@ -714,7 +715,7 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
                     "H1": bad_hydrogen_position,
                 },
             )
-            return RegionTransformationResult(
+            return ContinuousRelaxationResult(
                 refined_structure=refined_structure,
                 delta=StructureDelta(
                     before_constitution=problem.region.snapshot.structure.constitution,
@@ -729,7 +730,7 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
                 ),
                 issues=(),
                 backend_name="fake",
-                relaxation_executions=(execution,),
+                execution=execution,
             )
 
     monkeypatch.setattr(
