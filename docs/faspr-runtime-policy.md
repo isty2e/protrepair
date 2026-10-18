@@ -19,6 +19,10 @@ such requests before launching FASPR, naming the residue and missing atoms.
 Complete its heavy atoms first, or include it in `mutable_residue_ids` and remove
 any explicit freeze.
 
+`reference_sidechain_packing` runs on the input before workflow heavy-atom
+completion, so the same check can reject a workflow request. The error lists
+all incomplete fixed residues rather than requiring one retry per residue.
+
 For unchanged components, packing preserves current atom charges, occupancy,
 B factors and altloc metadata. Blank charge fields in FASPR output do not mean
 neutral or unknown chemistry. Original input observations remain separate;

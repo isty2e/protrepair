@@ -291,6 +291,7 @@ def prepare_structure_for_faspr(plan: PackingPlan) -> ProteinStructure:
     component_library = build_standard_component_library()
     prepared_chain_sites: list[ChainSite] = []
     removed_atom_refs: list[AtomRef] = []
+    incomplete_fixed_residues: list[str] = []
     for chain_site in plan.polymer_chain_sites():
         prepared_residue_sites: list[ResidueSite] = []
         for residue_site in chain_site.residues:
@@ -305,12 +306,9 @@ def prepare_structure_for_faspr(plan: PackingPlan) -> ProteinStructure:
                 )
                 if missing_heavy_atoms:
                     # FASPR unfreezes incomplete fixed residues before packing.
-                    raise PackingBackendError(
-                        "FASPR cannot preserve incomplete fixed residue "
-                        f"{residue_site.residue_id.display_token()}; missing heavy "
-                        f"atoms: {', '.join(missing_heavy_atoms)}. Include the "
-                        "residue in mutable_residue_ids (and remove it from "
-                        "frozen_residue_ids), or complete heavy atoms first."
+                    incomplete_fixed_residues.append(
+                        f"fixed residue {residue_site.residue_id.display_token()} "
+                        f"(missing heavy atoms: {', '.join(missing_heavy_atoms)})"
                     )
 
             prepared_residue_sites.append(
@@ -319,6 +317,14 @@ def prepare_structure_for_faspr(plan: PackingPlan) -> ProteinStructure:
             removed_atom_refs.extend(_hydrogen_atom_refs_for_residue_site(residue_site))
 
         prepared_chain_sites.append(chain_site.with_residues(prepared_residue_sites))
+
+    if incomplete_fixed_residues:
+        raise PackingBackendError(
+            "FASPR cannot preserve incomplete "
+            f"{'; '.join(incomplete_fixed_residues)}. Include these residues in "
+            "mutable_residue_ids (and remove them from frozen_residue_ids), "
+            "or complete heavy atoms first."
+        )
 
     removed_atom_ref_set = frozenset(removed_atom_refs)
     removed_atom_indices = frozenset(

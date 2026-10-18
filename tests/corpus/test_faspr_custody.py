@@ -3,9 +3,15 @@
 from pathlib import Path
 
 import pytest
+from tests.support.request_builders import (
+    transform_requests,
+    whole_structure_requested_goals,
+)
 
+from protrepair.api import process_structure
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.io import read_structure
+from protrepair.state import HydrogenCoverageState
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
@@ -93,6 +99,53 @@ def test_raw_1aho_incomplete_mutable_residues_are_admitted(
         atom for atom in source.constitution.atom_slots if not atom.is_hydrogen()
     )
     assert execution_input.plan is plan
+
+
+@pytest.mark.parametrize("scope", (PackingScope.LOCAL, PackingScope.FULL))
+def test_raw_1aho_preflight_lists_all_incomplete_fixed_residues(
+    scope: PackingScope,
+) -> None:
+    source = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
+    spec = PackingSpec(
+        backend_name="faspr", scope=scope, mutable_residue_ids=(ResidueId("A", 1),)
+    )
+    with pytest.raises(PackingBackendError) as error:
+        execute_sidechain_packing(source, spec)
+
+    message = str(error.value)
+    assert all(f"fixed residue {token}" in message for token in ("A:9", "A:30", "A:50"))
+    assert all(name in message for name in ("OD2", "CD", "CE", "NZ"))
+
+
+@pytest.mark.parametrize("scope", (PackingScope.LOCAL, PackingScope.FULL))
+@pytest.mark.parametrize("include_incomplete", (False, True))
+def test_reference_packing_checks_original_fixed_scaffolds_before_completion(
+    scope: PackingScope, include_incomplete: bool
+) -> None:
+    mutable_ids = tuple(
+        ResidueId("A", index)
+        for index in ((1, 9, 30, 50) if include_incomplete else (1,))
+    )
+    requests = transform_requests(
+        reference_sidechain_packing=PackingSpec(
+            backend_name="faspr", scope=scope, mutable_residue_ids=mutable_ids
+        )
+    )
+    goals = whole_structure_requested_goals(HydrogenCoverageState.COMPLETE)
+    source = Path("tests/fixtures/pdb/1aho.pdb")
+
+    if not include_incomplete:
+        with pytest.raises(PackingBackendError, match="fixed residue A:9"):
+            process_structure(
+                source, requested_goals=goals, transform_requests=requests
+            )
+        return
+
+    result = process_structure(
+        source, requested_goals=goals, transform_requests=requests
+    )
+    assert result.requested_goals_fully_satisfied() is True
+    assert not result.has_errors()
 
 
 @pytest.mark.parametrize("selection", ("frozen", "full_subset", "local_subset"))
