@@ -1,5 +1,7 @@
 """Candidate policies for assessed refinement outputs."""
 
+from dataclasses import replace
+
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.slots import AtomIndex
 from protrepair.transformer.artifacts import RegionTransformationResult
@@ -43,7 +45,8 @@ def materialize_assessed_refinement_candidate(
     else:
         rejection_issue = assessment.rejection_issue
         assert rejection_issue is not None
-        return RegionTransformationResult(
+        return replace(
+            executed_result,
             refined_structure=original_structure,
             delta=StructureDelta(
                 before_constitution=original_structure.constitution,
@@ -53,8 +56,6 @@ def materialize_assessed_refinement_candidate(
                 *executed_result.issues,
                 rejection_issue,
             ),
-            backend_name=executed_result.backend_name,
-            backend_version=executed_result.backend_version,
         )
 
     if not pre_backend_moved_atom_indices:
@@ -68,8 +69,8 @@ def materialize_assessed_refinement_candidate(
         for atom_index in pre_backend_moved_atom_indices
     )
 
-    return RegionTransformationResult(
-        refined_structure=materialized_result.refined_structure,
+    return replace(
+        materialized_result,
         delta=StructureDelta(
             before_constitution=materialized_result.delta.before_constitution,
             after_constitution=materialized_result.delta.after_constitution,
@@ -93,7 +94,4 @@ def materialize_assessed_refinement_candidate(
             ),
             bond_topology_rewrites=materialized_result.delta.bond_topology_rewrites,
         ),
-        issues=materialized_result.issues,
-        backend_name=materialized_result.backend_name,
-        backend_version=materialized_result.backend_version,
     )

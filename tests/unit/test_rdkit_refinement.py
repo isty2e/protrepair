@@ -138,6 +138,63 @@ def test_refine_local_region_moves_selected_atom_and_keeps_context_fixed() -> No
     assert refined_observer.position == original_observer.position
 
 
+@pytest.mark.parametrize("method", tuple(ContinuousRelaxationForceField))
+@pytest.mark.parametrize("iterations", (1, 200))
+def test_public_local_result_preserves_actual_native_return(
+    monkeypatch: pytest.MonkeyPatch,
+    method: ContinuousRelaxationForceField,
+    iterations: int,
+) -> None:
+    original_builder = continuous_rdkit.build_rdkit_force_field
+    native_returns = []
+
+    def observed_builder(molecule, **kwargs):
+        field = original_builder(molecule, **kwargs)
+        problem = kwargs["problem"]
+
+        class ObservedField:
+            def Initialize(self):
+                return field.Initialize()
+
+            def Minimize(self, *, maxIts):
+                status = field.Minimize(maxIts=maxIts)
+                native_returns.append((problem.spec, maxIts, status))
+                return status
+
+        return ObservedField()
+
+    monkeypatch.setattr(continuous_rdkit, "build_rdkit_force_field", observed_builder)
+    selected = AtomRef(ResidueId("A", 1), "H1")
+    spec = DirectRegionTransformationSpec(
+        scope_spec=LocalScopeSpec.from_atoms((selected,)),
+        force_field=method,
+        config=ContinuousRelaxationConfig(
+            context_radius_angstrom=2.5, max_iterations=iterations
+        ),
+    )
+    result = transform_local_region(
+        build_toy_structure(), spec, component_library=build_toy_component_library()
+    )
+
+    assert len(native_returns) == 1
+    executions = getattr(result, "relaxation_executions", ())
+    assert len(executions) == 1
+    execution = executions[0]
+    settings, native_iterations, status = native_returns[0]
+    assert execution.settings is settings
+    assert execution.settings.force_field is method
+    assert execution.settings.max_iterations == native_iterations == iterations
+    assert execution.minimizer_status == status
+    assert execution.movable_scope.atom_refs == (selected,)
+    assert execution.backend_version == continuous_rdkit.rdBase.rdkitVersion
+
+    repeated = transform_local_region(
+        build_toy_structure(), spec, component_library=build_toy_component_library()
+    )
+    assert len(native_returns) == 2
+    assert repeated.relaxation_executions[0] is not execution
+
+
 def test_rdkit_refinement_preserves_movable_and_fixed_hydrogen_isotopes() -> None:
     """RDKit should lower D/T as explicit hydrogen isotopes without source loss."""
 
@@ -187,12 +244,18 @@ def test_rdkit_refinement_preserves_movable_and_fixed_hydrogen_isotopes() -> Non
         component_library=component_library,
     ).refined_structure
 
-    assert refined.constitution.atom_site_at(
-        refined.constitution.atom_index(AtomRef(ResidueId("A", 1), "H1"))
-    ).element == "D"
-    assert refined.constitution.atom_site_at(
-        refined.constitution.atom_index(AtomRef(ResidueId("L", 1), "H2"))
-    ).element == "T"
+    assert (
+        refined.constitution.atom_site_at(
+            refined.constitution.atom_index(AtomRef(ResidueId("A", 1), "H1"))
+        ).element
+        == "D"
+    )
+    assert (
+        refined.constitution.atom_site_at(
+            refined.constitution.atom_index(AtomRef(ResidueId("L", 1), "H2"))
+        ).element
+        == "T"
+    )
 
 
 def test_refine_local_region_supports_mmff_on_benchmark_fixture() -> None:
@@ -330,8 +393,7 @@ def test_rdkit_backend_discards_catastrophic_bond_distortion(
     assert result.refined_structure == structure
     assert result.delta.moved_atoms == ()
     assert any(
-        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
-        for issue in result.issues
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
     )
 
 
@@ -401,9 +463,7 @@ def test_rdkit_backend_discards_assigned_chirality_loss(
     structure = build_chiral_structure()
     residue_id = ResidueId("L", 1)
     fluorine_atom_ref = AtomRef(residue_id, "F1")
-    chlorine_atom_index = structure.constitution.atom_index(
-        AtomRef(residue_id, "CL1")
-    )
+    chlorine_atom_index = structure.constitution.atom_index(AtomRef(residue_id, "CL1"))
     fluorine_atom_index = structure.constitution.atom_index(fluorine_atom_ref)
     problem = build_continuous_relaxation_problem(
         structure,
@@ -746,8 +806,8 @@ def test_build_rdkit_force_field_adds_position_constraints_for_movable_atoms(
                 structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "H1"))
             ],
             False,
-            pytest.approx(1.04),
-            pytest.approx(1.14),
+            pytest.approx(1.05),
+            pytest.approx(1.13),
             continuous_rdkit.BOND_CONSTRAINT_FORCE_CONSTANT,
         )
     ]
@@ -907,8 +967,8 @@ def test_build_rdkit_force_field_adds_geometry_constraints_for_residuewise_selec
                 structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "A2"))
             ],
             False,
-            pytest.approx(1.15),
-            pytest.approx(1.25),
+            pytest.approx(1.16),
+            pytest.approx(1.24),
             continuous_rdkit.BOND_CONSTRAINT_FORCE_CONSTANT,
         ),
         (
@@ -1094,8 +1154,8 @@ def test_build_rdkit_force_field_uses_mmff_builder_and_constraints(
                 structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "A2"))
             ],
             False,
-            pytest.approx(1.15),
-            pytest.approx(1.25),
+            pytest.approx(1.16),
+            pytest.approx(1.24),
             continuous_rdkit.BOND_CONSTRAINT_FORCE_CONSTANT,
         ),
         (

@@ -8,7 +8,6 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
 from protrepair.state.chemistry_observation import StructureChemistryObservation
-from protrepair.transformer.artifacts import RegionTransformationResult
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.settings import ContinuousRelaxationSettings
 from protrepair.transformer.refinement.local_pipeline.assessment import (
@@ -25,6 +24,7 @@ from protrepair.transformer.refinement.local_pipeline.construction import (
 from protrepair.transformer.refinement.local_pipeline.request import (
     LocalRefinementRequest,
 )
+from protrepair.transformer.refinement.result import LocalRefinementResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +54,7 @@ def execute_local_transformation(
         ...,
     ] = (),
     chemistry_observation: StructureChemistryObservation | None = None,
-) -> RegionTransformationResult:
+) -> LocalRefinementResult:
     """Run a selected-region local refinement.
 
     Parameters
@@ -76,7 +76,7 @@ def execute_local_transformation(
 
     Returns
     -------
-    RegionTransformationResult
+    LocalRefinementResult
         Selected result after candidate execution and assessment.
 
     Raises
@@ -115,7 +115,7 @@ def execute_local_transformation_profiled(
         ...,
     ] = (),
     chemistry_observation: StructureChemistryObservation | None = None,
-) -> tuple[RegionTransformationResult, LocalRefinementRuntimeProfile]:
+) -> tuple[LocalRefinementResult, LocalRefinementRuntimeProfile]:
     """Run local refinement and measure its stages.
 
     Parameters
@@ -137,7 +137,7 @@ def execute_local_transformation_profiled(
 
     Returns
     -------
-    tuple[RegionTransformationResult, LocalRefinementRuntimeProfile]
+    tuple[LocalRefinementResult, LocalRefinementRuntimeProfile]
         Selected result, elapsed stage times and candidate counts.
 
     Raises
@@ -187,7 +187,7 @@ def execute_local_transformation_profiled(
 
 def execute_local_refinement_pipeline(
     request: LocalRefinementRequest,
-) -> RegionTransformationResult:
+) -> LocalRefinementResult:
     """Execute the one-way local-refinement pipeline over one canonical request."""
 
     result, _ = execute_local_refinement_pipeline_profiled(request)
@@ -196,7 +196,7 @@ def execute_local_refinement_pipeline(
 
 def execute_local_refinement_pipeline_profiled(
     request: LocalRefinementRequest,
-) -> tuple[RegionTransformationResult, LocalRefinementRuntimeProfile]:
+) -> tuple[LocalRefinementResult, LocalRefinementRuntimeProfile]:
     """Execute the local-refinement pipeline and return stage timings."""
 
     start = perf_counter()
@@ -220,6 +220,9 @@ def execute_local_refinement_pipeline_profiled(
     result = materialize_selected_refinement_candidate(
         selected_candidate,
         request=request,
+    )
+    result = LocalRefinementResult.from_selection(
+        result, relaxation_executions=assessed_batch.relaxation_executions
     )
     materialization_runtime_ms = (perf_counter() - start) * 1000.0
 

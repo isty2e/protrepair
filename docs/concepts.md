@@ -99,6 +99,33 @@ Existing checks for new stereo violations and severe restraint-backed bond
 distortion still apply. This is endpoint assessment, not selection of additional
 intermediate optimization frames.
 
+The native backend also checks explicit X-H bond lengths, including D and T,
+against the selected UFF or MMFF94s equilibrium distances. It discards newly
+worsened large distortions, while allowing inherited distortion to remain or
+improve. The current allowance is the larger of 0.20 A and the initial deviation;
+it is a coarse safeguard, not a universal H-geometry standard. It does not check
+every H direction or require native convergence before returning a candidate.
+
+Bond restraints use a soft window of at least 0.04 A or four reported standard
+deviations. Angle restraints retain their separate five-degree minimum. These
+are calibration choices for optimization, not exact validity bounds or promises
+that every reported geometry issue will disappear.
+
+The common region result owns structural edits and diagnostics, without depending
+on a particular transformation family. A continuous result associates its endpoint
+with one native invocation. A local refinement result can instead select a
+discrete candidate or the parent while retaining facts from other native attempts.
+
+Local refinement results carry `relaxation_executions`: the actual bound
+settings, source atoms allowed to move, native return code and runtime version
+for each observed minimization. Rejected and unselected candidates keep their
+records too. Separate calls remain distinct even with identical inputs; passing
+one record through cap projection or H revalidation does not duplicate it.
+These are in-memory return facts, not resumable solver state or accumulated
+whole-workflow history. A native status of zero means convergence, not chemical
+validity or adoption. An empty record after an exception does not establish that
+no native work ran.
+
 ## Complete, Partial, And Unsupported Outcomes
 
 A processing run can return a useful structure without satisfying every goal.

@@ -55,6 +55,8 @@ from protrepair.transformer.artifacts import (
     StructureDelta,
 )
 from protrepair.transformer.context import ProteinTransformationContext
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
+from protrepair.transformer.continuous.result import ContinuousRelaxationResult
 from protrepair.transformer.continuous.settings import (
     ContinuousRelaxationConfig,
     ContinuousRelaxationForceField,
@@ -662,6 +664,7 @@ def test_refine_local_region_can_adopt_discrete_preconditioning_candidate(
     )
 
     assert backend_calls == []
+    assert result.relaxation_executions == ()
     assert assessed_backend_names == ["discrete_preconditioning"]
     assert _atom_position(result.refined_structure, residue_id, "H1") == (
         discrete_position
@@ -685,6 +688,7 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
     bad_hydrogen_position = Vec3(2.35, 1.05, 0.0)
     refreshed_hydrogen_position = Vec3(1.35, -1.10, 0.0)
     refined_heavy_position = Vec3(2.20, 1.25, 0.0)
+    native_returns = []
     spec = DirectRegionTransformationSpec(
         scope_spec=LocalScopeSpec.from_residues((residue_id,)),
         force_field=ContinuousRelaxationForceField.UFF,
@@ -699,6 +703,10 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
             restraint_library: RestraintLibrary,
         ) -> RegionTransformationResult:
             del restraint_library
+            execution = ContinuousRelaxationExecution.from_native_return(
+                problem, minimizer_status=1, backend_version="test-runtime"
+            )
+            native_returns.append(execution)
             refined_structure = _structure_with_updated_atom_positions(
                 problem.region.snapshot.structure,
                 residue_id,
@@ -707,7 +715,7 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
                     "H1": bad_hydrogen_position,
                 },
             )
-            return RegionTransformationResult(
+            return ContinuousRelaxationResult(
                 refined_structure=refined_structure,
                 delta=StructureDelta(
                     before_constitution=problem.region.snapshot.structure.constitution,
@@ -722,6 +730,7 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
                 ),
                 issues=(),
                 backend_name="fake",
+                execution=execution,
             )
 
     monkeypatch.setattr(
@@ -812,6 +821,8 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
     )
 
     assert hydrogenation_calls == [frozenset((residue_id,))]
+    assert result.relaxation_executions == tuple(native_returns)
+    assert len(native_returns) == 1
     assert len(revalidation_projectors) == 2
     assert revalidation_projectors[0] is not None
     assert revalidation_projectors[1] is revalidation_projectors[0]

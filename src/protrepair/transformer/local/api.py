@@ -11,7 +11,6 @@ from protrepair.chemistry import (
 from protrepair.errors import RefinementError
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.snapshot import ProteinStructureSnapshot
-from protrepair.transformer.artifacts import RegionTransformationResult
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.readiness import (
     derive_atom_scope_continuous_relaxation_facts,
@@ -23,6 +22,7 @@ from protrepair.transformer.refinement.local_pipeline.runtime import (
     execute_local_transformation,
     execute_local_transformation_profiled,
 )
+from protrepair.transformer.refinement.result import LocalRefinementResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +42,7 @@ def transform_local_region(
     *,
     component_library: ComponentLibrary | None = None,
     restraint_library: RestraintLibrary | None = None,
-) -> RegionTransformationResult:
+) -> LocalRefinementResult:
     """Transform one selected local region against a fixed surrounding context.
 
     This API requires the current selected domain to be hydrogen-complete and
@@ -50,6 +50,11 @@ def transform_local_region(
     one explicit force-field choice on the boundary request. Supporting
     structures may be represented on the boundary spec, but direct execution
     currently accepts only source-only transformation contexts.
+
+    Returns
+    -------
+    LocalRefinementResult
+        Selected structure and all observed native returns before selection.
     """
 
     if not isinstance(spec, DirectRegionTransformationSpec):
@@ -105,7 +110,7 @@ def profile_transform_local_region(
     *,
     component_library: ComponentLibrary | None = None,
     restraint_library: RestraintLibrary | None = None,
-) -> tuple[RegionTransformationResult, LocalRegionTransformationRuntimeProfile]:
+) -> tuple[LocalRefinementResult, LocalRegionTransformationRuntimeProfile]:
     """Transform one selected local region and return boundary stage timings."""
 
     if not isinstance(spec, DirectRegionTransformationSpec):

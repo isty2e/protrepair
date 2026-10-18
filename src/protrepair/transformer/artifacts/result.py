@@ -9,7 +9,7 @@ from protrepair.transformer.artifacts.patch import StructureDelta
 
 @dataclass(frozen=True, slots=True)
 class RegionTransformationResult:
-    """Structured result from one selected-region transformation."""
+    """Structural result shared by selected-region transformation families."""
 
     refined_structure: ProteinStructure
     delta: StructureDelta
@@ -75,9 +75,7 @@ class RegionTransformationResult:
                 )
         for rewrite in self.delta.atom_formal_charge_rewrites:
             if (
-                self.refined_structure.topology.formal_charge(
-                    rewrite.after_atom_index
-                )
+                self.refined_structure.topology.formal_charge(rewrite.after_atom_index)
                 != rewrite.current_formal_charge
             ):
                 raise ValueError(

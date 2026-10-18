@@ -1,6 +1,6 @@
 """Execution candidates for local refinement."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -11,6 +11,7 @@ from protrepair.transformer.artifacts import RegionTransformationResult
 from protrepair.transformer.artifacts.patch import StructureDelta
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.domain import ContinuousRelaxationProblem
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.continuous.local_relaxation import (
     ContinuousLocalRelaxationTransformer,
 )
@@ -237,12 +238,37 @@ AssessedRefinementCandidate: TypeAlias = EvaluatedSpeculativeProposal[
     RegionTransformationResult,
     AssessedRefinementResult,
 ]
-AssessedRefinementBatch: TypeAlias = SpeculativeEvaluationBatch[
-    RefinementExecutionCandidate,
-    RegionTransformationResult,
-    AssessedRefinementResult,
-    RefinementError,
-]
+
+
+@dataclass(frozen=True, slots=True)
+class AssessedRefinementBatch(
+    SpeculativeEvaluationBatch[
+        RefinementExecutionCandidate,
+        RegionTransformationResult,
+        AssessedRefinementResult,
+        RefinementError,
+    ]
+):
+    """Assessed candidates with all observed native returns before selection.
+
+    Parameters
+    ----------
+    relaxation_executions : tuple[ContinuousRelaxationExecution, ...]
+        Native returns from this batch, including rejected or unselected candidates.
+    """
+
+    relaxation_executions: tuple[ContinuousRelaxationExecution, ...] = field(
+        default=(), compare=False, repr=False, kw_only=True
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "relaxation_executions",
+            ContinuousRelaxationExecution.deduplicated(self.relaxation_executions),
+        )
+
+
 SelectedRefinementCandidate: TypeAlias = SpeculativeAdoptionDecision[
     RefinementExecutionCandidate,
     RegionTransformationResult,

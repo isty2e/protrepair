@@ -1,6 +1,7 @@
 """Backbone-window refinement executor."""
 
 from dataclasses import dataclass, replace
+from typing import TypeVar
 
 from protrepair.chemistry import ComponentLibrary, RestraintLibrary
 from protrepair.diagnostics.events import ValidationIssue
@@ -18,9 +19,11 @@ from protrepair.transformer.continuous.settings import ContinuousRelaxationSetti
 from protrepair.transformer.refinement.local_pipeline.runtime import (
     execute_local_transformation,
 )
+from protrepair.transformer.refinement.result import LocalRefinementResult
 from protrepair.transformer.refinement.spec import BackboneWindowRefinementSpec
 
 OPTIONAL_BACKBONE_WINDOW_ATOM_NAMES = frozenset({"OXT"})
+ResultT = TypeVar("ResultT", bound=RegionTransformationResult)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +38,7 @@ class BackboneWindowRefinementExecutor:
         self,
         structure: ProteinStructure,
         window_spec: BackboneWindowRefinementSpec,
-    ) -> RegionTransformationResult:
+    ) -> LocalRefinementResult:
         """Run backbone-window refinement over one source structure."""
 
         return execute_backbone_window_refinement(
@@ -54,7 +57,7 @@ def execute_backbone_window_refinement(
     spec: ContinuousRelaxationSettings,
     component_library: ComponentLibrary | None = None,
     restraint_library: RestraintLibrary | None = None,
-) -> RegionTransformationResult:
+) -> LocalRefinementResult:
     """Execute one backbone-window refinement over an ordered residue window."""
 
     if not isinstance(structure, ProteinStructure):
@@ -140,13 +143,12 @@ def atom_input_from_backbone_window_refinement_spec(
 
 
 def _with_backbone_window_rejection_context(
-    result: RegionTransformationResult,
-) -> RegionTransformationResult:
+    result: ResultT,
+) -> ResultT:
     if result.moved_atom_count() != 0:
         return result
     if not any(
-        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
-        for issue in result.issues
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
     ):
         return result
 
