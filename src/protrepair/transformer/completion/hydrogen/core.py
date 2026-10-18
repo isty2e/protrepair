@@ -15,6 +15,7 @@ from protrepair.chemistry.microstate.preparation import (
     PolymerSitePreparation,
 )
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
+from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.chemistry.retained_non_polymer.glycosidic import (
     GlycosidicTemplateBinding,
 )
@@ -150,18 +151,10 @@ def materialize_hydrogens_core(
         normalized, library, target_residue_ids=targets
     )
     normalized = topology_result.structure
-    prepared = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(normalized),
-        library,
-        requests=histidine_microstate_requests(structure, request),
-    )
-    result = _fixed_hydrogens(
-        normalized, library, prepared, targets=targets, rebuilding=rebuilding
-    )
     result = TransformationResult(
-        result.structure,
-        topology_result.repairs + result.repairs,
-        topology_result.issues + result.issues,
+        normalized,
+        topology_result.repairs,
+        topology_result.issues,
     )
     if forbidden:
         result = TransformationResult(
@@ -269,7 +262,22 @@ def materialize_hydrogens_core(
             repairs=tuple(repairs),
             issues=tuple(issues),
         )
-    return result
+
+    # Orient fixed H against applied chemistry, not choices that may fail or
+    # belong to residues outside the requested mutation scope.
+    prepared = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(result.structure),
+        library,
+        requests=histidine_microstate_requests(result.structure, request),
+    )
+    fixed = _fixed_hydrogens(
+        result.structure, library, prepared, targets=targets, rebuilding=rebuilding
+    )
+    return TransformationResult(
+        fixed.structure,
+        result.repairs + fixed.repairs,
+        result.issues + fixed.issues,
+    )
 
 
 def _fixed_hydrogens(
@@ -285,6 +293,9 @@ def _fixed_hydrogens(
     issues = []
     fixed_bond_refs = []
     disulfides = disulfide_bonded_cysteine_residue_ids(structure)
+    polar_chemistry = PolarContactChemistry(
+        structure.constitution, structure.topology, library
+    )
     for chain in structure.constitution.chains:
         if not any(residue.residue_id in targets for residue in chain.residues):
             continue
@@ -301,6 +312,7 @@ def _fixed_hydrogens(
         environment = HydrogenCompletionEnvironment.from_payloads(
             heavy,
             templates=templates,
+            polar_chemistry=polar_chemistry,
             disulfide_bonded_residue_ids=disulfides.intersection(
                 payload.residue_id for payload in payloads
             ),

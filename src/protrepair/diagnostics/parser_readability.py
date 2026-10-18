@@ -21,10 +21,12 @@ from protrepair.io.source_identity import (
     normalize_insertion_code,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.constitution import StructureConstitution
 from protrepair.structure.element import ElementIdentity
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import (
     BondProvenance,
+    StructureTopology,
     TopologyBond,
     is_covalent_like_relationship,
 )
@@ -104,6 +106,10 @@ class _RDKitMol(Protocol):
         """Return an atom by RDKit atom index."""
         ...
 
+    def GetAtoms(self) -> Sequence[_RDKitAtom]:
+        """Return atoms in the parsed molecule."""
+        ...
+
 
 @contextmanager
 def _expected_rdkit_parser_probe_logs_blocked() -> Iterator[None]:
@@ -119,7 +125,7 @@ def _expected_rdkit_parser_probe_logs_blocked() -> Iterator[None]:
 
 @dataclass(frozen=True, slots=True)
 class RDKitProximityBondWitness:
-    """One RDKit-inferred no-CONECT proximity bond near a parser failure."""
+    """One RDKit-inferred no-CONECT proximity bond."""
 
     atom_ref_1: AtomRef
     atom_ref_2: AtomRef
@@ -247,25 +253,53 @@ class RDKitNoConectSanitizeReadabilityMetrics:
 
 @dataclass(frozen=True, slots=True)
 class RDKitNoConectParserReadabilityProbe:
-    """Single no-CONECT RDKit parser probe with reusable projections."""
+    """Sanitation outcome with separate failure and H-attachment evidence.
+
+    Parameters
+    ----------
+    sanitize_readable : bool or None
+        Whether sanitation succeeds, or unknown when no H is present.
+    residue_problem_witnesses : tuple[RDKitParserProblemWitness, ...]
+        Localized native sanitation failures and their neighboring bonds.
+    structure_messages : tuple[str, ...]
+        Sanitation failures that cannot be assigned to a residue.
+    hydrogen_attachment_witnesses : tuple[RDKitProximityBondWitness, ...], default=()
+        Observed attachments outside declared canonical H/D/T parents, even
+        when sanitation succeeds. Undeclared parents are not inferred here.
+    """
 
     sanitize_readable: bool | None
     residue_problem_witnesses: tuple[RDKitParserProblemWitness, ...]
     structure_messages: tuple[str, ...]
+    hydrogen_attachment_witnesses: tuple[RDKitProximityBondWitness, ...] = ()
+
+    def extra_proximity_bonds(self) -> tuple[RDKitProximityBondWitness, ...]:
+        """Return unique noncanonical bonds independently of sanitation success.
+
+        Returns
+        -------
+        tuple[RDKitProximityBondWitness, ...]
+            Failure and attachment witnesses, deduplicated by unordered endpoints.
+        """
+
+        return tuple(
+            {
+                _atom_ref_endpoint_pair(bond.atom_ref_1, bond.atom_ref_2): bond
+                for bond in (
+                    *_extra_proximity_bonds_from_problem_witnesses(
+                        self.residue_problem_witnesses
+                    ),
+                    *self.hydrogen_attachment_witnesses,
+                )
+            }.values()
+        )
 
     def metrics(self) -> RDKitNoConectSanitizeReadabilityMetrics:
         """Return compact parser-readability burden metrics for this probe."""
 
-        if not self.residue_problem_witnesses and not self.structure_messages:
-            return RDKitNoConectSanitizeReadabilityMetrics(
-                sanitize_readable=self.sanitize_readable,
-            )
-
-        extra_bonds = _extra_proximity_bonds_from_problem_witnesses(
-            self.residue_problem_witnesses
-        )
+        extra_bonds = self.extra_proximity_bonds()
         return RDKitNoConectSanitizeReadabilityMetrics(
-            sanitize_readable=False,
+            sanitize_readable=self.sanitize_readable,
             extra_proximity_bond_count=len(extra_bonds),
             extra_heavy_proximity_bond_count=sum(
                 1 for bond in extra_bonds if bond.is_heavy_heavy()
@@ -287,7 +321,11 @@ class RDKitNoConectParserReadabilityProbe:
                 ),
             )
 
-        if not self.residue_problem_witnesses and not self.structure_messages:
+        if (
+            not self.residue_problem_witnesses
+            and not self.structure_messages
+            and not self.hydrogen_attachment_witnesses
+        ):
             return ()
 
         issues: list[ValidationIssue] = []
@@ -342,6 +380,20 @@ class RDKitNoConectParserReadabilityProbe:
                     kind=ValidationIssueKind.PARSER_READABILITY,
                     severity=IssueSeverity.ERROR,
                     message=message,
+                )
+            )
+
+        for witness in self.hydrogen_attachment_witnesses:
+            issues.append(
+                ValidationIssue.for_residue(
+                    kind=ValidationIssueKind.PARSER_READABILITY,
+                    severity=IssueSeverity.WARNING,
+                    message=(
+                        "no-CONECT RDKit inferred a hydrogen attachment outside "
+                        f"canonical topology: {witness.display_token()}; "
+                        "successful sanitation does not establish H-parent fidelity"
+                    ),
+                    residue_id=witness.atom_ref_1.residue_id,
                 )
             )
 
@@ -400,9 +452,31 @@ class _RDKitNoConectProblemSurface:
 
 @dataclass(frozen=True, slots=True)
 class RDKitKnownBondLookup:
-    """Coordinate-invariant topology lookup for no-CONECT parser projections."""
+    """Coordinate-invariant topology lookup for no-CONECT parser projections.
+
+    Parameters
+    ----------
+    component_library : ComponentLibrary
+        Definitions used to prepare template-derived pairs.
+    constitution : StructureConstitution
+        Atom identities for which the lookup was prepared.
+    topology : StructureTopology
+        Bond and charge snapshot used during preparation.
+    component_id_by_residue_id : Mapping[ResidueId, str]
+        Component identities for polymer-link interpretation.
+    known_atom_name_pairs_by_residue_id : Mapping
+        Template-derived residue-local pairs.
+    topology_atom_name_pairs_by_residue_id : Mapping
+        Topology-derived residue-local pairs.
+    topology_inter_residue_endpoint_pairs : frozenset
+        Known cross-residue endpoint pairs.
+    hydrogen_parent_refs : Mapping
+        Declared covalent heavy parents, keyed by canonical H/D/T identity.
+    """
 
     component_library: ComponentLibrary
+    constitution: StructureConstitution = field(repr=False)
+    topology: StructureTopology = field(repr=False)
     component_id_by_residue_id: Mapping[ResidueId, str]
     known_atom_name_pairs_by_residue_id: Mapping[
         ResidueId,
@@ -413,6 +487,7 @@ class RDKitKnownBondLookup:
         frozenset[tuple[str, str]],
     ]
     topology_inter_residue_endpoint_pairs: frozenset[tuple[AtomRef, AtomRef]]
+    hydrogen_parent_refs: Mapping[AtomRef, frozenset[AtomRef]]
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -435,9 +510,58 @@ class RDKitKnownBondLookup:
             "topology_inter_residue_endpoint_pairs",
             frozenset(self.topology_inter_residue_endpoint_pairs),
         )
+        object.__setattr__(
+            self,
+            "hydrogen_parent_refs",
+            MappingProxyType(dict(self.hydrogen_parent_refs)),
+        )
+
+    def require_context(
+        self,
+        structure: ProteinStructure,
+        *,
+        component_library: ComponentLibrary | None,
+    ) -> None:
+        """Reject reuse with different graph or chemistry definitions.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Coordinates may differ, but constitution and topology must match.
+        component_library : ComponentLibrary or None
+            Active definitions, or the default library.
+
+        Raises
+        ------
+        ValueError
+            The prepared lookup belongs to different derivation inputs.
+        """
+
+        if (
+            structure.constitution is not self.constitution
+            and structure.constitution != self.constitution
+        ) or (
+            structure.topology is not self.topology
+            and structure.topology != self.topology
+        ):
+            raise ValueError("parser bond lookup requires its original graph")
+
+        active_library = (
+            build_default_component_library()
+            if component_library is None
+            else component_library
+        )
+        if active_library is not self.component_library:
+            raise ValueError(
+                "parser bond lookup requires its original component library"
+            )
 
     def is_known_bond(self, atom_ref_1: AtomRef, atom_ref_2: AtomRef) -> bool:
         """Return whether one RDKit-inferred bond exists in ProtRepair topology."""
+
+        for hydrogen, partner in ((atom_ref_1, atom_ref_2), (atom_ref_2, atom_ref_1)):
+            if hydrogen in self.hydrogen_parent_refs:
+                return partner in self.hydrogen_parent_refs[hydrogen]
 
         if atom_ref_1.residue_id != atom_ref_2.residue_id:
             endpoint_pair = _atom_ref_endpoint_pair(atom_ref_1, atom_ref_2)
@@ -472,10 +596,39 @@ def probe_rdkit_no_conect_parser_readability(
     *,
     component_library: ComponentLibrary | None = None,
     pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
+    known_bond_lookup: RDKitKnownBondLookup | None = None,
 ) -> RDKitNoConectParserReadabilityProbe:
-    """Return one reusable no-CONECT RDKit parser-readability probe."""
+    """Parse current coordinates and localize no-CONECT chemistry failures.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Candidate to serialize and parse, including its hydrogens.
+    component_library : ComponentLibrary or None
+        Active definitions, or defaults.
+    pdb_block_projector : RDKitNoConectPDBBlockProjector or None
+        Optional serialization preparation; incompatible inputs use full writing.
+    known_bond_lookup : RDKitKnownBondLookup or None
+        Optional graph preparation bound to this structure and library.
+
+    Returns
+    -------
+    RDKitNoConectParserReadabilityProbe
+        Fresh geometry-dependent results; readability is unknown without H.
+
+    Raises
+    ------
+    ValueError
+        A supplied bond lookup has different derivation inputs.
+    RdkitUnavailableError
+        The required parser backend is unavailable.
+    """
 
     _require_rdkit_parser_backend("RDKit no-CONECT parser-readability probe")
+    if known_bond_lookup is not None:
+        known_bond_lookup.require_context(
+            structure, component_library=component_library
+        )
     if not _structure_contains_hydrogens(structure):
         return RDKitNoConectParserReadabilityProbe(
             sanitize_readable=None,
@@ -483,22 +636,27 @@ def probe_rdkit_no_conect_parser_readability(
             structure_messages=(),
         )
 
-    residue_problem_witnesses, structure_messages = _rdkit_no_conect_problem_witnesses(
-        structure,
-        component_library=component_library,
-        pdb_block_projector=pdb_block_projector,
+    residue_problem_witnesses, structure_messages, attachments = (
+        _rdkit_no_conect_problem_witnesses(
+            structure,
+            component_library=component_library,
+            pdb_block_projector=pdb_block_projector,
+            known_bond_lookup=known_bond_lookup,
+        )
     )
     if not residue_problem_witnesses and not structure_messages:
         return RDKitNoConectParserReadabilityProbe(
             sanitize_readable=True,
             residue_problem_witnesses=(),
             structure_messages=(),
+            hydrogen_attachment_witnesses=attachments,
         )
 
     return RDKitNoConectParserReadabilityProbe(
         sanitize_readable=False,
         residue_problem_witnesses=tuple(residue_problem_witnesses.values()),
         structure_messages=structure_messages,
+        hydrogen_attachment_witnesses=attachments,
     )
 
 
@@ -512,6 +670,10 @@ def measure_rdkit_no_conect_extra_heavy_proximity_bond_count(
     """Return the extra heavy-heavy parser witness count without clustering."""
 
     _require_rdkit_parser_backend("RDKit no-CONECT parser proximity-bond count")
+    if known_bond_lookup is not None:
+        known_bond_lookup.require_context(
+            structure, component_library=component_library
+        )
     if not _structure_contains_hydrogens(structure):
         return 0
 
@@ -601,13 +763,39 @@ def measure_rdkit_no_conect_sanitize_readability_metrics(
     *,
     component_library: ComponentLibrary | None = None,
     pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
+    known_bond_lookup: RDKitKnownBondLookup | None = None,
 ) -> RDKitNoConectSanitizeReadabilityMetrics:
-    """Return no-CONECT RDKit readability plus parser-visible bond burden."""
+    """Measure no-CONECT readability and parser-visible bond burden.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Current candidate geometry and graph.
+    component_library : ComponentLibrary or None
+        Active chemistry definitions, or defaults.
+    pdb_block_projector : RDKitNoConectPDBBlockProjector or None
+        Optional coordinate serialization preparation.
+    known_bond_lookup : RDKitKnownBondLookup or None
+        Optional preparation for the same graph and library.
+
+    Returns
+    -------
+    RDKitNoConectSanitizeReadabilityMetrics
+        Metrics derived from a fresh parser probe.
+
+    Raises
+    ------
+    ValueError
+        A supplied lookup has different derivation inputs.
+    RdkitUnavailableError
+        The required parser backend is unavailable.
+    """
 
     return probe_rdkit_no_conect_parser_readability(
         structure,
         component_library=component_library,
         pdb_block_projector=pdb_block_projector,
+        known_bond_lookup=known_bond_lookup,
     ).metrics()
 
 
@@ -688,6 +876,8 @@ def prepare_rdkit_no_conect_known_bond_lookup(
     )
     return RDKitKnownBondLookup(
         component_library=active_component_library,
+        constitution=structure.constitution,
+        topology=structure.topology,
         component_id_by_residue_id={
             residue_site.residue_id: residue_site.component_id
             for residue_site in structure.constitution.iter_residues(
@@ -710,7 +900,28 @@ def prepare_rdkit_no_conect_known_bond_lookup(
         topology_inter_residue_endpoint_pairs=(
             _topology_known_inter_residue_endpoint_pairs(structure)
         ),
+        hydrogen_parent_refs=_canonical_hydrogen_parent_refs(structure),
     )
+
+
+def _canonical_hydrogen_parent_refs(
+    structure: ProteinStructure,
+) -> dict[AtomRef, frozenset[AtomRef]]:
+    parents: dict[AtomRef, set[AtomRef]] = defaultdict(set)
+    constitution = structure.constitution
+    for bond in structure.topology.bonds:
+        if not is_covalent_like_relationship(bond):
+            continue
+        first, second = bond.atom_index_1, bond.atom_index_2
+        first_is_h = constitution.atom_site_at(first).is_hydrogen()
+        second_is_h = constitution.atom_site_at(second).is_hydrogen()
+        if first_is_h == second_is_h:
+            continue
+        hydrogen, parent = (first, second) if first_is_h else (second, first)
+        parents[constitution.atom_ref_at(hydrogen)].add(
+            constitution.atom_ref_at(parent)
+        )
+    return {hydrogen: frozenset(partners) for hydrogen, partners in parents.items()}
 
 
 def _structure_contains_hydrogens(structure: ProteinStructure) -> bool:
@@ -747,9 +958,11 @@ def _rdkit_no_conect_problem_witnesses(
     *,
     component_library: ComponentLibrary | None,
     pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
+    known_bond_lookup: RDKitKnownBondLookup | None = None,
 ) -> tuple[
     dict[ResidueId, RDKitParserProblemWitness],
     tuple[str, ...],
+    tuple[RDKitProximityBondWitness, ...],
 ]:
     """Return residue-localized parser chemistry problems and bond witnesses."""
 
@@ -758,14 +971,18 @@ def _rdkit_no_conect_problem_witnesses(
         pdb_block_projector=pdb_block_projector,
     )
     if problem_surface.molecule is None:
-        return ({}, problem_surface.structure_messages)
-    if not problem_surface.residue_problem_atom_indices:
-        return ({}, problem_surface.structure_messages)
+        return ({}, problem_surface.structure_messages, ())
 
-    known_bond_lookup = prepare_rdkit_no_conect_known_bond_lookup(
-        structure,
-        component_library=component_library,
+    if known_bond_lookup is None:
+        known_bond_lookup = prepare_rdkit_no_conect_known_bond_lookup(
+            structure,
+            component_library=component_library,
+        )
+    attachments = _unexpected_hydrogen_attachments(
+        problem_surface.molecule, known_bond_lookup
     )
+    if not problem_surface.residue_problem_atom_indices:
+        return ({}, problem_surface.structure_messages, attachments)
     residue_problem_witnesses = {
         residue_id: RDKitParserProblemWitness(
             residue_id=residue_id,
@@ -785,7 +1002,39 @@ def _rdkit_no_conect_problem_witnesses(
     return (
         residue_problem_witnesses,
         problem_surface.structure_messages,
+        attachments,
     )
+
+
+def _unexpected_hydrogen_attachments(
+    molecule: _RDKitMol, lookup: RDKitKnownBondLookup
+) -> tuple[RDKitProximityBondWitness, ...]:
+    if not lookup.hydrogen_parent_refs:
+        return ()
+
+    witnesses = []
+    for hydrogen in molecule.GetAtoms():
+        if hydrogen.GetAtomicNum() != 1:
+            continue
+        hydrogen_ref = _atom_ref_from_rdkit_atom(hydrogen)
+        if hydrogen_ref is None or hydrogen_ref not in lookup.hydrogen_parent_refs:
+            continue
+        for bond in hydrogen.GetBonds():
+            first, second = bond.GetBeginAtom(), bond.GetEndAtom()
+            parent = second if first.GetAtomicNum() == 1 else first
+            parent_ref = _atom_ref_from_rdkit_atom(parent)
+            if parent_ref is None or lookup.is_known_bond(hydrogen_ref, parent_ref):
+                continue
+            witnesses.append(
+                RDKitProximityBondWitness(
+                    atom_ref_1=hydrogen_ref,
+                    atom_ref_2=parent_ref,
+                    element_1=hydrogen.GetSymbol(),
+                    element_2=parent.GetSymbol(),
+                    is_known_component_bond=False,
+                )
+            )
+    return tuple(witnesses)
 
 
 def _rdkit_no_conect_problem_surface(
@@ -826,14 +1075,35 @@ def _rdkit_no_conect_problem_surface(
                 structure_messages=("_pdb_parse_failed_before_sanitize",),
             )
 
-        chemistry_problems = Chem.DetectChemistryProblems(molecule)
+        # Detection omits organometallic cleanup and is not the sanitation oracle.
+        # Keep the partially cleaned native graph to localize only surviving errors.
+        try:
+            Chem.SanitizeMol(molecule)
+        except Exception as error:
+            error_lines = str(error).splitlines()
+            sanitation_message = (
+                error_lines[0].strip() if error_lines else "RDKit sanitation failed"
+            ) or "RDKit sanitation failed"
+        else:
+            return _RDKitNoConectProblemSurface(
+                molecule=molecule,
+                residue_atom_names={},
+                residue_messages={},
+                residue_problem_atom_indices={},
+                structure_messages=(),
+            )
+
+        try:
+            chemistry_problems = Chem.DetectChemistryProblems(molecule)
+        except Exception:
+            chemistry_problems = ()
     if not chemistry_problems:
         return _RDKitNoConectProblemSurface(
             molecule=molecule,
             residue_atom_names={},
             residue_messages={},
             residue_problem_atom_indices={},
-            structure_messages=(),
+            structure_messages=(sanitation_message,),
         )
 
     residue_atom_names: dict[ResidueId, set[str]] = defaultdict(set)
@@ -1117,11 +1387,17 @@ def _topology_known_inter_residue_endpoint_pairs(
         if not _topology_bond_is_parser_known(bond):
             continue
 
-        atom_ref_1 = structure.constitution.atom_ref_at(bond.atom_index_1)
-        atom_ref_2 = structure.constitution.atom_ref_at(bond.atom_index_2)
-        if atom_ref_1.residue_id == atom_ref_2.residue_id:
+        residue_index_1 = structure.constitution.residue_index_for_atom_index(
+            bond.atom_index_1
+        )
+        residue_index_2 = structure.constitution.residue_index_for_atom_index(
+            bond.atom_index_2
+        )
+        if residue_index_1 == residue_index_2:
             continue
 
+        atom_ref_1 = structure.constitution.atom_ref_at(bond.atom_index_1)
+        atom_ref_2 = structure.constitution.atom_ref_at(bond.atom_index_2)
         endpoint_pairs.add(_atom_ref_endpoint_pair(atom_ref_1, atom_ref_2))
 
     return frozenset(endpoint_pairs)

@@ -10,7 +10,9 @@ from protrepair.chemistry import (
     ResidueTemplate,
     RotatableHydrogenKind,
 )
+from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.geometry import InternalCoordinateFrame, Vec3
+from protrepair.structure.labels import AtomRef
 from protrepair.transformer.completion.hydrogen.scoring import (
     RotatableHydrogenEnvironment,
     RotatableHydrogenLocalSite,
@@ -18,18 +20,6 @@ from protrepair.transformer.completion.hydrogen.scoring import (
     max_rotatable_hydrogen_interaction_horizon_angstrom,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
-
-__all__ = [
-    "ROTATABLE_HYDROGEN_SPECS",
-    "RotatableHydrogenEnvironment",
-    "RotatableHydrogenLocalSite",
-    "RotatableHydrogenPlacementSpec",
-    "RotatableHydrogenSearch",
-    "build_rotatable_hydrogen_environments",
-    "build_rotatable_hydrogen_search",
-    "rotatable_hydrogen_donor_atom_name",
-    "rotatable_hydrogen_placement_spec",
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +31,7 @@ class _RotatableHydrogenEnvironmentSite:
     y: float
     z: float
     element: str
+    is_acceptor: bool
     charge: float
     sigma_nm: float
     epsilon_kj_mol: float
@@ -229,8 +220,31 @@ def build_rotatable_hydrogen_environments(
     *,
     residues: tuple[CompletionResiduePayload, ...],
     templates: Sequence[ResidueTemplate | None],
+    polar_chemistry: PolarContactChemistry,
 ) -> tuple[RotatableHydrogenEnvironment, ...]:
-    """Pack per-residue interaction environments for rotatable hydrogen search."""
+    """Pack per-residue interaction environments for rotatable hydrogen search.
+
+    Parameters
+    ----------
+    residues : tuple[CompletionResiduePayload, ...]
+        Coordinate payloads in chain order; H may be omitted for placement.
+    templates : Sequence[ResidueTemplate or None]
+        Aligned placement templates and partial-charge parameters.
+    polar_chemistry : PolarContactChemistry
+        Current full-structure chemistry, before H are omitted from payloads.
+
+    Returns
+    -------
+    tuple[RotatableHydrogenEnvironment, ...]
+        One environment per payload, with independently derived acceptor flags.
+
+    Raises
+    ------
+    ValueError
+        If templates and residues have different lengths.
+    UnknownElementRadiusError
+        If an active scoring site has no supported radius.
+    """
 
     placement_specs = tuple(
         None
@@ -248,6 +262,7 @@ def build_rotatable_hydrogen_environments(
         environment_sites = _rotatable_hydrogen_environment_sites(
             residues=residues,
             templates=templates,
+            polar_chemistry=polar_chemistry,
         )
         max_hydrogen_site_interaction_horizon_angstrom = (
             max_rotatable_hydrogen_interaction_horizon_angstrom(
@@ -278,6 +293,7 @@ def build_rotatable_hydrogen_environments(
                     atom_y=(),
                     atom_z=(),
                     elements=(),
+                    acceptors=(),
                     charges=(),
                     sigmas_nm=(),
                     epsilons_kj_mol=(),
@@ -291,11 +307,15 @@ def build_rotatable_hydrogen_environments(
         atom_y: list[float] = []
         atom_z: list[float] = []
         elements: list[str] = []
+        acceptors: list[bool] = []
         charges: list[float] = []
         sigmas_nm: list[float] = []
         epsilons_kj_mol: list[float] = []
         donor_position = residue.residue_geometry.position(
             placement_spec.donor_atom_name
+        )
+        supports_donor = polar_chemistry.supports_donor(
+            AtomRef(residue.residue_id, placement_spec.donor_atom_name)
         )
         interaction_radius_sq = _rotatable_hydrogen_environment_radius_sq(
             placement_spec,
@@ -318,6 +338,7 @@ def build_rotatable_hydrogen_environments(
             atom_y.append(site.y)
             atom_z.append(site.z)
             elements.append(site.element)
+            acceptors.append(supports_donor and site.is_acceptor)
             charges.append(site.charge)
             sigmas_nm.append(site.sigma_nm)
             epsilons_kj_mol.append(site.epsilon_kj_mol)
@@ -329,12 +350,14 @@ def build_rotatable_hydrogen_environments(
                 atom_y=tuple(atom_y),
                 atom_z=tuple(atom_z),
                 elements=tuple(elements),
+                acceptors=tuple(acceptors),
                 charges=tuple(charges),
                 sigmas_nm=tuple(sigmas_nm),
                 epsilons_kj_mol=tuple(epsilons_kj_mol),
                 local_sites=_rotatable_hydrogen_local_sites(
                     residue=residue,
                     template=template,
+                    polar_chemistry=polar_chemistry,
                 ),
             )
         )
@@ -346,6 +369,7 @@ def _rotatable_hydrogen_environment_sites(
     *,
     residues: tuple[CompletionResiduePayload, ...],
     templates: Sequence[ResidueTemplate | None],
+    polar_chemistry: PolarContactChemistry,
 ) -> tuple[_RotatableHydrogenEnvironmentSite, ...]:
     """Return reusable chain-local heavy sites for rotatable-H scoring."""
 
@@ -368,6 +392,8 @@ def _rotatable_hydrogen_environment_sites(
                     y=atom_position.y,
                     z=atom_position.z,
                     element=atom_site.element,
+                    is_acceptor=atom_site.name
+                    in polar_chemistry.acceptor_names(residue.residue_id),
                     charge=0.0 if atom_parameters is None else atom_parameters.charge,
                     sigma_nm=(
                         0.0 if atom_parameters is None else atom_parameters.sigma_nm
@@ -414,6 +440,7 @@ def _rotatable_hydrogen_local_sites(
     *,
     residue: CompletionResiduePayload,
     template: ResidueTemplate | None,
+    polar_chemistry: PolarContactChemistry,
 ) -> tuple[RotatableHydrogenLocalSite, ...]:
     """Return same-residue heavy sites relevant to rotatable-H scoring."""
 
@@ -436,9 +463,16 @@ def _rotatable_hydrogen_local_sites(
                 x=atom_position.x,
                 y=atom_position.y,
                 z=atom_position.z,
-                bond_hops_from_donor=template.bond_hop_distance(
-                    donor_atom_name,
-                    atom_site.name,
+                bond_hops_from_donor=polar_chemistry.bond_hop_distance(
+                    AtomRef(residue.residue_id, donor_atom_name),
+                    AtomRef(residue.residue_id, atom_site.name),
+                ),
+                is_acceptor=(
+                    polar_chemistry.supports_donor(
+                        AtomRef(residue.residue_id, donor_atom_name)
+                    )
+                    and atom_site.name
+                    in polar_chemistry.acceptor_names(residue.residue_id)
                 ),
             )
         )
@@ -459,3 +493,16 @@ def rotatable_hydrogen_donor_atom_name(
         return None
 
     return spec.donor_atom_name
+
+
+__all__ = [
+    "ROTATABLE_HYDROGEN_SPECS",
+    "RotatableHydrogenEnvironment",
+    "RotatableHydrogenLocalSite",
+    "RotatableHydrogenPlacementSpec",
+    "RotatableHydrogenSearch",
+    "build_rotatable_hydrogen_environments",
+    "build_rotatable_hydrogen_search",
+    "rotatable_hydrogen_donor_atom_name",
+    "rotatable_hydrogen_placement_spec",
+]

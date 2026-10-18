@@ -77,6 +77,28 @@ compatibility, clashes, stereochemistry, geometry, issue burden, and search
 depth. The returned structure is the preferred terminal candidate, not merely
 the last action executed.
 
+## Local Refinement Assessment
+
+Local refinement measures contacts involving the selected residues, including
+contacts with retained ligands and cofactors. Heavy atoms and H/D/T participate;
+H-H pairs keep their usual exclusion. This default does not depend on the force
+field. Low-level callers supplying a contact basis keep its explicit policy.
+
+The no-CONECT parser probe runs full RDKit sanitation. A successful parse can
+still attach H to a different heavy atom, so the probe separately checks
+attachments against declared canonical H/D/T parents. It does not guess missing
+parents or rewrite the structure's topology.
+Observed noncanonical attachments also contribute to the parser deficits used
+by correction planning, even when sanitation succeeds.
+
+Local candidate comparison puts confirmed parser failure first, then observed
+noncanonical parser bonds, steric clashes and overlap, and soft contact proxies.
+Unknown parser status is not evidence of success or failure. Equal quality is
+not regression, and a local improvement need not fix a remote parser failure.
+Existing checks for new stereo violations and severe restraint-backed bond
+distortion still apply. This is endpoint assessment, not selection of additional
+intermediate optimization frames.
+
 ## Complete, Partial, And Unsupported Outcomes
 
 A processing run can return a useful structure without satisfying every goal.

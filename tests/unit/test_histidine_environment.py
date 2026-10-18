@@ -17,18 +17,24 @@ from protrepair.chemistry.radii import (
     covalent_radius_angstrom,
 )
 from protrepair.chemistry.standard.components import build_standard_component_library
-from protrepair.geometry import Vec3
+from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.io import read_structure_string, write_structure_string
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
     BondRelationshipType,
     StructureTopology,
     TopologyBond,
 )
+from protrepair.transformer.completion.hydrogen import core
+from protrepair.transformer.completion.hydrogen.protonation import (
+    PrasRatioHistidineProtonationRequest,
+)
 from protrepair.transformer.completion.hydrogen.repair import add_hydrogens
+from protrepair.transformer.completion.hydrogen.scoring import RotatableHydrogenSearch
 
 
 def _point(name: str, distance: float = 0.0, bend: float = 0.0) -> Vec3:
@@ -46,6 +52,7 @@ def _source(
     source_h: str | None = None,
     isotope: str = "H",
     reverse: bool = False,
+    serine: bool = False,
 ):
     atoms = [
         ("N", "N", Vec3(-3.6, 1.1, 0.8)),
@@ -134,6 +141,20 @@ def _source(
             entries.append(("CA", "C", position, "GLY", "B", number, ""))
         else:
             raise AssertionError(motif)
+    if serine:
+        entries.extend(
+            (name, element, Vec3(*position), "SER", "A", 2, "")
+            for name, element, position in (
+                ("N", "N", (1.8, 2.3, 3.1)),
+                ("CA", "C", (2.3, 1.0, 2.8)),
+                ("C", "C", (3.6, 0.8, 3.5)),
+                ("O", "O", (4.4, -0.1, 3.1)),
+                ("OXT", "O", (3.9, 1.5, 4.5)),
+                ("CB", "C", (1.3, 0.0, 3.3)),
+                ("OG", "O", (0.0, 0.0, 2.8)),
+            )
+        )
+        entries.sort(key=lambda entry: (entry[4], entry[5]))
     if reverse:
         entries.reverse()
     lines = [
@@ -198,6 +219,140 @@ def _with_bonds(source, bonds):
         polymer_blueprint=source.polymer_blueprint,
         provenance=source.provenance,
     )
+
+
+def _scored_ring_roles(monkeypatch, source):
+    geometry = source.residue_geometry(
+        source.constitution.residue_index(ResidueId("A", 1))
+    )
+    positions = {
+        name: (point.x, point.y, point.z)
+        for name in ("ND1", "NE2")
+        for point in (geometry.position(name),)
+    }
+    observed = []
+    original = RotatableHydrogenSearch.optimized_coordinate
+
+    def capture(search, environment):
+        if environment.residue_id == ResidueId("A", 2):
+            roles = {
+                name: flag
+                for name, position in positions.items()
+                for x, y, z, flag in zip(
+                    environment.atom_x,
+                    environment.atom_y,
+                    environment.atom_z,
+                    environment.acceptors,
+                    strict=True,
+                )
+                if (x, y, z) == position
+            }
+            observed.append(roles)
+        return original(search, environment)
+
+    monkeypatch.setattr(RotatableHydrogenSearch, "optimized_coordinate", capture)
+    return observed
+
+
+@pytest.mark.parametrize(
+    "contacts,protonation_request,expected",
+    [
+        ((), None, {"ND1": True, "NE2": False}),
+        ((("ND1", 2.8, 0, "carbonyl"),), None, {"ND1": False, "NE2": True}),
+        ((), PrasRatioHistidineProtonationRequest(1.0), {"ND1": False, "NE2": False}),
+    ],
+    ids=("epsilon", "delta", "cation"),
+)
+def test_rotatable_h_scoring_uses_realized_histidine_chemistry(
+    monkeypatch, contacts, protonation_request, expected
+):
+    source = _source(contacts=contacts, serine=True)
+    observed = _scored_ring_roles(monkeypatch, source)
+    result = add_hydrogens(
+        source, prepare_heavy_atoms=False, histidine_protonation=protonation_request
+    )
+
+    assert not result.has_errors()
+    serine = result.structure.constitution.residue_or_ligand(ResidueId("A", 2))
+    assert serine is not None and serine.has_atom_site("HG")
+    assert observed and all(roles == expected for roles in observed)
+
+
+def test_cationic_repreparation_cannot_reuse_a_neutral_acceptor(monkeypatch):
+    initial = add_hydrogens(_source(serine=True), prepare_heavy_atoms=False).structure
+    source = initial.without_atom_refs(
+        tuple(
+            initial.constitution.atom_ref_at(AtomIndex(i))
+            for i, atom in enumerate(initial.constitution.atom_slots)
+            if atom.is_hydrogen()
+        )
+    )
+    observed = _scored_ring_roles(monkeypatch, source)
+    result = add_hydrogens(
+        source,
+        prepare_heavy_atoms=False,
+        histidine_protonation=PrasRatioHistidineProtonationRequest(1.0),
+    )
+
+    assert not result.has_errors()
+    assert observed and all(roles == {"ND1": False, "NE2": False} for roles in observed)
+
+
+def test_scoped_serine_does_not_borrow_unrealized_histidine_choices(monkeypatch):
+    source = _source(serine=True)
+    observed = _scored_ring_roles(monkeypatch, source)
+    result = add_hydrogens(
+        source,
+        prepare_heavy_atoms=False,
+        target_residue_ids=frozenset({ResidueId("A", 2)}),
+    )
+
+    assert not result.has_errors()
+    assert observed and all(roles == {"ND1": False, "NE2": False} for roles in observed)
+    assert result.structure.constitution.residue_or_ligand(
+        ResidueId("A", 1)
+    ) == source.constitution.residue_or_ligand(ResidueId("A", 1))
+
+
+def test_failed_histidine_placement_does_not_publish_selected_contact_roles(
+    monkeypatch,
+):
+    source = _source(serine=True)
+    original = core.place_polymer_microstate_hydrogens
+
+    def fail_histidine(context, residue_id, site, **kwargs):
+        if (
+            site.template.component_id == "HIS"
+            and site.kind is PolymerChemicalSite.SIDECHAIN
+        ):
+            raise GeometryPlacementError("deliberately unavailable ring placement")
+        return original(context, residue_id, site, **kwargs)
+
+    monkeypatch.setattr(core, "place_polymer_microstate_hydrogens", fail_histidine)
+    observed = _scored_ring_roles(monkeypatch, source)
+    result = add_hydrogens(source, prepare_heavy_atoms=False)
+
+    assert result.issues
+    assert not result.has_errors()
+    assert observed and all(roles == {"ND1": False, "NE2": False} for roles in observed)
+    serine = result.structure.constitution.residue_or_ligand(ResidueId("A", 2))
+    assert serine is not None and serine.has_atom_site("HG")
+
+
+def test_reordered_placement_preserves_original_isotope_and_heavy_geometry(monkeypatch):
+    source = _source(source_h="ND1", isotope="D", serine=True)
+    observed = _scored_ring_roles(monkeypatch, source)
+    result = add_hydrogens(source, prepare_heavy_atoms=False)
+
+    assert not result.has_errors()
+    assert observed and all(roles == {"ND1": False, "NE2": True} for roles in observed)
+    for index, position in source.geometry.iter_positions():
+        ref = source.constitution.atom_ref_at(index)
+        after = result.structure.constitution.atom_index(ref)
+        assert result.structure.geometry.position(after) == position
+        assert result.structure.constitution.atom_site_at(
+            after
+        ) == source.constitution.atom_site_at(index)
 
 
 @pytest.mark.parametrize("nitrogen,expected", (("ND1", (1, 0)), ("NE2", (0, 1))))

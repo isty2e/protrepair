@@ -93,3 +93,37 @@ their endpoint proximity and do not become unexpected near-covalent pathology.
 An `UNKNOWN` relationship does not suppress a finding. Same-residue heavy-atom
 eligibility follows the explicit near-covalent policy while known template-bond
 neighbors remain excluded.
+
+## Polar Contacts
+
+A close H contact is not necessarily a steric clash. Clash checks, near-covalent
+diagnostics and H-orientation scoring share a conservative hydrogen-bond
+exemption. It applies within a residue as well as between residues, after each
+consumer's bonded-neighbor exclusions.
+
+The H must have a supported N, O or S parent, and the other atom must have
+compatible acceptor chemistry. Formal charge, bond order, attached H and
+resonance context matter: an amide N or protonated amine is not an acceptor just
+because it is nitrogen. Known canonical bonds take precedence. Supported
+templates can fill absent bonds or interpret an exact match to an untyped
+CONECT record; they cannot move H to a nearer atom or override a conflicting
+attachment. Standard H-numbering variants are recognized only when their
+template parent is unambiguous, including branched methylene names such as ILE
+HG12/HG13. These projections do not change topology.
+
+Carboxyl oxygens can be recognized from their carbon/oxygen bond context before
+formal charges are available, including stock ASP, GLU and terminal groups. This
+does not assign charges. An observed acid O-H or conflicting source chemistry
+still limits acceptor eligibility.
+
+The current geometry envelope is H...acceptor distance 1.6-2.4 A, donor-H
+distance at most 1.45 A, and donor-H...acceptor angle greater than 120 degrees.
+These are diagnostic heuristics, not universal chemical limits or a force-field
+energy model. Metal-bound, contradictory or insufficiently specified chemistry
+receives no exemption. A remaining warning is therefore not proof that the
+contact is physically impossible, and RDKit readability is assessed separately.
+
+Hydrogen completion applies coupled polymer site changes before building the
+fixed-H placement environment. Scoring therefore sees the chemistry actually
+applied, not an earlier protonation state or an unrealized preparation choice.
+Failed and untargeted sites keep their current state and existing diagnostics.

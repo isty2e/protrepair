@@ -1301,8 +1301,8 @@ def test_refinement_metrics_regressed_rejects_full_structure_sanitize_loss() -> 
     assert refinement_metrics_regressed(before_metrics, after_metrics)
 
 
-def test_refinement_rejects_unresolved_sanitize_without_global_relief() -> None:
-    """Unreadable candidates should still fail when global burden does not improve."""
+def test_refinement_does_not_reject_equal_quality_for_remote_sanitize_failure() -> None:
+    """Unchanged remote burden does not turn equal local quality into regression."""
 
     before_metrics = _acceptance_metrics(
         focus_clash_count=0,
@@ -1323,7 +1323,7 @@ def test_refinement_rejects_unresolved_sanitize_without_global_relief() -> None:
         whole_structure_rdkit_sanitize_readable=False,
     )
 
-    assert refinement_metrics_rejected(before_metrics, after_metrics)
+    assert not refinement_metrics_rejected(before_metrics, after_metrics)
 
 
 def test_refinement_accepts_unresolved_sanitize_with_global_relief() -> None:

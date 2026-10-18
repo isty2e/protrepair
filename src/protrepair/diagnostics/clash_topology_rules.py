@@ -6,12 +6,14 @@ from math import acos, degrees, isfinite, sqrt
 from typing_extensions import Protocol
 
 from protrepair.chemistry import ResidueTemplate
+from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 
 HYDROGEN_BOND_MIN_DISTANCE_ANGSTROM = 1.6
 HYDROGEN_BOND_MAX_DISTANCE_ANGSTROM = 2.4
+HYDROGEN_DONOR_MAX_DISTANCE_ANGSTROM = 1.45
 # Baker-Hubbard-style diagnostic cutoff: DOI 10.1016/0079-6107(84)90007-5.
 HYDROGEN_BOND_MIN_DONOR_HYDROGEN_ACCEPTOR_ANGLE_DEGREES = 120.0
 # Clash classification treats undefined tuple-vector angles as non-exempt;
@@ -23,6 +25,12 @@ ACCEPTOR_ELEMENTS = frozenset({"N", "O", "S"})
 
 class ClashTopologyResidueContext(Protocol):
     """Residue context surface required by clash topology exclusions."""
+
+    @property
+    def polar_chemistry(self) -> PolarContactChemistry:
+        """Return the shared coordinate-independent polar-contact observation."""
+
+        ...
 
     @property
     def residue_site(self) -> ResidueSite:
@@ -44,7 +52,7 @@ class ClashTopologyResidueContext(Protocol):
 
     @property
     def hydrogen_anchor_by_name(self) -> Mapping[str, str]:
-        """Return inferred hydrogen anchors."""
+        """Return chemically supported hydrogen anchors."""
 
         ...
 
@@ -197,17 +205,11 @@ def same_residue_bond_hops(
     left_site: ClashTopologyAtomSite,
     right_site: ClashTopologyAtomSite,
 ) -> int | None:
-    """Return same-residue bond hops for two atom sites if the template knows them."""
+    """Return residue-local hops from canonical and supported projected bonds."""
 
-    template = left_site.context.template
-    if template is None:
-        return None
-
-    return atom_to_atom_bond_hops_within_residue(
-        left_site.atom_name,
-        right_site.atom_name,
-        context=left_site.context,
-        template=template,
+    return left_site.context.polar_chemistry.bond_hop_distance(
+        AtomRef(left_site.residue_id, left_site.atom_name),
+        AtomRef(right_site.residue_id, right_site.atom_name),
     )
 
 
@@ -248,88 +250,12 @@ def atom_to_named_backbone_hops(
 ) -> int | None:
     """Return bond hops from one atom site to a named backbone heavy atom."""
 
-    template = site.context.template
-    if template is None:
+    if not site.context.residue_site.has_atom_site(target_atom_name):
         return None
-
-    return atom_to_atom_bond_hops_within_residue(
-        site.atom_name,
-        target_atom_name,
-        context=site.context,
-        template=template,
+    return site.context.polar_chemistry.bond_hop_distance(
+        AtomRef(site.residue_id, site.atom_name),
+        AtomRef(site.residue_id, target_atom_name),
     )
-
-
-def atom_to_atom_bond_hops_within_residue(
-    atom_name_1: str,
-    atom_name_2: str,
-    *,
-    context: ClashTopologyResidueContext,
-    template: ResidueTemplate,
-) -> int | None:
-    """Return intra-residue bond hops using heavy topology plus inferred H anchors."""
-
-    normalized_atom_name_1 = atom_name_1.strip().upper()
-    normalized_atom_name_2 = atom_name_2.strip().upper()
-    if normalized_atom_name_1 == normalized_atom_name_2:
-        return 0
-
-    atom_name_1_is_hydrogen = atom_is_hydrogen(
-        context.residue_site,
-        normalized_atom_name_1,
-    )
-    atom_name_2_is_hydrogen = atom_is_hydrogen(
-        context.residue_site,
-        normalized_atom_name_2,
-    )
-
-    if not atom_name_1_is_hydrogen and not atom_name_2_is_hydrogen:
-        return template.bond_hop_distance(
-            normalized_atom_name_1,
-            normalized_atom_name_2,
-        )
-
-    if atom_name_1_is_hydrogen and atom_name_2_is_hydrogen:
-        anchor_atom_name_1 = context.hydrogen_anchor_by_name.get(normalized_atom_name_1)
-        anchor_atom_name_2 = context.hydrogen_anchor_by_name.get(normalized_atom_name_2)
-        if anchor_atom_name_1 is None or anchor_atom_name_2 is None:
-            return None
-        if anchor_atom_name_1 == anchor_atom_name_2:
-            return 2
-        heavy_hops = template.bond_hop_distance(anchor_atom_name_1, anchor_atom_name_2)
-        if heavy_hops is None:
-            return None
-        return heavy_hops + 2
-
-    if atom_name_1_is_hydrogen:
-        anchor_atom_name = context.hydrogen_anchor_by_name.get(normalized_atom_name_1)
-        if anchor_atom_name is None:
-            return None
-        if anchor_atom_name == normalized_atom_name_2:
-            return 1
-        heavy_hops = template.bond_hop_distance(
-            anchor_atom_name,
-            normalized_atom_name_2,
-        )
-        if heavy_hops is None:
-            return None
-        return heavy_hops + 1
-
-    anchor_atom_name = context.hydrogen_anchor_by_name.get(normalized_atom_name_2)
-    if anchor_atom_name is None:
-        return None
-    if anchor_atom_name == normalized_atom_name_1:
-        return 1
-    heavy_hops = template.bond_hop_distance(normalized_atom_name_1, anchor_atom_name)
-    if heavy_hops is None:
-        return None
-    return heavy_hops + 1
-
-
-def atom_is_hydrogen(residue_site: ResidueSite, atom_name: str) -> bool:
-    """Return whether a named atom within a residue is a hydrogen."""
-
-    return residue_site.atom_site(atom_name).is_hydrogen()
 
 
 def probable_hydrogen_bond(
@@ -338,9 +264,6 @@ def probable_hydrogen_bond(
     pair_distance: float,
 ) -> bool:
     """Return whether one H-involving pair is plausibly a hydrogen bond."""
-
-    if left_site.residue_id == right_site.residue_id:
-        return False
 
     if left_site.is_hydrogen() == right_site.is_hydrogen():
         return False
@@ -358,10 +281,23 @@ def probable_hydrogen_bond(
         hydrogen_site = right_site
         acceptor_site = left_site
 
+    if (
+        acceptor_site.atom_name
+        not in acceptor_site.context.polar_chemistry.acceptor_names(
+            acceptor_site.residue_id
+        )
+    ):
+        return False
+
     anchor_atom_name = hydrogen_site.context.hydrogen_anchor_by_name.get(
         hydrogen_site.atom_name
     )
     if anchor_atom_name is None:
+        return False
+
+    if not hydrogen_site.context.polar_chemistry.supports_donor(
+        AtomRef(hydrogen_site.residue_id, anchor_atom_name)
+    ):
         return False
 
     donor_atom = hydrogen_site.context.residue_site.atom_site(anchor_atom_name)
@@ -435,6 +371,7 @@ def probable_hydrogen_bond_geometry(
     acceptor_norm = _vector_norm(acceptor_vector)
     if (
         donor_norm <= HYDROGEN_BOND_DEGENERATE_NORM_EPSILON
+        or donor_norm > HYDROGEN_DONOR_MAX_DISTANCE_ANGSTROM
         or acceptor_norm <= HYDROGEN_BOND_DEGENERATE_NORM_EPSILON
     ):
         return False

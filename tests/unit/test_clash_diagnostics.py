@@ -384,7 +384,7 @@ def test_empty_clash_basis_uses_minimum_candidate_cell_size() -> None:
         component_library=build_standard_component_library(),
     )
 
-    assert basis.atom_site_bases == ()
+    assert basis.bind_context(structure).atom_sites == ()
     assert basis.candidate_cell_size_angstrom == 1.0
     assert (
         bind_clash_detection_context(structure, basis=basis).detect_clashes().is_empty()
@@ -1390,6 +1390,21 @@ def build_hydrogen_bond_candidate_structure(
                                 acceptor_atom_name,
                                 acceptor_element,
                                 acceptor_position,
+                            ),
+                            *(
+                                (
+                                    atom(
+                                        "C",
+                                        "C",
+                                        Vec3(
+                                            acceptor_position.x - 1.2,
+                                            acceptor_position.y,
+                                            acceptor_position.z,
+                                        ),
+                                    ),
+                                )
+                                if acceptor_atom_name == "O"
+                                else ()
                             ),
                         ),
                     ),

@@ -55,6 +55,24 @@
 
 ### Fixed
 
+- realize coupled polymer chemistry before scoring fixed rotatable H, so
+  protonation changes cannot leave stale acceptors in the placement environment
+- classify supported polar contacts from bonded chemistry rather than element
+  or nearest-atom guesses, including intramolecular H bonds, while retaining
+  the existing geometric cutoffs and source attachment authority; apply the
+  same eligibility to rotatable-H placement, which can change generated H
+  positions without changing the force-field terms
+- recognize charge-unspecified carboxyl oxygens before H placement and preserve
+  branched methylene parents across PDB H naming conventions, without assigning
+  charges or renaming deposited atoms
+- use full RDKit sanitation for no-CONECT readability and retain unresolved
+  failure evidence when localization fails; report H attachments outside
+  canonical topology separately, even when sanitation succeeds; this observed
+  attachment burden can create parser deficits used by correction planning
+- include retained contacts in default local refinement assessment and compare
+  actual parser burden, then steric clashes, before soft contact proxies;
+  equal quality is not regression, and local improvement need not resolve an
+  unrelated remote parser failure
 - avoid inferring hydrides or hydrogen halides for retained monatomic metal and
   halogen inventories; preserve unknown charges and require molecular evidence
   when source H/D/T is present

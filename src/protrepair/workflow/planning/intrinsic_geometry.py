@@ -1,6 +1,10 @@
 """Decision-owned intrinsic geometry facts with action eligibility overlays."""
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
+from protrepair.diagnostics.clashes import (
+    ClashDetectionBasis,
+    prepare_clash_detection_basis,
+)
 from protrepair.scope import ResidueSetScope
 from protrepair.state import (
     OrientationCorrectionEligibilityState,
@@ -12,6 +16,7 @@ from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
 from protrepair.transformer.discrete.axis_rotation import (
     select_best_discrete_correction_candidate,
+    snapshot_has_applicable_axis_rotation_correction,
 )
 
 
@@ -49,6 +54,7 @@ def derive_orientation_correction_eligibility_state(
     """Return whether one structure admits a discrete orientation correction."""
 
     snapshot = ProteinStructureSnapshot.from_structure(structure)
+    clash_basis: ClashDetectionBasis | None = None
     for residue in structure.constitution.iter_residues(include_ligands=False):
         atom_input = AtomInput(
             atom_indices=structure.constitution.atom_indices_for_residue(
@@ -57,6 +63,16 @@ def derive_orientation_correction_eligibility_state(
             basis=AtomInputBasis.RESIDUEWISE,
             selected_scope=ResidueSetScope(residue_ids=(residue.residue_id,)),
         )
+        if not snapshot_has_applicable_axis_rotation_correction(
+            snapshot, atom_input, component_library
+        ):
+            continue
+
+        if clash_basis is None:
+            clash_basis = prepare_clash_detection_basis(
+                structure, component_library=component_library
+            )
+
         if (
             select_best_discrete_correction_candidate(
                 snapshot=snapshot,
@@ -64,6 +80,7 @@ def derive_orientation_correction_eligibility_state(
                 structure=structure,
                 residue_id=residue.residue_id,
                 component_library=component_library,
+                clash_basis=clash_basis,
             )
             is not None
         ):

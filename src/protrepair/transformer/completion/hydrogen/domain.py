@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from protrepair.chemistry import ResidueTemplate
+from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.geometry import Vec3
 from protrepair.scope import ResidueSetScope
 from protrepair.structure.constitution import ResidueSite
@@ -53,14 +54,40 @@ class HydrogenCompletionEnvironment:
         residues: tuple[CompletionResiduePayload, ...],
         *,
         templates: Sequence[ResidueTemplate | None],
+        polar_chemistry: PolarContactChemistry,
         disulfide_bonded_residue_ids: frozenset[ResidueId],
     ) -> "HydrogenCompletionEnvironment":
-        """Build the shared hydrogen environment for one chain residue tuple."""
+        """Build the shared hydrogen environment for one chain residue tuple.
+
+        Parameters
+        ----------
+        residues : tuple[CompletionResiduePayload, ...]
+            Chain-local coordinate payloads used for placement.
+        templates : Sequence[ResidueTemplate or None]
+            Templates aligned with the payloads.
+        polar_chemistry : PolarContactChemistry
+            Current full-structure chemistry, including existing H evidence.
+        disulfide_bonded_residue_ids : frozenset[ResidueId]
+            Canonical disulfide members in this chain.
+
+        Returns
+        -------
+        HydrogenCompletionEnvironment
+            Placement environments sharing the same chemistry interpretation.
+
+        Raises
+        ------
+        ValueError
+            If payload/template alignment or residue membership is invalid.
+        UnknownElementRadiusError
+            If an active scoring site has no supported radius.
+        """
 
         return cls(
             rotatable_environments=build_rotatable_hydrogen_environments(
                 residues=residues,
                 templates=templates,
+                polar_chemistry=polar_chemistry,
             ),
             disulfide_bonded_residue_ids=disulfide_bonded_residue_ids,
         )

@@ -25,6 +25,7 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
 )
+from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.chemistry.retained_non_polymer.coordination import (
     CoordinatedComponentPreparation,
     coordinated_component_preparation,
@@ -299,6 +300,9 @@ def _execute_retained_non_polymer_hydrogen_stage(
     fixed_hydrogen_atom_refs: set[AtomRef] = set()
     repairs: list[RepairEvent] = []
     issues: list[ValidationIssue] = []
+    polar_chemistry = PolarContactChemistry(
+        structure.constitution, structure.topology, component_library
+    )
     bonds_by_residue = _bonds_by_residue(
         structure, target_residue_ids=target_residue_ids
     )
@@ -395,6 +399,7 @@ def _execute_retained_non_polymer_hydrogen_stage(
             result = _hydrogenate_retained_non_polymer_payload(
                 source_payload.without_atom_sites(_hydrogen_atom_names(source_payload)),
                 component_library=component_library,
+                polar_chemistry=polar_chemistry,
                 chemistry_evidence=evidence,
                 coordination_preparation=coordination_preparation,
                 source_payload=source_payload.without_atom_sites(replaceable_hydrogens),
@@ -737,6 +742,7 @@ def _hydrogenate_retained_non_polymer_payload(
     payload: CompletionResiduePayload,
     *,
     component_library: ComponentLibrary,
+    polar_chemistry: PolarContactChemistry,
     chemistry_evidence: RetainedNonPolymerChemistryEvidence | None = None,
     coordination_preparation: CoordinatedComponentPreparation | None = None,
     source_payload: CompletionResiduePayload | None = None,
@@ -940,6 +946,7 @@ def _hydrogenate_retained_non_polymer_payload(
             hydrogenated_payload = _apply_retained_non_polymer_hydrogen_directive(
                 payload,
                 template=template,
+                polar_chemistry=polar_chemistry,
                 placement_directive=placement_directive,
                 is_disulfide_bonded=is_disulfide_bonded,
                 template_binding=template_binding,
@@ -2003,6 +2010,7 @@ def _apply_retained_non_polymer_hydrogen_directive(
     payload: CompletionResiduePayload,
     *,
     template: ResidueTemplate,
+    polar_chemistry: PolarContactChemistry,
     placement_directive: StaticHydrogenPlacementDirective
     | RigidHydrogenPlacementDirective,
     is_disulfide_bonded: bool,
@@ -2013,6 +2021,7 @@ def _apply_retained_non_polymer_hydrogen_directive(
     environment = HydrogenCompletionEnvironment.from_payloads(
         (payload,),
         templates=(template,),
+        polar_chemistry=polar_chemistry,
         disulfide_bonded_residue_ids=(
             frozenset((payload.residue_id,)) if is_disulfide_bonded else frozenset()
         ),
