@@ -4,6 +4,29 @@ ProtRepair treats FASPR as a heavy-atom side-chain packing backend. FASPR does
 not own general hydrogen completion, retained-ligand chemistry, or final
 workflow planning.
 
+## Coordinate And Chemical Authority
+
+The packing plan decides which sidechains may move. Backbone atoms, OXT,
+fixed residues and retained ligands keep their exact canonical coordinates.
+The adapter compares protected native coordinates with the serialized input,
+allowing only FASPR's float32 conversion and three-decimal output rounding.
+Actual movement outside the plan is a packing error, not a change to adopt.
+An explicit `mutable_residue_ids` set also constrains full-structure packing.
+
+For unchanged components, packing preserves current atom charges, occupancy,
+B factors and altloc metadata. Blank charge fields in FASPR output do not mean
+neutral or unknown chemistry. Original input observations remain separate;
+packing does not replay them over an applied microstate or explicit override.
+
+Requested component mutations discard the old residue's H, charges and saved
+microstate choices. New sidechain bonds come from the new component template,
+not from old bonds between atoms with matching names. Source-declared bonds
+within the standard residue scaffold can be replaced by an authorized mutation;
+the original declarations remain in the input observation. Inter-residue,
+non-covalent and nonstandard explicit sidechain links are rejected rather than
+losing linked chemistry. The result still needs the usual chemical-state and
+hydrogen completion steps; FASPR does not choose its protonation state.
+
 ## Polymer Hydrogen Merge
 
 The FASPR adapter prepares input by stripping polymer hydrogens because FASPR
@@ -15,9 +38,8 @@ Hydrogen preservation is residue-local and evidence-based:
 
 - Preserve original polymer hydrogens only when the residue heavy-atom state is
   equivalent before and after packing.
-- Treat fixed-vs-packed labels as hints, not proof. A fixed residue whose heavy
-  atoms moved has invalidated hydrogens; a selected residue whose heavy atoms are
-  unchanged may retain hydrogens.
+- Fixed labels alone are not proof: protected movement is checked before the
+  merge. A selected residue whose heavy atoms are unchanged may retain hydrogens.
 - Preserve atom sites, coordinates, and topology bonds together. A preserved
   hydrogen without its anchor bond is invalid canonical topology.
 - Drop hydrogen atom sites and hydrogen topology bonds together when heavy atoms

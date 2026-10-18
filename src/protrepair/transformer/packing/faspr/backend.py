@@ -1,13 +1,15 @@
 """FASPR specialization of the generic side-chain packing backend seam."""
 
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import isfinite
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import numpy as np
 from typing_extensions import Self
 
+from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.errors import (
@@ -32,10 +34,17 @@ from protrepair.structure.constitution import (
     ResidueSite,
     StructureConstitution,
 )
-from protrepair.structure.geometry import StructureGeometry
+from protrepair.structure.geometry import AtomGeometry, StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
-from protrepair.structure.topology import AtomTopology, StructureTopology
+from protrepair.structure.topology import (
+    AtomTopology,
+    BondProvenance,
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+    is_source_provenance,
+)
 from protrepair.transformer.packing.alphabet import PackingAlphabet
 from protrepair.transformer.packing.domain import (
     PackingCapabilities,
@@ -136,7 +145,6 @@ class FasprPackingBackend:
             executable_path=runtime_assets.executable_path,
             timeout_seconds=self.timeout_seconds,
         )
-        validate_faspr_output_shape(plan, packed_structure)
         changed_residue_ids = plan.changed_residue_ids_after(packed_structure)
         issues = infer_packing_issues(plan, packed_structure)
         return PackingResult(
@@ -201,10 +209,21 @@ class FasprRuntimeAssets:
 
 @dataclass(frozen=True, slots=True)
 class FasprExecutionInput:
-    """Backend-specific execution input derived from a generic packing plan."""
+    """FASPR transport and the canonical plan governing its output.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Polymer-H-stripped context; retained ligands are excluded at native
+        serialization.
+    plan : PackingPlan
+        Current chemical state, requested sequence and movement authority.
+    sequence_override : str or None, default=None
+        Native sequence encoding, including fixed-residue labels.
+    """
 
     structure: ProteinStructure
-    original_structure: ProteinStructure
+    plan: PackingPlan
     sequence_override: str | None = None
 
     @classmethod
@@ -215,7 +234,7 @@ class FasprExecutionInput:
         sequence_override = build_faspr_sequence_override(plan)
         return cls(
             structure=prepared_structure,
-            original_structure=plan.structure,
+            plan=plan,
             sequence_override=sequence_override,
         )
 
@@ -286,6 +305,9 @@ def prepare_structure_for_faspr(plan: PackingPlan) -> ProteinStructure:
         plan.structure.constitution.atom_index(atom_ref)
         for atom_ref in removed_atom_ref_set
     )
+    removed_atom_index_values = {
+        atom_index.value for atom_index in removed_atom_indices
+    }
     updated_constitution = plan.structure.constitution.with_chains(prepared_chain_sites)
     return ProteinStructure.from_payload(
         constitution=updated_constitution,
@@ -297,11 +319,7 @@ def prepare_structure_for_faspr(plan: PackingPlan) -> ProteinStructure:
                 for atom_index, atom_topology in enumerate(
                     plan.structure.topology.atom_topologies
                 )
-                if atom_index
-                not in {
-                    removed_atom_index.value
-                    for removed_atom_index in removed_atom_indices
-                }
+                if atom_index not in removed_atom_index_values
             ),
             bonds=plan.structure.topology.bonds_for_constitution(
                 source_constitution=plan.structure.constitution,
@@ -365,6 +383,21 @@ def validate_faspr_output_shape(
         if original_residue_site.residue_id != packed_residue_site.residue_id:
             raise PackingBackendExecutionError(
                 "FASPR changed residue identifiers or order unexpectedly"
+            )
+
+    expected_sequence = build_faspr_sequence_override(plan) or "".join(
+        FASPR_ALPHABET.sequence_for_residues(original_residue_sites)
+    )
+    for residue, expected in zip(packed_residue_sites, expected_sequence, strict=True):
+        if any(site.is_hydrogen() for site in residue.atom_sites):
+            raise PackingBackendExecutionError(
+                "FASPR returned unexpected hydrogen atoms"
+            )
+        if not FASPR_ALPHABET.supports_component(residue.component_id) or (
+            FASPR_ALPHABET.require_token(residue.component_id) != expected.upper()
+        ):
+            raise PackingBackendExecutionError(
+                "FASPR changed a component outside the requested sequence"
             )
 
 
@@ -444,13 +477,10 @@ def run_faspr(
         temp_dir = Path(temp_dir_name)
         input_path = temp_dir / "input.pdb"
         output_path = temp_dir / "output.pdb"
-        input_path.write_text(
-            write_structure_string(
-                _polymer_only_structure(execution_input.structure),
-                FileFormat.PDB,
-            ),
-            encoding="utf-8",
+        input_text = write_structure_string(
+            _polymer_only_structure(execution_input.structure), FileFormat.PDB
         )
+        input_path.write_text(input_text, encoding="utf-8")
 
         command = [str(executable_path), "-i", str(input_path), "-o", str(output_path)]
         if execution_input.sequence_override is not None:
@@ -514,15 +544,280 @@ def run_faspr(
                 "FASPR output did not normalize as a polymer-only structure"
             ) from error
 
+    validate_faspr_output_shape(execution_input.plan, packed_core)
+    projected_input = read_structure_string_with_policy(
+        input_text,
+        FileFormat.PDB,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.REJECT),
+    )
     try:
+        packed_core = _restore_faspr_canonical_state(
+            packed_core=packed_core,
+            projected_input=projected_input,
+            plan=execution_input.plan,
+        )
         return _merge_packed_polymer_with_original_ligands(
             packed_core=packed_core,
-            original_structure=execution_input.original_structure,
+            original_structure=execution_input.plan.structure,
         )
     except ResidueNotFoundError as error:
         raise PackingBackendExecutionError(
             "FASPR produced an unknown residue identifier"
         ) from error
+
+
+def _restore_faspr_canonical_state(
+    *,
+    packed_core: ProteinStructure,
+    projected_input: ProteinStructure,
+    plan: PackingPlan,
+) -> ProteinStructure:
+    """Interpret coordinate-only output before H validity and topology merge."""
+
+    original = plan.structure
+    fixed = frozenset(plan.fixed_residue_ids())
+    chains: list[ChainSite] = []
+    geometries: list[AtomGeometry] = []
+    charges: list[AtomTopology | None] = []
+    mutations: set[ResidueId] = set()
+    for chain in packed_core.constitution.chains:
+        residues: list[ResidueSite] = []
+        for native in chain.residues:
+            current = plan.residue_site(native.residue_id)
+            same_component = current.component_id == native.component_id
+            if not same_component:
+                mutations.add(native.residue_id)
+            native_by_name = {site.name: site for site in native.atom_sites}
+            current_by_name = {site.name: site for site in current.atom_sites}
+            added_names = native_by_name.keys() - current_by_name.keys()
+            if not same_component or added_names:
+                expected_names = frozenset(
+                    build_standard_component_library()
+                    .require(native.component_id)
+                    .expected_polymer_heavy_atom_names()
+                )
+                # Standard FASPR atom names encode C, N, O or S in their first letter.
+                if (
+                    not native_by_name.keys() <= expected_names | {"OXT"}
+                    or (
+                        not same_component
+                        and not expected_names <= native_by_name.keys()
+                    )
+                    or any(
+                        site.element != site.name[0]
+                        for site in native.atom_sites
+                        if not same_component or site.name in added_names
+                    )
+                ):
+                    raise PackingBackendExecutionError(
+                        "FASPR returned an incompatible component scaffold"
+                    )
+            sites = [
+                site
+                for site in current.atom_sites
+                if not site.is_hydrogen()
+                and (same_component or site.name in BACKBONE_ATOM_NAMES | {"OXT"})
+            ]
+            site_names = {site.name for site in sites}
+            sites.extend(
+                site for site in native.atom_sites if site.name not in site_names
+            )
+            if native.residue_id in fixed and any(
+                site.name not in current_by_name for site in sites
+            ):
+                raise PackingBackendExecutionError(
+                    "FASPR added atoms to a fixed residue"
+                )
+
+            for site in sites:
+                ref = AtomRef(native.residue_id, site.name)
+                current_index = original.constitution.resolve_atom_index(ref)
+                native_site = native_by_name.get(site.name)
+                protected = native.residue_id in fixed or site.name in (
+                    BACKBONE_ATOM_NAMES | {"OXT"}
+                )
+                if native_site is None and site.name != "OXT":
+                    raise PackingBackendExecutionError(
+                        f"FASPR omitted required atom {ref.display_token()}"
+                    )
+                if native_site is not None and native_site.element != site.element:
+                    raise PackingBackendExecutionError(
+                        f"FASPR changed atom element {ref.display_token()}"
+                    )
+
+                if protected:
+                    if current_index is None:
+                        raise PackingBackendExecutionError(
+                            f"FASPR added protected atom {ref.display_token()}"
+                        )
+                    if native_site is not None:
+                        _require_faspr_projection_equivalence(
+                            ref, projected_input, packed_core
+                        )
+                    geometry = original.geometry.atom_geometry(current_index)
+                else:
+                    native_index = packed_core.constitution.atom_index(ref)
+                    position = packed_core.geometry.atom_geometry(native_index).position
+                    geometry = (
+                        original.geometry.atom_geometry(current_index).with_position(
+                            position
+                        )
+                        if same_component and current_index is not None
+                        else AtomGeometry(position=position)
+                    )
+                geometries.append(geometry)
+                charges.append(
+                    original.topology.atom_topologies[current_index.value]
+                    if same_component and current_index is not None
+                    else None
+                )
+
+            residues.append(
+                ResidueSite(
+                    component_id=native.component_id,
+                    residue_id=native.residue_id,
+                    atom_sites=tuple(sites),
+                    is_hetero=current.is_hetero,
+                )
+            )
+        chains.append(chain.with_residues(residues))
+
+    constitution = packed_core.constitution.with_chains(chains)
+    return ProteinStructure.from_payload(
+        constitution=constitution,
+        geometry=StructureGeometry(
+            constitution=constitution, atom_geometries=tuple(geometries)
+        ),
+        topology=StructureTopology(
+            constitution=constitution,
+            atom_topologies=tuple(charges),
+            bonds=_faspr_merged_heavy_bonds(
+                original, constitution, mutations=frozenset(mutations)
+            ),
+        ),
+        polymer_blueprint=original.polymer_blueprint,
+        provenance=(
+            replace(
+                original.provenance,
+                microstate_choices=tuple(
+                    choice
+                    for choice in original.provenance.microstate_choices
+                    if choice.residue_id not in mutations
+                ),
+            )
+            if mutations
+            else original.provenance
+        ),
+    )
+
+
+def _require_faspr_projection_equivalence(
+    ref: AtomRef, projected_input: ProteinStructure, packed_core: ProteinStructure
+) -> None:
+    before = projected_input.geometry.atom_geometry(
+        projected_input.constitution.atom_index(ref)
+    ).position
+    after = packed_core.geometry.atom_geometry(
+        packed_core.constitution.atom_index(ref)
+    ).position
+    for expected, actual in zip(before, after, strict=True):
+        # FASPR stores float32 coordinates and writes three decimal places.
+        conversion_error = abs(float(np.float32(expected)) - expected)
+        if abs(actual - expected) > conversion_error + 0.0005 + 1e-10:
+            raise PackingBackendExecutionError(
+                f"FASPR moved protected atom {ref.display_token()}"
+            )
+
+
+def _faspr_merged_heavy_bonds(
+    original: ProteinStructure,
+    constitution: StructureConstitution,
+    *,
+    mutations: frozenset[ResidueId],
+) -> tuple[TopologyBond, ...]:
+    retained_pairs: set[frozenset[AtomRef]] = set()
+    for bond in original.topology.bonds:
+        if any(
+            original.constitution.atom_site_at(index).is_hydrogen()
+            for index in bond.endpoint_pair()
+        ):
+            continue
+        refs = tuple(
+            original.constitution.atom_ref_at(index) for index in bond.endpoint_pair()
+        )
+        altered = any(
+            ref.residue_id in mutations
+            and ref.atom_name not in BACKBONE_ATOM_NAMES | {"OXT"}
+            for ref in refs
+        )
+        if altered:
+            external = refs[0].residue_id != refs[1].residue_id
+            intrinsic = False
+            if not external and bond.relationship_type is BondRelationshipType.COVALENT:
+                residue = original.constitution.residue_site_at(
+                    original.constitution.residue_index(refs[0].residue_id)
+                )
+                intrinsic = refs[1].atom_name in (
+                    build_standard_component_library()
+                    .require(residue.component_id)
+                    .definition.bonded_atom_names(refs[0].atom_name)
+                )
+            if (
+                external
+                or bond.relationship_type is not BondRelationshipType.COVALENT
+                or (is_source_provenance(bond) and not intrinsic)
+            ):
+                raise PackingBackendExecutionError(
+                    "FASPR mutation would invalidate linked chemistry"
+                )
+            continue
+        retained_pairs.add(frozenset(refs))
+
+    bonds = [
+        bond
+        for bond in original.topology.bonds_for_constitution(
+            source_constitution=original.constitution,
+            target_constitution=constitution,
+        )
+        if frozenset(constitution.atom_ref_at(index) for index in bond.endpoint_pair())
+        in retained_pairs
+    ]
+    occupied = {bond.endpoint_pair() for bond in bonds}
+    for residue in constitution.residue_slots:
+        new_names = {
+            site.name
+            for site in residue.atom_sites
+            if original.constitution.resolve_atom_index(
+                AtomRef(residue.residue_id, site.name)
+            )
+            is None
+        }
+        if residue.residue_id not in mutations and not new_names:
+            continue
+        template = build_standard_component_library().require(residue.component_id)
+        for definition in template.definition.bonds:
+            names = (definition.atom_name_1, definition.atom_name_2)
+            if residue.residue_id not in mutations and not new_names.intersection(
+                names
+            ):
+                continue
+            indices = tuple(
+                constitution.resolve_atom_index(AtomRef(residue.residue_id, name))
+                for name in names
+            )
+            if indices[0] is None or indices[1] is None:
+                continue
+            bond = TopologyBond(
+                atom_index_1=indices[0],
+                atom_index_2=indices[1],
+                order=definition.order,
+                aromatic=definition.aromatic,
+                provenance=BondProvenance.TEMPLATE_RESOLVED,
+            )
+            if bond.endpoint_pair() not in occupied:
+                bonds.append(bond)
+                occupied.add(bond.endpoint_pair())
+    return tuple(bonds)
 
 
 def _os_error_reason(error: OSError) -> str:
@@ -661,9 +956,24 @@ def _merge_packed_polymer_with_original_ligands(
             original_structure=original_structure,
             ligand_residue_id_set=ligand_residue_id_set,
         ),
-        bonds=original_structure.topology.bonds_for_constitution(
-            source_constitution=original_structure.constitution,
-            target_constitution=updated_constitution,
+        bonds=(
+            *packed_core.topology.bonds_for_constitution(
+                source_constitution=packed_core.constitution,
+                target_constitution=updated_constitution,
+            ),
+            *(
+                bond
+                for bond in original_structure.topology.bonds_for_constitution(
+                    source_constitution=original_structure.constitution,
+                    target_constitution=updated_constitution,
+                )
+                if any(
+                    updated_constitution.atom_site_at(index).is_hydrogen()
+                    or updated_constitution.atom_ref_at(index).residue_id
+                    in ligand_residue_id_set
+                    for index in bond.endpoint_pair()
+                )
+            ),
         ),
     )
     return ProteinStructure.from_payload(
@@ -671,7 +981,7 @@ def _merge_packed_polymer_with_original_ligands(
         geometry=updated_geometry,
         topology=updated_topology,
         polymer_blueprint=original_structure.polymer_blueprint,
-        provenance=original_structure.provenance,
+        provenance=packed_core.provenance,
     )
 
 

@@ -17,7 +17,7 @@ from tests.support.canonical_builders import (
 
 import protrepair.transformer.packing.faspr.backend as faspr_backend
 import protrepair.transformer.packing.faspr.paths as faspr_paths
-from protrepair.diagnostics import IssueSeverity, ValidationIssueKind
+from protrepair.diagnostics import ValidationIssueKind
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, write_structure_string
 from protrepair.structure import ProteinStructure
@@ -176,13 +176,13 @@ def test_faspr_backend_builds_local_sequence_override_with_fake_executable(
             mode=PackingMode.PACK,
             scope=PackingScope.LOCAL,
             mutable_residue_ids=(mutable_residue_id,),
-            target_sequence="V",
+            target_sequence="L",
         ),
     )
 
     result = FasprPackingBackend(executable_path=executable_path).pack(plan)
 
-    assert log_path.read_text(encoding="utf-8").strip() == "aVy"
+    assert log_path.read_text(encoding="utf-8").strip() == "aLy"
     assert result.backend_name == "faspr"
     assert result.changed_residue_ids == ()
     assert result.packed_structure.chain_ids() == ("A",)
@@ -596,10 +596,10 @@ def test_faspr_backend_restores_hydrogens_when_heavy_atoms_are_unchanged(
     assert result.packed_structure.topology.bond_between(n_index, h_index)
 
 
-def test_faspr_backend_drops_hydrogens_when_fixed_residue_heavy_atoms_move(
+def test_faspr_backend_rejects_motion_of_fixed_residue_heavy_atoms(
     tmp_path: Path,
 ) -> None:
-    """Fixed labels must not preserve stale H when FASPR moves heavy atoms."""
+    """A fixed label cannot admit an output that actually moves fixed atoms."""
 
     executable_path = copy_template_faspr_executable(tmp_path)
     output_template_path = tmp_path / "packed-output.pdb"
@@ -624,24 +624,8 @@ def test_faspr_backend_drops_hydrogens_when_fixed_residue_heavy_atoms_move(
         ),
     )
 
-    result = FasprPackingBackend(executable_path=executable_path).pack(plan)
-    packed_residue = result.packed_structure.constitution.chain("A").residues[0]
-
-    assert "H" not in packed_residue.atom_site_names()
-    assert "HA" not in packed_residue.atom_site_names()
-    assert "HB1" not in packed_residue.atom_site_names()
-    assert (
-        result.packed_structure.constitution.resolve_atom_index(
-            AtomRef(residue_id=residue_id, atom_name="H")
-        )
-        is None
-    )
-    assert len(result.issues) == 1
-    issue = result.issues[0]
-    assert issue.kind is ValidationIssueKind.PACKING_INVALIDATED_HYDROGENS
-    assert issue.severity is IssueSeverity.WARNING
-    assert issue.scope.targets_residue(residue_id)
-    assert "FASPR invalidated polymer hydrogens" in issue.message
+    with pytest.raises(PackingBackendExecutionError, match="protected atom"):
+        FasprPackingBackend(executable_path=executable_path).pack(plan)
 
 
 def test_faspr_backend_preserves_and_drops_hydrogens_per_residue(
@@ -690,10 +674,10 @@ def test_faspr_backend_preserves_and_drops_hydrogens_per_residue(
     assert not result.issues[0].scope.targets_residue(first_residue_id)
 
 
-def test_faspr_backend_drops_hydrogens_when_heavy_atom_charges_change(
+def test_faspr_backend_retains_current_charge_when_native_omits_it(
     tmp_path: Path,
 ) -> None:
-    """Heavy-atom charge changes should invalidate preserved hydrogens."""
+    """Omitted native charge is not evidence of a changed chemical state."""
 
     executable_path = copy_template_faspr_executable(tmp_path)
     output_template_path = tmp_path / "packed-output.pdb"
@@ -715,11 +699,11 @@ def test_faspr_backend_drops_hydrogens_when_heavy_atom_charges_change(
         result.packed_structure.constitution.resolve_atom_index(
             AtomRef(residue_id=residue_id, atom_name="H")
         )
-        is None
+        is not None
     )
-    assert result.changed_residue_ids == (residue_id,)
-    assert len(result.issues) == 1
-    assert result.issues[0].kind is ValidationIssueKind.PACKING_INVALIDATED_HYDROGENS
+    assert result.changed_residue_ids == ()
+    assert result.issues == ()
+    assert result.packed_structure.topology == structure.topology
 
 
 def test_faspr_backend_smoke_runs_packaged_binary() -> None:
@@ -879,7 +863,7 @@ def test_faspr_backend_wraps_unknown_polymer_output_residue_id(
 
     with pytest.raises(
         PackingBackendExecutionError,
-        match="unknown residue identifier",
+        match="number of polymer residues",
     ):
         FasprPackingBackend(executable_path=executable_path).pack(plan)
 
