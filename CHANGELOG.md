@@ -69,7 +69,11 @@
   retain unchanged H/D/T sites and bonds together
 - enforce FASPR's requested sequence and fixed-atom boundaries, and rebuild
   intrinsic bonds for authorized component mutations without retaining stale
-  charges, H or applied microstate choices; refuse incompatible linked mutations
+  charges, H or applied microstate choices; refuse incompatible linked mutations.
+  Ordinary H completion cannot yet fully prepare mutations whose original
+  input identities remain unreconciled
+- reject incomplete fixed FASPR residues before native execution, naming the
+  residue and missing heavy atoms with guidance to complete or select it
 - supply fixed calculation-only H for admitted omitted amide partners at peptide
   boundaries, without preparing off-scope source residues or exporting cap atoms
 - reject newly worsened large covalent X-H length distortions against the

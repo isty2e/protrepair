@@ -167,7 +167,40 @@ def test_faspr_backend_builds_local_sequence_override_with_fake_executable(
     executable_path.chmod(0o755)
     (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
 
-    structure = build_test_structure()
+    structure = build_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    build_residue("ALA", "A", 1, ("N", "CA", "C", "O", "CB")),
+                    build_residue(
+                        "LEU", "A", 2, ("N", "CA", "C", "O", "CB", "CG", "CD1", "CD2")
+                    ),
+                    build_residue(
+                        "TYR",
+                        "A",
+                        3,
+                        (
+                            "N",
+                            "CA",
+                            "C",
+                            "O",
+                            "CB",
+                            "CG",
+                            "CD1",
+                            "CD2",
+                            "CE1",
+                            "CE2",
+                            "CZ",
+                            "OH",
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        source_format=FileFormat.PDB,
+        source_name="faspr-local-sequence-test",
+    )
     mutable_residue_id = structure.constitution.chain("A").residues[1].residue_id
     plan = PackingPlan.from_inputs(
         structure,

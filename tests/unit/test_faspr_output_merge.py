@@ -32,6 +32,7 @@ from protrepair.structure.topology import (
 from protrepair.transformer.packing import PackingPlan, PackingScope, PackingSpec
 from protrepair.transformer.packing.faspr.backend import (
     FasprPackingBackend,
+    PackingBackendError,
     PackingBackendExecutionError,
 )
 
@@ -433,9 +434,7 @@ def test_native_sidechain_completion_respects_plan_authority(
     )
     native = build_heavy_only_packed_structure()
     if frozen:
-        with pytest.raises(
-            PackingBackendExecutionError, match="added atoms to a fixed"
-        ):
+        with pytest.raises(PackingBackendError, match="fixed residue A:1.*CB"):
             _pack(
                 tmp_path,
                 source,
@@ -453,6 +452,37 @@ def test_native_sidechain_completion_respects_plan_authority(
     assert bond is not None and bond.order == 1
     assert bond.provenance is BondProvenance.TEMPLATE_RESOLVED
     assert not any(site.is_hydrogen() for site in result.constitution.atom_slots)
+
+
+def test_complete_fixed_residue_does_not_require_optional_oxt(tmp_path: Path) -> None:
+    source = build_hydrogenated_test_structure()
+    result = _pack(
+        tmp_path,
+        source,
+        build_heavy_only_packed_structure(),
+        PackingSpec(backend_name="faspr", frozen_residue_ids=(ResidueId("A", 1),)),
+    )
+    assert result.constitution == source.constitution
+    assert result.geometry == source.geometry
+    assert result.topology == source.topology
+
+
+def test_native_cannot_add_optional_oxt_to_complete_fixed_residue(
+    tmp_path: Path,
+) -> None:
+    native = _with_sites(
+        build_heavy_only_packed_structure(),
+        additions=((AtomSite("OXT", "O"), AtomGeometry(Vec3(2, 2, 2))),),
+    )
+    with pytest.raises(
+        PackingBackendExecutionError, match="added atoms to a fixed residue A:1"
+    ):
+        _pack(
+            tmp_path,
+            build_hydrogenated_test_structure(),
+            native,
+            PackingSpec(backend_name="faspr", frozen_residue_ids=(ResidueId("A", 1),)),
+        )
 
 
 @pytest.mark.parametrize("include_native_connections", (False, True))

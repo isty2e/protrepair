@@ -13,6 +13,12 @@ allowing only FASPR's float32 conversion and three-decimal output rounding.
 Actual movement outside the plan is a packing error, not a change to adopt.
 An explicit `mutable_residue_ids` set also constrains full-structure packing.
 
+Fixed residues must have complete standard heavy-atom scaffolds before packing;
+OXT is optional. FASPR otherwise unfreezes and repacks them. ProtRepair rejects
+such requests before launching FASPR, naming the residue and missing atoms.
+Complete its heavy atoms first, or include it in `mutable_residue_ids` and remove
+any explicit freeze.
+
 For unchanged components, packing preserves current atom charges, occupancy,
 B factors and altloc metadata. Blank charge fields in FASPR output do not mean
 neutral or unknown chemistry. Original input observations remain separate;
@@ -24,8 +30,18 @@ not from old bonds between atoms with matching names. Source-declared bonds
 within the standard residue scaffold can be replaced by an authorized mutation;
 the original declarations remain in the input observation. Inter-residue,
 non-covalent and nonstandard explicit sidechain links are rejected rather than
-losing linked chemistry. The result still needs the usual chemical-state and
-hydrogen completion steps; FASPR does not choose its protonation state.
+losing linked chemistry. FASPR does not choose the new protonation state.
+
+When the original input record names a different component, ordinary H
+completion cannot yet fully prepare the mutated residue: the microstate
+resolver cannot reconcile the two identities. Nonpolar template H may be
+added, but backbone and polar-site H can remain unresolved with warnings.
+The H-inventory goal excludes unresolved sites, so satisfying that goal does
+not certify mutation chemistry as complete.
+
+For same-component repacking, retaining a disulfide, metal or ligand-link bond
+does not guarantee its geometry is preserved when linked sidechain atoms are
+allowed to move. The linked-mutation guard does not cover ordinary repacking.
 
 ## Polymer Hydrogen Merge
 

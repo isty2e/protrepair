@@ -7,13 +7,20 @@ import pytest
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.io import read_structure
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.labels import AtomRef
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.packing import (
+    PackingPlan,
     PackingScope,
     PackingSpec,
     execute_sidechain_packing,
+)
+from protrepair.transformer.packing.faspr.backend import (
+    FasprExecutionInput,
+    FasprPackingBackend,
+    FasprRuntimeAssets,
+    PackingBackendError,
 )
 
 pytestmark = pytest.mark.corpus
@@ -29,6 +36,63 @@ def prepared_1aho() -> ProteinStructure:
         for atom in prepared.topology.atom_topologies
     )
     return prepared
+
+
+@pytest.mark.parametrize("scope", (PackingScope.LOCAL, PackingScope.FULL))
+@pytest.mark.parametrize(
+    ("fixed_id", "missing_names"),
+    ((9, ("OD2",)), (30, ("CD", "CE", "NZ")), (50, ("NZ",))),
+)
+def test_raw_1aho_incomplete_fixed_residue_is_rejected_before_runtime_access(
+    monkeypatch: pytest.MonkeyPatch,
+    scope: PackingScope,
+    fixed_id: int,
+    missing_names: tuple[str, ...],
+) -> None:
+    source = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
+    mutable_ids = tuple(
+        ResidueId("A", index) for index in (1, 9, 30, 50) if index != fixed_id
+    )
+    plan = PackingPlan.from_inputs(
+        source,
+        PackingSpec(backend_name="faspr", scope=scope, mutable_residue_ids=mutable_ids),
+    )
+
+    def unexpected_runtime_access(self: FasprPackingBackend) -> FasprRuntimeAssets:
+        pytest.fail("Incomplete fixed residues must be rejected before runtime access")
+
+    monkeypatch.setattr(
+        FasprPackingBackend, "runtime_assets", unexpected_runtime_access
+    )
+    with pytest.raises(PackingBackendError) as error:
+        execute_sidechain_packing(source, plan.spec)
+
+    assert type(error.value) is PackingBackendError
+    message = str(error.value)
+    assert f"fixed residue A:{fixed_id}" in message
+    assert all(name in message for name in missing_names)
+    assert "mutable_residue_ids" in message
+    assert "complete heavy atoms" in message
+
+
+@pytest.mark.parametrize("scope", (PackingScope.LOCAL, PackingScope.FULL))
+def test_raw_1aho_incomplete_mutable_residues_are_admitted(
+    scope: PackingScope,
+) -> None:
+    source = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
+    plan = PackingPlan.from_inputs(
+        source,
+        PackingSpec(
+            backend_name="faspr",
+            scope=scope,
+            mutable_residue_ids=tuple(ResidueId("A", i) for i in (9, 30, 50)),
+        ),
+    )
+    execution_input = FasprExecutionInput.from_plan(plan)
+    assert execution_input.structure.constitution.atom_slots == tuple(
+        atom for atom in source.constitution.atom_slots if not atom.is_hydrogen()
+    )
+    assert execution_input.plan is plan
 
 
 @pytest.mark.parametrize("selection", ("frozen", "full_subset", "local_subset"))

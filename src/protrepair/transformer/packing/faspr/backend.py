@@ -287,12 +287,32 @@ def validate_rotamer_library_near(executable_path: Path) -> Path:
 def prepare_structure_for_faspr(plan: PackingPlan) -> ProteinStructure:
     """Return one canonical structure compatible with FASPR expectations."""
 
+    fixed_residue_ids = set(plan.fixed_residue_ids())
+    component_library = build_standard_component_library()
     prepared_chain_sites: list[ChainSite] = []
     removed_atom_refs: list[AtomRef] = []
     for chain_site in plan.polymer_chain_sites():
         prepared_residue_sites: list[ResidueSite] = []
         for residue_site in chain_site.residues:
             validate_faspr_residue_site(residue_site)
+            if residue_site.residue_id in fixed_residue_ids:
+                missing_heavy_atoms = tuple(
+                    name
+                    for name in component_library.require(
+                        residue_site.component_id
+                    ).expected_polymer_heavy_atom_names()
+                    if not residue_site.has_atom_site(name)
+                )
+                if missing_heavy_atoms:
+                    # FASPR unfreezes incomplete fixed residues before packing.
+                    raise PackingBackendError(
+                        "FASPR cannot preserve incomplete fixed residue "
+                        f"{residue_site.residue_id.display_token()}; missing heavy "
+                        f"atoms: {', '.join(missing_heavy_atoms)}. Include the "
+                        "residue in mutable_residue_ids (and remove it from "
+                        "frozen_residue_ids), or complete heavy atoms first."
+                    )
+
             prepared_residue_sites.append(
                 strip_hydrogens_from_residue_site(residue_site)
             )
@@ -626,7 +646,8 @@ def _restore_faspr_canonical_state(
                 site.name not in current_by_name for site in sites
             ):
                 raise PackingBackendExecutionError(
-                    "FASPR added atoms to a fixed residue"
+                    "FASPR added atoms to a fixed residue "
+                    f"{native.residue_id.display_token()}"
                 )
 
             for site in sites:
