@@ -142,7 +142,7 @@ class PackingPlan:
         seen_residue_ids: set[ResidueId] = set()
         selected_residue_id_set = set(self.selected_residue_ids())
 
-        if self.spec.scope is PackingScope.LOCAL:
+        if self.spec.mutable_residue_ids is not None:
             for residue_id in self.polymer_residue_ids:
                 if residue_id not in selected_residue_id_set:
                     ordered_residue_ids.append(residue_id)
@@ -183,8 +183,7 @@ class PackingPlan:
         """Return explicitly targeted residue sites in selection order."""
 
         return tuple(
-            self.residue_site(residue_id)
-            for residue_id in self.selected_residue_ids()
+            self.residue_site(residue_id) for residue_id in self.selected_residue_ids()
         )
 
     def changed_residue_ids_after(

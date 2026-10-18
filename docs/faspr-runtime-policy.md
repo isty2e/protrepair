@@ -4,6 +4,49 @@ ProtRepair treats FASPR as a heavy-atom side-chain packing backend. FASPR does
 not own general hydrogen completion, retained-ligand chemistry, or final
 workflow planning.
 
+## Coordinate And Chemical Authority
+
+The packing plan decides which sidechains may move. Backbone atoms, OXT,
+fixed residues and retained ligands keep their exact canonical coordinates.
+The adapter compares protected native coordinates with the serialized input,
+allowing only FASPR's float32 conversion and three-decimal output rounding.
+Actual movement outside the plan is a packing error, not a change to adopt.
+An explicit `mutable_residue_ids` set also constrains full-structure packing.
+
+Fixed residues must have complete standard heavy-atom scaffolds before packing;
+OXT is optional. FASPR otherwise unfreezes and repacks them. ProtRepair rejects
+such requests before launching FASPR, naming the residue and missing atoms.
+Complete its heavy atoms first, or include it in `mutable_residue_ids` and remove
+any explicit freeze.
+
+`reference_sidechain_packing` runs on the input before workflow heavy-atom
+completion, so the same check can reject a workflow request. The error lists
+all incomplete fixed residues rather than requiring one retry per residue.
+
+For unchanged components, packing preserves current atom charges, occupancy,
+B factors and altloc metadata. Blank charge fields in FASPR output do not mean
+neutral or unknown chemistry. Original input observations remain separate;
+packing does not replay them over an applied microstate or explicit override.
+
+Requested component mutations discard the old residue's H, charges and saved
+microstate choices. New sidechain bonds come from the new component template,
+not from old bonds between atoms with matching names. Source-declared bonds
+within the standard residue scaffold can be replaced by an authorized mutation;
+the original declarations remain in the input observation. Inter-residue,
+non-covalent and nonstandard explicit sidechain links are rejected rather than
+losing linked chemistry. FASPR does not choose the new protonation state.
+
+When the original input record names a different component, ordinary H
+completion cannot yet fully prepare the mutated residue: the microstate
+resolver cannot reconcile the two identities. Nonpolar template H may be
+added, but backbone and polar-site H can remain unresolved with warnings.
+The H-inventory goal excludes unresolved sites, so satisfying that goal does
+not certify mutation chemistry as complete.
+
+For same-component repacking, retaining a disulfide, metal or ligand-link bond
+does not guarantee its geometry is preserved when linked sidechain atoms are
+allowed to move. The linked-mutation guard does not cover ordinary repacking.
+
 ## Polymer Hydrogen Merge
 
 The FASPR adapter prepares input by stripping polymer hydrogens because FASPR
@@ -15,9 +58,8 @@ Hydrogen preservation is residue-local and evidence-based:
 
 - Preserve original polymer hydrogens only when the residue heavy-atom state is
   equivalent before and after packing.
-- Treat fixed-vs-packed labels as hints, not proof. A fixed residue whose heavy
-  atoms moved has invalidated hydrogens; a selected residue whose heavy atoms are
-  unchanged may retain hydrogens.
+- Fixed labels alone are not proof: protected movement is checked before the
+  merge. A selected residue whose heavy atoms are unchanged may retain hydrogens.
 - Preserve atom sites, coordinates, and topology bonds together. A preserved
   hydrogen without its anchor bond is invalid canonical topology.
 - Drop hydrogen atom sites and hydrogen topology bonds together when heavy atoms
