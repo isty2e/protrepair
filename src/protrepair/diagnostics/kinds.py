@@ -36,6 +36,7 @@ class ValidationIssueKind(str, Enum):
     GEOMETRY_PLACEMENT_SKIPPED = "geometry_placement_skipped"
     INVALID_STEREOCHEMISTRY = "invalid_stereochemistry"
     REFINEMENT_REJECTED = "refinement_rejected"
+    WORKFLOW_SEARCH_EXHAUSTED = "workflow_search_exhausted"
     COMPUTATIONAL_PEPTIDE_CAP = "computational_peptide_cap"
     SOURCE_COORDINATION_PARTNER_OMITTED = "source_coordination_partner_omitted"
     COORDINATED_COMPONENT_PREPARATION = "coordinated_component_preparation"

@@ -1,19 +1,23 @@
 """Committed side-chain packing workflow action proposal adapters."""
 
 from protrepair.diagnostics.parser_readability import (
+    RDKitProximityBondCluster,
     rdkit_no_conect_extra_proximity_bond_clusters,
 )
 from protrepair.diagnostics.parser_topology import (
     ambiguous_disulfide_partner_residue_ids_by_residue,
 )
+from protrepair.scope import AtomSetScope
 from protrepair.state import HydrogenCoverageState
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.packing.faspr.backend import FASPR_ALPHABET
 from protrepair.transformer.packing.spec import PackingMode, PackingScope, PackingSpec
-from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.actions.packing import CommittedPackingTransformer
 from protrepair.workflow.planning.action.domain import WorkflowActionDomain
-from protrepair.workflow.planning.action.proposals import WorkflowActionProposal
+from protrepair.workflow.planning.action.proposals import (
+    WorkflowActionProposal,
+    WorkflowProposalSelectionMode,
+)
 from protrepair.workflow.planning.default_action_registry.capabilities import (
     COMMITTED_PACKING_CAPABILITY,
 )
@@ -51,6 +55,7 @@ def committed_packing_proposals(
                 transformer=committed_packing_transformer,
                 capability=COMMITTED_PACKING_CAPABILITY,
                 explicitly_requested=True,
+                selection_mode=WorkflowProposalSelectionMode.QUALITY_ALTERNATIVE,
             ),
         )
 
@@ -59,6 +64,7 @@ def committed_packing_proposals(
             transformer=CommittedPackingTransformer.from_planned_spec(packing_spec),
             capability=COMMITTED_PACKING_CAPABILITY,
             explicitly_requested=False,
+            selection_mode=WorkflowProposalSelectionMode.QUALITY_ALTERNATIVE,
         )
         for packing_spec in _automatic_committed_packing_specs(domain)
     )
@@ -92,40 +98,59 @@ def _automatic_committed_packing_specs(
         is not HydrogenCoverageState.COMPLETE
     ):
         return ()
-    if not domain.memory.has_action_family(LocalRefinementTransformer):
-        return ()
-    if domain.memory.has_action_family(CommittedPackingTransformer):
+    if not domain.relaxation_executions:
         return ()
 
-    residue_ids = _automatic_packing_parser_burden_residue_ids(domain)
-    if not residue_ids:
-        return ()
-
-    return (
-        PackingSpec(
-            backend_name="faspr",
-            mode=PackingMode.PACK,
-            scope=PackingScope.LOCAL,
-            mutable_residue_ids=residue_ids,
-        ),
-    )
-
-
-def _automatic_packing_parser_burden_residue_ids(
-    domain: WorkflowActionDomain,
-) -> tuple[ResidueId, ...]:
-    """Return parser-burden residues for one automatic packing proposal."""
-
+    memory = domain.memory
     clusters = rdkit_no_conect_extra_proximity_bond_clusters(
         domain.structure,
         component_library=domain.component_library,
     )
-    if not clusters:
-        return ()
+    ambiguous_partners = ambiguous_disulfide_partner_residue_ids_by_residue(
+        domain.structure
+    )
+    packing_specs: list[PackingSpec] = []
+    for cluster in clusters:
+        if not cluster.bonds:
+            continue
+
+        endpoints = AtomSetScope(
+            atom_ref
+            for witness in cluster.bonds
+            for atom_ref in (witness.atom_ref_1, witness.atom_ref_2)
+        )
+        if not memory.returned_relaxations_overlapping_scope(endpoints):
+            continue
+
+        residue_ids = _automatic_packing_parser_burden_residue_ids(
+            domain,
+            cluster=cluster,
+            ambiguous_partners=ambiguous_partners,
+        )
+        if residue_ids:
+            packing_specs.append(
+                PackingSpec(
+                    backend_name="faspr",
+                    mode=PackingMode.PACK,
+                    scope=PackingScope.LOCAL,
+                    mutable_residue_ids=residue_ids,
+                )
+            )
+
+    return tuple(dict.fromkeys(packing_specs))
+
+
+def _automatic_packing_parser_burden_residue_ids(
+    domain: WorkflowActionDomain,
+    *,
+    cluster: RDKitProximityBondCluster,
+    ambiguous_partners: dict[ResidueId, frozenset[ResidueId]],
+) -> tuple[ResidueId, ...]:
+    """Return mutable polymer residues and their ambiguous disulfide partners."""
 
     residue_ids: list[ResidueId] = []
     seen_residue_ids: set[ResidueId] = set()
-    for residue_id in clusters[0].residue_ids:
+    for residue_id in cluster.residue_ids:
         residue_site = domain.structure.constitution.residue_or_ligand(residue_id)
         if residue_site is None or residue_site.is_hetero:
             continue
@@ -133,9 +158,6 @@ def _automatic_packing_parser_burden_residue_ids(
         residue_ids.append(residue_id)
         seen_residue_ids.add(residue_id)
 
-    ambiguous_partners = ambiguous_disulfide_partner_residue_ids_by_residue(
-        domain.structure
-    )
     for residue_id in tuple(residue_ids):
         for partner_residue_id in sorted(
             ambiguous_partners.get(residue_id, frozenset()),
@@ -153,7 +175,8 @@ def _automatic_packing_parser_burden_residue_ids(
             residue_ids.append(partner_residue_id)
             seen_residue_ids.add(partner_residue_id)
 
-    return tuple(residue_ids)
+    # Partner expansion can reach the same mutable set from different clusters.
+    return tuple(sorted(residue_ids, key=lambda residue_id: residue_id.display_token()))
 
 
 __all__ = [

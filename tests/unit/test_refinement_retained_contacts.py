@@ -8,7 +8,9 @@ from tests.support.canonical_builders import (
     chain_payload,
     residue_payload,
 )
+from tests.support.request_builders import ingress_options, transform_requests
 
+from protrepair.api import process_structure
 from protrepair.chemistry import (
     ComponentLibrary,
     RestraintLibrary,
@@ -85,6 +87,7 @@ from protrepair.transformer.refinement.speculative_planning import SpeculativeEx
 from protrepair.transformer.result import TransformationResult
 from protrepair.workflow.actions.context import TransformerExecutionContext
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
+from protrepair.workflow.contracts import LigandPolicy
 from protrepair.workflow.engine.runtime import execute_workflow_transformer
 
 
@@ -298,7 +301,7 @@ def test_candidate_batch_selects_contact_relief_over_an_adverse_endpoint(
     assert selected.evaluation.accepted_metrics().focus_clash_count == 0
 
 
-@pytest.mark.parametrize("runner", ["direct", "profile", "action"])
+@pytest.mark.parametrize("runner", ["direct", "profile", "action", "workflow"])
 @pytest.mark.parametrize("offset", [-0.30, 2.35])
 def test_user_paths_deliver_the_better_retained_contact_candidate(
     contact_pair, runner, offset, monkeypatch
@@ -325,7 +328,7 @@ def test_user_paths_deliver_the_better_retained_contact_candidate(
                 source, spec, component_library=library
             )
         delivered = result.refined_structure
-    else:
+    elif runner == "action":
         repair = RepairRefinementSpec(
             scope_spec, binding=RecommendedContinuousRelaxationBinding()
         )
@@ -337,6 +340,19 @@ def test_user_paths_deliver_the_better_retained_contact_candidate(
                 original_structure=source,
                 orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
             ),
+        ).structure
+    else:
+        monkeypatch.setattr(
+            "protrepair.workflow.engine.processing.build_default_component_library",
+            lambda: library,
+        )
+        repair = RepairRefinementSpec(
+            scope_spec, binding=RecommendedContinuousRelaxationBinding()
+        )
+        delivered = process_structure(
+            source,
+            ingress=ingress_options(ligand_policy=LigandPolicy.KEEP),
+            transform_requests=transform_requests(repair_refinement=repair),
         ).structure
     if offset > 0:
         assert delivered is endpoint.refined_structure

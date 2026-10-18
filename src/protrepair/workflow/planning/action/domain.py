@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.scope import AtomSetScope
+from protrepair.scope.relations import scopes_overlap
 from protrepair.state import (
     ResidueChemistryReadinessFacts,
     ResidueCoverageFacts,
@@ -20,6 +22,7 @@ from protrepair.state.structure_topology import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.local.projection import (
     LocalContinuousExecutionResidueProjection,
 )
@@ -31,6 +34,8 @@ from protrepair.workflow.contracts.request import (
     RequestedGoalSet,
     WorkflowTransformRequests,
 )
+from protrepair.workflow.planning.action.attempt import WorkflowActionAttempt
+from protrepair.workflow.planning.action.proposals import WorkflowExecutableAction
 from protrepair.workflow.planning.action.registry import WorkflowActionAdoption
 from protrepair.workflow.planning.assessment.deficits import (
     WorkflowDeficitDisposition,
@@ -50,12 +55,37 @@ class WorkflowPlanningMemoryReadView:
     """Planner-memory read view over adopted workflow action families."""
 
     adopted_actions: tuple[WorkflowActionAdoption, ...] = ()
+    relaxation_executions: tuple[ContinuousRelaxationExecution, ...] = ()
+    attempts: tuple[WorkflowActionAttempt, ...] = ()
+
+    def blocks_transformer_attempt(
+        self, transformer: WorkflowExecutableAction, *, structure: ProteinStructure
+    ) -> bool:
+        """Delegate current-input suppression to canonical attempt evidence."""
+
+        return any(attempt.blocks(transformer, structure) for attempt in self.attempts)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "adopted_actions",
             tuple(self.adopted_actions),
+        )
+        object.__setattr__(
+            self,
+            "relaxation_executions",
+            ContinuousRelaxationExecution.deduplicated(self.relaxation_executions),
+        )
+
+    def returned_relaxations_overlapping_scope(
+        self, scope: AtomSetScope
+    ) -> tuple[ContinuousRelaxationExecution, ...]:
+        """Return native facts permitting motion of an endpoint, not fixed context."""
+
+        return tuple(
+            execution
+            for execution in self.relaxation_executions
+            if scopes_overlap(execution.movable_scope, scope)
         )
 
     def has_prior_augmentation_adoption(self) -> bool:
@@ -351,6 +381,8 @@ class WorkflowActionDomain:
         LocalContinuousExecutionResidueProjection | None
     ) = None
     adopted_actions: tuple[WorkflowActionAdoption, ...] = ()
+    relaxation_executions: tuple[ContinuousRelaxationExecution, ...] = ()
+    attempts: tuple[WorkflowActionAttempt, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -385,7 +417,11 @@ class WorkflowActionDomain:
     def memory(self) -> WorkflowPlanningMemoryReadView:
         """Return the planner-memory read view."""
 
-        return WorkflowPlanningMemoryReadView(adopted_actions=self.adopted_actions)
+        return WorkflowPlanningMemoryReadView(
+            adopted_actions=self.adopted_actions,
+            relaxation_executions=self.relaxation_executions,
+            attempts=self.attempts,
+        )
 
     @property
     def explicit_repair(self) -> WorkflowExplicitRepairReadView:

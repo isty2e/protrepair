@@ -40,6 +40,11 @@ class HydrogenCompletionTransformer(ResidueSetWorkflowStructureTransformer):
 
         return True
 
+    def reapplication_context(self, structure: ProteinStructure) -> ProteinStructure:
+        """Bind preparation attempts to their exact canonical input."""
+
+        return structure
+
     def transform_projected_domain(
         self,
         projected_domain: ProjectedDomainState[ProteinStructure],

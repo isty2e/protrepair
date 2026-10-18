@@ -30,6 +30,7 @@ from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.snapshot import ProteinStructureSnapshot
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.refinement.speculative_planning import (
     SpeculativePlanningNodeId,
 )
@@ -43,11 +44,12 @@ from protrepair.workflow.contracts.result import (
     RequestedGoalReport,
     RequestedGoalStatus,
     TransformationResult,
+    WorkflowBranchOutcome,
     WorkflowBranchQualityScore,
+    WorkflowBranchStatus,
     WorkflowPhaseOutcome,
     WorkflowPhaseReport,
     WorkflowPhaseStatus,
-    WorkflowTerminalBranchOutcome,
 )
 from protrepair.workflow.planning.assessment.blockers import WorkflowBlocker
 from protrepair.workflow.planning.assessment.goal_support import (
@@ -317,7 +319,7 @@ def evaluate_requested_goal_report(
     return RequestedGoalReport(outcomes=tuple(outcomes))
 
 
-def evaluate_terminal_branch_outcome(
+def evaluate_workflow_branch_outcome(
     *,
     node_id: SpeculativePlanningNodeId,
     result: TransformationResult,
@@ -326,10 +328,12 @@ def evaluate_terminal_branch_outcome(
     planning_context: WorkflowPlanningContext,
     component_library: ComponentLibrary,
     blockers: tuple[WorkflowBlocker, ...] = (),
-) -> WorkflowTerminalBranchOutcome:
-    """Build one terminal outcome from its already-evaluated branch facts."""
+    status: WorkflowBranchStatus = WorkflowBranchStatus.TERMINAL,
+    relaxation_executions: tuple[ContinuousRelaxationExecution, ...] = (),
+) -> WorkflowBranchOutcome:
+    """Build one retained candidate outcome from already-evaluated branch facts."""
 
-    return WorkflowTerminalBranchOutcome(
+    return WorkflowBranchOutcome(
         node_id=node_id,
         requested_goal_report=requested_goal_report,
         phase_report=deferred_workflow_phase_report(
@@ -342,6 +346,8 @@ def evaluate_terminal_branch_outcome(
         error_count=result.error_count(),
         warning_count=result.warning_count(),
         issue_count=result.issue_count(),
+        status=status,
+        relaxation_executions=relaxation_executions,
     )
 
 

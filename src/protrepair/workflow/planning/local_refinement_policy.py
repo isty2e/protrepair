@@ -18,11 +18,11 @@ from protrepair.transformer.continuous.binding import (
 from protrepair.transformer.continuous.settings import ContinuousRelaxationConfig
 from protrepair.transformer.local.models import LocalScopeSpec
 from protrepair.transformer.refinement.parser_witness import (
-    parser_witness_repair_candidates,
+    DEFAULT_PARSER_WITNESS_REPAIR_BUDGET,
+    iter_parser_witness_repair_candidates,
 )
 from protrepair.transformer.refinement.spec import RepairRefinementSpec
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
-from protrepair.workflow.actions.packing import CommittedPackingTransformer
 from protrepair.workflow.planning.action.domain import WorkflowActionDomain
 from protrepair.workflow.planning.joint_correction_scopes import (
     batch_joint_correction_scope_proposals,
@@ -128,10 +128,7 @@ class LocalRefinementProposalPolicy:
     ) -> bool:
         """Return whether automatic local refinement may be proposed."""
 
-        if not domain.memory.has_action_family(LocalRefinementTransformer):
-            return True
-
-        return domain.memory.has_action_family(CommittedPackingTransformer) and (
+        return (
             domain.burden.has_intrinsic_geometry_burden()
             or domain.burden.has_parser_compatibility_burden()
             or domain.burden.has_interaction_burden()
@@ -155,7 +152,7 @@ class LocalRefinementProposalPolicy:
             or parser_compatibility_facts.has_parser_visible_proximity_burden()
         )
         parser_candidates = (
-            parser_witness_repair_candidates(
+            iter_parser_witness_repair_candidates(
                 domain.structure,
                 component_library=domain.component_library,
             )
@@ -167,8 +164,21 @@ class LocalRefinementProposalPolicy:
             if scope_spec_key in seen_scope_specs:
                 continue
 
+            if domain.memory.blocks_transformer_attempt(
+                LocalRefinementTransformer.from_repair_refinement(
+                    candidate.repair_refinement
+                ),
+                structure=domain.structure,
+            ):
+                continue
+
             automatic_specs.append(candidate.repair_refinement)
             seen_scope_specs.add(scope_spec_key)
+            if (
+                len(automatic_specs)
+                >= DEFAULT_PARSER_WITNESS_REPAIR_BUDGET.max_clusters_per_pass
+            ):
+                break
 
         if automatic_specs:
             return tuple(automatic_specs)

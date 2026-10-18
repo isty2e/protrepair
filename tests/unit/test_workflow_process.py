@@ -20,9 +20,10 @@ from tests.support.request_builders import (
     ingress_options,
     whole_structure_requested_goals,
 )
+from tests.support.workflow_proposals import workflow_proposals
 
 from protrepair.api import process_structure
-from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry import RestraintLibrary, build_default_component_library
 from protrepair.diagnostics import (
     IssueSeverity,
     RepairEventKind,
@@ -45,6 +46,7 @@ from protrepair.io.structure_ingress import (
     apply_structure_normalization_policy,
 )
 from protrepair.scope import (
+    AtomSetScope,
     ResidueBoundaryScope,
     ResidueBoundarySide,
     ResidueSetScope,
@@ -65,15 +67,21 @@ from protrepair.structure.labels import (
     ResidueId,
 )
 from protrepair.structure.provenance import FileFormat
+from protrepair.transformer.artifacts import RegionTransformationResult
 from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
 from protrepair.transformer.completion.hydrogen.repair import add_hydrogens
 from protrepair.transformer.continuous.binding_policy import (
     ManualContinuousRelaxationBinding,
     RecommendedContinuousRelaxationBinding,
 )
+from protrepair.transformer.continuous.domain import ContinuousRelaxationProblem
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
+from protrepair.transformer.continuous.rdkit import RdkitContinuousRelaxationBackend
 from protrepair.transformer.continuous.settings import (
     ContinuousRelaxationConfig,
     ContinuousRelaxationForceField,
+    ContinuousRelaxationProfile,
+    ContinuousRelaxationSettings,
 )
 from protrepair.transformer.local import LocalScopeSpec
 from protrepair.transformer.packing import (
@@ -145,6 +153,7 @@ from protrepair.workflow.engine.runtime import (
     workflow_children_with_regression_retention,
     workflow_children_within_node_budget,
 )
+from protrepair.workflow.planning.action.proposals import WorkflowProposalSelectionMode
 from protrepair.workflow.planning.action.registry import WorkflowStateAction
 from protrepair.workflow.planning.planner import (
     WorkflowPlannerMemory,
@@ -581,7 +590,9 @@ def test_execute_iterative_workflow_threads_retained_non_polymer_fallback_policy
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(structure)
             ),
-            transformers=(transformer,) if planner_call_count == 1 else (),
+            proposals=workflow_proposals(
+                (transformer,) if planner_call_count == 1 else ()
+            ),
         )
 
     def fake_execute_workflow_transformer(
@@ -673,7 +684,9 @@ def test_process_structure_threads_typed_histidine_request_to_hydrogen_completio
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=(transformer,) if planner_call_count == 1 else (),
+            proposals=workflow_proposals(
+                (transformer,) if planner_call_count == 1 else ()
+            ),
         )
 
     def fake_add_hydrogens(
@@ -1390,7 +1403,7 @@ def test_prepare_workflow_packing_reference_adapts_transform_result(
 def test_planner_proposes_faspr_after_parser_refinement_stalls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Parser burden should route through packing after one FF repair attempt."""
+    """Parser burden routes through packing after its available FF actions stall."""
 
     residue_id = ResidueId(chain_id="A", seq_num=1)
     structure = build_workflow_structure(
@@ -1428,6 +1441,16 @@ def test_planner_proposes_faspr_after_parser_refinement_stalls(
         RepairRefinementSpec(
             scope_spec=LocalScopeSpec.from_residues((residue_id,)),
             binding=RecommendedContinuousRelaxationBinding(),
+            config=ContinuousRelaxationConfig(context_radius_angstrom=3.0),
+        )
+    )
+    prior_parser_refinement = LocalRefinementTransformer.from_repair_refinement(
+        RepairRefinementSpec(
+            scope_spec=LocalScopeSpec.from_residues((residue_id,)),
+            binding=RecommendedContinuousRelaxationBinding(),
+            config=ContinuousRelaxationConfig(
+                context_radius_angstrom=3.0, max_iterations=20
+            ),
         )
     )
 
@@ -1447,7 +1470,20 @@ def test_planner_proposes_faspr_after_parser_refinement_stalls(
         **kwargs,
     ) -> tuple[RDKitProximityBondCluster, ...]:
         del structure, kwargs
-        return _fake_parser_witness_clusters(residue_id, 1)
+        return (
+            RDKitProximityBondCluster(
+                residue_ids=(residue_id,),
+                bonds=(
+                    RDKitProximityBondWitness(
+                        AtomRef(residue_id, "N"),
+                        AtomRef(residue_id, "CB"),
+                        "N",
+                        "C",
+                        False,
+                    ),
+                ),
+            ),
+        )
 
     monkeypatch.setattr(
         "protrepair.state.structure_parser.measure_rdkit_no_conect_sanitize_readability_metrics",
@@ -1457,12 +1493,28 @@ def test_planner_proposes_faspr_after_parser_refinement_stalls(
         "protrepair.workflow.planning.default_action_registry.packing_proposals.rdkit_no_conect_extra_proximity_bond_clusters",
         fake_extra_proximity_bond_clusters,
     )
+    monkeypatch.setattr(
+        "protrepair.transformer.refinement.parser_witness.rdkit_no_conect_extra_proximity_bond_clusters",
+        fake_extra_proximity_bond_clusters,
+    )
 
     outcome = plan_workflow_actions(
         structure,
         requested_goals=RequestedGoalSet(),
         transform_requests=WorkflowTransformRequests(),
-        planner_memory=WorkflowPlannerMemory(adopted_transformers=(prior_refinement,)),
+        planner_memory=WorkflowPlannerMemory(
+            adopted_transformers=(prior_refinement, prior_parser_refinement),
+            relaxation_executions=(
+                ContinuousRelaxationExecution(
+                    settings=ContinuousRelaxationSettings(
+                        profile=ContinuousRelaxationProfile.RDKIT_UFF
+                    ),
+                    movable_scope=AtomSetScope((AtomRef(residue_id, "CB"),)),
+                    minimizer_status=1,
+                    backend_version="2026.03.2",
+                ),
+            ),
+        ),
     )
 
     assert len(outcome.transformers) == 1
@@ -1834,14 +1886,14 @@ def test_process_structure_expands_multi_node_workflow_frontier_fifo(
                 structure_planning_signature=StructurePlanningSignature.from_facts(
                     StructureProjectionStateFacts.from_structure(current_structure)
                 ),
-                transformers=(first_transformer, second_transformer),
+                proposals=workflow_proposals((first_transformer, second_transformer)),
             )
 
         return WorkflowPlanningOutcome(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=(),
+            proposals=workflow_proposals(()),
         )
 
     def fake_execute_workflow_transformer(
@@ -1894,6 +1946,14 @@ def test_process_structure_expands_multi_node_workflow_frontier_fifo(
     ]
     assert planner_calls == [
         ("workflow-frontier-root", ()),
+        (
+            "workflow-frontier-branch-a",
+            (TerminalAugmentationTransformer,),
+        ),
+        (
+            "workflow-frontier-branch-b",
+            (HeavyAtomCompletionTransformer,),
+        ),
         (
             "workflow-frontier-branch-a",
             (TerminalAugmentationTransformer,),
@@ -2021,8 +2081,10 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
 
     retained_children = workflow_children_with_regression_retention(
         current_branch_state=current_branch_state,
-        attempted_transformers=(transformer,),
-        transform_requests=WorkflowTransformRequests(),
+        attempted_proposals=workflow_proposals(
+            (transformer,),
+            selection_mode=WorkflowProposalSelectionMode.QUALITY_ALTERNATIVE,
+        ),
         retained_children=(child,),
         branch_evaluator=branch_evaluator,
     )
@@ -2040,7 +2102,7 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
         child_budget=1,
         branch_evaluator=branch_evaluator,
     ) == (retained_current_branch,)
-    terminal_outcome = branch_evaluator.terminal_outcome(
+    branch_outcome = branch_evaluator.branch_outcome(
         node_id=SpeculativePlanningNodeId(7),
         state=child.state,
         result=child.state.result,
@@ -2048,11 +2110,11 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(child_structure)
             ),
-            transformers=(),
+            proposals=workflow_proposals(()),
         ),
     )
 
-    assert terminal_outcome.branch_quality_score.search_depth == 7
+    assert branch_outcome.branch_quality_score.search_depth == 7
     deeper_state = WorkflowRuntimeState(
         result=child.state.result,
         planner_memory=child_memory.with_adopted_transformer(
@@ -2069,7 +2131,7 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
             ),
         )
     )
-    changed_terminal_outcome = branch_evaluator.terminal_outcome(
+    changed_terminal_outcome = branch_evaluator.branch_outcome(
         node_id=SpeculativePlanningNodeId(8),
         state=child.state,
         result=changed_result,
@@ -2077,7 +2139,7 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(child_structure)
             ),
-            transformers=(),
+            proposals=workflow_proposals(()),
         ),
     )
 
@@ -2178,14 +2240,28 @@ def test_process_structure_executes_parser_witness_repair_inside_workflow_pass(
                 structure_planning_signature=StructurePlanningSignature.from_facts(
                     StructureProjectionStateFacts.from_structure(current_structure)
                 ),
-                transformers=(primary_transformer,),
+                proposals=workflow_proposals((primary_transformer,)),
+            )
+
+        if current_structure.provenance.ingress.source_name == "after-primary":
+            return WorkflowPlanningOutcome(
+                structure_planning_signature=StructurePlanningSignature.from_facts(
+                    StructureProjectionStateFacts.from_structure(current_structure)
+                ),
+                proposals=workflow_proposals(
+                    (
+                        LocalRefinementTransformer.from_repair_refinement(
+                            parser_candidate.repair_refinement
+                        ),
+                    )
+                ),
             )
 
         return WorkflowPlanningOutcome(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=(),
+            proposals=workflow_proposals(()),
         )
 
     def fake_parser_witness_repair_candidates(
@@ -2270,6 +2346,7 @@ def test_process_structure_executes_parser_witness_repair_inside_workflow_pass(
     ]
     assert planner_calls == [
         ("parser-witness-workflow-root", ()),
+        ("after-primary", (TerminalAugmentationTransformer,)),
         (
             "after-parser-witness",
             (TerminalAugmentationTransformer, LocalRefinementTransformer),
@@ -2325,7 +2402,7 @@ def test_execute_iterative_workflow_caps_runaway_frontier(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=(transformer,),
+            proposals=workflow_proposals((transformer,)),
         )
 
     def fake_execute_workflow_transformer(
@@ -2347,19 +2424,20 @@ def test_execute_iterative_workflow_caps_runaway_frontier(
         fake_execute_workflow_transformer,
     )
 
-    with pytest.raises(ValueError, match="max_speculative_nodes=2"):
-        execute_iterative_workflow(
-            structure,
-            requested_goals=RequestedGoalSet(),
-            transform_requests=WorkflowTransformRequests(),
-            component_library=build_default_component_library(),
-            planning_context=WorkflowPlanningContext(max_speculative_nodes=2),
-            reference_structure=None,
-            orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
-            histidine_protonation=DisabledHistidineProtonationRequest(),
-        )
+    result = execute_iterative_workflow(
+        structure,
+        requested_goals=RequestedGoalSet(),
+        transform_requests=WorkflowTransformRequests(),
+        component_library=build_default_component_library(),
+        planning_context=WorkflowPlanningContext(max_speculative_nodes=2),
+        reference_structure=None,
+        orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
+        histidine_protonation=DisabledHistidineProtonationRequest(),
+    )
 
-    assert planner_call_count == 2
+    assert planner_call_count == 3
+    assert len(result.branches) == 1
+    assert result.branches[0].result.structure is structure
 
 
 def test_execute_iterative_workflow_caps_current_proposal_batch(
@@ -2417,7 +2495,7 @@ def test_execute_iterative_workflow_caps_current_proposal_batch(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=transformers,
+            proposals=workflow_proposals(transformers),
         )
 
     def fake_execute_workflow_transformer(
@@ -2439,20 +2517,20 @@ def test_execute_iterative_workflow_caps_current_proposal_batch(
         fake_execute_workflow_transformer,
     )
 
-    with pytest.raises(ValueError, match="max_speculative_nodes=2"):
-        execute_iterative_workflow(
-            structure,
-            requested_goals=RequestedGoalSet(),
-            transform_requests=WorkflowTransformRequests(),
-            component_library=build_default_component_library(),
-            planning_context=WorkflowPlanningContext(max_speculative_nodes=2),
-            reference_structure=None,
-            orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
-            histidine_protonation=DisabledHistidineProtonationRequest(),
-        )
+    result = execute_iterative_workflow(
+        structure,
+        requested_goals=RequestedGoalSet(),
+        transform_requests=WorkflowTransformRequests(),
+        component_library=build_default_component_library(),
+        planning_context=WorkflowPlanningContext(max_speculative_nodes=2),
+        reference_structure=None,
+        orphan_fragment_policy=OrphanFragmentPolicy.REBUILD,
+        histidine_protonation=DisabledHistidineProtonationRequest(),
+    )
 
-    assert planner_call_count == 2
+    assert planner_call_count == 3
     assert tuple(executed_transformers) == (transformers[0],)
+    assert len(result.branches) == 1
 
 
 def test_process_structure_requeries_parser_witness_repair_between_passes(
@@ -2537,14 +2615,28 @@ def test_process_structure_requeries_parser_witness_repair_between_passes(
                 structure_planning_signature=StructurePlanningSignature.from_facts(
                     StructureProjectionStateFacts.from_structure(current_structure)
                 ),
-                transformers=(primary_transformer,),
+                proposals=workflow_proposals((primary_transformer,)),
+            )
+
+        if current_structure.provenance.ingress.source_name == "after-primary":
+            return WorkflowPlanningOutcome(
+                structure_planning_signature=StructurePlanningSignature.from_facts(
+                    StructureProjectionStateFacts.from_structure(current_structure)
+                ),
+                proposals=workflow_proposals(
+                    (
+                        LocalRefinementTransformer.from_repair_refinement(
+                            first_candidate.repair_refinement
+                        ),
+                    )
+                ),
             )
 
         return WorkflowPlanningOutcome(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=(),
+            proposals=workflow_proposals(()),
         )
 
     def fake_probe_rdkit_no_conect_parser_readability(
@@ -2721,14 +2813,32 @@ def test_process_structure_rolls_back_parser_witness_pass_that_worsens_witnesses
                 structure_planning_signature=StructurePlanningSignature.from_facts(
                     StructureProjectionStateFacts.from_structure(current_structure)
                 ),
-                transformers=(primary_transformer,),
+                proposals=workflow_proposals((primary_transformer,)),
+            )
+
+        if not active_planner_memory.has_attempted_transformer(
+            LocalRefinementTransformer.from_repair_refinement(
+                parser_candidate.repair_refinement
+            )
+        ):
+            return WorkflowPlanningOutcome(
+                structure_planning_signature=StructurePlanningSignature.from_facts(
+                    StructureProjectionStateFacts.from_structure(current_structure)
+                ),
+                proposals=workflow_proposals(
+                    (
+                        LocalRefinementTransformer.from_repair_refinement(
+                            parser_candidate.repair_refinement
+                        ),
+                    )
+                ),
             )
 
         return WorkflowPlanningOutcome(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=(),
+            proposals=workflow_proposals(()),
         )
 
     def fake_probe_rdkit_no_conect_parser_readability(
@@ -2911,14 +3021,28 @@ def test_process_structure_skips_unproductive_parser_witness_cluster(
                 structure_planning_signature=StructurePlanningSignature.from_facts(
                     StructureProjectionStateFacts.from_structure(current_structure)
                 ),
-                transformers=(primary_transformer,),
+                proposals=workflow_proposals((primary_transformer,)),
+            )
+
+        if current_structure.provenance.ingress.source_name == "after-primary":
+            return WorkflowPlanningOutcome(
+                structure_planning_signature=StructurePlanningSignature.from_facts(
+                    StructureProjectionStateFacts.from_structure(current_structure)
+                ),
+                proposals=workflow_proposals(
+                    (
+                        LocalRefinementTransformer.from_repair_refinement(
+                            first_candidate.repair_refinement
+                        ),
+                    )
+                ),
             )
 
         return WorkflowPlanningOutcome(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=(),
+            proposals=workflow_proposals(()),
         )
 
     def fake_probe_rdkit_no_conect_parser_readability(
@@ -3167,14 +3291,14 @@ def test_process_structure_prefers_terminal_branch_that_satisfies_requested_stat
                 structure_planning_signature=StructurePlanningSignature.from_facts(
                     StructureProjectionStateFacts.from_structure(current_structure)
                 ),
-                transformers=(first_transformer, second_transformer),
+                proposals=workflow_proposals((first_transformer, second_transformer)),
             )
 
         return WorkflowPlanningOutcome(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=(),
+            proposals=workflow_proposals(()),
         )
 
     def fake_execute_workflow_transformer(
@@ -3258,9 +3382,9 @@ def test_process_structure_prefers_terminal_branch_that_satisfies_requested_stat
     preferred_outcome = result.requested_goal_report.outcome_for(requested_state)
     assert preferred_outcome is not None
     assert preferred_outcome.status is RequestedGoalStatus.SATISFIED
-    assert result.terminal_branch_report is not None
-    assert len(result.terminal_branch_report.outcomes) == 1
-    assert result.terminal_branch_report.preferred_node_id.value == 1
+    assert result.branch_report is not None
+    assert len(result.branch_report.outcomes) == 1
+    assert result.branch_report.preferred_node_id.value == 1
 
 
 def test_process_structure_rejects_dominated_sibling_branch_by_issue_counts(
@@ -3313,14 +3437,14 @@ def test_process_structure_rejects_dominated_sibling_branch_by_issue_counts(
                 structure_planning_signature=StructurePlanningSignature.from_facts(
                     StructureProjectionStateFacts.from_structure(current_structure)
                 ),
-                transformers=(worse_transformer, better_transformer),
+                proposals=workflow_proposals((worse_transformer, better_transformer)),
             )
 
         return WorkflowPlanningOutcome(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=(),
+            proposals=workflow_proposals(()),
         )
 
     def fake_execute_workflow_transformer(
@@ -3383,11 +3507,13 @@ def test_process_structure_rejects_dominated_sibling_branch_by_issue_counts(
 
     assert planner_calls == [
         "workflow-reject-root",
+        "workflow-reject-worse",
+        "workflow-reject-better",
         "workflow-reject-better",
     ]
     assert result.structure.provenance.ingress.source_name == "workflow-reject-better"
-    assert result.terminal_branch_report is not None
-    assert len(result.terminal_branch_report.outcomes) == 1
+    assert result.branch_report is not None
+    assert len(result.branch_report.outcomes) == 1
 
 
 def test_process_structure_prefers_goal_progress_when_pruning_siblings(
@@ -3447,14 +3573,16 @@ def test_process_structure_prefers_goal_progress_when_pruning_siblings(
                 structure_planning_signature=StructurePlanningSignature.from_facts(
                     StructureProjectionStateFacts.from_structure(current_structure)
                 ),
-                transformers=(unmet_transformer, satisfying_transformer),
+                proposals=workflow_proposals(
+                    (unmet_transformer, satisfying_transformer)
+                ),
             )
 
         return WorkflowPlanningOutcome(
             structure_planning_signature=StructurePlanningSignature.from_facts(
                 StructureProjectionStateFacts.from_structure(current_structure)
             ),
-            transformers=(),
+            proposals=workflow_proposals(()),
         )
 
     def fake_execute_workflow_transformer(
@@ -3542,6 +3670,8 @@ def test_process_structure_prefers_goal_progress_when_pruning_siblings(
 
     assert planner_calls == [
         "workflow-goal-pruning-root",
+        "workflow-goal-pruning-unmet",
+        "workflow-goal-pruning-satisfied",
         "workflow-goal-pruning-satisfied",
     ]
     assert (
@@ -3552,8 +3682,8 @@ def test_process_structure_prefers_goal_progress_when_pruning_siblings(
     preferred_outcome = result.requested_goal_report.outcome_for(requested_state)
     assert preferred_outcome is not None
     assert preferred_outcome.status is RequestedGoalStatus.SATISFIED
-    assert result.terminal_branch_report is not None
-    assert len(result.terminal_branch_report.outcomes) == 1
+    assert result.branch_report is not None
+    assert len(result.branch_report.outcomes) == 1
 
 
 def test_process_structure_applies_local_refinement_after_hydrogenation(
@@ -4095,8 +4225,20 @@ def test_process_structure_uses_partitioned_hydrogen_route_for_heterogeneous_inp
     )
 
 
-def test_process_structure_defers_recommended_binding_for_unsupported_domain() -> None:
-    """Unsupported workflow domains should stop before any stage execution."""
+def test_process_structure_reports_refinement_refusal_for_unsupported_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unsupported explicit request reports refusal without executing native FF."""
+
+    def unexpected(
+        backend: RdkitContinuousRelaxationBackend,
+        problem: ContinuousRelaxationProblem,
+        *,
+        restraint_library: RestraintLibrary,
+    ) -> RegionTransformationResult:
+        pytest.fail("an explicit request must not bypass chemical readiness")
+
+    monkeypatch.setattr(RdkitContinuousRelaxationBackend, "relax", unexpected)
 
     structure = build_workflow_structure(
         chains=(
@@ -4130,8 +4272,10 @@ def test_process_structure_defers_recommended_binding_for_unsupported_domain() -
 
     assert result.structure is structure
     assert tuple(issue.kind for issue in result.issues) == (
+        ValidationIssueKind.REFINEMENT_REJECTED,
         ValidationIssueKind.MISSING_COMPONENT_DEFINITION,
     )
+    assert not result.repairs
     assert isinstance(local_refinement.binding, ManualContinuousRelaxationBinding)
     assert local_refinement.binding.force_field is ContinuousRelaxationForceField.MMFF
 

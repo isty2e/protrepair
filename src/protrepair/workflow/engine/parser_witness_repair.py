@@ -15,6 +15,7 @@ from protrepair.transformer.refinement.parser_witness import (
     ParserWitnessRepairCandidate,
     parser_witness_repair_candidates,
 )
+from protrepair.transformer.refinement.result import RefinementTransformationResult
 from protrepair.transformer.result import TransformationResult
 from protrepair.workflow.actions.context import TransformerExecutionContext
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
@@ -27,6 +28,7 @@ class DirectParserWitnessRepairResult:
 
     result: TransformationResult
     adopted_transformers: tuple[WorkflowStateAction, ...]
+    attempted_transformers: tuple[WorkflowStateAction, ...] = ()
 
 
 class WorkflowTransformerExecutor(Protocol):
@@ -54,6 +56,10 @@ def execute_bounded_parser_witness_repair_loop(
 
     active_result = result
     adopted_transformers: list[WorkflowStateAction] = []
+    attempted_transformers: list[WorkflowStateAction] = []
+    observed_executions = list(
+        RefinementTransformationResult.observed_executions(result)
+    )
     budget = DEFAULT_PARSER_WITNESS_REPAIR_BUDGET
     active_pdb_block_projector = prepare_rdkit_no_conect_pdb_block_projector(
         active_result.structure
@@ -92,6 +98,10 @@ def execute_bounded_parser_witness_repair_loop(
                 transformer=transformer,
                 execution_context=execution_context,
             )
+            attempted_transformers.append(transformer)
+            observed_executions.extend(
+                RefinementTransformationResult.observed_executions(execution_outcome)
+            )
             candidate_result = _with_parser_witness_repair_diagnostics(
                 active_result,
                 execution_outcome,
@@ -122,8 +132,15 @@ def execute_bounded_parser_witness_repair_loop(
             break
 
     return DirectParserWitnessRepairResult(
-        result=active_result,
+        result=(
+            RefinementTransformationResult.with_observed_executions(
+                active_result, tuple(observed_executions)
+            )
+            if observed_executions
+            else active_result
+        ),
         adopted_transformers=tuple(adopted_transformers),
+        attempted_transformers=tuple(attempted_transformers),
     )
 
 

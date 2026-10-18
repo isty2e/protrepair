@@ -27,8 +27,7 @@ class RetainedNonPolymerHydrogenCompletionTransformer(
     def __post_init__(self) -> None:
         if not isinstance(self.scope, ResidueSetScope):
             raise TypeError(
-                "retained non-polymer hydrogen completion requires "
-                "a residue-set scope"
+                "retained non-polymer hydrogen completion requires a residue-set scope"
             )
 
     @classmethod
@@ -39,6 +38,11 @@ class RetainedNonPolymerHydrogenCompletionTransformer(
         """Build one retained non-polymer hydrogen completion transformer."""
 
         return cls(scope=scope)
+
+    def reapplication_context(self, structure: ProteinStructure) -> ProteinStructure:
+        """Bind retained preparation attempts to their exact canonical input."""
+
+        return structure
 
     def transform_projected_domain(
         self,
@@ -54,9 +58,7 @@ class RetainedNonPolymerHydrogenCompletionTransformer(
             projected_domain.state,
             component_library=context.component_library,
             target_residue_ids=self.covered_residue_ids(),
-            chemistry_evidence=(
-                context.retained_non_polymer_chemistry_evidence
-            ),
+            chemistry_evidence=(context.retained_non_polymer_chemistry_evidence),
             allow_retained_non_polymer_rdkit_fallback=(
                 context.allow_retained_non_polymer_rdkit_fallback
             ),

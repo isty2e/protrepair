@@ -87,12 +87,25 @@ whose chemistry cannot otherwise be resolved.
 | `issues` | Structured warnings and errors |
 | `analyses` | Optional `AnalysisBundle` |
 | `requested_goal_report` | Per-goal outcomes; `process_structure()` returns an empty report when no goals were requested |
-| `terminal_branch_report` | Branch evaluation details when available |
+| `branch_report` | Retained candidates, selected node, and search stop reason |
+| `relaxation_executions` | Observed native FF returns from the selected branch history |
 
 Useful methods include `has_errors()`, `has_warnings()`, `repair_count()`,
 `error_count()`, `warning_count()`, `issue_count()`,
 `requested_goal_completion_verdict()`, and
 `requested_goals_fully_satisfied()`.
+
+If search reaches `max_speculative_nodes`, processing returns the preferred
+assessed candidate with a `WORKFLOW_SEARCH_EXHAUSTED` warning. Check the goal
+report and remaining diagnostics before using it: reaching the limit says
+nothing about whether the requested goals were met. `branch_report` distinguishes
+planner-terminal candidates from candidates still on the frontier, and records
+why search stopped. It replaces the former `terminal_branch_report` attribute.
+
+Native execution records describe returned calls, not successful repairs or
+adopted coordinates. Rejected candidates can therefore contribute records;
+exceptions may leave native work unobserved. The records contain settings,
+movable atoms, minimizer status, and backend version, not resumable solver state.
 
 ## Structure I/O
 

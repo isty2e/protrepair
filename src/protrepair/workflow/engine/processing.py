@@ -114,7 +114,8 @@ def process_canonical_structure(
         () if packing_reference is None else packing_reference.packing_result.issues
     )
     return finalize_workflow_result(
-        terminal_branches=runtime_result.terminal_branches,
+        branches=runtime_result.branches,
+        stop_reason=runtime_result.stop_reason,
         planning_context=active_planning_context,
         component_library=component_library,
         requested_analyses=normalized_analyses,

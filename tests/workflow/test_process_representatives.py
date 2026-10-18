@@ -358,8 +358,8 @@ def test_explicit_3j6b_repair_uses_calculation_only_peptide_boundaries() -> None
     for number in (122, 155):
         site = result.structure.constitution.residue_or_ligand(ResidueId("9", number))
         assert site is not None and not site.has_atom_site("OXT")
-    assert result.terminal_branch_report is not None
-    score = result.terminal_branch_report.preferred_outcome().branch_quality_score
+    assert result.branch_report is not None
+    score = result.branch_report.preferred_outcome().branch_quality_score
     assert score.parser_incompatible == 0
     assert score.parser_extra_heavy_bond_count == 0
 
