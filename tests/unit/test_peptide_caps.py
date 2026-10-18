@@ -30,6 +30,7 @@ from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.domain import ContinuousRelaxationProblem
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.continuous.local_relaxation import (
     ContinuousLocalRelaxationTransformer,
 )
@@ -139,7 +140,15 @@ def test_source_backed_caps_close_native_graph_and_preserve_source(intact, radiu
                 == Chem.HybridizationType.SP2
             )
     model = capped.problem.region.snapshot.structure
-    projected = capped.project_result(_result(model)).refined_structure
+    execution = ContinuousRelaxationExecution.from_native_return(
+        capped.problem, minimizer_status=1, backend_version="test-runtime"
+    )
+    projected_result = capped.project_result(
+        replace(_result(model), relaxation_executions=(execution,))
+    )
+    assert projected_result.relaxation_executions == (execution,)
+    assert projected_result.relaxation_executions[0] is execution
+    projected = projected_result.refined_structure
     assert projected.constitution is intact.constitution
     assert projected.topology is intact.topology
     assert projected.provenance is intact.provenance
@@ -317,6 +326,12 @@ def test_direct_transformer_uses_caps_and_returns_only_original_atoms(intact, me
         problem.region.snapshot, problem.region.atom_input
     )
     result = transformer.transform(context)
+    assert len(result.relaxation_executions) == 1
+    execution = result.relaxation_executions[0]
+    assert execution.settings is problem.spec
+    assert execution.has_motion_scope(
+        context.atom_input.observed_atom_scope(context.source_snapshot)
+    )
     assert result.refined_structure.constitution is intact.constitution
     assert result.refined_structure.topology is intact.topology
     assert result.delta.before_constitution is intact.constitution

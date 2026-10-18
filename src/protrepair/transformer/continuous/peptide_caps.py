@@ -130,6 +130,7 @@ class CappedRelaxationProblem:
             issues=(*result.issues, *support_issues),
             backend_name=result.backend_name,
             backend_version=result.backend_version,
+            relaxation_executions=result.relaxation_executions,
         )
 
 

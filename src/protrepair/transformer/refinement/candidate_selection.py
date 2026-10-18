@@ -55,6 +55,7 @@ def materialize_assessed_refinement_candidate(
             ),
             backend_name=executed_result.backend_name,
             backend_version=executed_result.backend_version,
+            relaxation_executions=executed_result.relaxation_executions,
         )
 
     if not pre_backend_moved_atom_indices:
@@ -96,4 +97,5 @@ def materialize_assessed_refinement_candidate(
         issues=materialized_result.issues,
         backend_name=materialized_result.backend_name,
         backend_version=materialized_result.backend_version,
+        relaxation_executions=materialized_result.relaxation_executions,
     )

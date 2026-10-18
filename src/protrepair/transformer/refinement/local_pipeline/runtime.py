@@ -1,6 +1,6 @@
 """Runtime orchestration for the local refinement pipeline."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 
 from protrepair.chemistry import ComponentLibrary, RestraintLibrary
@@ -221,6 +221,7 @@ def execute_local_refinement_pipeline_profiled(
         selected_candidate,
         request=request,
     )
+    result = replace(result, relaxation_executions=assessed_batch.relaxation_executions)
     materialization_runtime_ms = (perf_counter() - start) * 1000.0
 
     return (

@@ -1,21 +1,37 @@
 """Transformer output results over refined structures and slot deltas."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.artifacts.patch import StructureDelta
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 
 
 @dataclass(frozen=True, slots=True)
 class RegionTransformationResult:
-    """Structured result from one selected-region transformation."""
+    """Structured result from one selected-region transformation.
+
+    Parameters
+    ----------
+    relaxation_executions : tuple[ContinuousRelaxationExecution, ...]
+        Observed native returns, including rejected or unselected candidates.
+        These facts do not participate in structural value equality or repr.
+
+    Notes
+    -----
+    Native convergence, geometric acceptance and candidate selection are separate.
+    Empty evidence after an exception does not establish that no native work ran.
+    """
 
     refined_structure: ProteinStructure
     delta: StructureDelta
     issues: tuple[ValidationIssue, ...]
     backend_name: str
     backend_version: str | None = None
+    relaxation_executions: tuple[ContinuousRelaxationExecution, ...] = field(
+        default=(), compare=False, repr=False, kw_only=True
+    )
 
     def __post_init__(self) -> None:
         backend_name = self.backend_name.strip().lower()
@@ -75,9 +91,7 @@ class RegionTransformationResult:
                 )
         for rewrite in self.delta.atom_formal_charge_rewrites:
             if (
-                self.refined_structure.topology.formal_charge(
-                    rewrite.after_atom_index
-                )
+                self.refined_structure.topology.formal_charge(rewrite.after_atom_index)
                 != rewrite.current_formal_charge
             ):
                 raise ValueError(
@@ -90,6 +104,11 @@ class RegionTransformationResult:
         object.__setattr__(self, "backend_name", backend_name)
         object.__setattr__(self, "issues", issues)
         object.__setattr__(self, "backend_version", backend_version)
+        object.__setattr__(
+            self,
+            "relaxation_executions",
+            ContinuousRelaxationExecution.deduplicated(self.relaxation_executions),
+        )
 
     def moved_atom_count(self) -> int:
         """Return the number of atoms whose coordinates were updated."""

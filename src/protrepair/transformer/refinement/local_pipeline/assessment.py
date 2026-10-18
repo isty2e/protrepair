@@ -30,7 +30,6 @@ from protrepair.transformer.refinement.local_pipeline.request import (
 from protrepair.transformer.refinement.speculative_planning import (
     EvaluatedSpeculativeProposal,
     SpeculativeAdoptionDecision,
-    SpeculativeEvaluationBatch,
 )
 
 
@@ -89,7 +88,7 @@ def execute_and_assess_refinement_candidate_batch(
     assessment_runtime_ms += (perf_counter() - start) * 1000.0
     if discrete_parser_preconditioning_short_circuits(discrete_assessment):
         return (
-            SpeculativeEvaluationBatch(
+            AssessedRefinementBatch(
                 evaluated_proposals=(discrete_assessment,),
             ),
             backend_execution_runtime_ms,
@@ -112,12 +111,13 @@ def execute_and_assess_refinement_candidate_batch(
     )
     assessment_runtime_ms += (perf_counter() - start) * 1000.0
     return (
-        SpeculativeEvaluationBatch(
+        AssessedRefinementBatch(
             evaluated_proposals=(
                 discrete_assessment,
                 *remaining_assessed_batch.evaluated_proposals,
             ),
             execution_errors=remaining_assessed_batch.execution_errors,
+            relaxation_executions=remaining_assessed_batch.relaxation_executions,
         ),
         backend_execution_runtime_ms,
         assessment_runtime_ms,
@@ -176,7 +176,7 @@ def assess_refinement_candidate_batch(
         {} if before_metrics_cache is None else before_metrics_cache
     )
 
-    return SpeculativeEvaluationBatch(
+    return AssessedRefinementBatch(
         evaluated_proposals=tuple(
             assess_refinement_candidate(
                 candidate,
@@ -190,6 +190,11 @@ def assess_refinement_candidate_batch(
             for candidate in batch.executions
         ),
         execution_errors=batch.errors,
+        relaxation_executions=tuple(
+            execution
+            for candidate in batch.executions
+            for execution in candidate.outcome.relaxation_executions
+        ),
     )
 
 

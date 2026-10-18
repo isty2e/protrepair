@@ -138,6 +138,63 @@ def test_refine_local_region_moves_selected_atom_and_keeps_context_fixed() -> No
     assert refined_observer.position == original_observer.position
 
 
+@pytest.mark.parametrize("method", tuple(ContinuousRelaxationForceField))
+@pytest.mark.parametrize("iterations", (1, 200))
+def test_public_local_result_preserves_actual_native_return(
+    monkeypatch: pytest.MonkeyPatch,
+    method: ContinuousRelaxationForceField,
+    iterations: int,
+) -> None:
+    original_builder = continuous_rdkit.build_rdkit_force_field
+    native_returns = []
+
+    def observed_builder(molecule, **kwargs):
+        field = original_builder(molecule, **kwargs)
+        problem = kwargs["problem"]
+
+        class ObservedField:
+            def Initialize(self):
+                return field.Initialize()
+
+            def Minimize(self, *, maxIts):
+                status = field.Minimize(maxIts=maxIts)
+                native_returns.append((problem.spec, maxIts, status))
+                return status
+
+        return ObservedField()
+
+    monkeypatch.setattr(continuous_rdkit, "build_rdkit_force_field", observed_builder)
+    selected = AtomRef(ResidueId("A", 1), "H1")
+    spec = DirectRegionTransformationSpec(
+        scope_spec=LocalScopeSpec.from_atoms((selected,)),
+        force_field=method,
+        config=ContinuousRelaxationConfig(
+            context_radius_angstrom=2.5, max_iterations=iterations
+        ),
+    )
+    result = transform_local_region(
+        build_toy_structure(), spec, component_library=build_toy_component_library()
+    )
+
+    assert len(native_returns) == 1
+    executions = getattr(result, "relaxation_executions", ())
+    assert len(executions) == 1
+    execution = executions[0]
+    settings, native_iterations, status = native_returns[0]
+    assert execution.settings is settings
+    assert execution.settings.force_field is method
+    assert execution.settings.max_iterations == native_iterations == iterations
+    assert execution.minimizer_status == status
+    assert execution.movable_scope.atom_refs == (selected,)
+    assert execution.backend_version == continuous_rdkit.rdBase.rdkitVersion
+
+    repeated = transform_local_region(
+        build_toy_structure(), spec, component_library=build_toy_component_library()
+    )
+    assert len(native_returns) == 2
+    assert repeated.relaxation_executions[0] is not execution
+
+
 def test_rdkit_refinement_preserves_movable_and_fixed_hydrogen_isotopes() -> None:
     """RDKit should lower D/T as explicit hydrogen isotopes without source loss."""
 

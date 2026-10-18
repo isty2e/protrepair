@@ -111,6 +111,16 @@ deviations. Angle restraints retain their separate five-degree minimum. These
 are calibration choices for optimization, not exact validity bounds or promises
 that every reported geometry issue will disappear.
 
+Local transformation results carry `relaxation_executions`: the actual bound
+settings, source atoms allowed to move, native return code and runtime version
+for each observed minimization. Rejected and unselected candidates keep their
+records too. Separate calls remain distinct even with identical inputs; passing
+one record through cap projection or H revalidation does not duplicate it.
+These are in-memory return facts, not resumable solver state or accumulated
+whole-workflow history. A native status of zero means convergence, not chemical
+validity or adoption. An empty record after an exception does not establish that
+no native work ran.
+
 ## Complete, Partial, And Unsupported Outcomes
 
 A processing run can return a useful structure without satisfying every goal.

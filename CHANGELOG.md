@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- retain actual native FF settings, source motion scope, return status and
+  runtime version on local transformation results, including rejected and
+  unselected candidates; native convergence does not imply candidate adoption
+
 ### Changed
 
 - use a 0.04 A minimum soft bond-restraint window during local FF optimization,

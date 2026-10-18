@@ -292,4 +292,5 @@ def _with_refreshed_hydrogen_coordinates(
         issues=(*result.issues, *appended_issues),
         backend_name=result.backend_name,
         backend_version=result.backend_version,
+        relaxation_executions=result.relaxation_executions,
     )

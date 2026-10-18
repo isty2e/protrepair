@@ -1,6 +1,6 @@
 """RDKit realization of the continuous local-relaxation backend seam."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 from typing import TYPE_CHECKING
 
@@ -37,6 +37,7 @@ from protrepair.transformer.continuous.domain import (
     ContinuousRelaxationRegion,
     PlannedBond,
 )
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.continuous.settings import ContinuousRelaxationForceField
 from protrepair.transformer.continuous.shared import apply_position_updates
 
@@ -248,7 +249,12 @@ class RdkitContinuousRelaxationBackend:
             problem, molecule, rdkit_atom_index_by_structure_atom_index
         )
         force_field.Initialize()
-        force_field.Minimize(maxIts=problem.spec.max_iterations)
+        minimizer_status = force_field.Minimize(maxIts=problem.spec.max_iterations)
+        execution = ContinuousRelaxationExecution.from_native_return(
+            problem,
+            minimizer_status=minimizer_status,
+            backend_version=rdBase.rdkitVersion,
+        )
 
         moved_positions = {
             atom_index: conformer_position(
@@ -267,15 +273,18 @@ class RdkitContinuousRelaxationBackend:
             if (distortion := guard.distortion(refined_structure)) is not None
         )
         if hydrogen_distortions:
-            return rejected_original_structure_result(
-                problem,
-                catastrophic_distortions=tuple(
-                    sorted(
-                        hydrogen_distortions,
-                        key=lambda distortion: -distortion.deviation_angstrom(),
-                    )
+            return replace(
+                rejected_original_structure_result(
+                    problem,
+                    catastrophic_distortions=tuple(
+                        sorted(
+                            hydrogen_distortions,
+                            key=lambda distortion: -distortion.deviation_angstrom(),
+                        )
+                    ),
+                    backend_version=rdBase.rdkitVersion,
                 ),
-                backend_version=rdBase.rdkitVersion,
+                relaxation_executions=(execution,),
             )
 
         chirality_changes = _rdkit_chirality_changes(
@@ -287,10 +296,13 @@ class RdkitContinuousRelaxationBackend:
             refined_structure=refined_structure,
         )
         if chirality_changes:
-            return _rejected_chirality_change_result(
-                problem,
-                chirality_changes=chirality_changes,
-                backend_version=rdBase.rdkitVersion,
+            return replace(
+                _rejected_chirality_change_result(
+                    problem,
+                    chirality_changes=chirality_changes,
+                    backend_version=rdBase.rdkitVersion,
+                ),
+                relaxation_executions=(execution,),
             )
 
         catastrophic_distortions = catastrophic_bond_distortions(
@@ -299,10 +311,13 @@ class RdkitContinuousRelaxationBackend:
             restraint_library=restraint_library,
         )
         if catastrophic_distortions:
-            return rejected_original_structure_result(
-                problem,
-                catastrophic_distortions=catastrophic_distortions,
-                backend_version=rdBase.rdkitVersion,
+            return replace(
+                rejected_original_structure_result(
+                    problem,
+                    catastrophic_distortions=catastrophic_distortions,
+                    backend_version=rdBase.rdkitVersion,
+                ),
+                relaxation_executions=(execution,),
             )
 
         return RegionTransformationResult(
@@ -321,6 +336,7 @@ class RdkitContinuousRelaxationBackend:
             issues=(),
             backend_name="rdkit",
             backend_version=rdBase.rdkitVersion,
+            relaxation_executions=(execution,),
         )
 
 
