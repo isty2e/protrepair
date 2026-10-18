@@ -244,8 +244,11 @@ microstate remains unresolved where its original partner is missing.
 
 Conflicting source chemistry, ambiguous attachments, unsupported non-peptide
 cuts, and missing cap anchors still block execution. A source-backed cap needs
-the relevant backbone scaffold and validated H anchors, not completion of an
-omitted side chain. Heavy-atom completeness remains required for residues
+the relevant backbone scaffold, not completion of an omitted side chain. For an
+ordinary linked amide N with no source H, the cap receives one fixed, planar H.
+A supplied H keeps its validated position; incompatible source H or charge is
+not replaced by model H. This support does not require preparing the omitted
+source residue. Heavy-atom completeness remains required for residues
 actually included in the force field. Computational caps do not resolve
 off-scope contacts or guarantee ideal bond lengths; returned-source quality is
 assessed separately.

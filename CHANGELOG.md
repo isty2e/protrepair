@@ -4,6 +4,9 @@
 
 ### Changed
 
+- use a 0.04 A minimum soft bond-restraint window during local FF optimization,
+  retaining four-ESD scaling, the separate five-degree angle minimum and existing
+  force constants and iteration limits
 - prefer source-compatible thiolate for a single stock-qualified CYS SG--heme
   Fe site, while retaining source thiol H/D/T and neutral sulfur charges;
   remove the neutral thiol default at other coordinated CYS sites. Without
@@ -55,6 +58,11 @@
 
 ### Fixed
 
+- supply fixed calculation-only H for admitted omitted amide partners at peptide
+  boundaries, without preparing off-scope source residues or exporting cap atoms
+- reject newly worsened large covalent X-H length distortions against the
+  executing UFF/MMFF targets, while preserving source topology and allowing
+  inherited distortions to remain or improve
 - realize coupled polymer chemistry before scoring fixed rotatable H, so
   protonation changes cannot leave stale acceptors in the placement environment
 - classify supported polar contacts from bonded chemistry rather than element

@@ -395,19 +395,17 @@ def _cap_atoms(
         anchor = "C"
     else:
         if partner is not None:
-            partner_site = constitution.residue_or_ligand(partner.residue_id)
-            if partner_site is None or partner_site.component_id == "PRO":
-                raise RefinementError(
-                    "source proline requires intact fixed context, not NME"
-                )
             attachment, methyl = (
                 point(partner.residue_id, name) for name in ("N", "CA")
             )
             if boundary.source_partner_hydrogen is None:
-                raise RefinementError("source-backed NME requires a validated H anchor")
-            hydrogen = point(
-                partner.residue_id, boundary.source_partner_hydrogen.atom_name
-            )
+                hydrogen = attachment + 1.01 * _third_direction(
+                    attachment, endpoint, methyl
+                )
+            else:
+                hydrogen = point(
+                    partner.residue_id, boundary.source_partner_hydrogen.atom_name
+                )
         else:
             attachment = endpoint + 1.329 * _third_direction(
                 endpoint, ca, point(residue_id, "O")

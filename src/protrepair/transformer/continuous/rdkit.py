@@ -1,6 +1,11 @@
 """RDKit realization of the continuous local-relaxation backend seam."""
 
 from dataclasses import dataclass
+from math import isfinite
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from rdkit.Chem.rdchem import Mol
 
 try:
     from rdkit import Chem, rdBase
@@ -40,14 +45,17 @@ ATOMWISE_POSITION_CONSTRAINT_MAX_DISPLACEMENT_ANGSTROM = 0.35
 # cleanup does not distort the selected residue backbone.
 RESIDUEWISE_POSITION_CONSTRAINT_MAX_DISPLACEMENT_ANGSTROM = 0.35
 POSITION_CONSTRAINT_FORCE_CONSTANT = 50.0
+# Soft-window defaults are calibration choices, not geometric validity bounds.
 BOND_CONSTRAINT_ESD_MULTIPLIER = 4.0
-BOND_CONSTRAINT_MIN_TOLERANCE_ANGSTROM = 0.05
+BOND_CONSTRAINT_MIN_TOLERANCE_ANGSTROM = 0.04
 BOND_CONSTRAINT_FORCE_CONSTANT = 80.0
 BACKBONE_WINDOW_BOND_CONSTRAINT_FORCE_CONSTANT = 500.0
 ANGLE_CONSTRAINT_ESD_MULTIPLIER = 4.0
 ANGLE_CONSTRAINT_MIN_TOLERANCE_DEGREES = 5.0
 ANGLE_CONSTRAINT_FORCE_CONSTANT = 30.0
 CATASTROPHIC_BOND_DISTORTION_DEVIATION_ANGSTROM = 0.20
+# Coarse admission tolerance, not X-ray/nuclear H normalization or FF convergence.
+COVALENT_HYDROGEN_BOND_DISTORTION_DEVIATION_ANGSTROM = 0.20
 MMFF_VARIANT = "MMFF94s"
 PEPTIDE_CN_TARGET_DISTANCE_ANGSTROM = 1.329
 PEPTIDE_CN_DISTANCE_TOLERANCE_ANGSTROM = 0.06
@@ -63,11 +71,128 @@ class _CatastrophicBondDistortion:
     atom_name_2: str
     observed_distance_angstrom: float
     target_distance_angstrom: float
+    target_description: str = "restraint"
 
     def deviation_angstrom(self) -> float:
-        """Return the absolute bond-length deviation from the restraint target."""
+        """Return the absolute bond-length deviation from the reference target."""
 
         return abs(self.observed_distance_angstrom - self.target_distance_angstrom)
+
+
+@dataclass(frozen=True, slots=True)
+class _CovalentHydrogenBondGuard:
+    """Check one native X-H bond without blocking inherited distortion recovery."""
+
+    bond: PlannedBond
+    target_distance_angstrom: float
+    maximum_deviation_angstrom: float
+    method: ContinuousRelaxationForceField
+
+    def distortion(
+        self, structure: ProteinStructure
+    ) -> _CatastrophicBondDistortion | None:
+        first, second = self.bond.atom_index_1, self.bond.atom_index_2
+        distance = structure.geometry.atom_geometry(first).distance_to(
+            structure.geometry.atom_geometry(second)
+        )
+        deviation = abs(distance - self.target_distance_angstrom)
+        if deviation <= self.maximum_deviation_angstrom + 1e-12:
+            return None
+
+        constitution = structure.constitution
+        residue_index = constitution.residue_index_for_atom_index(first)
+        return _CatastrophicBondDistortion(
+            residue_index=residue_index,
+            component_id=constitution.residue_site_at(residue_index).component_id,
+            atom_name_1=constitution.atom_site_at(first).name,
+            atom_name_2=constitution.atom_site_at(second).name,
+            observed_distance_angstrom=distance,
+            target_distance_angstrom=self.target_distance_angstrom,
+            target_description=f"native {self.method.value.upper()} X-H",
+        )
+
+
+def _covalent_hydrogen_bond_guards(
+    problem: ContinuousRelaxationProblem,
+    molecule: "Mol",
+    mapping: dict[AtomIndex, int],
+) -> tuple[_CovalentHydrogenBondGuard, ...]:
+    assert Chem is not None and rdForceFieldHelpers is not None
+    structure = problem.region.snapshot.structure
+    constitution = structure.constitution
+    movable = frozenset(problem.region.movable_atom_indices)
+    bonds = tuple(
+        bond
+        for bond in problem.bonds
+        if (bond.atom_index_1 in movable or bond.atom_index_2 in movable)
+        and (
+            constitution.atom_site_at(bond.atom_index_1).is_hydrogen()
+            != constitution.atom_site_at(bond.atom_index_2).is_hydrogen()
+        )
+    )
+    if not bonds:
+        return ()
+
+    method = problem.spec.force_field
+    # MMFF typing may change aromatic flags; do not mutate the executing molecule.
+    parameter_molecule = Chem.Mol(molecule)
+    mmff = None
+    if method is ContinuousRelaxationForceField.MMFF:
+        try:
+            mmff = rdForceFieldHelpers.MMFFGetMoleculeProperties(
+                parameter_molecule, mmffVariant=MMFF_VARIANT
+            )
+        except Exception as error:
+            raise RefinementError(
+                "RDKit could not determine MMFF hydrogen bond targets"
+            ) from error
+        if mmff is None:
+            raise RefinementError(
+                "RDKit could not determine MMFF hydrogen bond targets"
+            )
+
+    guards = []
+    for bond in bonds:
+        first, second = bond.atom_index_1, bond.atom_index_2
+        try:
+            parameters = (
+                rdForceFieldHelpers.GetUFFBondStretchParams(
+                    parameter_molecule, mapping[first], mapping[second]
+                )
+                if mmff is None
+                else mmff.GetMMFFBondStretchParams(
+                    parameter_molecule, mapping[first], mapping[second]
+                )
+            )
+        except Exception as error:
+            raise RefinementError(
+                "RDKit could not determine a native hydrogen bond target"
+            ) from error
+        if parameters is None:
+            raise RefinementError(
+                "RDKit could not determine a native hydrogen bond target"
+            )
+        target = float(parameters[-1])
+        if not isfinite(target) or target <= 0:
+            raise RefinementError(
+                "RDKit returned an invalid native hydrogen bond target"
+            )
+
+        initial_distance = structure.geometry.atom_geometry(first).distance_to(
+            structure.geometry.atom_geometry(second)
+        )
+        guards.append(
+            _CovalentHydrogenBondGuard(
+                bond,
+                target,
+                max(
+                    COVALENT_HYDROGEN_BOND_DISTORTION_DEVIATION_ANGSTROM,
+                    abs(initial_distance - target),
+                ),
+                method,
+            )
+        )
+    return tuple(guards)
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +244,9 @@ class RdkitContinuousRelaxationBackend:
                 rdkit_atom_index_by_structure_atom_index
             ),
         )
+        hydrogen_guards = _covalent_hydrogen_bond_guards(
+            problem, molecule, rdkit_atom_index_by_structure_atom_index
+        )
         force_field.Initialize()
         force_field.Minimize(maxIts=problem.spec.max_iterations)
 
@@ -133,6 +261,23 @@ class RdkitContinuousRelaxationBackend:
             problem.region.snapshot.structure,
             moved_positions=moved_positions,
         )
+        hydrogen_distortions = tuple(
+            distortion
+            for guard in hydrogen_guards
+            if (distortion := guard.distortion(refined_structure)) is not None
+        )
+        if hydrogen_distortions:
+            return rejected_original_structure_result(
+                problem,
+                catastrophic_distortions=tuple(
+                    sorted(
+                        hydrogen_distortions,
+                        key=lambda distortion: -distortion.deviation_angstrom(),
+                    )
+                ),
+                backend_version=rdBase.rdkitVersion,
+            )
+
         chirality_changes = _rdkit_chirality_changes(
             problem,
             molecule=molecule,
@@ -355,12 +500,13 @@ def rejected_original_structure_result(
         residue_id=residue_site.residue_id,
         message=(
             "RDKit local refinement output was discarded because it produced "
-            "catastrophic restraint-backed bond distortion: "
+            "catastrophic bond distortion: "
             f"{residue_site.residue_id.display_token()} "
             f"{worst_distortion.component_id} "
             f"{worst_distortion.atom_name_1}-{worst_distortion.atom_name_2} "
             f"{worst_distortion.observed_distance_angstrom:.3f} A vs "
-            f"{worst_distortion.target_distance_angstrom:.3f} A target "
+            f"{worst_distortion.target_distance_angstrom:.3f} A "
+            f"{worst_distortion.target_description} target "
             f"({len(catastrophic_distortions)} severe bond distortion(s))"
         ),
     )

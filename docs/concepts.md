@@ -99,6 +99,18 @@ Existing checks for new stereo violations and severe restraint-backed bond
 distortion still apply. This is endpoint assessment, not selection of additional
 intermediate optimization frames.
 
+The native backend also checks explicit X-H bond lengths, including D and T,
+against the selected UFF or MMFF94s equilibrium distances. It discards newly
+worsened large distortions, while allowing inherited distortion to remain or
+improve. The current allowance is the larger of 0.20 A and the initial deviation;
+it is a coarse safeguard, not a universal H-geometry standard. It does not check
+every H direction or require native convergence before returning a candidate.
+
+Bond restraints use a soft window of at least 0.04 A or four reported standard
+deviations. Angle restraints retain their separate five-degree minimum. These
+are calibration choices for optimization, not exact validity bounds or promises
+that every reported geometry issue will disappear.
+
 ## Complete, Partial, And Unsupported Outcomes
 
 A processing run can return a useful structure without satisfying every goal.

@@ -187,12 +187,18 @@ def test_rdkit_refinement_preserves_movable_and_fixed_hydrogen_isotopes() -> Non
         component_library=component_library,
     ).refined_structure
 
-    assert refined.constitution.atom_site_at(
-        refined.constitution.atom_index(AtomRef(ResidueId("A", 1), "H1"))
-    ).element == "D"
-    assert refined.constitution.atom_site_at(
-        refined.constitution.atom_index(AtomRef(ResidueId("L", 1), "H2"))
-    ).element == "T"
+    assert (
+        refined.constitution.atom_site_at(
+            refined.constitution.atom_index(AtomRef(ResidueId("A", 1), "H1"))
+        ).element
+        == "D"
+    )
+    assert (
+        refined.constitution.atom_site_at(
+            refined.constitution.atom_index(AtomRef(ResidueId("L", 1), "H2"))
+        ).element
+        == "T"
+    )
 
 
 def test_refine_local_region_supports_mmff_on_benchmark_fixture() -> None:
@@ -330,8 +336,7 @@ def test_rdkit_backend_discards_catastrophic_bond_distortion(
     assert result.refined_structure == structure
     assert result.delta.moved_atoms == ()
     assert any(
-        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
-        for issue in result.issues
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
     )
 
 
@@ -401,9 +406,7 @@ def test_rdkit_backend_discards_assigned_chirality_loss(
     structure = build_chiral_structure()
     residue_id = ResidueId("L", 1)
     fluorine_atom_ref = AtomRef(residue_id, "F1")
-    chlorine_atom_index = structure.constitution.atom_index(
-        AtomRef(residue_id, "CL1")
-    )
+    chlorine_atom_index = structure.constitution.atom_index(AtomRef(residue_id, "CL1"))
     fluorine_atom_index = structure.constitution.atom_index(fluorine_atom_ref)
     problem = build_continuous_relaxation_problem(
         structure,
@@ -746,8 +749,8 @@ def test_build_rdkit_force_field_adds_position_constraints_for_movable_atoms(
                 structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "H1"))
             ],
             False,
-            pytest.approx(1.04),
-            pytest.approx(1.14),
+            pytest.approx(1.05),
+            pytest.approx(1.13),
             continuous_rdkit.BOND_CONSTRAINT_FORCE_CONSTANT,
         )
     ]
@@ -907,8 +910,8 @@ def test_build_rdkit_force_field_adds_geometry_constraints_for_residuewise_selec
                 structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "A2"))
             ],
             False,
-            pytest.approx(1.15),
-            pytest.approx(1.25),
+            pytest.approx(1.16),
+            pytest.approx(1.24),
             continuous_rdkit.BOND_CONSTRAINT_FORCE_CONSTANT,
         ),
         (
@@ -1094,8 +1097,8 @@ def test_build_rdkit_force_field_uses_mmff_builder_and_constraints(
                 structure.constitution.atom_index(AtomRef(ResidueId("A", 1), "A2"))
             ],
             False,
-            pytest.approx(1.15),
-            pytest.approx(1.25),
+            pytest.approx(1.16),
+            pytest.approx(1.24),
             continuous_rdkit.BOND_CONSTRAINT_FORCE_CONSTANT,
         ),
         (

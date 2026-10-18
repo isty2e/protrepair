@@ -29,7 +29,8 @@ class PeptideBoundary:
         The unresolved internal N also needs a calculation-only N-H attachment.
     source_partner_hydrogen : AtomRef or None
         Validated source H anchor for an omitted N, including named attachments
-        not yet materialized as source bonds.
+        not yet materialized as source bonds. For an admitted omitted N with no
+        source H, the cap transformer places its one required calculation H.
     """
 
     endpoint: AtomRef
@@ -162,7 +163,7 @@ class PeptideBoundaryPlan:
                 ):
                     raise RefinementError(f"unsupported peptide partner at {ref}")
                 partner_hydrogen = cls._source_partner_hydrogen(
-                    context, partner, component_library
+                    context, partner, component_library, neighbors
                 )
             else:
                 chain = constitution.chain(ref.residue_id.chain_id)
@@ -298,6 +299,7 @@ class PeptideBoundaryPlan:
         context: PolymerMicrostateContext,
         partner: AtomRef,
         component_library: ComponentLibrary,
+        neighbors: dict[AtomIndex, list[tuple[AtomIndex, PlannedBond]]],
     ) -> AtomRef | None:
         source = context.source
         constitution = source.constitution
@@ -317,6 +319,12 @@ class PeptideBoundaryPlan:
         graph = resolution.graph
         if graph is None:
             raise RefinementError(f"unresolved source cap partner at {partner}")
+        if partner.atom_name == "N" and not any(
+            atom.name == "N" and atom.hydrogens == 1 for atom in graph.atoms
+        ):
+            raise RefinementError(
+                f"source cap partner requires intact fixed context at {partner}"
+            )
         try:
             attachments = context.hydrogen_attachments(
                 partner.residue_id, site, resolution
@@ -325,11 +333,14 @@ class PeptideBoundaryPlan:
             raise RefinementError(
                 f"unsupported source cap partner at {partner}"
             ) from error
-        # Omitted residues need valid anchors, not a source-topology repair.
-        # The context validates named H attachment without requiring an N-H edge.
+        # Resolution establishes the linked chemistry, not source H realization.
+        # Only an ordinary one-H N may borrow a calculation H when none is present.
         counts = Counter(attachments.values())
         if any(
-            counts[atom.name] != atom.hydrogens
+            (
+                counts[atom.name] != atom.hydrogens
+                and not (partner.atom_name == atom.name == "N" and counts["N"] == 0)
+            )
             or (
                 source.topology.formal_charge(
                     constitution.atom_index(AtomRef(partner.residue_id, atom.name))
@@ -340,6 +351,14 @@ class PeptideBoundaryPlan:
             for atom in graph.atoms
         ):
             raise RefinementError(f"unrealized source cap partner at {partner}")
+        if any(
+            bond.aromatic
+            for atom in graph.atoms
+            for _, bond in neighbors[
+                constitution.atom_index(AtomRef(partner.residue_id, atom.name))
+            ]
+        ):
+            raise RefinementError(f"aromatic source cap partner at {partner}")
         for bond in graph.bonds:
             actual = source.topology.bond_between(
                 constitution.atom_index(AtomRef(partner.residue_id, bond.atom_name_1)),
