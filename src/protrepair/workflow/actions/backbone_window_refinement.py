@@ -17,6 +17,7 @@ from protrepair.transformer.refinement.backbone_window import (
     execute_backbone_window_refinement,
 )
 from protrepair.transformer.refinement.outcome import (
+    RefinementCodomainState,
     RefinementStage,
     RefinementStageOutcome,
 )
@@ -107,9 +108,24 @@ class BackboneWindowRefinementTransformer(WorkflowStructureTransformer):
                 stage=RefinementStage.BACKBONE_WINDOW,
             )
 
-        return ProjectedCodomainState(
+        return RefinementCodomainState(
             scope=self.scope,
             state=outcome.structure,
             repairs=outcome.repairs,
             issues=outcome.issues,
+            relaxation_executions=outcome.relaxation_executions,
         )
+
+    def lift_projected_codomain(
+        self,
+        carrier: TransformationResult,
+        projected_codomain: ProjectedCodomainState[ProteinStructure],
+        *,
+        context: TransformerExecutionContext,
+    ) -> TransformationResult:
+        """Retain native facts through the refinement-specific projection."""
+
+        del context
+        if not isinstance(projected_codomain, RefinementCodomainState):
+            raise TypeError("backbone refinement requires its refinement codomain")
+        return projected_codomain.lift(carrier)

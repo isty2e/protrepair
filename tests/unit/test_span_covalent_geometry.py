@@ -51,6 +51,7 @@ from protrepair.transformer.continuous.binding import (
     RecommendedContinuousRelaxationBinding,
 )
 from protrepair.transformer.local.models import LocalScopeSpec
+from protrepair.transformer.refinement.outcome import RefinementCodomainState
 from protrepair.transformer.refinement.spec import (
     BackboneWindowRefinementSpec,
     RepairRefinementSpec,
@@ -529,7 +530,7 @@ def test_small_bond_excess_survives_until_final_state_assessment(
         )
         calls.append(followup)
         if followup == "rejected":
-            return ProjectedCodomainState(scope=self.workflow_scope, state=structure)
+            return RefinementCodomainState(scope=self.workflow_scope, state=structure)
 
         corrected_atoms = tuple(
             atom.with_position(_position(reference, ref.residue_id, ref.atom_name))
@@ -539,7 +540,7 @@ def test_small_bond_excess_survives_until_final_state_assessment(
             for index, atom in enumerate(structure.geometry.atom_geometries)
             for ref in (structure.constitution.atom_ref_at(AtomIndex(index)),)
         )
-        return ProjectedCodomainState(
+        return RefinementCodomainState(
             scope=self.workflow_scope,
             state=ProteinStructure.from_payload(
                 constitution=structure.constitution,
@@ -988,7 +989,7 @@ def test_refinement_request_survives_absent_span_until_reconstruction(
             for event in carrier.repairs
         )
         calls.append(self.workflow_scope)
-        return ProjectedCodomainState(
+        return RefinementCodomainState(
             scope=self.workflow_scope,
             state=projected_domain.state,
             issues=(

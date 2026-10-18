@@ -1,6 +1,6 @@
 """Transformer-owned accumulated structure and diagnostic result carrier."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from typing_extensions import Self
 
@@ -62,17 +62,15 @@ class TransformationResult:
         if not issues:
             return self
 
-        return type(self)(
-            structure=self.structure,
-            repairs=self.repairs,
+        return replace(
+            self,
             issues=self.issues + tuple(issues),
         )
 
     def with_structure(self, structure: ProteinStructure) -> Self:
         """Return a copy with an updated structure."""
 
-        return type(self)(
+        return replace(
+            self,
             structure=structure,
-            repairs=self.repairs,
-            issues=self.issues,
         )

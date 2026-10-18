@@ -1,6 +1,7 @@
 """Workflow-visible structure-transformer action contracts."""
 
 from abc import abstractmethod
+from dataclasses import replace
 
 from protrepair.scope import ResidueSetScope, Scope
 from protrepair.structure.aggregate import ProteinStructure
@@ -25,6 +26,14 @@ class WorkflowStructureTransformer(
     ]
 ):
     """Workflow action that transforms the current structure result carrier."""
+
+    def reapplication_context(
+        self, structure: ProteinStructure
+    ) -> ProteinStructure | None:
+        """Return None: ordinary actions are attempted once per branch."""
+
+        del structure
+        return None
 
     @property
     @abstractmethod
@@ -55,7 +64,8 @@ class WorkflowStructureTransformer(
         """Lift one structure codomain back into the workflow result carrier."""
 
         del context
-        return TransformationResult(
+        return replace(
+            carrier,
             structure=projected_codomain.state,
             repairs=carrier.repairs + projected_codomain.repairs,
             issues=carrier.issues + projected_codomain.issues,
