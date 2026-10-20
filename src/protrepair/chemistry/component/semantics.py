@@ -1,7 +1,7 @@
 """Heavy-atom and hydrogen completion semantics over component models."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 
@@ -114,6 +114,9 @@ class IdealGeometryHydrogenSemantics:
     """Hydrogen-placement semantics driven by an idealized component model."""
 
     component: IdealizedComponent
+    _anchor_by_name: dict[str, str] | None = field(
+        default=None, init=False, compare=False, hash=False, repr=False
+    )
 
     def expected_hydrogen_atom_names(self) -> tuple[str, ...]:
         """Return hydrogen atom names owned by this idealized hydrogen source."""
@@ -134,6 +137,9 @@ class IdealGeometryHydrogenSemantics:
     def template_hydrogen_anchor_by_name(self) -> Mapping[str, str]:
         """Return template-resolved heavy-atom anchors for idealized hydrogens."""
 
+        cached = self._anchor_by_name
+        if cached is not None:
+            return MappingProxyType(cached)
         anchor_by_name: dict[str, str] = {}
         for hydrogen_atom in self.component.hydrogen_atoms():
             anchor_atom_name = self.component.hydrogen_anchor_atom_name(
@@ -144,6 +150,7 @@ class IdealGeometryHydrogenSemantics:
 
             anchor_by_name[hydrogen_atom.atom_name] = anchor_atom_name
 
+        object.__setattr__(self, "_anchor_by_name", anchor_by_name)
         return MappingProxyType(anchor_by_name)
 
 
@@ -175,6 +182,9 @@ class HydrogenSemantics:
     plan_with_backbone: tuple[HydrogenOperation, ...] | None = None
     plan_without_backbone: tuple[HydrogenOperation, ...] | None = None
     rotatable_kind: RotatableHydrogenKind | None = None
+    _anchor_by_name: dict[str, str] | None = field(
+        default=None, init=False, compare=False, hash=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         uses_static_plan = (
@@ -217,6 +227,9 @@ class HydrogenSemantics:
         if self.rotatable_kind is not None:
             return ROTATABLE_HYDROGEN_ANCHOR_BY_NAME[self.rotatable_kind]
 
+        cached = self._anchor_by_name
+        if cached is not None:
+            return MappingProxyType(cached)
         anchor_by_name: dict[str, str] = {}
         for plan in (self.plan_with_backbone, self.plan_without_backbone):
             if plan is None:
@@ -243,6 +256,7 @@ class HydrogenSemantics:
 
                     anchor_by_name[hydrogen_atom_name] = anchor_atom_name
 
+        object.__setattr__(self, "_anchor_by_name", anchor_by_name)
         return MappingProxyType(anchor_by_name)
 
     @staticmethod

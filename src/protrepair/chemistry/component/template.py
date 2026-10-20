@@ -35,6 +35,9 @@ class ResidueTemplate:
     ) = None
     hydrogen_semantics: HydrogenSemantics | IdealGeometryHydrogenSemantics | None = None
     tetrahedral_centers: tuple[TetrahedralCenterSemantics, ...] = ()
+    _polymer_hydrogen_parent_aliases: Mapping[str, str] | None = field(
+        default=None, init=False, compare=False, hash=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         normalized_params = {
@@ -288,6 +291,69 @@ class ResidueTemplate:
                 if hydrogen_atom_name in normalized_present_atom_names
             }
         )
+
+    def polymer_hydrogen_parent_aliases(self) -> Mapping[str, str]:
+        """Interpret fixed polymer H naming rules, not observed attachments.
+
+        Returns
+        -------
+        Mapping[str, str]
+            Immutable template anchors, terminal aliases and unambiguous carbon
+            families. Isotope normalization and actual bonds remain live queries.
+            Linked/free backbone N naming is not part of this projection.
+
+        Raises
+        ------
+        ValueError
+            The complete hydrogen grammar has conflicting anchor declarations.
+        """
+        cached = self._polymer_hydrogen_parent_aliases
+        if cached is not None:
+            return cached
+        aliases = {
+            "H": "N",
+            "H1": "N",
+            "H2": "N",
+            "H3": "N",
+            "1H": "N",
+            "2H": "N",
+            "3H": "N",
+            "HXT": "OXT",
+            "HO": "O",
+        }
+        if self.component_id == "HIS":
+            aliases.update({"HD1": "ND1", "HE2": "NE2"})
+        elif self.component_id == "ARG":
+            aliases.update({"HH11": "NH1", "HH12": "NH1", "HH21": "NH2", "HH22": "NH2"})
+        elif self.component_id == "ASN":
+            aliases.update({"HD21": "ND2", "HD22": "ND2"})
+        elif self.component_id == "GLN":
+            aliases.update({"HE21": "NE2", "HE22": "NE2"})
+        elif self.component_id == "ASP":
+            aliases.update({"HD1": "OD1", "HD2": "OD2"})
+        elif self.component_id == "GLU":
+            aliases.update({"HE1": "OE1", "HE2": "OE2"})
+        if self.hydrogen_semantics is not None:
+            aliases.update(self.hydrogen_semantics.template_hydrogen_anchor_by_name())
+
+        # Ambiguous carbon families stay unresolved; declared anchors win.
+        carbon_parents: dict[str, set[str]] = {}
+        for atom_name in self.expected_polymer_heavy_atom_names():
+            if not atom_name.startswith("C"):
+                continue
+            stem = "H" + atom_name[1:]
+            for name in (
+                stem,
+                *(f"{stem}{i}" for i in (1, 2, 3)),
+                *(f"{i}{stem}" for i in (1, 2, 3)),
+            ):
+                carbon_parents.setdefault(name, set()).add(atom_name)
+        for name, parents in carbon_parents.items():
+            if len(parents) == 1:
+                aliases.setdefault(name, next(iter(parents)))
+        result = MappingProxyType(aliases)
+        object.__setattr__(self, "_polymer_hydrogen_parent_aliases", result)
+        return result
 
     def requires_coordinate_hydrogen_topology(
         self,
