@@ -12,6 +12,8 @@
 
 ### Changed
 
+- skip unused orientation searches when scoring workflow branches; correction
+  planning and phase reports still evaluate orientation eligibility
 - reuse polymer chemistry preparation and complete hydrogen plans within each
   workflow planning pass, and compile immutable component naming rules once
   rather than reinterpreting them for each residue
