@@ -66,8 +66,9 @@ def test_low_resolution_sidechain_gap_stays_stable_no_op() -> None:
     assert "geometry 0->" in result.error_message
 
 
-def test_hydrogenated_negative_refinement_benchmark_case_surfaces_topology_blocker(
-) -> None:
+def test_hydrogenated_negative_refinement_benchmark_case_surfaces_topology_blocker() -> (
+    None
+):
     """Hydrogenating retained chemistry should not mask the PJE linkage blocker."""
 
     case = REFINEMENT_BENCHMARK_CASES["2q6f-cys143-pje"]
@@ -181,8 +182,7 @@ def test_hydrogenated_retained_non_polymer_benchmark_cases_run_under_uff(
     assert result.error_message is None
     assert result.metrics_after is not None
     assert (
-        result.expected_outcome
-        is RefinementBenchmarkExpectedOutcome.RUNNABLE_SUCCESS
+        result.expected_outcome is RefinementBenchmarkExpectedOutcome.RUNNABLE_SUCCESS
     )
     assert result.expected_success is True
     assert result.expectation_matched is True

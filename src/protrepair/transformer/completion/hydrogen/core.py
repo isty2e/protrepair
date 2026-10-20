@@ -276,6 +276,7 @@ def materialize_hydrogens_core(
 
     # Orient fixed H against applied chemistry, not choices that may fail or
     # belong to residues outside the requested mutation scope.
+    assert prepared is not None
     prepared = prepared.for_inputs(
         result.structure,
         library,

@@ -41,7 +41,6 @@ from protrepair.transformer.discrete import (
     parser_witness_pre_untangle_scoring as parser_scoring_module,
 )
 from protrepair.transformer.discrete.parser_witness_pre_untangle import (
-    _deduplicated_sidechain_root_rotation_plans,
     build_parser_witness_pre_untangle_candidate,
     parser_witness_pre_untangle_score,
 )
@@ -119,20 +118,16 @@ def test_parser_witness_pre_untangle_rotates_sidechain_without_moving_axis() -> 
 
     assert candidate is not None
     assert candidate.score < parser_witness_pre_untangle_score(structure, cluster)
-    assert (
-        candidate.structure.residue_geometry(
-            candidate.structure.constitution.residue_index(tyr_id)
-        ).position("CA")
-        == structure.residue_geometry(structure.constitution.residue_index(tyr_id))
-        .position("CA")
-    )
-    assert (
-        candidate.structure.residue_geometry(
-            candidate.structure.constitution.residue_index(tyr_id)
-        ).position("CB")
-        == structure.residue_geometry(structure.constitution.residue_index(tyr_id))
-        .position("CB")
-    )
+    assert candidate.structure.residue_geometry(
+        candidate.structure.constitution.residue_index(tyr_id)
+    ).position("CA") == structure.residue_geometry(
+        structure.constitution.residue_index(tyr_id)
+    ).position("CA")
+    assert candidate.structure.residue_geometry(
+        candidate.structure.constitution.residue_index(tyr_id)
+    ).position("CB") == structure.residue_geometry(
+        structure.constitution.residue_index(tyr_id)
+    ).position("CB")
     before_tyr_geometry = structure.residue_geometry(
         structure.constitution.residue_index(tyr_id)
     )
@@ -140,11 +135,13 @@ def test_parser_witness_pre_untangle_rotates_sidechain_without_moving_axis() -> 
         candidate.structure.constitution.residue_index(tyr_id)
     )
     assert after_tyr_geometry.position("OH").distance_to(
-        structure.residue_geometry(structure.constitution.residue_index(obstacle_id))
-        .position("C")
+        structure.residue_geometry(
+            structure.constitution.residue_index(obstacle_id)
+        ).position("C")
     ) > before_tyr_geometry.position("OH").distance_to(
-        structure.residue_geometry(structure.constitution.residue_index(obstacle_id))
-        .position("C")
+        structure.residue_geometry(
+            structure.constitution.residue_index(obstacle_id)
+        ).position("C")
     )
     assert isclose(
         after_tyr_geometry.position("CG").distance_to(
@@ -260,8 +257,7 @@ def test_parser_witness_scoring_reports_unknown_radius_elements_once() -> None:
 
     message = str(error_info.value)
     assert (
-        "parser-witness pre-untangle scoring has unresolved covalent radius"
-        in message
+        "parser-witness pre-untangle scoring has unresolved covalent radius" in message
     )
     assert message.count("XX") == 1
     assert "C1" in message
@@ -345,7 +341,7 @@ def test_parser_witness_pre_untangle_deduplicates_rotation_plans_per_residue(
         counted_plan_builder,
     )
 
-    plans = _deduplicated_sidechain_root_rotation_plans(
+    plans = parser_module._deduplicated_sidechain_root_rotation_plans(
         structure,
         cluster,
         component_library=component_library,
@@ -1006,8 +1002,9 @@ def test_transform_does_not_prepare_contact_basis_without_rotation_plan(
     assert result is snapshot
 
 
-def _parser_witness_contact_fixture(
-) -> tuple[ProteinStructure, RDKitProximityBondCluster]:
+def _parser_witness_contact_fixture() -> tuple[
+    ProteinStructure, RDKitProximityBondCluster
+]:
     """Return a compact two-residue parser-witness contact fixture."""
 
     left_id = ResidueId("A", 1)

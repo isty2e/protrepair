@@ -29,6 +29,7 @@ from protrepair.transformer.packing.spec import PackingScope, PackingSpec
 from protrepair.transformer.refinement.result import RefinementTransformationResult
 from protrepair.transformer.refinement.spec import RepairRefinementSpec
 from protrepair.workflow.actions import hydrogen_completion, hydrogen_topology
+from protrepair.workflow.actions.base import WorkflowStructureTransformer
 from protrepair.workflow.actions.disulfide_topology import (
     DisulfideTopologyResolutionTransformer,
 )
@@ -268,7 +269,7 @@ def test_attached_repair_follows_current_proposal_family_and_history(
     )
 
     assert len(loops) == (1 if next_family == "local" else 0)
-    expected_actions = [primary]
+    expected_actions: list[WorkflowStructureTransformer] = [primary]
     if following is not None and next_family != "local":
         expected_actions.append(following)
     assert actions == expected_actions

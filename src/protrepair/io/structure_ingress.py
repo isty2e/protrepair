@@ -1,5 +1,6 @@
 """Canonical raw-structure ingress normalization transformations."""
 
+import itertools
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -676,11 +677,7 @@ def _canonical_residue_roles_for_chain(
     ordered_residue_ids = tuple(sorted(raw_residues_by_id))
     sequence_neighbor_pairs = frozenset(
         (left_residue_id, right_residue_id)
-        for left_residue_id, right_residue_id in zip(
-            ordered_residue_ids,
-            ordered_residue_ids[1:],
-            strict=False,
-        )
+        for left_residue_id, right_residue_id in itertools.pairwise(ordered_residue_ids)
         if _residue_ids_are_sequential_peptide_neighbors(
             left_residue_id,
             right_residue_id,

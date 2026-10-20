@@ -520,17 +520,19 @@ def run_faspr(
         try:
             stdout_path = temp_dir / "stdout.txt"
             stderr_path = temp_dir / "stderr.txt"
-            with stdout_path.open("w", encoding="utf-8") as stdout_file:
-                with stderr_path.open("w", encoding="utf-8") as stderr_file:
-                    completed = subprocess.run(
-                        command,
-                        check=False,
-                        stdout=stdout_file,
-                        stderr=stderr_file,
-                        text=True,
-                        cwd=executable_path.parent,
-                        timeout=timeout_seconds,
-                    )
+            with (
+                stdout_path.open("w", encoding="utf-8") as stdout_file,
+                stderr_path.open("w", encoding="utf-8") as stderr_file,
+            ):
+                completed = subprocess.run(
+                    command,
+                    check=False,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    text=True,
+                    cwd=executable_path.parent,
+                    timeout=timeout_seconds,
+                )
         except subprocess.TimeoutExpired as error:
             raise PackingBackendExecutionError(
                 "FASPR execution timed out after "

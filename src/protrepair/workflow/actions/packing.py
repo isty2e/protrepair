@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
-from protrepair.scope import ResidueSetScope, Scope, WholeStructureScope
+from protrepair.scope import ResidueSetScope, WholeStructureScope
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.base import (
     ProjectedCodomainState,
@@ -57,11 +57,9 @@ class CommittedPackingTransformer(WorkflowStructureTransformer):
         """Build one committed-packing transformer from a planned packing spec."""
 
         if packing_spec.mutable_residue_ids is None:
-            scope: Scope = WholeStructureScope()
+            scope: WholeStructureScope | ResidueSetScope = WholeStructureScope()
         else:
-            scope = ResidueSetScope(
-                residue_ids=packing_spec.mutable_residue_ids
-            )
+            scope = ResidueSetScope(residue_ids=packing_spec.mutable_residue_ids)
 
         return cls(scope=scope, packing_spec=packing_spec)
 

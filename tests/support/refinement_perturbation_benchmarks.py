@@ -258,9 +258,7 @@ PERTURBATION_BENCHMARK_SCENARIOS: dict[
     "1jd0-gln92-rigid-medium-self-reference": (
         RefinementPerturbationBenchmarkScenario(
             scenario_id="1jd0-gln92-rigid-medium-self-reference",
-            case=SELF_REFERENCE_REFINEMENT_BENCHMARK_CASES[
-                "1jd0-gln92-self-reference"
-            ],
+            case=SELF_REFERENCE_REFINEMENT_BENCHMARK_CASES["1jd0-gln92-self-reference"],
             strategy=REFINEMENT_STRATEGIES["sidechain-local"],
             perturbation=REFINEMENT_PERTURBATION_SPECS["rigid_medium"],
             track=REFINEMENT_BENCHMARK_TRACKS["hydrogenated"],
@@ -270,9 +268,7 @@ PERTURBATION_BENCHMARK_SCENARIOS: dict[
     "4jfx-ptr8-rigid-small-self-reference": (
         RefinementPerturbationBenchmarkScenario(
             scenario_id="4jfx-ptr8-rigid-small-self-reference",
-            case=SELF_REFERENCE_REFINEMENT_BENCHMARK_CASES[
-                "4jfx-ptr8-self-reference"
-            ],
+            case=SELF_REFERENCE_REFINEMENT_BENCHMARK_CASES["4jfx-ptr8-self-reference"],
             strategy=REFINEMENT_STRATEGIES["sidechain-local"],
             perturbation=REFINEMENT_PERTURBATION_SPECS["rigid_small"],
             track=REFINEMENT_BENCHMARK_TRACKS["hydrogenated"],
@@ -282,9 +278,7 @@ PERTURBATION_BENCHMARK_SCENARIOS: dict[
     "4jfx-ptr8-rigid-medium-self-reference": (
         RefinementPerturbationBenchmarkScenario(
             scenario_id="4jfx-ptr8-rigid-medium-self-reference",
-            case=SELF_REFERENCE_REFINEMENT_BENCHMARK_CASES[
-                "4jfx-ptr8-self-reference"
-            ],
+            case=SELF_REFERENCE_REFINEMENT_BENCHMARK_CASES["4jfx-ptr8-self-reference"],
             strategy=REFINEMENT_STRATEGIES["sidechain-local"],
             perturbation=REFINEMENT_PERTURBATION_SPECS["rigid_medium"],
             track=REFINEMENT_BENCHMARK_TRACKS["hydrogenated"],
@@ -383,7 +377,7 @@ def run_refinement_perturbation_benchmark_case(
             component_library=active_component_library,
         )
         problem_build_runtime_ms = (perf_counter() - build_start) * 1000.0
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - Record per-case failures and continue the cohort.
         problem_build_runtime_ms = 0.0
         metrics_before = compute_refinement_metrics(
             perturbed_structure,
@@ -438,7 +432,7 @@ def run_refinement_perturbation_benchmark_case(
                 plan,
                 restraint_library=active_restraint_library,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Benchmarks record per-case failures and continue the cohort.
             backend_runtime_samples_ms.append((perf_counter() - start) * 1000.0)
             return RefinementPerturbationBenchmarkResult(
                 case_id=case.case_id,
@@ -475,7 +469,7 @@ def run_refinement_perturbation_benchmark_case(
                 spec,
                 component_library=active_component_library,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Benchmarks record per-case failures and continue the cohort.
             runtime_samples_ms.append((perf_counter() - start) * 1000.0)
             return RefinementPerturbationBenchmarkResult(
                 case_id=case.case_id,
@@ -535,9 +529,7 @@ def run_refinement_perturbation_benchmark_case(
     )
     error_type = None if status == "success" else "NoOpRefinement"
     error_message = (
-        None
-        if status == "success"
-        else _no_op_refinement_error_message(final_issues)
+        None if status == "success" else _no_op_refinement_error_message(final_issues)
     )
     return RefinementPerturbationBenchmarkResult(
         case_id=case.case_id,
@@ -626,8 +618,7 @@ def perturb_atom_positions(
 
     random_state = RandomState(perturbation.random_seed)
     movable_atom_indices = tuple(
-        structure.constitution.atom_index(atom_ref)
-        for atom_ref in movable_atom_refs
+        structure.constitution.atom_index(atom_ref) for atom_ref in movable_atom_refs
     )
     movable_positions = np.asarray(
         [
@@ -654,9 +645,7 @@ def perturb_atom_positions(
 
     translation = translation_direction * perturbation.translation_angstrom
     rotated_positions = (
-        centroid
-        + (movable_positions - centroid) @ rotation_matrix.T
-        + translation
+        centroid + (movable_positions - centroid) @ rotation_matrix.T + translation
     )
     return {
         atom_index: Vec3(

@@ -55,11 +55,8 @@ class EventScope:
                 raise ValueError(
                     "residue-span event scope requires at least one residue id"
                 )
-        elif self.kind is EventScopeKind.RESIDUE_SET:
-            if not residue_ids:
-                raise ValueError(
-                    "residue-set event scope requires at least one residue id"
-                )
+        elif self.kind is EventScopeKind.RESIDUE_SET and not residue_ids:
+            raise ValueError("residue-set event scope requires at least one residue id")
 
         object.__setattr__(self, "residue_ids", residue_ids)
 

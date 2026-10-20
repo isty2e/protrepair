@@ -96,12 +96,8 @@ def test_radius_snapshot_matches_live_rdkit_release_periodic_table() -> None:
         for atomic_number in range(1, 119)
     }
 
-    assert set(RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM) == set(
-        live_vdw_radii
-    )
-    assert set(RDKIT_PERIODIC_TABLE_COVALENT_RADII_ANGSTROM) == set(
-        live_covalent_radii
-    )
+    assert set(RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM) == set(live_vdw_radii)
+    assert set(RDKIT_PERIODIC_TABLE_COVALENT_RADII_ANGSTROM) == set(live_covalent_radii)
     for element_symbol, radius_angstrom in live_vdw_radii.items():
         assert RDKIT_PERIODIC_TABLE_VAN_DER_WAALS_RADII_ANGSTROM[
             element_symbol
@@ -208,10 +204,7 @@ def test_deuterium_and_tritium_alias_to_hydrogen_radius() -> None:
 
     assert deuterium_resolution.status is ElementRadiusResolutionStatus.RESOLVED
     assert deuterium_resolution.is_alias()
-    assert (
-        deuterium_resolution.data_quality
-        is ElementRadiusDataQuality.SOURCE_REPORTED
-    )
+    assert deuterium_resolution.data_quality is ElementRadiusDataQuality.SOURCE_REPORTED
     assert deuterium_resolution.requested_element_symbol == "D"
     assert deuterium_resolution.normalized_element_symbol == "H"
     assert deuterium_resolution.radius_angstrom == van_der_waals_radius_angstrom("H")
@@ -260,10 +253,7 @@ def test_radius_resolution_distinguishes_upstream_source_defaults() -> None:
     vdw_actinide_reported = resolve_element_radius("BK", RadiusKind.VAN_DER_WAALS)
 
     assert covalent_default.data_quality is ElementRadiusDataQuality.SOURCE_DEFAULT
-    assert (
-        covalent_same_value.data_quality
-        is ElementRadiusDataQuality.SOURCE_REPORTED
-    )
+    assert covalent_same_value.data_quality is ElementRadiusDataQuality.SOURCE_REPORTED
     assert (
         covalent_superheavy_reported.data_quality
         is ElementRadiusDataQuality.SOURCE_REPORTED
@@ -271,8 +261,7 @@ def test_radius_resolution_distinguishes_upstream_source_defaults() -> None:
     assert vdw_default.data_quality is ElementRadiusDataQuality.SOURCE_DEFAULT
     assert vdw_same_value.data_quality is ElementRadiusDataQuality.SOURCE_REPORTED
     assert (
-        vdw_actinide_reported.data_quality
-        is ElementRadiusDataQuality.SOURCE_REPORTED
+        vdw_actinide_reported.data_quality is ElementRadiusDataQuality.SOURCE_REPORTED
     )
 
     covalent_source_defaults = {

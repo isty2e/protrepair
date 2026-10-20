@@ -70,7 +70,7 @@ def test_contact_domain_normalizes_boundary_aliases_only_at_ingress() -> None:
     assert ContactDomain.normalize("not-applicable") is ContactDomain.NOT_APPLICABLE
 
     with pytest.raises(TypeError, match="ContactDomain or string"):
-        ContactDomain.normalize(7)  # type: ignore[arg-type]
+        ContactDomain.normalize(7)  # pyrefly: ignore[bad-argument-type]
     with pytest.raises(ValueError, match="unsupported contact domain"):
         ContactDomain.normalize("cofactor-ish")
 

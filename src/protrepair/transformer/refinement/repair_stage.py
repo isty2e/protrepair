@@ -344,7 +344,7 @@ def _apply_local_refinement_prerequisites(
         # Reobserve after any publication; a refused attempt must not starve
         # independent prerequisite work on this unchanged snapshot.
         if prerequisite_targets.retained_non_polymer_topology_residue_ids:
-            from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (  # noqa: E501
+            from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
                 resolve_retained_non_polymer_topology,
             )
 
@@ -365,7 +365,7 @@ def _apply_local_refinement_prerequisites(
                 continue
 
         if prerequisite_targets.retained_non_polymer_hydrogen_residue_ids:
-            from protrepair.transformer.completion.retained_non_polymer_hydrogen import (  # noqa: E501
+            from protrepair.transformer.completion.retained_non_polymer_hydrogen import (
                 repair as retained_non_polymer_hydrogen_repair,
             )
 

@@ -140,9 +140,7 @@ class AtomFormalChargeRewrite:
                 raise TypeError(f"{field_name} must be an integer or None")
 
         if self.previous_formal_charge == self.current_formal_charge:
-            raise ValueError(
-                "atom formal-charge rewrite must change the formal charge"
-            )
+            raise ValueError("atom formal-charge rewrite must change the formal charge")
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,9 +170,7 @@ class BondTopologyRewrite:
         left_after_atom_index = self.left_after_atom_index
         right_after_atom_index = self.right_after_atom_index
         if left_after_atom_index == right_after_atom_index:
-            raise ValueError(
-                "bond topology rewrites require two distinct atom slots"
-            )
+            raise ValueError("bond topology rewrites require two distinct atom slots")
         if right_after_atom_index.value < left_after_atom_index.value:
             left_after_atom_index, right_after_atom_index = (
                 right_after_atom_index,
@@ -209,9 +205,7 @@ def _deduplicated_moved_atoms(
     moved_atom_set: set[MovedAtomDelta] = set()
     for moved_atom in moved_atoms:
         if not isinstance(moved_atom, MovedAtomDelta):
-            raise TypeError(
-                "structure delta moved_atoms must be MovedAtomDelta values"
-            )
+            raise TypeError("structure delta moved_atoms must be MovedAtomDelta values")
         if moved_atom in moved_atom_set:
             continue
 
@@ -527,9 +521,7 @@ class StructureDelta:
 
         atom_rewrite_index_set = {
             rewrite.after_atom_index for rewrite in atom_element_rewrites
-        } | {
-            rewrite.after_atom_index for rewrite in atom_formal_charge_rewrites
-        }
+        } | {rewrite.after_atom_index for rewrite in atom_formal_charge_rewrites}
         for rewrite in residue_topology_rewrites:
             for atom_index in rewrite.affected_atom_indices:
                 _validate_atom_index(

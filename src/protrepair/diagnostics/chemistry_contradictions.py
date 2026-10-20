@@ -46,9 +46,7 @@ def diagnose_retained_non_polymer_template_chemistry_contradictions(
         residue_geometry=residue_geometry,
         source_formal_charge_by_atom_name=source_formal_charge_by_atom_name,
         standard_component_library=build_standard_component_library(),
-        component_library=ComponentLibrary(
-            templates={template.component_id: template}
-        ),
+        component_library=ComponentLibrary(templates={template.component_id: template}),
     )
     decision_record = adjudicate_microstate_evidence(evidence)
     issue = validation_issue_from_microstate_decision(decision_record)

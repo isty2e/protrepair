@@ -71,9 +71,7 @@ class JointCorrectionScopePolicy:
         if self.minimum_overlap_angstrom < 0.0:
             raise ValueError("minimum_overlap_angstrom must be non-negative")
         if self.covalent_distance_margin_angstrom < 0.0:
-            raise ValueError(
-                "covalent_distance_margin_angstrom must be non-negative"
-            )
+            raise ValueError("covalent_distance_margin_angstrom must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,13 +84,9 @@ class JointCorrectionBatchingPolicy:
 
     def __post_init__(self) -> None:
         if self.minimum_cluster_worst_overlap_angstrom <= 0.0:
-            raise ValueError(
-                "minimum_cluster_worst_overlap_angstrom must be positive"
-            )
+            raise ValueError("minimum_cluster_worst_overlap_angstrom must be positive")
         if self.minimum_cluster_total_overlap_angstrom <= 0.0:
-            raise ValueError(
-                "minimum_cluster_total_overlap_angstrom must be positive"
-            )
+            raise ValueError("minimum_cluster_total_overlap_angstrom must be positive")
         if self.compatibility_context_distance_angstrom < 0.0:
             raise ValueError(
                 "compatibility_context_distance_angstrom must be non-negative"
@@ -114,9 +108,7 @@ class JointCorrectionScopeProposal:
     def __post_init__(self) -> None:
         object.__setattr__(self, "residue_ids", tuple(self.residue_ids))
         if len(self.residue_ids) < 2:
-            raise ValueError(
-                "joint correction scopes require at least two residue ids"
-            )
+            raise ValueError("joint correction scopes require at least two residue ids")
         if self.contact_pair_count <= 0:
             raise ValueError(
                 "joint correction scopes require at least one severe contact"
@@ -177,11 +169,7 @@ def propose_joint_correction_scopes(
     if not focus_residue_ids:
         return ()
 
-    active_policy = (
-        JointCorrectionScopePolicy()
-        if policy is None
-        else policy
-    )
+    active_policy = JointCorrectionScopePolicy() if policy is None else policy
     clash_context = prepare_clash_detection_context(
         structure,
         component_library=component_library,
@@ -226,9 +214,7 @@ def propose_joint_correction_scopes(
 
         proposals.append(
             JointCorrectionScopeProposal(
-                residue_ids=tuple(
-                    sorted(residue_cluster, key=residue_sort_key)
-                ),
+                residue_ids=tuple(sorted(residue_cluster, key=residue_sort_key)),
                 contact_pair_count=len(cluster_contacts),
                 worst_overlap_angstrom=max(
                     contact.overlap_angstrom for contact in cluster_contacts
@@ -267,9 +253,7 @@ def batch_joint_correction_scope_proposals(
         return ()
 
     active_policy = (
-        JointCorrectionBatchingPolicy()
-        if batching_policy is None
-        else batching_policy
+        JointCorrectionBatchingPolicy() if batching_policy is None else batching_policy
     )
     thresholded_proposals = tuple(
         proposal
@@ -307,8 +291,7 @@ def batch_joint_correction_scope_proposals(
         context_residue_ids_by_index=context_residue_ids_by_index,
     ):
         component_proposals = tuple(
-            thresholded_proposals[proposal_index]
-            for proposal_index in proposal_indices
+            thresholded_proposals[proposal_index] for proposal_index in proposal_indices
         )
         batched_proposals.append(
             JointCorrectionScopeProposal(
@@ -323,16 +306,13 @@ def batch_joint_correction_scope_proposals(
                     )
                 ),
                 contact_pair_count=sum(
-                    proposal.contact_pair_count
-                    for proposal in component_proposals
+                    proposal.contact_pair_count for proposal in component_proposals
                 ),
                 worst_overlap_angstrom=max(
-                    proposal.worst_overlap_angstrom
-                    for proposal in component_proposals
+                    proposal.worst_overlap_angstrom for proposal in component_proposals
                 ),
                 total_overlap_angstrom=sum(
-                    proposal.total_overlap_angstrom
-                    for proposal in component_proposals
+                    proposal.total_overlap_angstrom for proposal in component_proposals
                 ),
                 motion_class=JointCorrectionMotionClass.widened(
                     proposal.motion_class for proposal in component_proposals
@@ -345,10 +325,7 @@ def batch_joint_correction_scope_proposals(
             -proposal.worst_overlap_angstrom,
             -proposal.total_overlap_angstrom,
             -proposal.contact_pair_count,
-            tuple(
-                residue_sort_key(residue_id)
-                for residue_id in proposal.residue_ids
-            ),
+            tuple(residue_sort_key(residue_id) for residue_id in proposal.residue_ids),
         )
     )
     return tuple(batched_proposals)
@@ -554,8 +531,7 @@ def _proposal_passes_batching_threshold(
     """Return whether one raw proposal has enough near-covalent burden."""
 
     return (
-        proposal.worst_overlap_angstrom
-        >= policy.minimum_cluster_worst_overlap_angstrom
+        proposal.worst_overlap_angstrom >= policy.minimum_cluster_worst_overlap_angstrom
         or proposal.total_overlap_angstrom
         >= policy.minimum_cluster_total_overlap_angstrom
     )
@@ -569,8 +545,7 @@ def _compatible_proposal_components(
     """Return connected proposal components under the merge-compatibility relation."""
 
     adjacency: dict[int, set[int]] = {
-        proposal_index: set()
-        for proposal_index in range(len(proposals))
+        proposal_index: set() for proposal_index in range(len(proposals))
     }
     for left_index, left_proposal in enumerate(proposals):
         for right_index in range(left_index + 1, len(proposals)):

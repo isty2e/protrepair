@@ -213,17 +213,19 @@ class SourceConnection:
                 "conflicting source bond orders for one atom pair"
             )
 
-        if not self.is_fallback_record() and not other.is_fallback_record():
-            if replace(
+        if (
+            not self.is_fallback_record()
+            and not other.is_fallback_record()
+            and replace(
                 self,
                 source_metadata=replace(self.source_metadata, reported_order=None),
-            ) != replace(
+            )
+            != replace(
                 other,
                 source_metadata=replace(other.source_metadata, reported_order=None),
-            ):
-                raise ModelInvariantError(
-                    "conflicting bonds in typed source connections"
-                )
+            )
+        ):
+            raise ModelInvariantError("conflicting bonds in typed source connections")
         preferred = other if self.is_fallback_record() else self
         return replace(
             preferred,

@@ -335,7 +335,7 @@ def test_sulfonamidate_preparation_is_common_and_source_preserving(
 
 @pytest.mark.parametrize("isotope", ["H", "D", "T"])
 def test_one_original_donor_h_is_preserved(isotope, monkeypatch):
-    source, family, donor, _ = _example(source_h=isotope, donor_charge=-1)
+    source, family, _donor, _ = _example(source_h=isotope, donor_charge=-1)
     _register(monkeypatch, family)
     result = add_retained_non_polymer_hydrogens(
         source,
@@ -512,7 +512,7 @@ def _assert_donor_geometry(structure, donor):
 
 
 def test_isolated_neutral_template_does_not_publish_bound_chemistry(monkeypatch):
-    source, family, donor, native = _example()
+    source, family, donor, _native = _example()
     _register(monkeypatch, family)
     neutral = Chem.AddHs(template_without_hydrogens("CCS(=O)(=O)N"))
     assert EmbedMolecule(neutral, randomSeed=17) == 0
@@ -601,7 +601,7 @@ def test_two_observed_donor_h_are_not_deleted_to_fit_the_bound_state(
     ],
 )
 def test_remote_charge_and_actual_stereo_are_not_lost(smiles, monkeypatch):
-    source, family, donor, _ = _example(smiles)
+    source, family, _donor, _ = _example(smiles)
     _register(monkeypatch, family)
     result = add_retained_non_polymer_hydrogens(
         source, target_residue_ids=frozenset((LIGAND,))
@@ -650,14 +650,22 @@ def test_declared_stereo_opposite_to_actual_geometry_is_atomic(monkeypatch):
 def test_original_1jd0_window_with_deposited_links_prepares_five_hydrogens():
     text = Path("tests/fixtures/pdb/refinement/1jd0_gln92_local.pdb").read_text()
     links = (
-        "LINK         NE2 HIS A  94                ZN    ZN A 901"
-        "     1555   1555  2.06",
-        "LINK         NE2 HIS A  96                ZN    ZN A 901"
-        "     1555   1555  2.04",
-        "LINK         ND1 HIS A 119                ZN    ZN A 901"
-        "     1555   1555  2.04",
-        "LINK        ZN    ZN A 901                 N1  AZM A1400"
-        "     1555   1555  1.96",
+        (
+            "LINK         NE2 HIS A  94                ZN    ZN A 901"
+            "     1555   1555  2.06"
+        ),
+        (
+            "LINK         NE2 HIS A  96                ZN    ZN A 901"
+            "     1555   1555  2.04"
+        ),
+        (
+            "LINK         ND1 HIS A 119                ZN    ZN A 901"
+            "     1555   1555  2.04"
+        ),
+        (
+            "LINK        ZN    ZN A 901                 N1  AZM A1400"
+            "     1555   1555  1.96"
+        ),
     )
     frozen = read_structure_string(text, FileFormat.PDB)
     source = read_structure_string("\n".join(links) + "\n" + text, FileFormat.PDB)
@@ -760,7 +768,7 @@ def test_bridged_donor_is_not_reduced_to_one_partner(route, monkeypatch):
 
 
 def test_bound_template_cannot_hide_a_remote_original_charge(monkeypatch):
-    source, family, donor, native = _example("[O-]C(=O)CCS(=O)(=O)[NH-]")
+    source, family, _donor, _native = _example("[O-]C(=O)CCS(=O)(=O)[NH-]")
     _register(monkeypatch, family)
     original_topologies = list(source.topology.atom_topologies)
     original_topologies[0] = AtomTopology(formal_charge=-1)

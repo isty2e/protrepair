@@ -30,9 +30,7 @@ def test_normalized_vector_rejects_norm_at_degenerate_threshold() -> None:
     """The shared threshold should be closed on the degenerate side."""
 
     assert (
-        normalized_vector_or_none(
-            _vector(PLACEMENT_VECTOR_NORM_EPSILON, 0.0, 0.0)
-        )
+        normalized_vector_or_none(_vector(PLACEMENT_VECTOR_NORM_EPSILON, 0.0, 0.0))
         is None
     )
 
@@ -40,9 +38,7 @@ def test_normalized_vector_rejects_norm_at_degenerate_threshold() -> None:
 def test_normalized_vector_accepts_norm_above_degenerate_threshold() -> None:
     """A representable norm above the threshold should retain its direction."""
 
-    above_threshold = float(
-        np.nextafter(PLACEMENT_VECTOR_NORM_EPSILON, np.inf)
-    )
+    above_threshold = float(np.nextafter(PLACEMENT_VECTOR_NORM_EPSILON, np.inf))
     normalized = normalized_vector_or_none(_vector(above_threshold, 0.0, 0.0))
 
     assert normalized == pytest.approx(_vector(1.0, 0.0, 0.0))
@@ -77,10 +73,7 @@ def test_deterministic_orthogonal_vector_rejects_non_finite_axis(
 ) -> None:
     """A non-finite axis must not produce a nominal orthogonal direction."""
 
-    assert (
-        deterministic_unit_orthogonal_or_none(_vector(non_finite, 0.0, 0.0))
-        is None
-    )
+    assert deterministic_unit_orthogonal_or_none(_vector(non_finite, 0.0, 0.0)) is None
 
 
 def test_deterministic_orthogonal_vector_is_unit_and_perpendicular() -> None:

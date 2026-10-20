@@ -337,7 +337,7 @@ class GlycosidicTemplateBinding:
     ) -> tuple[ResidueTemplate, AtomRef | None]:
         semantics = template.hydrogen_semantics
         if not isinstance(semantics, IdealGeometryHydrogenSemantics):
-            raise ValueError("glycosidic donor requires idealized pyranose chemistry")
+            raise ValueError("glycosidic donor requires idealized pyranose chemistry")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
         component = roles.component
         donor = next(
             (
@@ -350,7 +350,7 @@ class GlycosidicTemplateBinding:
         projected = roles.project(tuple(inside.atom_name for _, inside, _ in links))
         heavy_semantics = template.heavy_atom_semantics
         if isinstance(heavy_semantics, HeavyAtomSemantics):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004 - Invalid data values retain their ValueError contract.
                 "glycosidic binding does not adapt static heavy-atom programs"
             )
         if isinstance(heavy_semantics, IdealGeometryHeavyAtomSemantics):
@@ -503,7 +503,7 @@ class GlycosidicTemplateBinding:
             raise ValueError("glycosylated ASN requires a complete heavy scaffold")
         semantics = template.hydrogen_semantics
         if not isinstance(semantics, HydrogenSemantics):
-            raise ValueError("glycosylated ASN requires supported fixed-H semantics")
+            raise ValueError("glycosylated ASN requires supported fixed-H semantics")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
         names = tuple(
             name
             for name, parent in semantics.template_hydrogen_anchor_by_name().items()

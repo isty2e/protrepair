@@ -58,9 +58,7 @@ class TransformationCandidate(Generic[PayloadT, ProvenanceT]):
 
 
 class BranchingContextOperation(
-    ContextOperation[
-        tuple[TransformationCandidate[PayloadT, ProvenanceT], ...]
-    ],
+    ContextOperation[tuple[TransformationCandidate[PayloadT, ProvenanceT], ...]],
     Generic[PayloadT, ProvenanceT],
 ):
     """Branching operation over one canonical transformation context."""

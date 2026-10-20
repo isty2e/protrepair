@@ -4,7 +4,7 @@ import json
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from protrepair.sources._network import (
+from protrepair.sources.network import (
     DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
     SourceResponseTooLargeError,
     normalize_source_retrieval_timeout,
@@ -197,8 +197,7 @@ def _fetch_uniprot_payload(
             requested_reference=reference,
             kind=UniProtSequenceFetchFailureKind.REMOTE_ERROR,
             message=(
-                "UniProt request timed out after "
-                f"{timeout_seconds:g} seconds: {error}"
+                f"UniProt request timed out after {timeout_seconds:g} seconds: {error}"
             ),
             source_url=request_url,
         )
@@ -247,19 +246,17 @@ def _sequence_record_from_payload(
     entry_audit = payload.get("entryAudit")
     organism_payload = payload.get("organism")
     if not isinstance(sequence_payload, dict):
-        raise ValueError("UniProt response omitted sequence payload")
+        raise ValueError("UniProt response omitted sequence payload")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
 
     sequence_value = sequence_payload.get("value")
     primary_accession = payload.get("primaryAccession")
     if not isinstance(sequence_value, str) or not isinstance(primary_accession, str):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004 - Invalid data values retain their ValueError contract.
             "UniProt response omitted primary accession or sequence value"
         )
 
     isoform_accession = (
-        reference.isoform_accession
-        if reference.isoform_accession is not None
-        else None
+        reference.isoform_accession if reference.isoform_accession is not None else None
     )
     entry_type = payload.get("entryType")
     entry_audit_payload = entry_audit if isinstance(entry_audit, dict) else None

@@ -82,9 +82,7 @@ class WorkflowBranchPreferencePolicy:
                     "WorkflowBranchQualityAxis values"
                 )
         if len(set(axes)) != len(axes):
-            raise ValueError(
-                "workflow branch preference policy must not repeat axes"
-            )
+            raise ValueError("workflow branch preference policy must not repeat axes")
         object.__setattr__(self, "axes", axes)
 
 
@@ -92,9 +90,7 @@ class WorkflowBranchPreferencePolicy:
 class WorkflowPlanningContext:
     """Explicit planning inputs that should not be inferred piecemeal."""
 
-    ligand_context_mode: WorkflowLigandContextMode = (
-        WorkflowLigandContextMode.IGNORE
-    )
+    ligand_context_mode: WorkflowLigandContextMode = WorkflowLigandContextMode.IGNORE
     target_intent: WorkflowTargetIntent = WorkflowTargetIntent.INSPECTION
     span_donor_availability: WorkflowSpanDonorAvailability = (
         WorkflowSpanDonorAvailability.NONE
@@ -110,8 +106,7 @@ class WorkflowPlanningContext:
     def __post_init__(self) -> None:
         if not isinstance(self.ligand_context_mode, WorkflowLigandContextMode):
             raise TypeError(
-                "workflow planning contexts require a "
-                "WorkflowLigandContextMode value"
+                "workflow planning contexts require a WorkflowLigandContextMode value"
             )
         if not isinstance(self.target_intent, WorkflowTargetIntent):
             raise TypeError(
@@ -155,10 +150,7 @@ class WorkflowPlanningContext:
     def considers_ligand_context(self) -> bool:
         """Return whether planning may use present ligands as interaction context."""
 
-        return (
-            self.ligand_context_mode
-            is WorkflowLigandContextMode.CONSIDER_IF_PRESENT
-        )
+        return self.ligand_context_mode is WorkflowLigandContextMode.CONSIDER_IF_PRESENT
 
     def allows_span_reconstruction(self) -> bool:
         """Return whether donor-backed span reconstruction is available."""

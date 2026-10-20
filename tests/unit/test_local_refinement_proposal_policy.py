@@ -25,7 +25,7 @@ def test_local_refinement_proposal_policy_rejects_invalid_candidate_limits(
 
     with pytest.raises((TypeError, ValueError)):
         LocalRefinementProposalPolicy(
-            severe_geometry_fallback_limit=invalid_limit,  # type: ignore[arg-type]
+            severe_geometry_fallback_limit=invalid_limit,  # pyrefly: ignore[bad-argument-type]
         )
 
 
@@ -52,5 +52,5 @@ def test_local_refinement_proposal_policy_rejects_invalid_context_radius(
 
     with pytest.raises((TypeError, ValueError)):
         LocalRefinementProposalPolicy(
-            severe_geometry_context_radius_angstrom=invalid_radius,  # type: ignore[arg-type]
+            severe_geometry_context_radius_angstrom=invalid_radius,  # pyrefly: ignore[bad-argument-type]
         )

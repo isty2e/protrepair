@@ -46,9 +46,7 @@ from protrepair.workflow.planning.assessment.deficits import (
 from protrepair.workflow.planning.planner import plan_workflow_actions
 
 
-def test_internal_gap_deficit_becomes_required_with_donor_context(
-) -> None:
-
+def test_internal_gap_deficit_becomes_required_with_donor_context() -> None:
     """Internal blueprint gaps should become required under donor-enabled policy."""
 
     structure = build_structure(
@@ -176,9 +174,7 @@ def test_workflow_state_deficit_keeps_prefix_terminal_gap_optional_by_default() 
     )
 
 
-def test_md_ready_planning_outcome_carries_atom_and_hydrogen_deficits(
-) -> None:
-
+def test_md_ready_planning_outcome_carries_atom_and_hydrogen_deficits() -> None:
     """Planner outcomes should carry md-ready atom and hydrogen deficits."""
 
     structure = build_structure(
@@ -280,23 +276,16 @@ def test_workflow_state_deficit_marks_unsupported_hydrogen_burden_blocked() -> N
     assert deficit.chemistry_readiness.unsupported_component_residue_ids == (
         residue_id,
     )
-    assert (
-        deficit.chemistry_readiness.heavy_atom_topology_unsupported_residue_ids
-        == (residue_id,)
+    assert deficit.chemistry_readiness.heavy_atom_topology_unsupported_residue_ids == (
+        residue_id,
     )
-    assert (
-        deficit.chemistry_readiness.hydrogen_topology_unsupported_residue_ids
-        == (residue_id,)
+    assert deficit.chemistry_readiness.hydrogen_topology_unsupported_residue_ids == (
+        residue_id,
     )
     assert deficit.chemistry_readiness.heavy_atom_topology_absent_residue_ids == ()
     assert deficit.chemistry_readiness.hydrogen_topology_absent_residue_ids == ()
-    assert deficit.chemistry_readiness.hydrogen_blocked_residue_ids == (
-        residue_id,
-    )
-    assert (
-        deficit.chemistry_readiness.disposition
-        is WorkflowDeficitDisposition.BLOCKED
-    )
+    assert deficit.chemistry_readiness.hydrogen_blocked_residue_ids == (residue_id,)
+    assert deficit.chemistry_readiness.disposition is WorkflowDeficitDisposition.BLOCKED
 
 
 def test_workflow_state_deficit_records_unsupported_topology_when_optional() -> None:
@@ -341,23 +330,19 @@ def test_workflow_state_deficit_records_unsupported_topology_when_optional() -> 
         planning_context=WorkflowPlanningContext(),
     )
 
-    assert (
-        deficit.chemistry_readiness.heavy_atom_topology_unsupported_residue_ids
-        == (residue_id,)
+    assert deficit.chemistry_readiness.heavy_atom_topology_unsupported_residue_ids == (
+        residue_id,
     )
-    assert (
-        deficit.chemistry_readiness.hydrogen_topology_unsupported_residue_ids
-        == (residue_id,)
+    assert deficit.chemistry_readiness.hydrogen_topology_unsupported_residue_ids == (
+        residue_id,
     )
     assert deficit.chemistry_readiness.hydrogen_blocked_residue_ids == ()
     assert (
-        deficit.chemistry_readiness.disposition
-        is WorkflowDeficitDisposition.OPTIONAL
+        deficit.chemistry_readiness.disposition is WorkflowDeficitDisposition.OPTIONAL
     )
 
 
-def test_parser_visible_proximity_burden_becomes_parser_compatibility_deficit(
-) -> None:
+def test_parser_visible_proximity_burden_becomes_parser_compatibility_deficit() -> None:
     """Parser-visible false proximity should plan as tool-compatibility burden."""
 
     structure = build_structure(
@@ -417,13 +402,13 @@ def test_parser_visible_proximity_burden_becomes_parser_compatibility_deficit(
     assert deficit.parser_compatibility.extra_heavy_proximity_bond_count == 2
     assert deficit.parser_compatibility.has_parser_visible_proximity_burden()
     assert (
-        deficit.parser_compatibility.disposition
-        is WorkflowDeficitDisposition.OPTIONAL
+        deficit.parser_compatibility.disposition is WorkflowDeficitDisposition.OPTIONAL
     )
 
 
-def test_parser_chemistry_failure_without_extra_proximity_is_not_geometry_deficit(
-) -> None:
+def test_parser_chemistry_failure_without_extra_proximity_is_not_geometry_deficit() -> (
+    None
+):
     """Generic parser chemistry failures should not become geometry repair burden."""
 
     structure = build_structure(
@@ -475,10 +460,9 @@ def test_parser_chemistry_failure_without_extra_proximity_is_not_geometry_defici
     assert deficit.parser_compatibility is None
 
 
-
-def test_deficits_distinguish_optional_intrinsic_from_required_holo_interaction(
-) -> None:
-
+def test_deficits_distinguish_optional_intrinsic_from_required_holo_interaction() -> (
+    None
+):
     """Intrinsic burden can stay optional while holo interaction burden becomes
     required.
     """
@@ -544,9 +528,7 @@ def test_deficits_distinguish_optional_intrinsic_from_required_holo_interaction(
             residue_payload(
                 component_id="FAD",
                 residue_id=ResidueId("A", 1001),
-                atoms=(
-                    atom_payload("C1", "C", Vec3(1.2, 1.0, 0.0)),
-                ),
+                atoms=(atom_payload("C1", "C", Vec3(1.2, 1.0, 0.0)),),
                 is_hetero=True,
             ),
         ),

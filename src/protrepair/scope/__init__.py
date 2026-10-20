@@ -29,10 +29,10 @@ from protrepair.scope.relations import scope_contains, scope_refines, scopes_ove
 
 __all__ = [
     "AbsentResidueSpanScope",
-    "AtomToChainSetScopeCoarsening",
-    "AtomToResidueSetScopeCoarsening",
     "AnchorAtomPairScope",
     "AtomSetScope",
+    "AtomToChainSetScopeCoarsening",
+    "AtomToResidueSetScopeCoarsening",
     "ChainSetScope",
     "CompositeScope",
     "ResidueBoundaryScope",

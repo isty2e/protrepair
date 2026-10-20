@@ -6,12 +6,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from protrepair.sources._network import (
-    DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
-    SourceResponseTooLargeError,
-    normalize_source_retrieval_timeout,
-    read_bounded_response_text,
-)
 from protrepair.sources.alphafold import (
     AlphaFoldFetchFailureKind,
     AlphaFoldModelFetchFailure,
@@ -21,6 +15,12 @@ from protrepair.sources.alphafold import (
     AlphaFoldStructureArtifact,
     AlphaFoldStructureFetchFailure,
     AlphaFoldStructureFetchOutcome,
+)
+from protrepair.sources.network import (
+    DEFAULT_SOURCE_RETRIEVAL_TIMEOUT_SECONDS,
+    SourceResponseTooLargeError,
+    normalize_source_retrieval_timeout,
+    read_bounded_response_text,
 )
 from protrepair.sources.uniprot import UniProtSequenceReference
 from protrepair.structure.provenance import FileFormat
@@ -178,8 +178,7 @@ def _alphafold_prediction_url(reference: UniProtSequenceReference) -> str:
     """Return the AlphaFold DB metadata endpoint for one reference."""
 
     return (
-        "https://alphafold.ebi.ac.uk/api/prediction/"
-        f"{reference.effective_accession()}"
+        f"https://alphafold.ebi.ac.uk/api/prediction/{reference.effective_accession()}"
     )
 
 
@@ -191,7 +190,7 @@ def _model_record_from_payload(
     """Decode one AlphaFold metadata payload into a typed model record."""
 
     if not isinstance(payload, dict):
-        raise ValueError("AlphaFold model payload must be a JSON object")
+        raise ValueError("AlphaFold model payload must be a JSON object")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
 
     uniprot_accession = payload.get("uniprotAccession")
     entry_id = payload.get("entryId")
@@ -200,17 +199,17 @@ def _model_record_from_payload(
     tool_used = payload.get("toolUsed")
     sequence = payload.get("sequence")
     if not isinstance(uniprot_accession, str):
-        raise ValueError("AlphaFold model payload omitted uniprotAccession")
+        raise ValueError("AlphaFold model payload omitted uniprotAccession")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
     if not isinstance(entry_id, str):
-        raise ValueError("AlphaFold model payload omitted entryId")
+        raise ValueError("AlphaFold model payload omitted entryId")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
     if not isinstance(model_entity_id, str):
-        raise ValueError("AlphaFold model payload omitted modelEntityId")
+        raise ValueError("AlphaFold model payload omitted modelEntityId")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
     if not isinstance(provider_id, str):
-        raise ValueError("AlphaFold model payload omitted providerId")
+        raise ValueError("AlphaFold model payload omitted providerId")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
     if not isinstance(tool_used, str):
-        raise ValueError("AlphaFold model payload omitted toolUsed")
+        raise ValueError("AlphaFold model payload omitted toolUsed")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
     if not isinstance(sequence, str):
-        raise ValueError("AlphaFold model payload omitted sequence")
+        raise ValueError("AlphaFold model payload omitted sequence")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
 
     return AlphaFoldModelRecord(
         uniprot_reference=_uniprot_reference_from_accession(uniprot_accession),
@@ -417,8 +416,7 @@ def _fetch_text_payload(
         return None, _FetchFailure(
             kind=AlphaFoldFetchFailureKind.INVALID_RESPONSE,
             message=(
-                "AlphaFold artifact response was not valid UTF-8: "
-                f"{error.reason}"
+                f"AlphaFold artifact response was not valid UTF-8: {error.reason}"
             ),
         )
     except SourceResponseTooLargeError as error:

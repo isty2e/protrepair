@@ -12,8 +12,8 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
+from protrepair.analysis import ramachandran as ramachandran_module
 from protrepair.analysis.kinds import AnalysisKind
-from protrepair.analysis.ramachandran import _ramachandran_category
 from protrepair.analysis.results import (
     AnalysisBundle,
     RamachandranAnalysis,
@@ -266,7 +266,7 @@ def test_ramachandran_category_projection_is_exact(
     """Documented coarse Ramachandran bins should stay exact."""
 
     assert (
-        _ramachandran_category(
+        ramachandran_module._ramachandran_category(
             phi_degrees=phi_degrees,
             psi_degrees=psi_degrees,
         )
@@ -379,11 +379,7 @@ def analysis_fixture_structure(
 ) -> ProteinStructure:
     """Return one small non-degenerate backbone-only structure."""
 
-    resolved_residue2_n = (
-        Vec3(2.9, 1.0, 1.2)
-        if residue2_n is None
-        else residue2_n
-    )
+    resolved_residue2_n = Vec3(2.9, 1.0, 1.2) if residue2_n is None else residue2_n
     return build_structure(
         chains=(
             chain_payload(

@@ -186,6 +186,7 @@ def test_public_local_result_preserves_actual_native_return(
     assert execution.settings.max_iterations == native_iterations == iterations
     assert execution.minimizer_status == status
     assert execution.movable_scope.atom_refs == (selected,)
+    assert continuous_rdkit.rdBase is not None
     assert execution.backend_version == continuous_rdkit.rdBase.rdkitVersion
 
     repeated = transform_local_region(

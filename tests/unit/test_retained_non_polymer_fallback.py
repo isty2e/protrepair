@@ -429,6 +429,7 @@ def test_fallback_rejects_native_hydrogenation_that_moves_original_atoms(
         )
     )
 
+    assert rdkit_hydrogen_geometry.Chem is not None
     add_hs = rdkit_hydrogen_geometry.Chem.AddHs
 
     def changed_coordinates(molecule, **kwargs):

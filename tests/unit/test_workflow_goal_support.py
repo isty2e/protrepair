@@ -138,10 +138,7 @@ def test_blocked_goal_projection_marks_heavy_support_blockers() -> None:
     assert len(blocked_goal_projections) == 1
     blocker = blocked_goal_projections[0].blockers[0]
     assert blocker.scope == ResidueSetScope(residue_ids=(residue_id,))
-    assert (
-        blocker.deficit_family
-        is WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS
-    )
+    assert blocker.deficit_family is WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS
 
 
 def test_workflow_blocker_scope_contract_is_residue_set_only() -> None:
@@ -237,10 +234,7 @@ def test_blocked_goal_projection_marks_chemistry_blockers() -> None:
     assert len(blocked_goal_projections) == 1
     blocker = blocked_goal_projections[0].blockers[0]
     assert blocker.scope == ResidueSetScope(residue_ids=(residue_id,))
-    assert (
-        blocker.deficit_family
-        is WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS
-    )
+    assert blocker.deficit_family is WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS
 
 
 def test_clash_goal_stays_unsupported_without_matching_capability() -> None:
@@ -287,8 +281,11 @@ def test_whole_structure_hydrogen_goal_counts_retained_non_polymer_hydrogens() -
         value=HydrogenCoverageState.COMPLETE,
     )
 
-    assert already_satisfied_requested_goals(
-        structure,
-        requested_goals=(requested_goal,),
-        component_library=build_retained_non_polymer_component_library(),
-    ) == ()
+    assert (
+        already_satisfied_requested_goals(
+            structure,
+            requested_goals=(requested_goal,),
+            component_library=build_retained_non_polymer_component_library(),
+        )
+        == ()
+    )

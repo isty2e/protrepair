@@ -296,10 +296,7 @@ class AbsentResidueSpanScope(Scope):
             "following_residue_id",
             allow_none=True,
         )
-        if (
-            self.preceding_residue_id is None
-            and self.following_residue_id is None
-        ):
+        if self.preceding_residue_id is None and self.following_residue_id is None:
             raise ValueError(
                 "absent-residue-span scopes require at least one anchor residue"
             )
@@ -316,9 +313,7 @@ class AbsentResidueSpanScope(Scope):
         seen_residue_ids: set[ResidueId] = set()
         for residue_id in self.absent_residue_ids:
             if not isinstance(residue_id, ResidueId):
-                raise TypeError(
-                    "absent_residue_ids must contain ResidueId values"
-                )
+                raise TypeError("absent_residue_ids must contain ResidueId values")
             if residue_id == self.preceding_residue_id:
                 raise ValueError(
                     "absent-residue-span scopes must not list the preceding "
@@ -439,7 +434,7 @@ class CompositeScope(Scope):
             if not isinstance(scope, Scope):
                 raise TypeError("composite scopes require Scope values")
             if isinstance(scope, CompositeScope):
-                raise ValueError("composite scopes must stay flat")
+                raise ValueError("composite scopes must stay flat")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
             if scope in seen_scopes:
                 continue
 
@@ -447,9 +442,7 @@ class CompositeScope(Scope):
             seen_scopes.add(scope)
 
         if len(ordered_scopes) < 2:
-            raise ValueError(
-                "composite scopes require at least two distinct scopes"
-            )
+            raise ValueError("composite scopes require at least two distinct scopes")
 
         object.__setattr__(self, "scopes", tuple(ordered_scopes))
 

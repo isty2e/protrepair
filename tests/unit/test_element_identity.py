@@ -44,7 +44,7 @@ def test_element_identity_rejects_non_string_source_symbol() -> None:
     """Canonical element identity should reject untyped source payloads."""
 
     with pytest.raises(TypeError, match="string source symbol"):
-        ElementIdentity(1)  # type: ignore[arg-type]
+        ElementIdentity(1)  # pyrefly: ignore[bad-argument-type]
 
 
 def test_element_identity_rejects_unicode_casefold_alias() -> None:

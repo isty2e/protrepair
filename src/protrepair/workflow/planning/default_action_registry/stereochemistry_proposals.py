@@ -15,11 +15,6 @@ from protrepair.workflow.planning.default_action_registry.capabilities import (
     STEREOCHEMISTRY_CORRECTION_CAPABILITY,
 )
 
-__all__ = [
-    "stereochemistry_correction_is_admissible",
-    "stereochemistry_correction_proposals",
-]
-
 
 def stereochemistry_correction_is_admissible(domain: WorkflowActionDomain) -> bool:
     """Return whether stereochemistry correction is admissible."""
@@ -29,8 +24,7 @@ def stereochemistry_correction_is_admissible(domain: WorkflowActionDomain) -> bo
         return False
 
     return (
-        intrinsic_geometry_facts.stereochemistry_state
-        is StereochemistryState.VIOLATED
+        intrinsic_geometry_facts.stereochemistry_state is StereochemistryState.VIOLATED
     )
 
 
@@ -49,9 +43,7 @@ def stereochemistry_correction_proposals(
     if report.is_empty():
         return ()
 
-    correction_batch = StereochemistryCorrectionBatch.from_violations(
-        report.violations
-    )
+    correction_batch = StereochemistryCorrectionBatch.from_violations(report.violations)
     residue_ids = tuple(sorted(correction_batch.corrected_residue_ids()))
     if not residue_ids:
         return ()
@@ -64,3 +56,9 @@ def stereochemistry_correction_proposals(
             capability=STEREOCHEMISTRY_CORRECTION_CAPABILITY,
         ),
     )
+
+
+__all__ = [
+    "stereochemistry_correction_is_admissible",
+    "stereochemistry_correction_proposals",
+]

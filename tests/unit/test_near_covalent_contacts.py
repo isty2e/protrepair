@@ -366,8 +366,7 @@ def test_6nbb_zinc_coordination_is_not_near_covalent_pathology() -> None:
 
     assert coordination_bond is not None
     assert (
-        coordination_bond.relationship_type
-        is BondRelationshipType.METAL_COORDINATION
+        coordination_bond.relationship_type is BondRelationshipType.METAL_COORDINATION
     )
 
     contacts = detect_near_covalent_contacts(
@@ -764,9 +763,7 @@ def _polymer_ligand_contact_structure(
             residue_payload(
                 component_id="NAD",
                 residue_id=ResidueId("A", 401),
-                atoms=(
-                    atom_payload("C5N", ligand_element, Vec3(1.5, 0.0, 0.0)),
-                ),
+                atoms=(atom_payload("C5N", ligand_element, Vec3(1.5, 0.0, 0.0)),),
                 is_hetero=True,
             ),
         ),

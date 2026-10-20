@@ -153,8 +153,7 @@ class ResidueFragmentMatch:
             self.present_fragments,
             key=lambda fragment: (
                 sum(
-                    atom_name in normalized_anchor_atom_names
-                    for atom_name in fragment
+                    atom_name in normalized_anchor_atom_names for atom_name in fragment
                 ),
                 len(fragment),
                 tuple(self._atom_order(atom_name) for atom_name in fragment),

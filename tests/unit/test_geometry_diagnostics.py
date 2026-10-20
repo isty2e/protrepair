@@ -456,7 +456,7 @@ def test_detect_heavy_geometry_accepts_external_ingested_restraints(
 
     cif_path = tmp_path / "custom-components.cif"
     cif_path.write_text(
-        "\n".join(
+        "\n".join(  # noqa: FLY002 - Keep fixture records on separate readable lines.
             (
                 "data_NSX",
                 "_chem_comp.id NSX",

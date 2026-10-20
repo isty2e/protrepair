@@ -64,9 +64,7 @@ class ContactPairPolicy:
         if self.ignore_same_residue_bond_hops < 0:
             raise ValueError("ignore_same_residue_bond_hops must be non-negative")
         if self.ignore_adjacent_polymer_bond_hops < 0:
-            raise ValueError(
-                "ignore_adjacent_polymer_bond_hops must be non-negative"
-            )
+            raise ValueError("ignore_adjacent_polymer_bond_hops must be non-negative")
 
     def as_contact_pair_policy(self) -> "ContactPairPolicy":
         """Return the canonical metric-neutral projection of this policy."""
@@ -78,9 +76,7 @@ class ContactPairPolicy:
             include_hydrogen_hydrogen=self.include_hydrogen_hydrogen,
             include_ligands=self.include_ligands,
             ignore_same_residue_bond_hops=self.ignore_same_residue_bond_hops,
-            ignore_adjacent_polymer_bond_hops=(
-                self.ignore_adjacent_polymer_bond_hops
-            ),
+            ignore_adjacent_polymer_bond_hops=(self.ignore_adjacent_polymer_bond_hops),
         )
 
 
@@ -268,9 +264,7 @@ def iter_candidate_atom_site_pairs(
                     previous_atom_site,
                     atom_site,
                     policy=policy,
-                    include_same_residue_heavy_pairs=(
-                        include_same_residue_heavy_pairs
-                    ),
+                    include_same_residue_heavy_pairs=(include_same_residue_heavy_pairs),
                 ):
                     continue
 
@@ -340,9 +334,7 @@ def _iter_candidate_atom_site_pairs_from_index(
                     previous_atom_site,
                     atom_site,
                     policy=policy,
-                    include_same_residue_heavy_pairs=(
-                        include_same_residue_heavy_pairs
-                    ),
+                    include_same_residue_heavy_pairs=(include_same_residue_heavy_pairs),
                 ):
                     continue
 
@@ -396,9 +388,7 @@ def _iter_focused_candidate_atom_site_pairs_from_index(
                     left_site,
                     right_site,
                     policy=policy,
-                    include_same_residue_heavy_pairs=(
-                        include_same_residue_heavy_pairs
-                    ),
+                    include_same_residue_heavy_pairs=(include_same_residue_heavy_pairs),
                 ):
                     continue
 

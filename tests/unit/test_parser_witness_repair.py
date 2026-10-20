@@ -103,9 +103,7 @@ def test_parser_witness_sidechain_only_polymer_cluster_uses_sidechain_scope(
 
     assert len(candidates) == 1
     assert candidates[0].repair_refinement.scope_spec == (
-        LocalScopeSpec.from_residue_sidechains(
-            (left_residue_id, right_residue_id)
-        )
+        LocalScopeSpec.from_residue_sidechains((left_residue_id, right_residue_id))
     )
     assert candidates[0].repair_refinement.config.max_iterations == 50
     assert candidates[0].repair_refinement.execution_scope_spec is None
@@ -202,9 +200,7 @@ def test_parser_witness_skips_ambiguous_disulfide_blocker_cluster(
     assert len(candidates) == 1
     assert candidates[0].cluster == sidechain_cluster
     assert candidates[0].repair_refinement.scope_spec == (
-        LocalScopeSpec.from_residue_sidechains(
-            (ResidueId("A", 4), ResidueId("A", 5))
-        )
+        LocalScopeSpec.from_residue_sidechains((ResidueId("A", 4), ResidueId("A", 5)))
     )
 
 
@@ -235,9 +231,7 @@ def test_parser_witness_exclusions_explain_ambiguous_disulfide_blocker(
         exclusions[0].reason
         is ParserWitnessRepairExclusionReason.AMBIGUOUS_DISULFIDE_TOPOLOGY
     )
-    assert exclusions[0].display_token() == (
-        "ambiguous_disulfide_topology:A:1,A:2"
-    )
+    assert exclusions[0].display_token() == ("ambiguous_disulfide_topology:A:1,A:2")
 
 
 def test_parser_witness_exclusions_explain_oversized_cluster(

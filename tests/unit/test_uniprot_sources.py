@@ -1,11 +1,13 @@
 """UniProt source retrieval tests."""
 
 import json
+from collections.abc import Mapping
 from email.message import Message
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
+from typing_extensions import Self
 
 from protrepair.sources import (
     UniProtSequenceFetchFailureKind,
@@ -21,10 +23,10 @@ from protrepair.sources.uniprot_retrieval import (
 class FakeResponse:
     """Minimal context-managed HTTP response for UniProt boundary tests."""
 
-    def __init__(self, payload: dict[str, object] | str) -> None:
+    def __init__(self, payload: Mapping[str, object] | str) -> None:
         self._payload = payload
 
-    def __enter__(self) -> "FakeResponse":
+    def __enter__(self) -> Self:
         """Enter the fake response context."""
 
         return self
@@ -33,11 +35,11 @@ class FakeResponse:
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
-        tb: object | None,
+        tb: object,
     ) -> None:
         """Exit the fake response context."""
 
-        return None
+        return
 
     def read(self, size: int = -1) -> bytes:
         """Return one JSON-encoded payload body."""
@@ -105,8 +107,7 @@ def test_fetch_uniprot_sequence_family_fetches_canonical_and_isoforms(
         "P04406-2",
     )
     assert tuple(
-        record.effective_accession()
-        for record in family.family.isoform_records
+        record.effective_accession() for record in family.family.isoform_records
     ) == ("P04406-1", "P04406-2")
 
 
@@ -225,15 +226,13 @@ def test_fetch_uniprot_sequence_rejects_oversized_response(
     def fake_urlopen(request: Request, *, timeout: float) -> FakeResponse:
         return FakeResponse("x" * 5)
 
-    import protrepair.sources._network as network_policy
+    import protrepair.sources.network as network_policy
     import protrepair.sources.uniprot_retrieval as uniprot_io
 
     monkeypatch.setattr(network_policy, "DEFAULT_SOURCE_RETRIEVAL_MAX_BYTES", 4)
     monkeypatch.setattr(uniprot_io, "urlopen", fake_urlopen)
 
-    outcome = fetch_uniprot_sequence(
-        UniProtSequenceReference(accession="P04406")
-    )
+    outcome = fetch_uniprot_sequence(UniProtSequenceReference(accession="P04406"))
 
     assert outcome.is_success() is False
     assert outcome.failure is not None
@@ -352,10 +351,7 @@ def test_fetch_uniprot_sequence_family_preserves_isoform_timeout_failure(
     assert outcome.is_success()
     family = outcome.require_result()
     assert (
-        tuple(
-            record.effective_accession()
-            for record in family.family.isoform_records
-        )
+        tuple(record.effective_accession() for record in family.family.isoform_records)
         == ()
     )
     assert len(family.failures()) == 1

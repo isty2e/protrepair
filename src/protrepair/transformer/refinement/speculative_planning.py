@@ -14,9 +14,7 @@ NodeStateT = TypeVar("NodeStateT")
 
 
 @dataclass(frozen=True, slots=True)
-class SpeculativeExecution(
-    Generic[ProposalT, ExecutionOutcomeT]
-):
+class SpeculativeExecution(Generic[ProposalT, ExecutionOutcomeT]):
     """Executed speculative proposal before downstream evaluation."""
 
     proposal: ProposalT
@@ -24,9 +22,7 @@ class SpeculativeExecution(
 
 
 @dataclass(frozen=True, slots=True)
-class SpeculativeExecutionBatch(
-    Generic[ProposalT, ExecutionOutcomeT, ExecutionErrorT]
-):
+class SpeculativeExecutionBatch(Generic[ProposalT, ExecutionOutcomeT, ExecutionErrorT]):
     """Batch execution output over one speculative proposal family."""
 
     executions: tuple[SpeculativeExecution[ProposalT, ExecutionOutcomeT], ...]
@@ -34,9 +30,7 @@ class SpeculativeExecutionBatch(
 
 
 @dataclass(frozen=True, slots=True)
-class EvaluatedSpeculativeProposal(
-    Generic[ProposalT, ExecutionOutcomeT, EvaluationT]
-):
+class EvaluatedSpeculativeProposal(Generic[ProposalT, ExecutionOutcomeT, EvaluationT]):
     """Executed speculative proposal plus evaluation outcome."""
 
     execution: SpeculativeExecution[ProposalT, ExecutionOutcomeT]
@@ -82,9 +76,7 @@ class SpeculativePlanningNodeId:
 
     def __post_init__(self) -> None:
         if self.value < 0:
-            raise ValueError(
-                "speculative planning node ids must be non-negative"
-            )
+            raise ValueError("speculative planning node ids must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,17 +92,18 @@ class SpeculativeAdoptedChild(
 
 
 @dataclass(frozen=True, slots=True)
-class SpeculativeAdoptionDecision(
-    Generic[ProposalT, ExecutionOutcomeT, EvaluationT]
-):
+class SpeculativeAdoptionDecision(Generic[ProposalT, ExecutionOutcomeT, EvaluationT]):
     """Adoption decision over one evaluated speculative proposal."""
 
     kind: SpeculativeAdoptionDecisionKind
-    candidate: EvaluatedSpeculativeProposal[
-        ProposalT,
-        ExecutionOutcomeT,
-        EvaluationT,
-    ] | None = None
+    candidate: (
+        EvaluatedSpeculativeProposal[
+            ProposalT,
+            ExecutionOutcomeT,
+            EvaluationT,
+        ]
+        | None
+    ) = None
     reason: str | None = None
 
     def __post_init__(self) -> None:
@@ -187,11 +180,14 @@ class SpeculativePlanningNode(
     node_id: SpeculativePlanningNodeId
     state: NodeStateT
     parent_node_id: SpeculativePlanningNodeId | None = None
-    adopted_decision: SpeculativeAdoptionDecision[
-        ProposalT,
-        ExecutionOutcomeT,
-        EvaluationT,
-    ] | None = None
+    adopted_decision: (
+        SpeculativeAdoptionDecision[
+            ProposalT,
+            ExecutionOutcomeT,
+            EvaluationT,
+        ]
+        | None
+    ) = None
 
     def __post_init__(self) -> None:
         if self.parent_node_id is None and self.adopted_decision is not None:
@@ -213,11 +209,7 @@ class SpeculativePlanningNode(
         """Return one root planning node."""
 
         return cls(
-            node_id=(
-                SpeculativePlanningNodeId(0)
-                if node_id is None
-                else node_id
-            ),
+            node_id=(SpeculativePlanningNodeId(0) if node_id is None else node_id),
             state=state,
         )
 
@@ -300,9 +292,7 @@ class SpeculativePlanningFrontier(
         """Return the next active node or raise when the frontier is empty."""
 
         if not self.active_nodes:
-            raise ValueError(
-                "speculative planning frontier has no active nodes"
-            )
+            raise ValueError("speculative planning frontier has no active nodes")
 
         return self.active_nodes[0]
 
@@ -352,9 +342,7 @@ class SpeculativePlanningTrace(
         nodes = tuple(self.nodes)
         node_ids = tuple(node.node_id for node in nodes)
         if len(set(node_ids)) != len(node_ids):
-            raise ValueError(
-                "speculative planning traces must not repeat node ids"
-            )
+            raise ValueError("speculative planning traces must not repeat node ids")
         known_node_ids = set(node_ids)
         active_node_ids = {
             active_node.node_id for active_node in self.frontier.active_nodes

@@ -49,9 +49,7 @@ BRANCHED_SIDECHAIN_CORRECTION_DEFINITIONS: dict[
 
 
 class BranchedSidechainSeedTransformer(
-    BranchingContextOperation[
-        ProteinStructureSnapshot, BranchedSidechainSeedProvenance
-    ]
+    BranchingContextOperation[ProteinStructureSnapshot, BranchedSidechainSeedProvenance]
 ):
     """Branching transformer for branched-sidechain seed snapshots."""
 
@@ -162,12 +160,15 @@ def resolve_branched_sidechain_seed_target(
     atom_input: AtomInput,
     *,
     component_library: ComponentLibrary,
-) -> tuple[
-    ResidueSite,
-    ResidueGeometry,
-    ResidueId,
-    BranchedSidechainCorrectionDefinition,
-] | None:
+) -> (
+    tuple[
+        ResidueSite,
+        ResidueGeometry,
+        ResidueId,
+        BranchedSidechainCorrectionDefinition,
+    ]
+    | None
+):
     """Return the single residue and correction definition for one seedable domain."""
 
     referenced_residue_ids = atom_input.referenced_residue_ids()

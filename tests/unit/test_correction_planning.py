@@ -43,8 +43,9 @@ from protrepair.workflow.planning.correction import plan_correction_transformers
 SERINE_RESIDUE_ID = ResidueId("A", 17)
 
 
-def test_correction_planner_emits_intrinsic_geometry_refinement_for_matrix_case(
-) -> None:
+def test_correction_planner_emits_intrinsic_geometry_refinement_for_matrix_case() -> (
+    None
+):
     """Ligand-free intrinsic geometry cases should plan correction explicitly."""
 
     assert "3g8l-asn182" in SCENARIO_FIXTURE_MATRIX
@@ -109,8 +110,9 @@ def test_correction_planner_emits_ligand_aware_refinement_only_in_holo_context()
     assert apo_outcome.transformers == ()
 
 
-def test_correction_planner_emits_post_hydrogen_interaction_refinement_for_matrix_case(
-) -> None:
+def test_correction_planner_emits_post_hydrogen_interaction_refinement_for_matrix_case() -> (
+    None
+):
     """Post-hydrogen interaction burden should plan correction explicitly."""
 
     assert "synthetic-ligand-clashing-serine-hydrogen" in SCENARIO_FIXTURE_MATRIX
@@ -141,14 +143,11 @@ def _repair_refinement(residue_id: ResidueId) -> RepairRefinementSpec:
 
     return RepairRefinementSpec(
         scope_spec=LocalScopeSpec.from_residues((residue_id,)),
-        binding=ManualContinuousRelaxationBinding(
-            ContinuousRelaxationForceField.UFF
-        ),
+        binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.UFF),
     )
 
 
-def _hydrogenated_holo_serine_clash_structure(
-    ) -> ProteinStructure:
+def _hydrogenated_holo_serine_clash_structure() -> ProteinStructure:
     """Return one hydrogenated holo serine window with a ligand clash on HG."""
 
     library = build_default_component_library()
@@ -221,9 +220,7 @@ def _canonical_residue_payload_from_structure(
 ) -> CanonicalResiduePayload:
     """Return one canonical residue payload from a canonical structure."""
 
-    residue_site = structure.constitution.chain(residue_id.chain_id).residue(
-        residue_id
-    )
+    residue_site = structure.constitution.chain(residue_id.chain_id).residue(residue_id)
     residue_index = structure.constitution.residue_index(residue_id)
     return (
         residue_site,
@@ -244,9 +241,7 @@ def _residue_payload_from_structure(
 ) -> CompletionResiduePayload:
     """Return one completion residue payload from a canonical structure."""
 
-    residue_site = structure.constitution.chain(residue_id.chain_id).residue(
-        residue_id
-    )
+    residue_site = structure.constitution.chain(residue_id.chain_id).residue(residue_id)
     residue_index = structure.constitution.residue_index(residue_id)
     return CompletionResiduePayload(
         residue_site=residue_site,

@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
+from typing_extensions import Self
 
 from protrepair.sources import (
     AlphaFoldFetchFailureKind,
@@ -35,7 +36,7 @@ class FakeResponse:
         self._payload = payload
         self._final_url = final_url
 
-    def __enter__(self) -> "FakeResponse":
+    def __enter__(self) -> Self:
         """Enter the fake response context."""
 
         return self
@@ -44,11 +45,11 @@ class FakeResponse:
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
-        tb: object | None,
+        tb: object,
     ) -> None:
         """Exit the fake response context."""
 
-        return None
+        return
 
     def read(self, size: int = -1) -> bytes:
         """Return one encoded payload body."""
@@ -120,9 +121,7 @@ def test_fetch_alphafold_model_set_preserves_canonical_and_isoform_records(
 
     monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
 
-    outcome = fetch_alphafold_model_set(
-        UniProtSequenceReference(accession="P04406")
-    )
+    outcome = fetch_alphafold_model_set(UniProtSequenceReference(accession="P04406"))
 
     assert outcome.is_success()
     model_set = outcome.require_model_set()
@@ -279,9 +278,7 @@ def test_fetch_alphafold_model_set_rejects_untrusted_redirect(
 
     monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
 
-    outcome = fetch_alphafold_model_set(
-        UniProtSequenceReference(accession="P04406")
-    )
+    outcome = fetch_alphafold_model_set(UniProtSequenceReference(accession="P04406"))
 
     assert outcome.is_success() is False
     assert outcome.failure is not None
@@ -298,15 +295,13 @@ def test_fetch_alphafold_model_set_rejects_oversized_response(
     def fake_urlopen(request: Request, *, timeout: float) -> FakeResponse:
         return FakeResponse("x" * 5)
 
-    import protrepair.sources._network as network_policy
     import protrepair.sources.alphafold_retrieval as alphafold_io
+    import protrepair.sources.network as network_policy
 
     monkeypatch.setattr(network_policy, "DEFAULT_SOURCE_RETRIEVAL_MAX_BYTES", 4)
     monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
 
-    outcome = fetch_alphafold_model_set(
-        UniProtSequenceReference(accession="P04406")
-    )
+    outcome = fetch_alphafold_model_set(UniProtSequenceReference(accession="P04406"))
 
     assert outcome.is_success() is False
     assert outcome.failure is not None
@@ -324,8 +319,8 @@ def test_fetch_alphafold_structure_artifact_rejects_oversized_response(
     def fake_urlopen(request: Request, *, timeout: float) -> FakeResponse:
         return FakeResponse("HEADER")
 
-    import protrepair.sources._network as network_policy
     import protrepair.sources.alphafold_retrieval as alphafold_io
+    import protrepair.sources.network as network_policy
 
     monkeypatch.setattr(network_policy, "DEFAULT_SOURCE_RETRIEVAL_MAX_BYTES", 4)
     monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
@@ -359,9 +354,7 @@ def test_fetch_alphafold_model_set_surfaces_not_found_failures(
 
     monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
 
-    outcome = fetch_alphafold_model_set(
-        UniProtSequenceReference(accession="P99999")
-    )
+    outcome = fetch_alphafold_model_set(UniProtSequenceReference(accession="P99999"))
 
     assert outcome.is_success() is False
     assert outcome.failure is not None
@@ -432,10 +425,14 @@ def test_fetch_alphafold_structure_artifact_passes_configured_timeout(
 
     monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
 
-    model = fetch_alphafold_model_set(
-        UniProtSequenceReference(accession="P04406"),
-        timeout_seconds=3.0,
-    ).require_model_set().models[0]
+    model = (
+        fetch_alphafold_model_set(
+            UniProtSequenceReference(accession="P04406"),
+            timeout_seconds=3.0,
+        )
+        .require_model_set()
+        .models[0]
+    )
 
     outcome = fetch_alphafold_structure_artifact(
         model,
@@ -525,9 +522,11 @@ def test_fetch_alphafold_structure_artifact_converts_urlerror_timeout_failure(
 
     monkeypatch.setattr(alphafold_io, "urlopen", fake_urlopen)
 
-    model = fetch_alphafold_model_set(
-        UniProtSequenceReference(accession="P04406")
-    ).require_model_set().models[0]
+    model = (
+        fetch_alphafold_model_set(UniProtSequenceReference(accession="P04406"))
+        .require_model_set()
+        .models[0]
+    )
     outcome = fetch_alphafold_structure_artifact(model, timeout_seconds=2.5)
 
     assert outcome.is_success() is False

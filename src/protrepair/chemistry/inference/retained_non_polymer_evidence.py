@@ -563,10 +563,8 @@ def selected_graph_coordination_bonds(
     attached_by_donor = {
         structure.constitution.atom_index(donor): [] for donor in partners_by_donor
     }
-    for index in attached_by_donor:
-        attached_by_donor[index].extend(
-            structure.topology.incident_bonds_by_atom().get(index, ())
-        )
+    for index, bonds in attached_by_donor.items():
+        bonds.extend(structure.topology.incident_bonds_by_atom().get(index, ()))
     for donor, partners in partners_by_donor.items():
         donor_index = structure.constitution.atom_index(donor)
         local_index = (

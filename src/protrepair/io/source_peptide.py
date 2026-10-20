@@ -1,5 +1,6 @@
 """Project source polymer succession into canonical peptide connectivity."""
 
+import itertools
 from collections import defaultdict
 from collections.abc import Mapping
 
@@ -105,18 +106,15 @@ def source_sequence_inferred_polymer_topology_bonds(
             residue_id: offset for offset, residue_id in enumerate(raw_slots)
         }
         source_slots = tuple(selected)
-        pairs = dict.fromkeys(zip(source_slots, source_slots[1:], strict=False))
+        pairs = dict.fromkeys(itertools.pairwise(source_slots))
         atom_slots = tuple(
             residue_id for residue_id, raw in selected.items() if raw.het_flag != "H"
         )
         # Reconcile relocated HET records only when ordinary source order supports
         # author ordering. Canonical sorting must not reverse an insertion run.
-        if all(
-            first < second
-            for first, second in zip(atom_slots, atom_slots[1:], strict=False)
-        ):
+        if all(first < second for first, second in itertools.pairwise(atom_slots)):
             slots = tuple(site.residue_id for site in chain.residues)
-            for first_id, second_id in zip(slots, slots[1:], strict=False):
+            for first_id, second_id in itertools.pairwise(slots):
                 if any(
                     selected.get(residue_id) is not None
                     and selected[residue_id].het_flag == "H"

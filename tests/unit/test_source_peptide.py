@@ -1,5 +1,7 @@
 """Source sequence evidence must not be confused with author numbering."""
 
+import itertools
+
 import gemmi
 import pytest
 
@@ -87,7 +89,7 @@ def test_complete_source_sequence_resolves_nonmonotonic_author_labels(
     )
     expected = {
         frozenset((AtomRef(first, "C"), AtomRef(second, "N")))
-        for first, second in zip(ids, ids[1:], strict=False)
+        for first, second in itertools.pairwise(ids)
     }
     assert _peptide_pairs(structure) == expected
     assert all(
@@ -449,7 +451,7 @@ def test_het_polymer_sorting_preserves_raw_sequence_neighbors(
     ids = (ResidueId("A", 1, "B"), ResidueId("A", 1, "A"), ResidueId("A", 1))
     expected = {
         frozenset((AtomRef(first, "C"), AtomRef(second, "N")))
-        for first, second in zip(ids, ids[1:], strict=False)
+        for first, second in itertools.pairwise(ids)
     }
     structure = _read(source, file_format)
     assert _peptide_pairs(structure) == expected

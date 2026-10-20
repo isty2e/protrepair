@@ -24,8 +24,6 @@ from protrepair.state.structure_readiness import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 
-__all__ = ["StructureIntrinsicGeometryFacts"]
-
 
 @dataclass(frozen=True, slots=True)
 class StructureIntrinsicGeometryFacts:
@@ -63,9 +61,7 @@ class StructureIntrinsicGeometryFacts:
             component_library=library,
             chemistry_readiness_facts=chemistry_readiness_facts,
         )
-        hydrogen_inclusive_protein_self_clashes: tuple[StericClash, ...] | None = (
-            None
-        )
+        hydrogen_inclusive_protein_self_clashes: tuple[StericClash, ...] | None = None
         if (
             active_chemistry_facts.hydrogen_coverage_state
             is HydrogenCoverageState.COMPLETE
@@ -85,9 +81,7 @@ class StructureIntrinsicGeometryFacts:
                 hydrogen_inclusive_protein_self_clashes,
             )
             protein_clashes = hydrogen_inclusive_protein_self_clashes
-            protein_self_clash_observation_mode = (
-                ClashObservationMode.ALL_ATOM_COMPLETE
-            )
+            protein_self_clash_observation_mode = ClashObservationMode.ALL_ATOM_COMPLETE
         else:
             heavy_atom_protein_self_clashes = protein_self_clashes(
                 detect_clashes(
@@ -110,9 +104,7 @@ class StructureIntrinsicGeometryFacts:
             ),
             protein_self_clash_count=len(protein_clashes),
             protein_self_clash_observation_mode=protein_self_clash_observation_mode,
-            observed_heavy_atom_self_clash_count=len(
-                heavy_atom_protein_self_clashes
-            ),
+            observed_heavy_atom_self_clash_count=len(heavy_atom_protein_self_clashes),
             observed_hydrogen_inclusive_self_clash_count=(
                 None
                 if hydrogen_inclusive_protein_self_clashes is None
@@ -129,3 +121,6 @@ class StructureIntrinsicGeometryFacts:
                 component_library=library,
             ),
         )
+
+
+__all__ = ["StructureIntrinsicGeometryFacts"]

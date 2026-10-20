@@ -20,7 +20,6 @@ except PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
-    "__version__",
     "AnalysisKind",
     "ProcessResult",
     "ProtrepairError",
@@ -28,6 +27,7 @@ __all__ = [
     "RetainedNonPolymerChemistryOverride",
     "StructureIngressOptions",
     "WorkflowTransformRequests",
+    "__version__",
     "process_structure",
     "requested_process_goal",
 ]

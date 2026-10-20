@@ -539,8 +539,7 @@ def connected_components(graph: Mapping[str, set[str]]) -> tuple[frozenset[str],
                     continue
 
                 component_atom_names.add(neighbor_atom_name)
-                if neighbor_atom_name in remaining_atom_names:
-                    remaining_atom_names.remove(neighbor_atom_name)
+                remaining_atom_names.discard(neighbor_atom_name)
                 frontier.append(neighbor_atom_name)
 
         components.append(frozenset(component_atom_names))

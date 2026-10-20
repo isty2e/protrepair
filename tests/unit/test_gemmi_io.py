@@ -18,8 +18,6 @@ from tests.support.canonical_builders import (
 from tests.support.request_builders import ingress_options
 from tests.support.structure_summary import summarize_structure
 
-import protrepair.io.gemmi_ingress as gemmi_ingress
-import protrepair.io.gemmi_writer as gemmi_writer
 from protrepair.diagnostics.topology import detect_disulfide_topology
 from protrepair.errors import (
     ModelInvariantError,
@@ -30,6 +28,8 @@ from protrepair.errors import (
 )
 from protrepair.geometry import Vec3
 from protrepair.io import (
+    gemmi_ingress,
+    gemmi_writer,
     read_structure,
     read_structure_string,
     write_structure,
@@ -1705,8 +1705,10 @@ def test_pdb_does_not_promote_supported_het_component_without_polymer_context() 
     structure = read_structure_string(
         build_pdb_text(
             [
-                "LINK         C   MSE L   1                 N   MSE L   1     "
-                "1555   1555  1.35  ",
+                (
+                    "LINK         C   MSE L   1                 N   MSE L   1     "
+                    "1555   1555  1.35  "
+                ),
                 build_pdb_atom_line(
                     serial=1,
                     record_name="HETATM",
@@ -1839,8 +1841,10 @@ def test_pdb_source_peptide_link_can_seed_het_only_polymer_context() -> None:
     structure = read_structure_string(
         build_pdb_text(
             [
-                "LINK         C   SEP A  10                 N   TPO A  20     "
-                "1555   1555  1.35  ",
+                (
+                    "LINK         C   SEP A  10                 N   TPO A  20     "
+                    "1555   1555  1.35  "
+                ),
                 build_pdb_atom_line(
                     serial=1,
                     record_name="HETATM",
@@ -1883,8 +1887,10 @@ def test_pdb_source_peptide_link_promotes_candidate_from_polymer_anchor() -> Non
     structure = read_structure_string(
         build_pdb_text(
             [
-                "LINK         C   ALA A   1                 N   SEP A  10     "
-                "1555   1555  1.35  ",
+                (
+                    "LINK         C   ALA A   1                 N   SEP A  10     "
+                    "1555   1555  1.35  "
+                ),
                 build_pdb_atom_line(
                     serial=1,
                     atom_name=" C  ",
@@ -4603,12 +4609,16 @@ def build_2q6f_linked_pdb_text() -> str:
 
     fixture_path = Path("tests/fixtures/pdb/refinement/2q6f_cys143_pje_local.pdb")
     pdb_text = fixture_path.read_text(encoding="utf-8")
-    link_records = "\n".join(
+    link_records = "\n".join(  # noqa: FLY002 - Keep fixture records on separate readable lines.
         (
-            "LINK         C   LEU D   4                 N   PJE D   5     "
-            "1555   1555  1.35  ",
-            "LINK         C   PJE D   5                 O   010 D   6     "
-            "1555   1555  1.44  ",
+            (
+                "LINK         C   LEU D   4                 N   PJE D   5     "
+                "1555   1555  1.35  "
+            ),
+            (
+                "LINK         C   PJE D   5                 O   010 D   6     "
+                "1555   1555  1.44  "
+            ),
         )
     )
     return pdb_text.replace("CRYST1", f"{link_records}\nCRYST1", 1)

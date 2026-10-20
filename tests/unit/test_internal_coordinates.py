@@ -71,9 +71,7 @@ def test_torsion_uses_closed_squared_plane_threshold() -> None:
 def test_torsion_accepts_plane_above_squared_threshold() -> None:
     """The next representable squared plane norm should retain its torsion."""
 
-    plane_norm_squared = float(
-        np.nextafter(TORSION_PLANE_NORM_SQUARED_EPSILON, np.inf)
-    )
+    plane_norm_squared = float(np.nextafter(TORSION_PLANE_NORM_SQUARED_EPSILON, np.inf))
     plane_offset = sqrt(plane_norm_squared)
 
     torsion = InternalCoordinateFrame.torsion(

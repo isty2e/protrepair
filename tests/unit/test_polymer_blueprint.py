@@ -86,9 +86,7 @@ def test_polymer_chain_blueprint_rejects_malformed_chain_identity() -> None:
     with pytest.raises(TypeError, match="chain_id"):
         PolymerChainBlueprint(
             chain_id=cast(str | None, 1),
-            residue_slots=(
-                PolymerResidueSlot(sequence_position=1, token="A"),
-            ),
+            residue_slots=(PolymerResidueSlot(sequence_position=1, token="A"),),
         )
 
 
@@ -97,9 +95,7 @@ def test_blank_reference_blueprint_chain_id_normalizes_to_unassigned() -> None:
 
     chain = PolymerChainBlueprint(
         chain_id=" ",
-        residue_slots=(
-            PolymerResidueSlot(sequence_position=1, token="A"),
-        ),
+        residue_slots=(PolymerResidueSlot(sequence_position=1, token="A"),),
     )
 
     assert chain.chain_id is None
@@ -113,15 +109,11 @@ def test_polymer_blueprint_rejects_duplicate_unassigned_chains() -> None:
             chains=(
                 PolymerChainBlueprint(
                     chain_id=None,
-                    residue_slots=(
-                        PolymerResidueSlot(sequence_position=1, token="A"),
-                    ),
+                    residue_slots=(PolymerResidueSlot(sequence_position=1, token="A"),),
                 ),
                 PolymerChainBlueprint(
                     chain_id=" ",
-                    residue_slots=(
-                        PolymerResidueSlot(sequence_position=2, token="C"),
-                    ),
+                    residue_slots=(PolymerResidueSlot(sequence_position=2, token="C"),),
                 ),
             )
         )
@@ -132,15 +124,11 @@ def test_polymer_blueprint_selects_mixed_assigned_and_unassigned_chains() -> Non
 
     unassigned_chain = PolymerChainBlueprint(
         chain_id=None,
-        residue_slots=(
-            PolymerResidueSlot(sequence_position=1, token="A"),
-        ),
+        residue_slots=(PolymerResidueSlot(sequence_position=1, token="A"),),
     )
     assigned_chain = PolymerChainBlueprint(
         chain_id="B",
-        residue_slots=(
-            PolymerResidueSlot(sequence_position=1, token="G"),
-        ),
+        residue_slots=(PolymerResidueSlot(sequence_position=1, token="G"),),
     )
     blueprint = PolymerBlueprint(chains=(unassigned_chain, assigned_chain))
 

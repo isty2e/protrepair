@@ -44,14 +44,12 @@ class StructureNormalizationPolicy:
 
         if not isinstance(self.mutation_policy, MutationPolicy):
             raise TypeError(
-                "structure normalization mutation_policy must be a "
-                "MutationPolicy value"
+                "structure normalization mutation_policy must be a MutationPolicy value"
             )
 
         if not isinstance(self.ligand_handling, LigandHandling):
             raise TypeError(
-                "structure normalization ligand_handling must be a "
-                "LigandHandling value"
+                "structure normalization ligand_handling must be a LigandHandling value"
             )
 
         selected_chain_ids = self.selected_chain_ids

@@ -112,18 +112,14 @@ class ObservedSequenceResidue:
 
     def __post_init__(self) -> None:
         if not isinstance(self.residue_id, ResidueId):
-            raise TypeError(
-                "observed sequence residues require a ResidueId value"
-            )
+            raise TypeError("observed sequence residues require a ResidueId value")
 
         component_id = self.component_id.strip().upper()
         token = self.token.strip().upper()
         if not component_id:
             raise ValueError("observed sequence residues require a component id")
         if len(token) != 1 or not token.isalpha():
-            raise ValueError(
-                "observed sequence residues require one alphabetic token"
-            )
+            raise ValueError("observed sequence residues require one alphabetic token")
 
         object.__setattr__(self, "component_id", component_id)
         object.__setattr__(self, "token", token)
@@ -140,9 +136,7 @@ class ReferenceSequenceAttachment:
     def __post_init__(self) -> None:
         label = self.label.strip()
         if not label:
-            raise ValueError(
-                "reference sequence attachments require a non-blank label"
-            )
+            raise ValueError("reference sequence attachments require a non-blank label")
 
         source_family = self.source_family
         if source_family is not None and not isinstance(
@@ -257,8 +251,7 @@ class ObservedChainSequence:
         return ObservedSequenceAlignmentSet(
             observed_sequence=self,
             alignments=tuple(
-                self.align_to_candidate(candidate)
-                for candidate in reference_candidates
+                self.align_to_candidate(candidate) for candidate in reference_candidates
             ),
         )
 
@@ -311,9 +304,7 @@ class SequenceAlignmentColumn:
                 "sequence alignment columns require an observed residue or None"
             )
         if self.reference_position is not None and self.reference_position <= 0:
-            raise ValueError(
-                "sequence alignment reference positions must be positive"
-            )
+            raise ValueError("sequence alignment reference positions must be positive")
 
         reference_token = self.reference_token
         if reference_token is not None:
@@ -340,9 +331,7 @@ class SequenceDifference:
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, SequenceDifferenceKind):
-            raise TypeError(
-                "sequence differences require a SequenceDifferenceKind"
-            )
+            raise TypeError("sequence differences require a SequenceDifferenceKind")
 
         observed_sequence = self.observed_sequence.strip().upper()
         reference_sequence = self.reference_sequence.strip().upper()
@@ -511,10 +500,7 @@ class ObservedSequenceAlignmentSet:
     def best_alignments(self) -> tuple[ObservedSequenceAlignment, ...]:
         """Return best-scoring alignments in stable first-seen order."""
 
-        best_key = min(
-            alignment.preference_key()
-            for alignment in self.alignments
-        )
+        best_key = min(alignment.preference_key() for alignment in self.alignments)
         return tuple(
             alignment
             for alignment in self.alignments
@@ -579,10 +565,7 @@ def _global_alignment_columns(
 
     observed_length = len(observed_residues)
     reference_length = len(reference_sequence)
-    scores = [
-        [0] * (reference_length + 1)
-        for _ in range(observed_length + 1)
-    ]
+    scores = [[0] * (reference_length + 1) for _ in range(observed_length + 1)]
     moves = [
         [AlignmentMove.DIAGONAL] * (reference_length + 1)
         for _ in range(observed_length + 1)
@@ -599,10 +582,9 @@ def _global_alignment_columns(
         for reference_index in range(1, reference_length + 1):
             observed_token = observed_residues[observed_index - 1].token
             reference_token = reference_sequence[reference_index - 1]
-            diagonal_score = (
-                scores[observed_index - 1][reference_index - 1]
-                + _substitution_score(observed_token, reference_token)
-            )
+            diagonal_score = scores[observed_index - 1][
+                reference_index - 1
+            ] + _substitution_score(observed_token, reference_token)
             up_score = scores[observed_index - 1][reference_index] - 1
             left_score = scores[observed_index][reference_index - 1] - 1
 
@@ -733,8 +715,7 @@ def _group_alignment_differences(
             if run_column.observed_residue is not None
         )
         reference_sequence = "".join(
-            run_column.reference_token or ""
-            for run_column in run_columns
+            run_column.reference_token or "" for run_column in run_columns
         )
         differences.append(
             SequenceDifference(

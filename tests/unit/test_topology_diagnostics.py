@@ -204,9 +204,7 @@ def cys_residue(
     return residue_payload(
         component_id="CYS",
         residue_id=ResidueId(chain_id=chain_id, seq_num=seq_num),
-        atoms=(
-            atom_payload("SG", "S", sg_position),
-        ),
+        atoms=(atom_payload("SG", "S", sg_position),),
     )
 
 

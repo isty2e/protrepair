@@ -64,7 +64,7 @@ from protrepair.workflow.planning.intrinsic_geometry import (
 )
 
 
-class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):
+class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-class-definition]  # Explicit slots are valid on this undecorated subclass.
     """Engine-owned lazy phase report that keeps contracts free of evaluators."""
 
     __slots__ = (
@@ -74,6 +74,12 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):
         "_planning_context",
         "_structure",
     )
+
+    _blockers: tuple[WorkflowBlocker, ...]
+    _cached_outcomes: tuple[WorkflowPhaseOutcome, ...] | None
+    _component_library: ComponentLibrary | None
+    _planning_context: WorkflowPlanningContext
+    _structure: ProteinStructure
 
     def __init__(
         self,

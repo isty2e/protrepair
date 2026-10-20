@@ -39,9 +39,7 @@ def atom_input_from_local_scope_spec(
     if scope_spec.is_atomwise():
         atom_scope = scope_spec.scope
         if not isinstance(atom_scope, AtomSetScope):
-            raise TypeError(
-                "atom-local scope lowering requires an AtomSetScope"
-            )
+            raise TypeError("atom-local scope lowering requires an AtomSetScope")
         selected_atom_ref_set = _selected_atom_ref_set(
             snapshot,
             atom_scope.atom_refs,
@@ -71,15 +69,12 @@ def atom_input_from_local_scope_spec(
 
     residue_scope = scope_spec.scope
     if not isinstance(residue_scope, ResidueSetScope):
-        raise TypeError(
-            "residue-local scope lowering requires a ResidueSetScope"
-        )
+        raise TypeError("residue-local scope lowering requires a ResidueSetScope")
     selected_residue_id_set = set(residue_scope.residue_ids)
     for residue_id in selected_residue_id_set:
         if snapshot.structure.constitution.residue_or_ligand(residue_id) is None:
             raise ValueError(
-                "local scope references unknown residue "
-                f"{residue_id.display_token()}"
+                f"local scope references unknown residue {residue_id.display_token()}"
             )
 
     if scope_spec.lowering is LocalScopeLowering.RESIDUE_SIDECHAIN_ATOMS:
@@ -130,8 +125,7 @@ def _selected_atom_ref_set(
     for atom_ref in selected_atom_ref_set:
         if snapshot.structure.constitution.resolve_atom_site(atom_ref) is None:
             raise ValueError(
-                "local scope references unknown atom "
-                f"{atom_ref.display_token()}"
+                f"local scope references unknown atom {atom_ref.display_token()}"
             )
 
     return selected_atom_ref_set
@@ -144,9 +138,7 @@ def _ordered_selected_atom_refs(
     """Return selected atom refs in canonical structure order."""
 
     return tuple(
-        atom_ref
-        for atom_ref in ordered_atom_refs
-        if atom_ref in selected_atom_ref_set
+        atom_ref for atom_ref in ordered_atom_refs if atom_ref in selected_atom_ref_set
     )
 
 
@@ -191,8 +183,7 @@ def _attached_hydrogen_atom_refs(
         residue = snapshot.structure.constitution.residue_or_ligand(residue_id)
         if residue is None:
             raise ValueError(
-                "local scope references unknown residue "
-                f"{residue_id.display_token()}"
+                f"local scope references unknown residue {residue_id.display_token()}"
             )
         template = active_component_library.get(residue.component_id)
         if template is None:
@@ -207,11 +198,12 @@ def _attached_hydrogen_atom_refs(
             for atom_ref in atom_scope.atom_refs
             if atom_ref.residue_id == residue_id
         }
-        for hydrogen_atom_name, anchor_atom_name in (
-            template.template_hydrogen_anchor_by_name(
-                residue.atom_site_names()
-            ).items()
-        ):
+        for (
+            hydrogen_atom_name,
+            anchor_atom_name,
+        ) in template.template_hydrogen_anchor_by_name(
+            residue.atom_site_names()
+        ).items():
             if anchor_atom_name not in residue_focus_atom_names:
                 continue
 
@@ -235,8 +227,7 @@ def _selected_residue_sidechain_atom_ref_set(
         residue = snapshot.structure.constitution.residue_or_ligand(residue_id)
         if residue is None:
             raise ValueError(
-                "local scope references unknown residue "
-                f"{residue_id.display_token()}"
+                f"local scope references unknown residue {residue_id.display_token()}"
             )
         template = component_library.get(residue.component_id)
         selected_atom_names = _selected_residue_sidechain_atom_names(

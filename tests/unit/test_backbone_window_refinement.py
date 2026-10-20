@@ -284,8 +284,7 @@ def test_backbone_window_transformer_reports_distinct_rejection_stage(
     assert issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
     assert issue.severity is IssueSeverity.WARNING
     assert (
-        issue.message
-        == "backbone-window local refinement was skipped: "
+        issue.message == "backbone-window local refinement was skipped: "
         "selected backbone window is invalid"
     )
 

@@ -752,7 +752,7 @@ def measure_rdkit_no_conect_sanitize_readability(
                 removeHs=False,
                 proximityBonding=True,
             )
-        except Exception:  # pragma: no cover - backend-specific failure path
+        except Exception:  # pragma: no cover - backend-specific failure path  # noqa: BLE001 - Backend failures are collected as diagnostic results.
             return False
 
     return molecule is not None
@@ -1079,7 +1079,7 @@ def _rdkit_no_conect_problem_surface(
         # Keep the partially cleaned native graph to localize only surviving errors.
         try:
             Chem.SanitizeMol(molecule)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Backend failures are collected as diagnostic results.
             error_lines = str(error).splitlines()
             sanitation_message = (
                 error_lines[0].strip() if error_lines else "RDKit sanitation failed"
@@ -1095,7 +1095,7 @@ def _rdkit_no_conect_problem_surface(
 
         try:
             chemistry_problems = Chem.DetectChemistryProblems(molecule)
-        except Exception:
+        except Exception:  # noqa: BLE001 - Backend failures are collected as diagnostic results.
             chemistry_problems = ()
     if not chemistry_problems:
         return _RDKitNoConectProblemSurface(

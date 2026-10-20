@@ -216,8 +216,9 @@ def _incident_coordination(
         for bond in bonds:
             if bond.relationship_type is not BondRelationshipType.METAL_COORDINATION:
                 continue
-            refs = tuple(
-                constitution.atom_ref_at(index) for index in bond.endpoint_pair()
+            refs = (
+                constitution.atom_ref_at(bond.atom_index_1),
+                constitution.atom_ref_at(bond.atom_index_2),
             )
             if not any(ref.residue_id == residue.residue_id for ref in refs):
                 continue

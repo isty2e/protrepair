@@ -69,9 +69,7 @@ def test_scientific_regression_backbone_oxygen_uses_current_context() -> None:
         c=Vec3(3.4, 1.4, 1.2),
     )
     snapshot = ProteinStructureSnapshot.from_structure(
-        _structure_from_completion_payloads(
-            (previous_residue, residue, next_residue)
-        )
+        _structure_from_completion_payloads((previous_residue, residue, next_residue))
     )
     site = _completion_site(
         snapshot,
@@ -126,9 +124,9 @@ def test_scientific_regression_backbone_oxygen_uses_current_context() -> None:
         _vec_array(expected_position),
         atol=1e-12,
     )
-    assert np.linalg.norm(
-        _vec_array(actual_position) - _vec_array(stale_position)
-    ) > 1.0
+    assert (
+        np.linalg.norm(_vec_array(actual_position) - _vec_array(stale_position)) > 1.0
+    )
 
 
 def test_scientific_regression_ramachandran_accepts_sane_numbering_gap() -> None:
@@ -343,9 +341,7 @@ def _hydrogen_bond_candidate_structure(
                     residue_payload(
                         component_id="GLY",
                         residue_id=ResidueId(chain_id="A", seq_num=1),
-                        atoms=(
-                            atom_payload("O", "O", acceptor_position),
-                        ),
+                        atoms=(atom_payload("O", "O", acceptor_position),),
                     ),
                 ),
             ),

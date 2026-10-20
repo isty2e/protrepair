@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from itertools import combinations
+from itertools import combinations, pairwise
 from math import atan2, isfinite
 from numbers import Real
 
@@ -1166,8 +1166,7 @@ def _source_span_boundary_failure(
         if residue_id is not None
     )
     if not scope.absent_residue_ids or any(
-        not left.immediately_precedes(right)
-        for left, right in zip(path, path[1:], strict=False)
+        not left.immediately_precedes(right) for left, right in pairwise(path)
     ):
         return SpanReconstructionFailure(
             SpanReconstructionFailureKind.INVALID_TARGET_STATE,
@@ -1761,7 +1760,7 @@ def _validate_materialized_peptide_junctions(
         else:
             payloads.append(payload)
 
-    for preceding, following in zip(payloads, payloads[1:], strict=False):
+    for preceding, following in pairwise(payloads):
         template = component_library.get(following.component_id)
         if template is None:
             return SpanReconstructionFailure(

@@ -1,6 +1,5 @@
 """Unit tests for retained non-polymer RDKit evidence inference."""
 
-
 from protrepair.chemistry.inference import (
     retained_non_polymer_evidence as evidence_inference,
 )
@@ -58,9 +57,12 @@ def test_evidence_template_with_hydrogens_returns_defensive_copy() -> None:
 
     assert any(atom.GetAtomicNum() == 1 for atom in second_template.GetAtoms())
     assert all(not atom.HasProp("poisoned") for atom in second_template.GetAtoms())
-    assert retained_non_polymer_evidence_expected_hydrogen_atom_names(
-        evidence
-    ) == ("H001", "H002", "H003", "H004")
+    assert retained_non_polymer_evidence_expected_hydrogen_atom_names(evidence) == (
+        "H001",
+        "H002",
+        "H003",
+        "H004",
+    )
 
 
 def test_mutated_heavy_template_does_not_affect_hydrogenated_template() -> None:
@@ -76,9 +78,12 @@ def test_mutated_heavy_template_does_not_affect_hydrogenated_template() -> None:
 
     heavy_template.GetAtomWithIdx(1).SetAtomicNum(6)
 
-    assert retained_non_polymer_evidence_expected_hydrogen_atom_names(
-        evidence
-    ) == ("H001", "H002", "H003", "H004")
+    assert retained_non_polymer_evidence_expected_hydrogen_atom_names(evidence) == (
+        "H001",
+        "H002",
+        "H003",
+        "H004",
+    )
 
 
 def test_evidence_template_caches_are_bounded() -> None:
@@ -89,8 +94,7 @@ def test_evidence_template_caches_are_bounded() -> None:
         == 256
     )
     assert (
-        evidence_inference._cached_template_with_hydrogens.cache_info().maxsize
-        == 256
+        evidence_inference._cached_template_with_hydrogens.cache_info().maxsize == 256
     )
 
 

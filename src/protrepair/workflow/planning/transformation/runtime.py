@@ -387,9 +387,10 @@ class TransformationProgressMemory:
         """Return progress memory updated for one completed step."""
 
         next_best_quality = self.best_quality_so_far
-        if quality_score is not None:
-            if next_best_quality is None or quality_score < next_best_quality:
-                next_best_quality = quality_score
+        if quality_score is not None and (
+            next_best_quality is None or quality_score < next_best_quality
+        ):
+            next_best_quality = quality_score
 
         return type(self)(
             no_progress_count=(

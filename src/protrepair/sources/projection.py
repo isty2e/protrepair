@@ -152,13 +152,11 @@ def align_observed_chain_to_uniprot_record(
 
     if not isinstance(observed_sequence, ObservedChainSequence):
         raise TypeError(
-            "align_observed_chain_to_uniprot_record requires an "
-            "ObservedChainSequence"
+            "align_observed_chain_to_uniprot_record requires an ObservedChainSequence"
         )
     if not isinstance(record, UniProtSequenceRecord):
         raise TypeError(
-            "align_observed_chain_to_uniprot_record requires a "
-            "UniProtSequenceRecord"
+            "align_observed_chain_to_uniprot_record requires a UniProtSequenceRecord"
         )
 
     return observed_sequence.align_to_candidate(
@@ -177,8 +175,7 @@ def align_observed_chain_to_uniprot_family(
 
     if not isinstance(observed_sequence, ObservedChainSequence):
         raise TypeError(
-            "align_observed_chain_to_uniprot_family requires an "
-            "ObservedChainSequence"
+            "align_observed_chain_to_uniprot_family requires an ObservedChainSequence"
         )
     if not isinstance(family, UniProtSequenceFamilyFetchResult):
         raise TypeError(

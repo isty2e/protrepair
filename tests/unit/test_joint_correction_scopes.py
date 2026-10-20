@@ -138,8 +138,7 @@ def test_joint_correction_scope_promotes_backbone_contacts_to_residue_atoms() ->
     assert proposals[0].worst_overlap_angstrom > 1.0
     assert proposals[0].motion_class is JointCorrectionMotionClass.RESIDUE_ATOMS
     assert (
-        proposals[0].as_local_scope_spec().lowering
-        is LocalScopeLowering.RESIDUE_ATOMS
+        proposals[0].as_local_scope_spec().lowering is LocalScopeLowering.RESIDUE_ATOMS
     )
 
 
@@ -216,9 +215,7 @@ def test_workflow_planner_emits_joint_refinement_scope_before_fallback() -> None
 
     repair_refinement = RepairRefinementSpec(
         scope_spec=LocalScopeSpec.from_residues((ResidueId("C", 45),)),
-        binding=ManualContinuousRelaxationBinding(
-            ContinuousRelaxationForceField.UFF
-        ),
+        binding=ManualContinuousRelaxationBinding(ContinuousRelaxationForceField.UFF),
     )
 
     outcome = plan_workflow_actions(
@@ -284,8 +281,9 @@ def test_batch_joint_correction_scope_proposals_merges_compatible_clusters() -> 
     )
 
 
-def test_batch_joint_correction_scope_proposals_keeps_incompatible_clusters_separate(
-) -> None:
+def test_batch_joint_correction_scope_proposals_keeps_incompatible_clusters_separate() -> (
+    None
+):
     """Distant severe clusters should remain separate proposals after batching."""
 
     structure = _toy_batching_structure()
@@ -397,6 +395,7 @@ def test_joint_scope_batches_genuine_polymer_ligand_contact() -> None:
     assert len(proposals) == 1
     assert proposals[0].residue_ids == (polymer_id, ligand_id)
     assert batched == proposals
+
 
 def test_representative_joint_scope_contact_is_detected_as_near_covalent() -> None:
     """Representative sanitize failure should surface as one near-covalent contact."""

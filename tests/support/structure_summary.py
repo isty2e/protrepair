@@ -117,9 +117,7 @@ def summarize_structure(structure: ProteinStructure) -> StructureSummary:
         for residue in chain.residues:
             residue_geometry = structure.geometry.residue_geometry(
                 constitution=structure.constitution,
-                residue_index=structure.constitution.residue_index(
-                    residue.residue_id
-                ),
+                residue_index=structure.constitution.residue_index(residue.residue_id),
             )
 
             component_counts[residue.component_id] += 1
@@ -214,9 +212,7 @@ def _semantic_digest_lines(
         for residue in chain.residues:
             residue_geometry = structure.geometry.residue_geometry(
                 constitution=structure.constitution,
-                residue_index=structure.constitution.residue_index(
-                    residue.residue_id
-                ),
+                residue_index=structure.constitution.residue_index(residue.residue_id),
             )
             for atom_site in residue.atom_sites:
                 atom_geometry = residue_geometry.atom_geometry(atom_site.name)
@@ -282,7 +278,4 @@ def format_residue_token(residue: ResidueSite) -> str:
     """Return a compact residue token for stable summaries."""
 
     hetero_flag = "HET" if residue.is_hetero else "ATOM"
-    return (
-        f"{hetero_flag}:{residue.component_id}:"
-        f"{residue.residue_id.display_token()}"
-    )
+    return f"{hetero_flag}:{residue.component_id}:{residue.residue_id.display_token()}"

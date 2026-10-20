@@ -57,6 +57,7 @@ def test_region_result_can_be_constructed_without_continuous_initialization() ->
     root = Path(__file__).resolve().parents[2]
     completed = subprocess.run(
         (sys.executable, "-c", program),
+        check=False,
         cwd=root,
         env={**os.environ, "PYTHONPATH": str(root / "src")},
         capture_output=True,

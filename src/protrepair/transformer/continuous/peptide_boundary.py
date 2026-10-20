@@ -102,11 +102,10 @@ class PeptideBoundaryPlan:
             left, right = bond.endpoint_pair()
             if bond.relationship_type is not BondRelationshipType.COVALENT:
                 unsupported_indices.update((left, right))
-            if (left in included) != (right in included):
-                if bond.relationship_type is not BondRelationshipType.COVALENT:
-                    raise RefinementError(
-                        "unsupported non-peptide calculation boundary"
-                    )
+            if (left in included) != (
+                right in included
+            ) and bond.relationship_type is not BondRelationshipType.COVALENT:
+                raise RefinementError("unsupported non-peptide calculation boundary")
             if bond.relationship_type is BondRelationshipType.COVALENT:
                 edges[(left.value, right.value)] = PlannedBond(
                     left, right, bond.order, bond.aromatic
@@ -140,12 +139,10 @@ class PeptideBoundaryPlan:
                 if ref.atom_name == "N"
                 else 4
             )
-            if all(bond.order is not None for _, bond in local):
-                if (
-                    sum(bond.order or 0 for _, bond in local) == expected
-                    and not outside
-                ):
-                    continue
+            if all(bond.order is not None for _, bond in local) and (
+                sum(bond.order or 0 for _, bond in local) == expected and not outside
+            ):
+                continue
             if len(outside) > 1:
                 raise RefinementError(f"multiple omitted partners at {ref}")
             partner = constitution.atom_ref_at(outside[0][0]) if outside else None

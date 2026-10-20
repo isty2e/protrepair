@@ -260,9 +260,7 @@ class ResidueBackboneNeighborhood:
             raise ValueError("residue_index must be within residue_count")
 
         previous_residue_index = (
-            ResidueIndex(residue_index.value - 1)
-            if residue_index.value > 0
-            else None
+            ResidueIndex(residue_index.value - 1) if residue_index.value > 0 else None
         )
         next_residue_index = (
             ResidueIndex(residue_index.value + 1)

@@ -52,10 +52,7 @@ class TransformationPlanningDecision:
     termination: TerminationDecision | None = None
 
     def __post_init__(self) -> None:
-        if (
-            self.selected_transformation_family is None
-            and self.termination is None
-        ):
+        if self.selected_transformation_family is None and self.termination is None:
             raise ValueError(
                 "planning decisions require either a selected transformation "
                 "or a termination decision"
@@ -117,23 +114,19 @@ def choose_next_transformation(
                     LocalTransformationFamily.BRANCHED_SIDECHAIN_SEED
                 ),
                 reason=(
-                    TransformationSelectionReason
-                    .CANDIDATE_CONSTRUCTION_PREPARES_RELAXATION_CANDIDATES
+                    TransformationSelectionReason.CANDIDATE_CONSTRUCTION_PREPARES_RELAXATION_CANDIDATES
                 ),
             )
         )
 
-    if legal_transformations.contains_stratum(
-        LocalTransformationStratum.RELAXATION
-    ):
+    if legal_transformations.contains_stratum(LocalTransformationStratum.RELAXATION):
         return TransformationPlanningDecision(
             selected_transformation_family=SelectedTransformationFamily(
                 legal_family=legal_transformations.family_record_for(
                     LocalTransformationFamily.CONTINUOUS_LOCAL_RELAXATION
                 ),
                 reason=(
-                    TransformationSelectionReason
-                    .CONTINUOUS_RELAXATION_ONLY_REMAINING_ACTION
+                    TransformationSelectionReason.CONTINUOUS_RELAXATION_ONLY_REMAINING_ACTION
                 ),
             )
         )
@@ -154,10 +147,7 @@ def _preparation_selection_reason(
     """Return the explainable selection reason for one preparation-stage action."""
 
     if legal_family.preparation_reason is LocalPreparationReason.TOPOLOGY_PRECONDITION:
-        return (
-            TransformationSelectionReason
-            .PREPARATION_REPAIRS_RELAXATION_TOPOLOGY_PRECONDITIONS
-        )
+        return TransformationSelectionReason.PREPARATION_REPAIRS_RELAXATION_TOPOLOGY_PRECONDITIONS
 
     if legal_family.preparation_reason is LocalPreparationReason.CHEMISTRY_PREPARATION:
         return TransformationSelectionReason.CHEMISTRY_PREPARATION_REPAIRS_LOCAL_STATE

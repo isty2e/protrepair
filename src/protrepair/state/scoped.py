@@ -19,9 +19,7 @@ class CarrierScopedState(Generic[CarrierT, StateValueT]):
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, Scope):
-            raise TypeError(
-                "carrier-scoped states require a canonical Scope value"
-            )
+            raise TypeError("carrier-scoped states require a canonical Scope value")
 
     def without_carrier(self) -> "ScopedState[StateValueT]":
         """Return the carrier-less scoped state value for this fact."""

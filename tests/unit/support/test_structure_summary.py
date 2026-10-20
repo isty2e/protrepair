@@ -156,7 +156,10 @@ def test_structure_summary_digest_helper_matches_default_summary_precision() -> 
     summary = summarize_structure(structure)
 
     assert semantic_digest_for_structure(structure) == summary.semantic_digest
-    assert semantic_digest_for_structure(
-        structure,
-        coordinate_decimal_places=2,
-    ) != summary.semantic_digest
+    assert (
+        semantic_digest_for_structure(
+            structure,
+            coordinate_decimal_places=2,
+        )
+        != summary.semantic_digest
+    )

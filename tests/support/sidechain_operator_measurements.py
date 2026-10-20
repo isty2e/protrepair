@@ -476,7 +476,7 @@ def measure_best_sidechain_candidate_refinement(
             spec,
             component_library=component_library,
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - Benchmarks record per-case failures and continue the cohort.
         return SidechainOperatorRefinementMeasurement(
             status="error",
             metrics_after=None,

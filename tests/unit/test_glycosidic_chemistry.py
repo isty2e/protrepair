@@ -78,9 +78,12 @@ def _source(chain="D"):
         if line.startswith("ATOM  ") and line[21] == "A":
             if asn - 1 <= int(line[22:26]) <= asn + 1:
                 records.append(line)
-        elif line.startswith("HETATM") and line[21] == chain:
-            records.append(line)
-        elif line.startswith("LINK  ") and chain in (line[21], line[51]):
+        elif (
+            line.startswith("HETATM")
+            and line[21] == chain
+            or line.startswith("LINK  ")
+            and chain in (line[21], line[51])
+        ):
             records.append(line)
     return read_structure_string("\n".join(records) + "\nEND\n", FileFormat.PDB)
 

@@ -1651,12 +1651,10 @@ def should_consider_pair(
     ):
         return False
 
-    if not policy.include_hydrogen_hydrogen and (
-        left_site.is_hydrogen() and right_site.is_hydrogen()
-    ):
-        return False
-
-    return True
+    return not (
+        not policy.include_hydrogen_hydrogen
+        and (left_site.is_hydrogen() and right_site.is_hydrogen())
+    )
 
 
 def should_ignore_pair(

@@ -144,19 +144,16 @@ class AnchorDistanceConstraint:
         ):
             if isinstance(value, bool) or not isinstance(value, int | float):
                 raise TypeError(
-                    "anchor-distance constraints require finite numeric "
-                    f"{field_name}"
+                    f"anchor-distance constraints require finite numeric {field_name}"
                 )
             if not isfinite(float(value)):
                 raise ValueError(
-                    "anchor-distance constraints require finite "
-                    f"{field_name}"
+                    f"anchor-distance constraints require finite {field_name}"
                 )
 
         if self.target_distance_angstrom <= 0.0:
             raise ValueError(
-                "anchor-distance constraints require positive "
-                "target_distance_angstrom"
+                "anchor-distance constraints require positive target_distance_angstrom"
             )
         if self.tolerance_angstrom <= 0.0:
             raise ValueError(
@@ -165,9 +162,7 @@ class AnchorDistanceConstraint:
 
 
 TransformationExternalEvidence: TypeAlias = (
-    DensityEvidence
-    | SymmetryContactEvidence
-    | ExternalCorrespondenceEvidence
+    DensityEvidence | SymmetryContactEvidence | ExternalCorrespondenceEvidence
 )
 
 TransformationExternalConstraint: TypeAlias = AnchorDistanceConstraint

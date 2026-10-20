@@ -11,8 +11,9 @@ from protrepair.structure.labels import ResidueId
 from protrepair.transformer.completion.fragment_matching import match_residue_fragment
 
 
-def test_match_residue_fragment_reports_complete_residue_when_expected_atoms_present(
-) -> None:
+def test_match_residue_fragment_reports_complete_residue_when_expected_atoms_present() -> (
+    None
+):
     """Complete residues should match as one connected template fragment."""
 
     template = build_standard_component_library().require("SER")

@@ -28,9 +28,8 @@ class PolymerResidueSlot:
 
     def __post_init__(self) -> None:
         sequence_position = self.sequence_position
-        if (
-            isinstance(sequence_position, bool)
-            or not isinstance(sequence_position, int)
+        if isinstance(sequence_position, bool) or not isinstance(
+            sequence_position, int
         ):
             raise TypeError(
                 "polymer residue slots require sequence_position to be an integer"
@@ -73,8 +72,7 @@ class PolymerChainBlueprint:
             )
 
         sequence_positions = tuple(
-            residue_slot.sequence_position
-            for residue_slot in residue_slots
+            residue_slot.sequence_position for residue_slot in residue_slots
         )
         if len(sequence_positions) != len(set(sequence_positions)):
             raise ValueError(
@@ -92,17 +90,13 @@ class PolymerChainBlueprint:
     def sequence(self) -> str:
         """Return the canonical sequence token string in slot order."""
 
-        return "".join(
-            residue_slot.token
-            for residue_slot in self.residue_slots
-        )
+        return "".join(residue_slot.token for residue_slot in self.residue_slots)
 
     def sequence_positions(self) -> tuple[int, ...]:
         """Return canonical sequence positions in slot order."""
 
         return tuple(
-            residue_slot.sequence_position
-            for residue_slot in self.residue_slots
+            residue_slot.sequence_position for residue_slot in self.residue_slots
         )
 
     def first_sequence_position(self) -> int:
@@ -160,8 +154,5 @@ class PolymerBlueprint:
             for chain_id in chain_ids
         )
         return PolymerBlueprint(
-            chains=tuple(
-                self.chain(chain_id)
-                for chain_id in normalized_chain_ids
-            )
+            chains=tuple(self.chain(chain_id) for chain_id in normalized_chain_ids)
         )

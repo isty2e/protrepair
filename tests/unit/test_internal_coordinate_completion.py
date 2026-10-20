@@ -109,9 +109,9 @@ def test_backbone_oxygen_uses_current_residue_psi_not_previous_context() -> None
         _vec_array(expected_position),
         atol=1e-12,
     )
-    assert np.linalg.norm(
-        _vec_array(actual_position) - _vec_array(stale_position)
-    ) > 1.0
+    assert (
+        np.linalg.norm(_vec_array(actual_position) - _vec_array(stale_position)) > 1.0
+    )
 
 
 def test_n_terminal_backbone_oxygen_does_not_require_previous_residue() -> None:
@@ -205,9 +205,9 @@ def test_c_terminal_missing_backbone_oxygen_uses_local_fallback_not_wrap() -> No
         _vec_array(fallback_position),
         atol=1e-12,
     )
-    assert np.linalg.norm(
-        _vec_array(actual_position) - _vec_array(wrapped_position)
-    ) > 0.5
+    assert (
+        np.linalg.norm(_vec_array(actual_position) - _vec_array(wrapped_position)) > 0.5
+    )
 
 
 def test_backbone_oxygen_gap_uses_local_fallback_not_next_residue() -> None:
@@ -263,9 +263,10 @@ def test_backbone_oxygen_gap_uses_local_fallback_not_next_residue() -> None:
         _vec_array(fallback_position),
         atol=1e-12,
     )
-    assert np.linalg.norm(
-        _vec_array(actual_position) - _vec_array(gapped_next_position)
-    ) > 0.5
+    assert (
+        np.linalg.norm(_vec_array(actual_position) - _vec_array(gapped_next_position))
+        > 0.5
+    )
 
 
 def test_backbone_oxygen_implausible_peptide_geometry_uses_local_fallback() -> None:
@@ -319,9 +320,9 @@ def test_backbone_oxygen_implausible_peptide_geometry_uses_local_fallback() -> N
         _vec_array(fallback_position),
         atol=1e-12,
     )
-    assert np.linalg.norm(
-        _vec_array(actual_position) - _vec_array(distant_position)
-    ) > 0.5
+    assert (
+        np.linalg.norm(_vec_array(actual_position) - _vec_array(distant_position)) > 0.5
+    )
 
 
 def test_backbone_oxygen_topology_covalent_gap_uses_next_peptide_context() -> None:

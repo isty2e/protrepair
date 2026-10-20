@@ -22,9 +22,7 @@ def _require_finite_points(*points: PlacementVector) -> None:
     """Reject non-finite polyhedral coordinates before vector arithmetic."""
 
     if not all(np.isfinite(point).all() for point in points):
-        raise GeometryPlacementError(
-            "polyhedral placement requires finite coordinates"
-        )
+        raise GeometryPlacementError("polyhedral placement requires finite coordinates")
 
 
 def _scale_bond(
@@ -159,9 +157,7 @@ class PlanarCenter:
         point_b = Vec3.coerce(self.anchor_b).to_array()
         _require_finite_points(point_a, point_center, point_b)
         with np.errstate(over="ignore", invalid="ignore"):
-            candidate = (
-                (point_a - point_b) + (point_center - point_b)
-            ) + point_center
+            candidate = ((point_a - point_b) + (point_center - point_b)) + point_center
         _require_finite_points(candidate)
         return _scale_bond(point_center, candidate, bond_length)
 
@@ -183,8 +179,7 @@ class PlanarCenter:
             angle_b = _angle_between_vectors_radians(bond_b, bond_candidate)
             average_angle = (
                 degrees(
-                    angle_b
-                    + _angle_between_vectors_radians(bond_a, bond_candidate)
+                    angle_b + _angle_between_vectors_radians(bond_a, bond_candidate)
                 )
             ) / 2
             rotate = average_angle - degrees(angle_b)
@@ -200,8 +195,7 @@ class PlanarCenter:
             rotated = (
                 point_center
                 + bond_candidate * np.cos(rotate * pi / 180.0)
-                + np.cross(unit_normal, bond_candidate)
-                * np.sin(rotate * pi / 180.0)
+                + np.cross(unit_normal, bond_candidate) * np.sin(rotate * pi / 180.0)
                 + unit_normal
                 * np.dot(unit_normal, bond_candidate)
                 * (1 - np.cos(rotate * pi / 180.0))

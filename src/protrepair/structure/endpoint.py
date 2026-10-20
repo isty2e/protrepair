@@ -204,8 +204,7 @@ class StructureEndpoint:
 
         if not isinstance(other, StructureEndpoint):
             raise TypeError(
-                "structure-endpoint coverage requires one "
-                "StructureEndpoint"
+                "structure-endpoint coverage requires one StructureEndpoint"
             )
 
         if self.carrier_handle != other.carrier_handle:
