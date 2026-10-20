@@ -643,14 +643,11 @@ def plan_workflow_actions(
             # execution owns rejection if it still cannot bind on the next state.
             pass
     action_domain = WorkflowActionDomain(
-        structure=structure,
+        chemistry_observation=chemistry_observation,
         requested_goals=requested_goals,
         transform_requests=transform_requests,
-        component_library=active_component_library,
         planning_context=active_planning_context,
         state_deficit=state_deficit,
-        coverage_facts=coverage_facts,
-        chemistry_readiness_facts=chemistry_readiness_facts,
         boundary_facts=boundary_facts,
         disulfide_topology_facts=disulfide_topology_facts,
         disulfide_hydrogen_facts=disulfide_hydrogen_facts,

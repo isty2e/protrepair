@@ -12,6 +12,9 @@
 
 ### Changed
 
+- reuse polymer chemistry preparation and complete hydrogen plans within each
+  workflow planning pass, and compile immutable component naming rules once
+  rather than reinterpreting them for each residue
 - return the preferred assessed retained structure with an exhaustion warning
   when workflow search reaches its node limit, rather than raising if no
   terminal branch has been reached; replace terminal-only result reporting with

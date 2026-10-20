@@ -58,6 +58,7 @@ def add_hydrogens(
         if atom.is_hydrogen()
     )
     prepared_structure = structure
+    preparation: PolymerMicrostatePreparation | None = None
     repairs: tuple[RepairEvent, ...] = ()
     issues: tuple[ValidationIssue, ...] = ()
     if prepare_heavy_atoms:
@@ -102,6 +103,7 @@ def add_hydrogens(
         source_isotope_structure=structure,
         target_residue_ids=target_residue_ids,
         histidine_protonation=histidine_protonation_request,
+        preparation=preparation,
     )
     staged_result = TransformationResult(
         structure=placement_result.structure,

@@ -11,7 +11,6 @@ from protrepair.workflow.planning.action.domain import WorkflowActionDomain
 from protrepair.workflow.planning.action.proposals import WorkflowActionProposal
 from protrepair.workflow.planning.completion.transformer_candidates import (
     plan_atom_completion_transformers,
-    plan_hydrogen_completion_transformers,
     plan_retained_non_polymer_hydrogen_completion_transformers,
 )
 from protrepair.workflow.planning.default_action_registry.capabilities import (
@@ -61,15 +60,7 @@ def hydrogen_completion_proposals(
 ) -> tuple[WorkflowActionProposal, ...]:
     """Return concrete hydrogen-completion proposals for the active domain."""
 
-    planning_outcome = plan_hydrogen_completion_transformers(
-        domain.structure,
-        requested_goals=domain.requested_goals,
-        component_library=domain.component_library,
-        required_residue_ids=domain.explicit_repair.prerequisite_residue_ids(),
-        coverage_facts=domain.coverage_facts,
-        chemistry_readiness_facts=domain.chemistry_readiness_facts,
-        histidine_protonation=domain.transform_requests.histidine_protonation_request(),
-    )
+    planning_outcome = domain.hydrogen_planning_outcome
     return tuple(
         WorkflowActionProposal(
             transformer=transformer,

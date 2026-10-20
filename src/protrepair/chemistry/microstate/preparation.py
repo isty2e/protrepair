@@ -328,6 +328,9 @@ class PolymerMicrostatePreparation:
     _disulfides: frozenset[ResidueId]
     _coordinate_dependent: bool
     _cysteine_adducts: Mapping[ResidueId, CysteineMichaelAdductBinding]
+    _requests: Mapping[
+        tuple[ResidueId, PolymerChemicalSite], MicrostateConstraints | None
+    ]
 
     def __init__(
         self,
@@ -339,7 +342,8 @@ class PolymerMicrostatePreparation:
         ]
         | None = None,
     ) -> None:
-        pending = {} if requests is None else dict(requests)
+        requested = {} if requests is None else dict(requests)
+        pending = dict(requested)
         adducts = {}
         coordinate_dependent_adducts = False
         for ligand in context.source.constitution.ligands:
@@ -460,8 +464,55 @@ class PolymerMicrostatePreparation:
         object.__setattr__(self, "_targets", MappingProxyType(targets))
         object.__setattr__(self, "context", context)
         object.__setattr__(self, "component_library", component_library)
+        object.__setattr__(self, "_requests", MappingProxyType(requested))
         object.__setattr__(
             self, "_disulfides", disulfide_bonded_cysteine_residue_ids(context.source)
+        )
+
+    def for_inputs(
+        self,
+        structure: ProteinStructure,
+        component_library: ComponentLibrary,
+        *,
+        requests: Mapping[
+            tuple[ResidueId, PolymerChemicalSite], MicrostateConstraints | None
+        ]
+        | None = None,
+    ) -> "PolymerMicrostatePreparation":
+        """Bind placement targets to the exact snapshot and complete requests.
+
+        Parameters
+        ----------
+        structure : ProteinStructure
+            Snapshot whose coordinates and source evidence will be consumed.
+        component_library : ComponentLibrary
+            Definitions for this operation; identity is required for reuse.
+        requests : Mapping or None
+            Complete new request map, not a patch over this preparation's map.
+            None and an empty map retain saved choices. A present None resets
+            that site and is distinct from an absent key.
+
+        Returns
+        -------
+        PolymerMicrostatePreparation
+            This instance only for identical bindings; otherwise a fresh one.
+
+        Raises
+        ------
+        ValueError
+            A request targets an absent polymer site.
+        """
+        requested = {} if requests is None else requests
+        if (
+            self.context.source is structure
+            and self.component_library is component_library
+            and self._requests == requested
+        ):
+            return self
+        return PolymerMicrostatePreparation(
+            PolymerMicrostateContext(structure),
+            component_library,
+            requests=requested,
         )
 
     def matches_chemistry(self, structure: ProteinStructure) -> bool:

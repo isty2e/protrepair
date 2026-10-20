@@ -1,5 +1,9 @@
 """Unit tests for workflow action domain admissibility."""
 
+from dataclasses import replace
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
@@ -16,6 +20,7 @@ from tests.support.retained_non_polymer_components import (
 )
 
 from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure
 from protrepair.scope import (
@@ -27,8 +32,8 @@ from protrepair.state import (
     HydrogenCoverageState,
     SidechainHeavyAtomCompletenessState,
     StructureBoundaryStateFacts,
-    derive_structure_coverage_and_chemistry_readiness_facts,
 )
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.structure_topology import (
     StructureDisulfideHydrogenFacts,
     StructureDisulfideTopologyFacts,
@@ -78,9 +83,21 @@ from protrepair.workflow.planning.action.registry import (
     action_registry_entry_for_type,
 )
 from protrepair.workflow.planning.assessment.deficits import WorkflowStateDeficit
+from protrepair.workflow.planning.completion import transformer_candidates
 from protrepair.workflow.planning.default_action_registry import (
     WORKFLOW_ACTION_REGISTRY,
 )
+from protrepair.workflow.planning.default_action_registry.completion_proposals import (
+    hydrogen_completion_is_admissible,
+    hydrogen_completion_proposals,
+)
+from protrepair.workflow.planning.default_action_registry.terminal_proposals import (
+    terminal_augmentation_proposals,
+)
+from protrepair.workflow.planning.default_action_registry.topology_proposals import (
+    polymer_hydrogen_topology_resolution_proposals,
+)
+from protrepair.workflow.planning.planner import plan_workflow_actions
 
 
 def test_heavy_completion_domain_is_admissible_for_required_atom_coverage() -> None:
@@ -421,6 +438,138 @@ def test_explicit_repair_refinement_requires_local_hydrogen_completion() -> None
     assert _is_admissible(HydrogenCompletionTransformer, domain)
 
 
+@pytest.mark.parametrize("empty", (False, True))
+def test_hydrogen_admissibility_and_proposals_share_one_complete_plan(empty):
+    source = augment_c_terminal_oxt(_heavy_complete_structure()).structure
+    if empty:
+        source = build_structure(chains=(), source_format=FileFormat.PDB)
+    domain = _workflow_action_domain(
+        source,
+        requested_goals=RequestedGoalSet(
+            (
+                requested_process_goal(
+                    scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+                ),
+            )
+        ),
+    )
+    original = transformer_candidates.plan_hydrogen_completion_transformers
+    with patch.object(
+        transformer_candidates, "plan_hydrogen_completion_transformers", wraps=original
+    ) as plan:
+        admissible = hydrogen_completion_is_admissible(domain)
+        first = hydrogen_completion_proposals(domain)
+        second = hydrogen_completion_proposals(domain)
+    assert admissible == bool(first)
+    assert bool(first) is not empty
+    assert first == second
+    assert plan.call_count == 1
+    assert plan.call_args.kwargs["observed_preparation"].context.source is source
+    assert domain.hydrogen_planning_outcome is domain.hydrogen_planning_outcome
+
+
+def test_single_planning_pass_derives_observed_polymer_targets_once():
+    source = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
+    initialize = PolymerMicrostatePreparation.__init__
+    with patch.object(
+        PolymerMicrostatePreparation, "__init__", autospec=True, side_effect=initialize
+    ) as constructor:
+        outcome = plan_workflow_actions(
+            source,
+            requested_goals=RequestedGoalSet(
+                (
+                    requested_process_goal(
+                        scope=WholeStructureScope(),
+                        value=HydrogenCoverageState.COMPLETE,
+                    ),
+                )
+            ),
+            transform_requests=WorkflowTransformRequests(),
+        )
+    assert outcome.proposals
+    assert constructor.call_count == 1
+
+
+def test_inactive_hydrogen_plan_never_acquires_preparation():
+    domain = _workflow_action_domain(_heavy_complete_structure())
+    with patch.object(
+        PolymerMicrostatePreparation,
+        "__init__",
+        side_effect=AssertionError("inactive preparation"),
+    ):
+        assert not hydrogen_completion_is_admissible(domain)
+        assert not hydrogen_completion_proposals(domain)
+        assert not terminal_augmentation_proposals(domain)
+    assert domain.hydrogen_planning_outcome is domain.hydrogen_planning_outcome
+
+
+def test_failed_hydrogen_plan_is_not_cached_as_an_empty_success():
+    domain = _workflow_action_domain(
+        _heavy_complete_structure(),
+        requested_goals=RequestedGoalSet(
+            (
+                requested_process_goal(
+                    scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+                ),
+            )
+        ),
+    )
+    with patch.object(
+        transformer_candidates,
+        "plan_hydrogen_completion_transformers",
+        side_effect=ValueError("failed planning"),
+    ) as plan:
+        for _ in range(2):
+            with pytest.raises(ValueError, match="failed planning"):
+                hydrogen_completion_proposals(domain)
+    assert plan.call_count == 2
+
+
+@pytest.mark.parametrize("terminal_first", (False, True))
+def test_domain_rebinds_old_count_preparation_only_once(terminal_first):
+    source = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
+    original = _workflow_action_domain(
+        source,
+        requested_goals=RequestedGoalSet(
+            (
+                requested_process_goal(
+                    scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+                ),
+            )
+        ),
+    )
+    old_preparation = (
+        original.chemistry_observation.hydrogen_expectation_model.polymer_preparation
+    )
+    current = source.with_provenance(source.provenance)
+    observation = original.chemistry_observation.for_structure(current)
+    assert observation.hydrogen_expectation_model.polymer_preparation is old_preparation
+    domain = replace(
+        original,
+        chemistry_observation=observation,
+        disulfide_topology_facts=StructureDisulfideTopologyFacts.from_structure(
+            current
+        ),
+        disulfide_hydrogen_facts=StructureDisulfideHydrogenFacts.from_structure(
+            current
+        ),
+    )
+    initialize = PolymerMicrostatePreparation.__init__
+    with patch.object(
+        PolymerMicrostatePreparation, "__init__", autospec=True, side_effect=initialize
+    ) as constructor:
+        if terminal_first:
+            terminal_augmentation_proposals(domain)
+        assert polymer_hydrogen_topology_resolution_proposals(domain)
+        rebound = domain.observed_preparation
+        hydrogen_completion_proposals(domain)
+        terminal_augmentation_proposals(domain)
+        assert domain.observed_preparation is rebound
+    assert constructor.call_count == 1
+    assert rebound.context.source is current
+    assert rebound is not old_preparation
+
+
 def _workflow_action_domain(
     structure,
     *,
@@ -446,12 +595,10 @@ def _workflow_action_domain(
     active_planning_context = (
         WorkflowPlanningContext() if planning_context is None else planning_context
     )
-    coverage_facts, chemistry_readiness_facts = (
-        derive_structure_coverage_and_chemistry_readiness_facts(
-            structure,
-            component_library=active_component_library,
-        )
+    observation = StructureChemistryObservation(
+        structure, component_library=active_component_library
     )
+    coverage_facts, chemistry_readiness_facts = observation.whole_structure_facts()
     disulfide_topology_facts = StructureDisulfideTopologyFacts.from_structure(structure)
     disulfide_hydrogen_facts = StructureDisulfideHydrogenFacts.from_structure(structure)
     state_deficit = WorkflowStateDeficit.from_facts(
@@ -476,14 +623,11 @@ def _workflow_action_domain(
             component_library=active_component_library,
         )
     return WorkflowActionDomain(
-        structure=structure,
+        chemistry_observation=observation,
         requested_goals=active_requested_goals,
         transform_requests=active_transform_requests,
-        component_library=active_component_library,
         planning_context=active_planning_context,
         state_deficit=state_deficit,
-        coverage_facts=coverage_facts,
-        chemistry_readiness_facts=chemistry_readiness_facts,
         boundary_facts=StructureBoundaryStateFacts.from_structure(structure),
         disulfide_topology_facts=disulfide_topology_facts,
         disulfide_hydrogen_facts=disulfide_hydrogen_facts,
