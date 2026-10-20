@@ -403,7 +403,9 @@ def evaluate_workflow_branch_quality_score(
             result.structure, component_library=active_component_library
         )
     _, chemistry_readiness_facts = observation.whole_structure_facts()
-    intrinsic_facts = derive_structure_intrinsic_geometry_facts(
+    # Eligibility searches prospective corrections but is not a score axis.
+    # Keep these facts local; planning and phase reports derive eligibility.
+    intrinsic_facts = StructureIntrinsicGeometryFacts.from_structure(
         result.structure,
         component_library=active_component_library,
         chemistry_readiness_facts=chemistry_readiness_facts,
