@@ -468,6 +468,18 @@ class WorkflowActionDomain:
             object.__setattr__(self, "_observed_preparation", prepared)
         return prepared
 
+    def hydrogen_preparation_is_requested(self) -> bool:
+        """Include the current local execution projection in H activation.
+
+        Returns
+        -------
+        bool
+            Whether H preparation can contribute to a requested goal or action.
+        """
+        return self.requested_goals.requests_hydrogen_preparation(
+            required_residue_ids=self.explicit_repair.prerequisite_residue_ids()
+        )
+
     @property
     def hydrogen_planning_outcome(
         self,
@@ -483,10 +495,7 @@ class WorkflowActionDomain:
         outcome = self._hydrogen_planning_outcome
         if outcome is None:
             required = self.explicit_repair.prerequisite_residue_ids()
-            if (
-                not self.requested_goals.requests_whole_structure_hydrogen_population()
-                and not required
-            ):
+            if not self.hydrogen_preparation_is_requested():
                 outcome = transformer_candidates.CompletionTransformerPlanningOutcome()
             else:
                 outcome = transformer_candidates.plan_hydrogen_completion_transformers(

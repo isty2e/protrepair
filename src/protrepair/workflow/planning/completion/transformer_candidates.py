@@ -191,9 +191,8 @@ def plan_hydrogen_completion_transformers(
         remains a terminal-completion prerequisite, not an H-placement action.
     """
 
-    if (
-        not requested_goals.requests_whole_structure_hydrogen_population()
-        and not required_residue_ids
+    if not requested_goals.requests_hydrogen_preparation(
+        required_residue_ids=required_residue_ids
     ):
         return CompletionTransformerPlanningOutcome()
 

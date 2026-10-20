@@ -22,8 +22,7 @@ def terminal_augmentation_is_admissible(domain: WorkflowActionDomain) -> bool:
             required_residue_ids=domain.explicit_repair.prerequisite_residue_ids(),
             observed_preparation=(
                 domain.observed_preparation
-                if domain.requested_goals.requests_whole_structure_hydrogen_population()
-                or domain.explicit_repair.prerequisite_residue_ids()
+                if domain.hydrogen_preparation_is_requested()
                 else None
             ),
         )
@@ -44,8 +43,7 @@ def terminal_augmentation_proposals(
         required_residue_ids=domain.explicit_repair.prerequisite_residue_ids(),
         observed_preparation=(
             domain.observed_preparation
-            if domain.requested_goals.requests_whole_structure_hydrogen_population()
-            or domain.explicit_repair.prerequisite_residue_ids()
+            if domain.hydrogen_preparation_is_requested()
             else None
         ),
     )

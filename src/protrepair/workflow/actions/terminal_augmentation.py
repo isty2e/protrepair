@@ -81,9 +81,8 @@ class TerminalAugmentationTransformer(ResidueSetWorkflowStructureTransformer):
             side=ResidueBoundarySide.C_TERMINUS,
         )
         target_residue_ids: list[ResidueId] = []
-        if (
-            requested_goals.requests_whole_structure_hydrogen_population()
-            or required_residue_ids
+        if requested_goals.requests_hydrogen_preparation(
+            required_residue_ids=required_residue_ids
         ):
             preparation = (
                 PolymerMicrostatePreparation(

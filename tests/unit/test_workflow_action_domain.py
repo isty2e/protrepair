@@ -38,7 +38,7 @@ from protrepair.state.structure_topology import (
     StructureDisulfideHydrogenFacts,
     StructureDisulfideTopologyFacts,
 )
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.polymer_blueprint import (
     PolymerBlueprint,
     PolymerChainBlueprint,
@@ -68,6 +68,9 @@ from protrepair.workflow.actions.hydrogen_completion import (
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.actions.retained_non_polymer_hydrogen_completion import (
     RetainedNonPolymerHydrogenCompletionTransformer,
+)
+from protrepair.workflow.actions.terminal_augmentation import (
+    TerminalAugmentationTransformer,
 )
 from protrepair.workflow.contracts import (
     ExternalSpanReconstructionSpec,
@@ -438,6 +441,48 @@ def test_explicit_repair_refinement_requires_local_hydrogen_completion() -> None
     assert _is_admissible(HydrogenCompletionTransformer, domain)
 
 
+@pytest.mark.parametrize("whole_h", (False, True))
+@pytest.mark.parametrize("local_h", (False, True))
+def test_hydrogen_preparation_activation_agrees_for_domain_and_cold_calls(
+    whole_h, local_h
+):
+    source = _heavy_complete_structure()
+    goals = RequestedGoalSet(
+        (
+            requested_process_goal(
+                scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+            ),
+        )
+        if whole_h
+        else ()
+    )
+    requests = WorkflowTransformRequests(
+        repair_refinement=RepairRefinementSpec(
+            scope_spec=LocalScopeSpec.from_residues((ResidueId("A", 1),)),
+            binding=ManualContinuousRelaxationBinding(
+                ContinuousRelaxationForceField.UFF
+            ),
+        )
+        if local_h
+        else None
+    )
+    domain = _workflow_action_domain(
+        source, requested_goals=goals, transform_requests=requests
+    )
+    required = domain.explicit_repair.prerequisite_residue_ids()
+    assert domain.hydrogen_preparation_is_requested() is (whole_h or local_h)
+    assert goals.requests_hydrogen_preparation(required_residue_ids=required) is (
+        whole_h or local_h
+    )
+    cold = transformer_candidates.plan_hydrogen_completion_transformers(
+        source,
+        requested_goals=goals,
+        component_library=domain.component_library,
+        required_residue_ids=required,
+    )
+    assert domain.hydrogen_planning_outcome == cold
+
+
 @pytest.mark.parametrize("empty", (False, True))
 def test_hydrogen_admissibility_and_proposals_share_one_complete_plan(empty):
     source = augment_c_terminal_oxt(_heavy_complete_structure()).structure
@@ -466,6 +511,46 @@ def test_hydrogen_admissibility_and_proposals_share_one_complete_plan(empty):
     assert plan.call_count == 1
     assert plan.call_args.kwargs["observed_preparation"].context.source is source
     assert domain.hydrogen_planning_outcome is domain.hydrogen_planning_outcome
+
+
+def test_local_hydrogen_activation_does_not_select_other_residues_or_termini():
+    source = read_structure(Path("tests/fixtures/pdb/1aho.pdb")).without_hydrogens()
+    terminal_id = ResidueId("A", 64)
+    source = source.without_atom_refs((AtomRef(terminal_id, "OXT"),))
+    selected = (ResidueId("A", 1),)
+    library = build_default_component_library()
+    planned = transformer_candidates.plan_hydrogen_completion_transformers(
+        source,
+        requested_goals=RequestedGoalSet(),
+        component_library=library,
+        required_residue_ids=selected,
+    )
+    assert len(planned.transformers) == 1
+    assert planned.transformers[0].covered_residue_ids() == frozenset(selected)
+    assert (
+        TerminalAugmentationTransformer.planned_candidate(
+            source,
+            boundary_facts=StructureBoundaryStateFacts.from_structure(source),
+            requested_goals=RequestedGoalSet(),
+            component_library=library,
+            required_residue_ids=selected,
+        )
+        is None
+    )
+    global_terminal = TerminalAugmentationTransformer.planned_candidate(
+        source,
+        boundary_facts=StructureBoundaryStateFacts.from_structure(source),
+        requested_goals=RequestedGoalSet(
+            (
+                requested_process_goal(
+                    scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+                ),
+            )
+        ),
+        component_library=library,
+    )
+    assert global_terminal is not None
+    assert global_terminal.covered_residue_ids() == frozenset((terminal_id,))
 
 
 def test_single_planning_pass_derives_observed_polymer_targets_once():

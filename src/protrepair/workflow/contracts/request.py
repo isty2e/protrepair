@@ -20,6 +20,7 @@ from protrepair.state import (
     ScopedState,
     SidechainHeavyAtomCompletenessState,
 )
+from protrepair.structure.labels import ResidueId
 from protrepair.transformer.completion.hydrogen.protonation import (
     HistidineProtonationRequest,
     normalize_histidine_protonation_request,
@@ -182,6 +183,25 @@ class RequestedGoalSet(Sequence[WorkflowGoal]):
             ClashPresenceState,
         )
         return requested_state is ClashPresenceState.NONE
+
+    def requests_hydrogen_preparation(
+        self, *, required_residue_ids: tuple[ResidueId, ...] = ()
+    ) -> bool:
+        """Include explicit local prerequisites without broadening their scope.
+
+        Parameters
+        ----------
+        required_residue_ids : tuple[ResidueId, ...]
+            Polymer residues required by another requested action.
+
+        Returns
+        -------
+        bool
+            Whether global H completion or local preparation is requested.
+        """
+        return self.requests_whole_structure_hydrogen_population() or bool(
+            required_residue_ids
+        )
 
     def boundary_goals(
         self,
