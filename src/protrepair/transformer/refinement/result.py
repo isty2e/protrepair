@@ -1,12 +1,99 @@
 """Selected local outcomes and their observed continuous invocations."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from typing_extensions import Self
 
 from protrepair.transformer.artifacts.result import RegionTransformationResult
 from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.continuous.result import ContinuousRelaxationResult
+from protrepair.transformer.result import TransformationResult
+
+
+@dataclass(frozen=True, slots=True)
+class RefinementTransformationResult(TransformationResult):
+    """A structure transition carrying observed native refinement returns.
+
+    Parameters
+    ----------
+    relaxation_executions : tuple[ContinuousRelaxationExecution, ...]
+        Invocation facts, independent of coordinate adoption. Empty facts after
+        an exception do not prove that no native work ran.
+    """
+
+    relaxation_executions: tuple[ContinuousRelaxationExecution, ...] = field(
+        default=(), compare=False, repr=False, kw_only=True
+    )
+
+    def __post_init__(self) -> None:
+        TransformationResult.__post_init__(self)
+        object.__setattr__(
+            self,
+            "relaxation_executions",
+            ContinuousRelaxationExecution.deduplicated(self.relaxation_executions),
+        )
+
+    @staticmethod
+    def observed_executions(
+        result: TransformationResult,
+    ) -> tuple[ContinuousRelaxationExecution, ...]:
+        """Return transported native facts without inferring them from repairs.
+
+        Parameters
+        ----------
+        result : TransformationResult
+            Structural carrier, possibly with refinement-owned evidence.
+
+        Returns
+        -------
+        tuple[ContinuousRelaxationExecution, ...]
+            Known returns, or no evidence for an ordinary structural carrier.
+        """
+
+        return (
+            result.relaxation_executions
+            if isinstance(result, RefinementTransformationResult)
+            else ()
+        )
+
+    @classmethod
+    def with_observed_executions(
+        cls,
+        result: TransformationResult,
+        executions: tuple[ContinuousRelaxationExecution, ...],
+    ) -> "RefinementTransformationResult":
+        """Preserve selected structural fields and merge native invocation facts.
+
+        Parameters
+        ----------
+        result : TransformationResult
+            Selected structure and diagnostics, including any prior native facts.
+        executions : tuple[ContinuousRelaxationExecution, ...]
+            Additional observed invocations in execution order.
+
+        Returns
+        -------
+        RefinementTransformationResult
+            Carrier with identity-deduplicated evidence and unchanged diagnostics.
+
+        Raises
+        ------
+        TypeError
+            A supplied record is not native execution evidence.
+        """
+
+        combined = ContinuousRelaxationExecution.deduplicated(
+            (*cls.observed_executions(result), *executions)
+        )
+        if isinstance(result, cls):
+            return replace(result, relaxation_executions=combined)
+
+        return cls(
+            structure=result.structure,
+            repairs=result.repairs,
+            issues=result.issues,
+            relaxation_executions=combined,
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,7 +1,9 @@
 """Parser-witness local-refinement candidate construction."""
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
+from itertools import islice
 from math import ceil
 
 from protrepair.chemistry import ComponentLibrary
@@ -66,9 +68,7 @@ class ParserWitnessRepairBudget:
         if extra_heavy_bond_count < 0:
             raise ValueError("extra_heavy_bond_count must be non-negative")
 
-        scaled_passes = ceil(
-            extra_heavy_bond_count / self.extra_heavy_bonds_per_pass
-        )
+        scaled_passes = ceil(extra_heavy_bond_count / self.extra_heavy_bonds_per_pass)
         return min(self.max_passes, max(self.base_passes, scaled_passes))
 
 
@@ -114,45 +114,81 @@ def parser_witness_repair_candidates(
 ) -> tuple[ParserWitnessRepairCandidate, ...]:
     """Return deterministic bounded repair candidates from RDKit parser witnesses."""
 
-    candidates: list[ParserWitnessRepairCandidate] = []
+    return tuple(
+        islice(
+            iter_parser_witness_repair_candidates(
+                structure,
+                component_library=component_library,
+                budget=budget,
+                clusters=clusters,
+            ),
+            budget.max_clusters_per_pass,
+        )
+    )
+
+
+def iter_parser_witness_repair_candidates(
+    structure: ProteinStructure,
+    *,
+    component_library: ComponentLibrary,
+    budget: ParserWitnessRepairBudget = DEFAULT_PARSER_WITNESS_REPAIR_BUDGET,
+    clusters: tuple[RDKitProximityBondCluster, ...] | None = None,
+) -> Iterator[ParserWitnessRepairCandidate]:
+    """Yield eligible repair candidates before history-dependent selection.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Current canonical carrier used to derive motion scopes.
+    component_library : ComponentLibrary
+        Chemistry definitions for current parser observations.
+    budget : ParserWitnessRepairBudget
+        Cluster exclusions and native settings, not a yield-count limit.
+    clusters : tuple[RDKitProximityBondCluster, ...] or None
+        Ordered observations, or None to derive them from current coordinates.
+
+    Yields
+    ------
+    ParserWitnessRepairCandidate
+        Eligible candidates in observation order. Workflow policy owns attempt
+        filtering and applies its proposal cap after that filtering.
+    """
+
     active_clusters = _active_parser_witness_clusters(
         structure,
         component_library=component_library,
         clusters=clusters,
     )
     if not active_clusters:
-        return ()
+        return
 
-    ambiguous_disulfide_partners = (
-        ambiguous_disulfide_partner_residue_ids_by_residue(structure)
+    ambiguous_disulfide_partners = ambiguous_disulfide_partner_residue_ids_by_residue(
+        structure
     )
     for cluster in active_clusters:
-        if _parser_witness_repair_exclusion_for_cluster(
-            cluster,
-            budget=budget,
-            ambiguous_disulfide_partners=ambiguous_disulfide_partners,
-        ) is not None:
+        if (
+            _parser_witness_repair_exclusion_for_cluster(
+                cluster,
+                budget=budget,
+                ambiguous_disulfide_partners=ambiguous_disulfide_partners,
+            )
+            is not None
+        ):
             continue
 
         scope_spec = _parser_witness_repair_scope_spec(structure, cluster)
-        candidates.append(
-            ParserWitnessRepairCandidate(
-                cluster=cluster,
-                repair_refinement=RepairRefinementSpec(
+        yield ParserWitnessRepairCandidate(
+            cluster=cluster,
+            repair_refinement=RepairRefinementSpec(
+                scope_spec=scope_spec,
+                binding=RecommendedContinuousRelaxationBinding(),
+                config=_parser_witness_repair_config(
+                    budget,
                     scope_spec=scope_spec,
-                    binding=RecommendedContinuousRelaxationBinding(),
-                    config=_parser_witness_repair_config(
-                        budget,
-                        scope_spec=scope_spec,
-                    ),
                 ),
-                budget=budget,
-            )
+            ),
+            budget=budget,
         )
-        if len(candidates) >= budget.max_clusters_per_pass:
-            break
-
-    return tuple(candidates)
 
 
 def parser_witness_repair_exclusions(
@@ -172,8 +208,8 @@ def parser_witness_repair_exclusions(
     if not active_clusters:
         return ()
 
-    ambiguous_disulfide_partners = (
-        ambiguous_disulfide_partner_residue_ids_by_residue(structure)
+    ambiguous_disulfide_partners = ambiguous_disulfide_partner_residue_ids_by_residue(
+        structure
     )
     return tuple(
         exclusion
@@ -294,10 +330,9 @@ def _witness_supports_sidechain_only_motion(
 ) -> bool:
     """Return whether both parser-witness endpoints are side-chain atoms."""
 
-    return (
-        _atom_ref_supports_sidechain_only_motion(structure, witness.atom_ref_1)
-        and _atom_ref_supports_sidechain_only_motion(structure, witness.atom_ref_2)
-    )
+    return _atom_ref_supports_sidechain_only_motion(
+        structure, witness.atom_ref_1
+    ) and _atom_ref_supports_sidechain_only_motion(structure, witness.atom_ref_2)
 
 
 def _atom_ref_supports_sidechain_only_motion(

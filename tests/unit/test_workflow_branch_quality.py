@@ -9,10 +9,10 @@ from protrepair.workflow.contracts.planning import (
 )
 from protrepair.workflow.contracts.result import (
     RequestedGoalReport,
+    WorkflowBranchOutcome,
     WorkflowBranchQualityScore,
+    WorkflowBranchReport,
     WorkflowPhaseReport,
-    WorkflowTerminalBranchOutcome,
-    WorkflowTerminalBranchReport,
 )
 
 
@@ -28,9 +28,7 @@ def test_terminal_branch_selection_uses_parser_quality_before_tie_breaker() -> N
         score=WorkflowBranchQualityScore(parser_incompatible=0),
     )
 
-    report = WorkflowTerminalBranchReport.from_outcomes(
-        (worse_branch, better_branch)
-    )
+    report = WorkflowBranchReport.from_outcomes((worse_branch, better_branch))
 
     assert report.preferred_node_id == SpeculativePlanningNodeId(1)
 
@@ -53,7 +51,7 @@ def test_terminal_branch_selection_policy_can_reorder_axes() -> None:
         )
     )
 
-    report = WorkflowTerminalBranchReport.from_outcomes(
+    report = WorkflowBranchReport.from_outcomes(
         (earlier_branch, later_branch),
         branch_preference_policy=search_first_policy,
     )
@@ -65,10 +63,10 @@ def _terminal_outcome(
     *,
     node_id: int,
     score: WorkflowBranchQualityScore,
-) -> WorkflowTerminalBranchOutcome:
+) -> WorkflowBranchOutcome:
     """Return one minimal terminal outcome for branch preference tests."""
 
-    return WorkflowTerminalBranchOutcome(
+    return WorkflowBranchOutcome(
         node_id=SpeculativePlanningNodeId(node_id),
         requested_goal_report=RequestedGoalReport(()),
         phase_report=WorkflowPhaseReport(()),

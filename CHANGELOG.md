@@ -4,12 +4,29 @@
 
 ### Added
 
+- report assessed terminal and frontier candidates, the search stop reason and
+  observed native FF returns on workflow results
 - retain actual native FF settings, source motion scope, return status and
   runtime version on local transformation results, including rejected and
   unselected candidates; native convergence does not imply candidate adoption
 
 ### Changed
 
+- return the preferred assessed retained structure with an exhaustion warning
+  when workflow search reaches its node limit, rather than raising if no
+  terminal branch has been reached; replace terminal-only result reporting with
+  `branch_report`, `WorkflowBranchOutcome` and `WorkflowBranchReport`, without a
+  `terminal_branch_report` compatibility alias. Terminal and frontier candidates
+  share the configured quality ordering; a better-ranked frontier can be returned
+  with unmet preparation goals even when a terminal candidate exists
+- honor explicit local refinement requests after preparation even without an
+  automatic repair burden. Reapply polymer and retained-component H preparation
+  on changed canonical inputs; suppress identical-input preparation and repeated
+  proposals for the same coordinate action on each branch
+- attach parser correction only when current planning selects local refinement,
+  and qualify automatic packing separately for each unresolved parser cluster
+  using observed native motion scope, including rejected native returns. Multiple
+  clusters can cause more FF or packing calls within the same node limit
 - use a 0.04 A minimum soft bond-restraint window during local FF optimization,
   retaining four-ESD scaling, the separate five-degree angle minimum and existing
   force constants and iteration limits

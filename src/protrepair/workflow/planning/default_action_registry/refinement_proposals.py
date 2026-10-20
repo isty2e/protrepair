@@ -13,7 +13,10 @@ from protrepair.workflow.actions.backbone_window_refinement import (
 )
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.planning.action.domain import WorkflowActionDomain
-from protrepair.workflow.planning.action.proposals import WorkflowActionProposal
+from protrepair.workflow.planning.action.proposals import (
+    WorkflowActionProposal,
+    WorkflowProposalSelectionMode,
+)
 from protrepair.workflow.planning.default_action_registry.capabilities import (
     BACKBONE_WINDOW_REFINEMENT_CAPABILITY,
     LOCAL_REFINEMENT_CAPABILITY,
@@ -41,12 +44,7 @@ def local_refinement_is_admissible(domain: WorkflowActionDomain) -> bool:
         return False
 
     if domain.explicit_repair.is_requested():
-        return (
-            domain.burden.has_intrinsic_geometry_burden()
-            or domain.burden.has_parser_compatibility_burden()
-            or domain.burden.has_interaction_burden()
-            or domain.memory.has_prior_augmentation_adoption()
-        )
+        return True
 
     return DEFAULT_LOCAL_REFINEMENT_PROPOSAL_POLICY.automatic_is_admissible(domain)
 
@@ -102,6 +100,7 @@ def local_refinement_proposals(
                 ),
                 capability=LOCAL_REFINEMENT_CAPABILITY,
                 explicitly_requested=False,
+                selection_mode=WorkflowProposalSelectionMode.QUALITY_ALTERNATIVE,
             )
             for repair_refinement_spec in repair_refinement_specs
             if not _refinement_spec_has_known_disulfide_conflict(
@@ -121,6 +120,7 @@ def local_refinement_proposals(
             ),
             capability=LOCAL_REFINEMENT_CAPABILITY,
             explicitly_requested=True,
+            selection_mode=WorkflowProposalSelectionMode.QUALITY_ALTERNATIVE,
         )
         for repair_refinement_spec in repair_refinement_specs
         if not _refinement_spec_has_known_disulfide_conflict(

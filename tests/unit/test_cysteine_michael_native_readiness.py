@@ -246,7 +246,7 @@ def test_complete_product_context_deficit_selects_graph_only_preparation(
             requested_goals=goals,
             transform_requests=WorkflowTransformRequests(),
             planner_memory=WorkflowPlannerMemory().with_attempted_transformer(
-                attempted
+                attempted, input_structure=source
             ),
         )
     action = next(

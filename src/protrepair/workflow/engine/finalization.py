@@ -1,4 +1,4 @@
-"""Terminal workflow result finalization."""
+"""Retained workflow result selection and final diagnostics."""
 
 from dataclasses import replace
 
@@ -29,38 +29,55 @@ from protrepair.state.structure_topology import (
     StructureDisulfideTopologyFacts,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.transformer.refinement.speculative_planning import SpeculativeStopReason
 from protrepair.workflow.contracts.planning import WorkflowPlanningContext
 from protrepair.workflow.contracts.result import (
     ProcessResult,
-    WorkflowTerminalBranchReport,
+    WorkflowBranchReport,
 )
-from protrepair.workflow.engine.runtime import WorkflowTerminalBranch
+from protrepair.workflow.engine.runtime import WorkflowBranch
 
 
 def finalize_workflow_result(
     *,
-    terminal_branches: tuple[WorkflowTerminalBranch, ...],
+    branches: tuple[WorkflowBranch, ...],
     planning_context: WorkflowPlanningContext,
     component_library: ComponentLibrary,
     requested_analyses: frozenset[AnalysisKind],
+    stop_reason: SpeculativeStopReason = SpeculativeStopReason.NO_PROPOSALS_AVAILABLE,
     preliminary_issues: tuple[ValidationIssue, ...] = (),
 ) -> ProcessResult:
-    """Select the preferred terminal branch and attach terminal artifacts."""
+    """Select the preferred assessed branch and attach final diagnostics."""
 
-    terminal_branch_report = _terminal_branch_report(
-        terminal_branches=terminal_branches,
+    branch_report = _branch_report(
+        branches=branches,
         planning_context=planning_context,
+        stop_reason=stop_reason,
     )
-    preferred_terminal_branch = terminal_branch_report.require_preferred_value(
-        {branch.node_id: branch for branch in terminal_branches}
+    preferred_branch = branch_report.require_preferred_value(
+        {branch.node_id: branch for branch in branches}
     )
     result = ProcessResult.from_transformation_result(
-        preferred_terminal_branch.result,
-        requested_goal_report=(
-            terminal_branch_report.preferred_outcome().requested_goal_report
-        ),
-        terminal_branch_report=terminal_branch_report,
+        preferred_branch.result,
+        requested_goal_report=(branch_report.preferred_outcome().requested_goal_report),
+        branch_report=branch_report,
     )
+    if branch_report.search_exhausted():
+        result = result.with_appended_issues(
+            (
+                ValidationIssue(
+                    kind=ValidationIssueKind.WORKFLOW_SEARCH_EXHAUSTED,
+                    severity=IssueSeverity.WARNING,
+                    message=(
+                        "workflow search reached "
+                        "max_speculative_nodes="
+                        f"{planning_context.max_speculative_nodes}; "
+                        "returning the preferred assessed retained candidate; "
+                        "requested goals and unresolved defects are reported separately"
+                    ),
+                ),
+            )
+        )
     parser_readability_issues = final_parser_readability_issues(
         result.structure,
         component_library=component_library,
@@ -187,16 +204,18 @@ def _disulfide_topology_conflict_issue(
     )
 
 
-def _terminal_branch_report(
+def _branch_report(
     *,
-    terminal_branches: tuple[WorkflowTerminalBranch, ...],
+    branches: tuple[WorkflowBranch, ...],
     planning_context: WorkflowPlanningContext,
-) -> WorkflowTerminalBranchReport:
-    """Build the terminal branch preference report for runtime branches."""
+    stop_reason: SpeculativeStopReason,
+) -> WorkflowBranchReport:
+    """Build the preference report for retained terminal and frontier candidates."""
 
-    return WorkflowTerminalBranchReport.from_outcomes(
-        tuple(branch.outcome for branch in terminal_branches),
+    return WorkflowBranchReport.from_outcomes(
+        tuple(branch.outcome for branch in branches),
         branch_preference_policy=planning_context.branch_preference_policy,
+        stop_reason=stop_reason,
     )
 
 

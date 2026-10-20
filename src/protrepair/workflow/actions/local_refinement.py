@@ -11,9 +11,11 @@ from protrepair.transformer.base import (
     ProjectedDomainState,
 )
 from protrepair.transformer.refinement.directive import RepairLocalRefinementDirective
+from protrepair.transformer.refinement.outcome import RefinementCodomainState
 from protrepair.transformer.refinement.repair_stage import (
     apply_repair_stage_local_refinement,
 )
+from protrepair.transformer.refinement.result import RefinementTransformationResult
 from protrepair.transformer.refinement.spec import RepairRefinementSpec
 from protrepair.transformer.result import TransformationResult
 from protrepair.workflow.actions.base import WorkflowStructureTransformer
@@ -39,8 +41,7 @@ class LocalRefinementTransformer(WorkflowStructureTransformer):
             (ResidueSetScope, AtomSetScope),
         ):
             raise TypeError(
-                "local refinement transformers require a residue-set or atom-set "
-                "scope"
+                "local refinement transformers require a residue-set or atom-set scope"
             )
         if not isinstance(self.repair_refinement, RepairRefinementSpec):
             raise TypeError(
@@ -95,12 +96,29 @@ class LocalRefinementTransformer(WorkflowStructureTransformer):
                 context.retained_non_polymer_chemistry_evidence
             ),
         )
-        return ProjectedCodomainState(
+        return RefinementCodomainState(
             scope=self.scope,
             state=stage_result.structure,
             repairs=stage_result.repairs[len(carrier.repairs) :],
             issues=stage_result.issues[len(carrier.issues) :],
+            relaxation_executions=RefinementTransformationResult.observed_executions(
+                stage_result
+            ),
         )
+
+    def lift_projected_codomain(
+        self,
+        carrier: TransformationResult,
+        projected_codomain: ProjectedCodomainState[ProteinStructure],
+        *,
+        context: TransformerExecutionContext,
+    ) -> TransformationResult:
+        """Retain refinement facts without adding them to generic codomains."""
+
+        del context
+        if not isinstance(projected_codomain, RefinementCodomainState):
+            raise TypeError("local refinement requires its refinement codomain")
+        return projected_codomain.lift(carrier)
 
 
 def materialize_workflow_local_refinement(

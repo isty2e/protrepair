@@ -1,7 +1,7 @@
 """Structured processing result contracts for the redesigned ProtRepair package."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
@@ -19,6 +19,9 @@ from protrepair.diagnostics.events import ValidationIssue
 from protrepair.scope import Scope
 from protrepair.state.scoped import ScopedState
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
+from protrepair.transformer.refinement.result import RefinementTransformationResult
+from protrepair.transformer.refinement.speculative_planning import SpeculativeStopReason
 from protrepair.transformer.result import TransformationResult
 from protrepair.workflow.contracts.planning import (
     WorkflowBranchPreferencePolicy,
@@ -38,26 +41,6 @@ if TYPE_CHECKING:
     )
 
 PreferredValueT = TypeVar("PreferredValueT")
-
-__all__ = [
-    "AnalysisBundle",
-    "ProcessResult",
-    "RamachandranAnalysis",
-    "RamachandranCategory",
-    "RamachandranPoint",
-    "RequestedGoalCompletionVerdict",
-    "RequestedGoalOutcome",
-    "RequestedGoalReport",
-    "RequestedGoalStatus",
-    "SecondaryStructureAnalysis",
-    "SecondaryStructureAssignment",
-    "WorkflowPhaseOutcome",
-    "WorkflowPhaseReport",
-    "WorkflowPhaseStatus",
-    "WorkflowBranchQualityScore",
-    "WorkflowTerminalBranchOutcome",
-    "WorkflowTerminalBranchReport",
-]
 
 BranchPreferenceKey = tuple[int | float, ...]
 
@@ -90,6 +73,13 @@ class WorkflowPhaseStatus(str, Enum):
     NOT_APPLICABLE = "not_applicable"
 
 
+class WorkflowBranchStatus(str, Enum):
+    """Whether a retained candidate finished planning before search stopped."""
+
+    TERMINAL = "terminal"
+    FRONTIER = "frontier"
+
+
 @dataclass(frozen=True, slots=True)
 class RequestedGoalOutcome:
     """Outcome for one requested scoped goal after one workflow run."""
@@ -103,9 +93,7 @@ class RequestedGoalOutcome:
 
     def __post_init__(self) -> None:
         if not isinstance(self.requested_goal, ScopedState):
-            raise TypeError(
-                "requested goal outcomes require a WorkflowGoal value"
-            )
+            raise TypeError("requested goal outcomes require a WorkflowGoal value")
         if not is_workflow_goal_state_value(self.requested_goal.value):
             raise TypeError(
                 "requested goal outcomes require a supported requested-goal value"
@@ -385,12 +373,8 @@ class WorkflowBranchQualityScore:
             parser_extra_bond_count=parser_extra_bond_count,
             protein_self_clash_count=protein_self_clash_count,
             ligand_aware_clash_count=ligand_aware_clash_count,
-            ligand_aware_worst_overlap_angstrom=(
-                ligand_aware_worst_overlap_angstrom
-            ),
-            ligand_aware_total_overlap_angstrom=(
-                ligand_aware_total_overlap_angstrom
-            ),
+            ligand_aware_worst_overlap_angstrom=(ligand_aware_worst_overlap_angstrom),
+            ligand_aware_total_overlap_angstrom=(ligand_aware_total_overlap_angstrom),
             stereochemistry_violation_count=stereochemistry_violation_count,
             severe_geometry_residue_count=severe_geometry_residue_count,
             search_depth=search_depth,
@@ -451,8 +435,29 @@ class WorkflowBranchQualityScore:
 
 
 @dataclass(frozen=True, slots=True)
-class WorkflowTerminalBranchOutcome:
-    """One terminal workflow branch plus its requested-goal evaluation."""
+class WorkflowBranchOutcome:
+    """Observed goals and quality for one retained workflow candidate.
+
+    Parameters
+    ----------
+    node_id : SpeculativePlanningNodeId
+        Identity within this search invocation.
+    requested_goal_report : RequestedGoalReport
+        Goal observations for this candidate, not inferred from termination.
+    phase_report : WorkflowPhaseReport
+        Phase observations, which may be evaluated lazily.
+    branch_quality_score : WorkflowBranchQualityScore
+        Policy-independent quality axes for selection.
+    error_count, warning_count, issue_count : int
+        Diagnostic counts before post-selection final diagnostics.
+    status : WorkflowBranchStatus
+        Planner-terminal or still on the frontier; neither implies goal attainment.
+
+    Raises
+    ------
+    TypeError
+        Status is not a canonical branch-status value.
+    """
 
     node_id: "SpeculativePlanningNodeId"
     requested_goal_report: RequestedGoalReport
@@ -461,12 +466,34 @@ class WorkflowTerminalBranchOutcome:
     error_count: int
     warning_count: int
     issue_count: int
+    status: WorkflowBranchStatus = WorkflowBranchStatus.TERMINAL
+    relaxation_executions: tuple[ContinuousRelaxationExecution, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, WorkflowBranchStatus):
+            raise TypeError("workflow branch status must be a WorkflowBranchStatus")
+        object.__setattr__(
+            self,
+            "relaxation_executions",
+            ContinuousRelaxationExecution.deduplicated(self.relaxation_executions),
+        )
 
     def preference_key(
         self,
         policy: WorkflowBranchPreferencePolicy,
     ) -> BranchPreferenceKey:
-        """Return the configured preference key for one terminal branch."""
+        """Return the configured preference key with a stable node-ID tie-breaker.
+
+        Parameters
+        ----------
+        policy : WorkflowBranchPreferencePolicy
+            Ordering of observed quality axes.
+
+        Returns
+        -------
+        tuple[int or float, ...]
+            Ascending preference key.
+        """
 
         return self.branch_quality_score.order_key(
             policy,
@@ -475,31 +502,101 @@ class WorkflowTerminalBranchOutcome:
 
 
 @dataclass(frozen=True, slots=True)
-class WorkflowTerminalBranchReport:
-    """Branch-aware report over terminal workflow frontier outcomes."""
+class WorkflowBranchReport:
+    """Select among retained candidates without equating exhaustion with success.
+
+    Parameters
+    ----------
+    preferred_node_id : SpeculativePlanningNodeId
+        Selected node; must agree with the configured quality policy.
+    outcomes : tuple[WorkflowBranchOutcome, ...]
+        Nonempty, uniquely identified retained candidates.
+    branch_preference_policy : WorkflowBranchPreferencePolicy
+        Ordering shared with workflow candidate assessment.
+    stop_reason : SpeculativeStopReason
+        Why search stopped, independent of the selected candidate's goal report.
+
+    Raises
+    ------
+    TypeError
+        Outcomes or the stop reason are noncanonical.
+    ValueError
+        Candidates are absent, duplicated, inconsistent with termination, or the
+        preferred node disagrees with policy.
+    """
 
     preferred_node_id: "SpeculativePlanningNodeId"
-    outcomes: tuple[WorkflowTerminalBranchOutcome, ...]
+    outcomes: tuple[WorkflowBranchOutcome, ...]
     branch_preference_policy: WorkflowBranchPreferencePolicy = field(
         default_factory=WorkflowBranchPreferencePolicy
     )
+    stop_reason: SpeculativeStopReason = SpeculativeStopReason.NO_PROPOSALS_AVAILABLE
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "outcomes", tuple(self.outcomes))
+        outcomes = tuple(self.outcomes)
+        if not outcomes:
+            raise ValueError("workflow branch report requires at least one outcome")
+        if not all(isinstance(outcome, WorkflowBranchOutcome) for outcome in outcomes):
+            raise TypeError(
+                "workflow branch reports require WorkflowBranchOutcome values"
+            )
+        if not isinstance(self.stop_reason, SpeculativeStopReason):
+            raise TypeError(
+                "workflow branch report stop reason must be a SpeculativeStopReason"
+            )
+        node_ids = tuple(outcome.node_id for outcome in outcomes)
+        if len(set(node_ids)) != len(node_ids):
+            raise ValueError("workflow branch report must not repeat node IDs")
+        if not self.search_exhausted() and any(
+            outcome.status is WorkflowBranchStatus.FRONTIER for outcome in outcomes
+        ):
+            raise ValueError("frontier outcomes require exhausted workflow search")
+        preferred = min(
+            outcomes,
+            key=lambda outcome: outcome.preference_key(self.branch_preference_policy),
+        )
+        if self.preferred_node_id != preferred.node_id:
+            raise ValueError(
+                "preferred workflow branch must match the configured policy"
+            )
+        object.__setattr__(self, "outcomes", outcomes)
 
     @classmethod
     def from_outcomes(
         cls,
-        outcomes: tuple[WorkflowTerminalBranchOutcome, ...],
+        outcomes: tuple[WorkflowBranchOutcome, ...],
         *,
         branch_preference_policy: WorkflowBranchPreferencePolicy | None = None,
-    ) -> "WorkflowTerminalBranchReport":
-        """Build one terminal-branch report and choose its preferred outcome."""
+        stop_reason: SpeculativeStopReason = (
+            SpeculativeStopReason.NO_PROPOSALS_AVAILABLE
+        ),
+    ) -> "WorkflowBranchReport":
+        """Choose the preferred candidate under one canonical quality ordering.
+
+        Parameters
+        ----------
+        outcomes : tuple[WorkflowBranchOutcome, ...]
+            Assessed terminal candidates and, on exhaustion, retained frontier nodes.
+        branch_preference_policy : WorkflowBranchPreferencePolicy or None
+            Axis ordering, or the default policy.
+        stop_reason : SpeculativeStopReason
+            Actual search termination cause.
+
+        Returns
+        -------
+        WorkflowBranchReport
+            Candidate observations and deterministic selection.
+
+        Raises
+        ------
+        TypeError
+            Outcomes or the stop reason are noncanonical.
+        ValueError
+            Outcomes are empty, duplicated, or inconsistent with termination.
+        """
 
         if not outcomes:
-            raise ValueError(
-                "workflow terminal branch report requires at least one outcome"
-            )
+            raise ValueError("workflow branch report requires at least one outcome")
 
         active_policy = (
             WorkflowBranchPreferencePolicy()
@@ -514,16 +611,57 @@ class WorkflowTerminalBranchReport:
             preferred_node_id=preferred_outcome.node_id,
             outcomes=outcomes,
             branch_preference_policy=active_policy,
+            stop_reason=stop_reason,
         )
 
-    def preferred_outcome(self) -> WorkflowTerminalBranchOutcome:
-        """Return the preferred terminal branch outcome."""
+    def search_exhausted(self) -> bool:
+        """Return whether unexplored work remained at the node limit.
+
+        Returns
+        -------
+        bool
+            Whether search stopped at its configured node limit.
+        """
+
+        return self.stop_reason is SpeculativeStopReason.ITERATION_LIMIT_REACHED
+
+    def require_selected_native_history(
+        self, executions: tuple[ContinuousRelaxationExecution, ...]
+    ) -> None:
+        """Require known native returns to remain in the selected history.
+
+        Parameters
+        ----------
+        executions : tuple[ContinuousRelaxationExecution, ...]
+            Facts already observed for the selected structural carrier.
+
+        Raises
+        ------
+        ValueError
+            Replacing a report would silently discard known invocation facts.
+        """
+
+        if not frozenset(executions).issubset(
+            self.preferred_outcome().relaxation_executions
+        ):
+            raise ValueError(
+                "workflow report must retain known native execution history"
+            )
+
+    def preferred_outcome(self) -> WorkflowBranchOutcome:
+        """Return the selected candidate's observation, not a success verdict.
+
+        Returns
+        -------
+        WorkflowBranchOutcome
+            The outcome selected by this report's policy.
+        """
 
         for outcome in self.outcomes:
             if outcome.node_id == self.preferred_node_id:
                 return outcome
 
-        raise ValueError("workflow terminal branch report preferred node is missing")
+        raise ValueError("workflow branch report preferred node is missing")
 
     def require_preferred_value(
         self,
@@ -532,23 +670,79 @@ class WorkflowTerminalBranchReport:
             PreferredValueT,
         ],
     ) -> PreferredValueT:
-        """Return the value mapped to the preferred terminal branch."""
+        """Return the value mapped to the selected candidate.
+
+        Parameters
+        ----------
+        values_by_node_id : Mapping[SpeculativePlanningNodeId, PreferredValueT]
+            Candidate carriers belonging to this invocation.
+
+        Returns
+        -------
+        PreferredValueT
+            Carrier with this report's preferred node identity.
+
+        Raises
+        ------
+        ValueError
+            The selected candidate has no mapped carrier.
+        """
 
         try:
             return values_by_node_id[self.preferred_node_id]
         except KeyError as error:
             raise ValueError(
-                "workflow terminal branch report preferred node is missing"
+                "workflow branch report preferred node is missing"
             ) from error
 
 
 @dataclass(frozen=True, slots=True)
 class ProcessResult(TransformationResult):
-    """Public structured result of a completed workflow processing run."""
+    """Returned structure and observations, including exhausted workflow search.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Selected retained structure, which may still have unresolved defects.
+    repairs : tuple[RepairEvent, ...]
+        Repair events belonging to the selected carrier.
+    issues : tuple[ValidationIssue, ...]
+        Transformation and final diagnostics, including search exhaustion.
+    analyses : AnalysisBundle or None
+        Requested analysis output.
+    requested_goal_report : RequestedGoalReport or None
+        Observed requested-goal outcomes.
+    branch_report : WorkflowBranchReport or None
+        Retained candidate selection and search termination evidence.
+
+    Notes
+    -----
+    Native history includes observed FF returns from sibling batches along the
+    selected ancestry, even when their coordinates were rejected. Returns from
+    other descendant subtrees are excluded; it is not a workflow-wide execution log.
+    """
 
     analyses: AnalysisBundle | None = None
     requested_goal_report: RequestedGoalReport | None = None
-    terminal_branch_report: WorkflowTerminalBranchReport | None = None
+    branch_report: WorkflowBranchReport | None = None
+
+    @property
+    def relaxation_executions(self) -> tuple[ContinuousRelaxationExecution, ...]:
+        """Return native calls from sibling batches along the selected ancestry.
+
+        Returns
+        -------
+        tuple[ContinuousRelaxationExecution, ...]
+            Selected-ancestry batch history, including unselected siblings, or
+            no evidence when no branch report is attached.
+            Empty evidence does not prove that no native work ran.
+        """
+
+        return (
+            ()
+            if self.branch_report is None
+            else self.branch_report.preferred_outcome().relaxation_executions
+        )
 
     @classmethod
     def from_transformation_result(
@@ -557,9 +751,43 @@ class ProcessResult(TransformationResult):
         *,
         analyses: AnalysisBundle | None = None,
         requested_goal_report: RequestedGoalReport | None = None,
-        terminal_branch_report: WorkflowTerminalBranchReport | None = None,
+        branch_report: WorkflowBranchReport | None = None,
     ) -> "ProcessResult":
-        """Build a public workflow result from a transformer-owned carrier."""
+        """Build a public workflow result from a transformer-owned carrier.
+
+        Parameters
+        ----------
+        result : TransformationResult
+            Selected structure, repairs, diagnostics and native execution evidence.
+        analyses : AnalysisBundle or None
+            Requested analysis output.
+        requested_goal_report : RequestedGoalReport or None
+            Observed goal outcomes for the selected structure.
+        branch_report : WorkflowBranchReport or None
+            Retained candidate observations and search termination evidence.
+
+        Returns
+        -------
+        ProcessResult
+            Carrier preserving the selected result's transformation evidence.
+
+        Raises
+        ------
+        ValueError
+            Known native returns are missing from the selected branch history.
+        """
+
+        observed = (
+            result.relaxation_executions
+            if isinstance(result, ProcessResult)
+            else RefinementTransformationResult.observed_executions(result)
+        )
+        if observed and branch_report is None:
+            raise ValueError(
+                "workflow report must retain known native execution history"
+            )
+        if branch_report is not None:
+            branch_report.require_selected_native_history(observed)
 
         return cls(
             structure=result.structure,
@@ -567,7 +795,7 @@ class ProcessResult(TransformationResult):
             issues=result.issues,
             analyses=analyses,
             requested_goal_report=requested_goal_report,
-            terminal_branch_report=terminal_branch_report,
+            branch_report=branch_report,
         )
 
     def requested_goal_completion_verdict(
@@ -598,30 +826,39 @@ class ProcessResult(TransformationResult):
         if not issues:
             return self
 
-        return type(self)(
-            structure=self.structure,
-            repairs=self.repairs,
-            issues=self.issues + tuple(issues),
-            analyses=self.analyses,
-            requested_goal_report=self.requested_goal_report,
-            terminal_branch_report=self.terminal_branch_report,
-        )
+        return replace(self, issues=self.issues + tuple(issues))
 
     def with_workflow_reporting(
         self,
         *,
         requested_goal_report: RequestedGoalReport,
-        terminal_branch_report: WorkflowTerminalBranchReport,
+        branch_report: WorkflowBranchReport,
     ) -> Self:
-        """Return a copy with workflow requested-goal and branch reports."""
+        """Return a copy with workflow requested-goal and branch reports.
 
-        return type(self)(
-            structure=self.structure,
-            repairs=self.repairs,
-            issues=self.issues,
-            analyses=self.analyses,
+        Parameters
+        ----------
+        requested_goal_report : RequestedGoalReport
+            Observed requested-goal outcomes.
+        branch_report : WorkflowBranchReport
+            Retained candidate selection and search termination evidence.
+
+        Returns
+        -------
+        Self
+            Reported result with unchanged structure and transformation evidence.
+
+        Raises
+        ------
+        ValueError
+            The replacement report discards known native invocation facts.
+        """
+
+        branch_report.require_selected_native_history(self.relaxation_executions)
+        return replace(
+            self,
             requested_goal_report=requested_goal_report,
-            terminal_branch_report=terminal_branch_report,
+            branch_report=branch_report,
         )
 
     def with_analyses(
@@ -630,23 +867,31 @@ class ProcessResult(TransformationResult):
     ) -> Self:
         """Return a copy with structured analysis outputs attached."""
 
-        return type(self)(
-            structure=self.structure,
-            repairs=self.repairs,
-            issues=self.issues,
-            analyses=analyses,
-            requested_goal_report=self.requested_goal_report,
-            terminal_branch_report=self.terminal_branch_report,
-        )
+        return replace(self, analyses=analyses)
 
     def with_structure(self, structure: ProteinStructure) -> Self:
         """Return a copy with an updated structure."""
 
-        return type(self)(
-            structure=structure,
-            repairs=self.repairs,
-            issues=self.issues,
-            analyses=self.analyses,
-            requested_goal_report=self.requested_goal_report,
-            terminal_branch_report=self.terminal_branch_report,
-        )
+        return replace(self, structure=structure)
+
+
+__all__ = [
+    "AnalysisBundle",
+    "ProcessResult",
+    "RamachandranAnalysis",
+    "RamachandranCategory",
+    "RamachandranPoint",
+    "RequestedGoalCompletionVerdict",
+    "RequestedGoalOutcome",
+    "RequestedGoalReport",
+    "RequestedGoalStatus",
+    "SecondaryStructureAnalysis",
+    "SecondaryStructureAssignment",
+    "WorkflowPhaseOutcome",
+    "WorkflowPhaseReport",
+    "WorkflowPhaseStatus",
+    "WorkflowBranchQualityScore",
+    "WorkflowBranchOutcome",
+    "WorkflowBranchStatus",
+    "WorkflowBranchReport",
+]

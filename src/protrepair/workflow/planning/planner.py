@@ -1,6 +1,6 @@
 """Generic workflow planning over requested goals and transformer invocations."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from protrepair.chemistry import (
     ComponentLibrary,
@@ -25,6 +25,7 @@ from protrepair.state.structure_topology import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.snapshot import ProteinStructureSnapshot
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.local.projection import (
     LocalContinuousExecutionResidueProjection,
 )
@@ -38,7 +39,9 @@ from protrepair.workflow.contracts.request import (
     WorkflowGoal,
     WorkflowTransformRequests,
 )
+from protrepair.workflow.planning.action.attempt import WorkflowActionAttempt
 from protrepair.workflow.planning.action.domain import WorkflowActionDomain
+from protrepair.workflow.planning.action.proposals import WorkflowActionProposal
 from protrepair.workflow.planning.action.registry import (
     WorkflowActionAdoption,
     WorkflowActionRegistryEntry,
@@ -90,10 +93,33 @@ class BlockedRequestedGoal:
 
 @dataclass(frozen=True, slots=True)
 class WorkflowPlanningOutcome:
-    """Generic workflow planning result over the current proposal batch."""
+    """Selected proposals and observations from one current-state assessment.
+
+    Parameters
+    ----------
+    structure_planning_signature : StructurePlanningSignature
+        Current chemistry, coverage and boundary signature.
+    proposals : tuple[WorkflowActionProposal, ...]
+        Selected family batch, retaining per-proposal selection semantics.
+    blockers : tuple[WorkflowBlocker, ...]
+        Known obstacles to requested goals.
+    unsupported_requested_goals : tuple[WorkflowGoal, ...]
+        Goals outside the active registry's capabilities.
+    blocked_requested_goals : tuple[BlockedRequestedGoal, ...]
+        Supported goals with current blockers.
+    already_satisfied_requested_goals : tuple[WorkflowGoal, ...]
+        Goals met before this planning step.
+    state_deficit : WorkflowStateDeficit or None
+        Current assessed burden, when available.
+
+    Raises
+    ------
+    TypeError
+        A batch member is not a canonical proposal.
+    """
 
     structure_planning_signature: StructurePlanningSignature
-    transformers: tuple[WorkflowStateAction, ...]
+    proposals: tuple[WorkflowActionProposal, ...]
     blockers: tuple[WorkflowBlocker, ...] = ()
     unsupported_requested_goals: tuple[
         WorkflowGoal,
@@ -107,7 +133,12 @@ class WorkflowPlanningOutcome:
     state_deficit: WorkflowStateDeficit | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "transformers", tuple(self.transformers))
+        object.__setattr__(self, "proposals", tuple(self.proposals))
+        if any(
+            not isinstance(proposal, WorkflowActionProposal)
+            for proposal in self.proposals
+        ):
+            raise TypeError("planning outcome requires canonical proposals")
         object.__setattr__(self, "blockers", tuple(self.blockers))
         object.__setattr__(
             self,
@@ -130,7 +161,7 @@ class WorkflowPlanningOutcome:
         cls,
         *,
         structure_planning_signature: StructurePlanningSignature,
-        candidate_transformers: list[WorkflowStateAction],
+        candidate_proposals: list[WorkflowActionProposal],
         blockers: tuple[WorkflowBlocker, ...] = (),
         unsupported_requested_goals: tuple[
             WorkflowGoal,
@@ -143,11 +174,34 @@ class WorkflowPlanningOutcome:
         ] = (),
         state_deficit: WorkflowStateDeficit | None = None,
     ) -> "WorkflowPlanningOutcome":
-        """Build one outcome from ordered candidate actions and planner facts."""
+        """Select the first ranked family without discarding proposal semantics.
+
+        Parameters
+        ----------
+        structure_planning_signature : StructurePlanningSignature
+            Current assessed signature.
+        candidate_proposals : list[WorkflowActionProposal]
+            Already ranked proposals; order and duplicates remain meaningful.
+        blockers : tuple[WorkflowBlocker, ...]
+            Current goal obstacles.
+        unsupported_requested_goals : tuple[WorkflowGoal, ...]
+            Goals outside registry support.
+        blocked_requested_goals : tuple[BlockedRequestedGoal, ...]
+            Goals with current blockers.
+        already_satisfied_requested_goals : tuple[WorkflowGoal, ...]
+            Goals already met.
+        state_deficit : WorkflowStateDeficit or None
+            Current burden, when assessed.
+
+        Returns
+        -------
+        WorkflowPlanningOutcome
+            First-family batch with original proposal identity and metadata.
+        """
 
         return cls(
             structure_planning_signature=structure_planning_signature,
-            transformers=cls._current_proposal_batch(candidate_transformers),
+            proposals=cls._current_proposal_batch(candidate_proposals),
             blockers=blockers,
             unsupported_requested_goals=unsupported_requested_goals,
             blocked_requested_goals=blocked_requested_goals,
@@ -157,24 +211,35 @@ class WorkflowPlanningOutcome:
 
     @staticmethod
     def _current_proposal_batch(
-        candidate_transformers: list[WorkflowStateAction],
-    ) -> tuple[WorkflowStateAction, ...]:
+        candidate_proposals: list[WorkflowActionProposal],
+    ) -> tuple[WorkflowActionProposal, ...]:
         """Return the current frontier proposal batch from ordered candidates."""
 
-        if not candidate_transformers:
+        if not candidate_proposals:
             return ()
 
-        first_family = candidate_transformers[0].proposal_family()
+        first_family = candidate_proposals[0].transformer.proposal_family()
         return tuple(
-            transformer
-            for transformer in candidate_transformers
-            if transformer.proposal_family() is first_family
+            proposal
+            for proposal in candidate_proposals
+            if proposal.transformer.proposal_family() is first_family
         )
+
+    @property
+    def transformers(self) -> tuple[WorkflowStateAction, ...]:
+        """Project the selected proposals into executable actions.
+
+        Returns
+        -------
+        tuple[WorkflowStateAction, ...]
+            Actions in proposal order; selection semantics remain on proposals.
+        """
+        return tuple(proposal.transformer for proposal in self.proposals)
 
     def has_transformers(self) -> bool:
         """Return whether the current planning outcome proposes any transformers."""
 
-        return bool(self.transformers)
+        return bool(self.proposals)
 
     def is_terminal(self) -> bool:
         """Return whether the workflow reached a terminal planning state."""
@@ -240,10 +305,26 @@ class WorkflowPlanningOutcome:
 
 @dataclass(frozen=True, slots=True)
 class WorkflowPlannerMemory:
-    """Planner memory for one single-branch workflow planning path."""
+    """Retain action and native evidence under one branch's fixed execution context.
+
+    Parameters
+    ----------
+    adopted_transformers : tuple[WorkflowStateAction, ...]
+        Historical actions whose outputs entered this path.
+    attempts : tuple[WorkflowActionAttempt, ...]
+        Evaluations, including input evidence for reapplicable preparation.
+    relaxation_executions : tuple[ContinuousRelaxationExecution, ...]
+        Actual native returns, independently of coordinate adoption.
+
+    Notes
+    -----
+    Library, reference and chemistry-policy inputs are fixed within this path.
+    This memory is not reusable across workflows with different execution contexts.
+    """
 
     adopted_transformers: tuple[WorkflowStateAction, ...] = ()
-    attempted_transformers: tuple[WorkflowStateAction, ...] = ()
+    attempts: tuple[WorkflowActionAttempt, ...] = ()
+    relaxation_executions: tuple[ContinuousRelaxationExecution, ...] = ()
 
     def __post_init__(self) -> None:
         adopted_transformers_list: list[WorkflowStateAction] = []
@@ -252,17 +333,20 @@ class WorkflowPlannerMemory:
                 adopted_transformers_list.append(adopted_transformer)
 
         adopted_transformers = tuple(adopted_transformers_list)
-        attempted_transformers_list: list[WorkflowStateAction] = []
-        for attempted_transformer in (
-            *self.attempted_transformers,
-            *adopted_transformers,
-        ):
-            if attempted_transformer not in attempted_transformers_list:
-                attempted_transformers_list.append(attempted_transformer)
-
-        attempted_transformers = tuple(attempted_transformers_list)
+        attempts: list[WorkflowActionAttempt] = []
+        for attempt in self.attempts:
+            if attempt not in attempts:
+                attempts.append(attempt)
+        for transformer in adopted_transformers:
+            if not any(attempt.transformer == transformer for attempt in attempts):
+                attempts.append(WorkflowActionAttempt(transformer))
         object.__setattr__(self, "adopted_transformers", adopted_transformers)
-        object.__setattr__(self, "attempted_transformers", attempted_transformers)
+        object.__setattr__(self, "attempts", tuple(attempts))
+        object.__setattr__(
+            self,
+            "relaxation_executions",
+            ContinuousRelaxationExecution.deduplicated(self.relaxation_executions),
+        )
 
     def has_adopted_transformer(
         self,
@@ -278,35 +362,133 @@ class WorkflowPlannerMemory:
     ) -> bool:
         """Return whether one exact workflow transformer was already evaluated."""
 
-        return transformer in self.attempted_transformers
+        return any(attempt.transformer == transformer for attempt in self.attempts)
+
+    @property
+    def attempted_transformers(self) -> tuple[WorkflowStateAction, ...]:
+        """Return historical action membership, independent of current applicability.
+
+        Returns
+        -------
+        tuple[WorkflowStateAction, ...]
+            Actions in first-observed order without duplicating input-bound attempts.
+        """
+        actions: list[WorkflowStateAction] = []
+        for attempt in self.attempts:
+            if attempt.transformer not in actions:
+                actions.append(attempt.transformer)
+        return tuple(actions)
+
+    def blocks_transformer_attempt(
+        self, transformer: WorkflowStateAction, *, structure: ProteinStructure
+    ) -> bool:
+        """Check current-input suppression without changing historical facts.
+
+        Parameters
+        ----------
+        transformer : WorkflowStateAction
+            Proposed action.
+        structure : ProteinStructure
+            Canonical current input under this branch's fixed execution context.
+
+        Returns
+        -------
+        bool
+            Whether historical attempts cover this action's reapplication context.
+        """
+        return any(attempt.blocks(transformer, structure) for attempt in self.attempts)
 
     def with_adopted_transformer(
         self,
         transformer: WorkflowStateAction,
+        *,
+        input_structure: ProteinStructure | None = None,
     ) -> "WorkflowPlannerMemory":
-        """Return one planning state with one additional adopted transformer."""
+        """Record adoption without losing a repeated preparation's input.
 
-        if self.has_adopted_transformer(transformer):
-            return self
+        Parameters
+        ----------
+        transformer : WorkflowStateAction
+            Adopted action.
+        input_structure : ProteinStructure or None
+            Carrier before execution. None retains only historical action evidence.
 
-        return type(self)(
-            adopted_transformers=self.adopted_transformers + (transformer,),
-            attempted_transformers=self.attempted_transformers,
+        Returns
+        -------
+        WorkflowPlannerMemory
+            Updated attempt evidence and deduplicated historical adoption membership.
+        """
+
+        memory = self.with_attempted_transformer(
+            transformer, input_structure=input_structure
+        )
+        if memory.has_adopted_transformer(transformer):
+            return memory
+
+        return replace(
+            memory,
+            adopted_transformers=memory.adopted_transformers + (transformer,),
         )
 
     def with_attempted_transformer(
         self,
         transformer: WorkflowStateAction,
+        *,
+        input_structure: ProteinStructure | None = None,
     ) -> "WorkflowPlannerMemory":
-        """Return one planning state with one additional attempted transformer."""
+        """Record evaluation separately from output adoption.
 
-        if self.has_attempted_transformer(transformer):
+        Parameters
+        ----------
+        transformer : WorkflowStateAction
+            Evaluated action, whether or not its output was retained.
+        input_structure : ProteinStructure or None
+            Carrier before execution; branch-only actions do not retain it.
+
+        Returns
+        -------
+        WorkflowPlannerMemory
+            History containing the action and its declared reapplication context.
+        """
+
+        attempt = WorkflowActionAttempt(
+            transformer,
+            None
+            if input_structure is None
+            else transformer.reapplication_context(input_structure),
+        )
+        if attempt in self.attempts:
             return self
 
-        return type(self)(
-            adopted_transformers=self.adopted_transformers,
-            attempted_transformers=self.attempted_transformers + (transformer,),
+        return replace(
+            self,
+            attempts=self.attempts + (attempt,),
         )
+
+    def with_returned_relaxations(
+        self,
+        executions: tuple[ContinuousRelaxationExecution, ...],
+    ) -> "WorkflowPlannerMemory":
+        """Remember native returns without claiming action or coordinate adoption.
+
+        Parameters
+        ----------
+        executions : tuple[ContinuousRelaxationExecution, ...]
+            Observed returns transported from this branch's execution.
+
+        Returns
+        -------
+        WorkflowPlannerMemory
+            Memory preserving invocation identity, order and existing action facts.
+        """
+
+        combined = ContinuousRelaxationExecution.deduplicated(
+            (*self.relaxation_executions, *executions)
+        )
+        if combined == self.relaxation_executions:
+            return self
+
+        return replace(self, relaxation_executions=combined)
 
     def adoption_records(
         self,
@@ -481,13 +663,17 @@ def plan_workflow_actions(
         adopted_actions=active_planner_memory.adoption_records(
             registry=active_action_registry,
         ),
+        relaxation_executions=active_planner_memory.relaxation_executions,
+        attempts=active_planner_memory.attempts,
     )
     candidate_proposals = [
         proposal
         for registry_entry in active_action_registry
         if registry_entry.is_admissible(action_domain)
         for proposal in registry_entry.proposals(action_domain)
-        if not active_planner_memory.has_attempted_transformer(proposal.transformer)
+        if not active_planner_memory.blocks_transformer_attempt(
+            proposal.transformer, structure=structure
+        )
     ]
     blocked_goal_projections = blocked_requested_goal_projections(
         requested_goals,
@@ -516,9 +702,7 @@ def plan_workflow_actions(
 
     return WorkflowPlanningOutcome.from_candidates(
         structure_planning_signature=structure_planning_signature,
-        candidate_transformers=[
-            proposal.transformer for proposal in ranked_candidate_proposals
-        ],
+        candidate_proposals=list(ranked_candidate_proposals),
         blockers=blockers,
         unsupported_requested_goals=unsupported_goal_set,
         blocked_requested_goals=blocked_requested_goals,

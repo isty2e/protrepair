@@ -47,11 +47,12 @@ from protrepair.workflow.contracts.result import (
     RequestedGoalOutcome,
     RequestedGoalReport,
     RequestedGoalStatus,
+    WorkflowBranchOutcome,
+    WorkflowBranchReport,
+    WorkflowBranchStatus,
     WorkflowPhaseOutcome,
     WorkflowPhaseReport,
     WorkflowPhaseStatus,
-    WorkflowTerminalBranchOutcome,
-    WorkflowTerminalBranchReport,
 )
 from protrepair.workflow.contracts.span_policy import ExternalSpanGapSelectionPolicy
 
@@ -88,8 +89,9 @@ __all__ = [
     "WorkflowPhaseOutcome",
     "WorkflowPhaseReport",
     "WorkflowPhaseStatus",
-    "WorkflowTerminalBranchOutcome",
-    "WorkflowTerminalBranchReport",
+    "WorkflowBranchOutcome",
+    "WorkflowBranchStatus",
+    "WorkflowBranchReport",
     "WorkflowPlanningContext",
     "WorkflowLigandContextMode",
     "WorkflowPlanningPhase",

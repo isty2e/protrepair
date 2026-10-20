@@ -115,7 +115,7 @@ class WorkflowPlanningPolicy:
             self._explicit_request_priority(group),
             self._exact_goal_support_priority(capability, domain=domain),
             self._effect_class_priority(capability),
-            self._locality_priority(capability),
+            self._locality_priority(group),
             self._donor_priority(capability),
             group.original_index,
         )
@@ -345,9 +345,9 @@ class WorkflowPlanningPolicy:
 
     def _locality_priority(
         self,
-        capability: WorkflowActionCapability,
+        group: _WorkflowCandidateGroup,
     ) -> int:
-        """Return the best supported locality rank for one capability."""
+        """Rank offered targets, retaining capability ranking if any is unknown."""
 
         locality_order = {
             WorkflowActionLocality.LOCAL_SCOPE: 0,
@@ -355,9 +355,17 @@ class WorkflowPlanningPolicy:
             WorkflowActionLocality.RESIDUE_SPAN: 2,
             WorkflowActionLocality.WHOLE_STRUCTURE: 3,
         }
-        return min(
-            locality_order[locality] for locality in capability.supported_localities
-        )
+        offered_ranks: list[int] = []
+        for proposal in group.proposals:
+            locality = proposal.target_locality()
+            if locality is None:
+                return min(
+                    locality_order[supported]
+                    for supported in group.capability.supported_localities
+                )
+            offered_ranks.append(locality_order[locality])
+
+        return min(offered_ranks)
 
     def _donor_priority(
         self,

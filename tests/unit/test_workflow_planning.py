@@ -288,7 +288,7 @@ def test_plan_workflow_actions_keeps_parser_witness_ahead_of_global_geometry(
         raise AssertionError("global geometry should not run before parser witness")
 
     monkeypatch.setattr(
-        "protrepair.workflow.planning.local_refinement_policy.parser_witness_repair_candidates",
+        "protrepair.workflow.planning.local_refinement_policy.iter_parser_witness_repair_candidates",
         fake_parser_witness_repair_candidates,
     )
     monkeypatch.setattr(
@@ -363,7 +363,7 @@ def test_plan_workflow_actions_skips_parser_witness_when_parser_compatible(
     )
     monkeypatch.setattr(
         workflow_local_refinement_policy,
-        "parser_witness_repair_candidates",
+        "iter_parser_witness_repair_candidates",
         fail_parser_witness_repair_candidates,
     )
     monkeypatch.setattr(
@@ -1103,8 +1103,8 @@ def test_plan_workflow_actions_emits_local_refinement_after_completion_adoption(
                 ),
             )
         ),
-        planner_memory=WorkflowPlannerMemory(
-            adopted_transformers=(hydrogen_outcome.transformers[0],)
+        planner_memory=WorkflowPlannerMemory().with_adopted_transformer(
+            hydrogen_outcome.transformers[0], input_structure=structure
         ),
     )
 
@@ -1150,8 +1150,8 @@ def test_plan_workflow_actions_emits_atom_set_local_refinement_scope() -> None:
                 ),
             )
         ),
-        planner_memory=WorkflowPlannerMemory(
-            adopted_transformers=(hydrogen_outcome.transformers[0],)
+        planner_memory=WorkflowPlannerMemory().with_adopted_transformer(
+            hydrogen_outcome.transformers[0], input_structure=structure
         ),
     )
 
@@ -1527,7 +1527,7 @@ def test_plan_workflow_actions_auto_emits_joint_refinement(
 
     monkeypatch.setattr(
         workflow_local_refinement_policy,
-        "parser_witness_repair_candidates",
+        "iter_parser_witness_repair_candidates",
         lambda structure, *, component_library: (),
     )
 
@@ -1559,7 +1559,7 @@ def test_plan_workflow_actions_does_not_auto_sweep_joint_refinement_without_pars
 
     monkeypatch.setattr(
         workflow_local_refinement_policy,
-        "parser_witness_repair_candidates",
+        "iter_parser_witness_repair_candidates",
         lambda structure, *, component_library: (),
     )
     monkeypatch.setattr(
@@ -1680,8 +1680,8 @@ def test_plan_workflow_actions_auto_targets_2qls_leu32_intrinsic_geometry() -> N
     assert len(intrinsic_transformers) == 1
 
 
-def test_plan_workflow_actions_blocks_auto_joint_refinement_after_adoption() -> None:
-    """Automatic joint refinement should be an opportunistic bounded batch."""
+def test_plan_workflow_actions_keeps_distinct_parser_repairs_after_adoption() -> None:
+    """One adopted action must not suppress distinct current parser burdens."""
 
     adopted_refinement = LocalRefinementTransformer.from_repair_refinement(
         RepairRefinementSpec(
@@ -1701,10 +1701,13 @@ def test_plan_workflow_actions_blocks_auto_joint_refinement_after_adoption() -> 
         ),
     )
 
-    assert not any(
-        isinstance(transformer, LocalRefinementTransformer)
+    repairs = tuple(
+        transformer
         for transformer in outcome.transformers
+        if isinstance(transformer, LocalRefinementTransformer)
     )
+    assert repairs
+    assert adopted_refinement not in repairs
 
 
 def test_plan_workflow_actions_promotes_joint_refinement_to_residue_scope() -> None:
@@ -1778,8 +1781,8 @@ def test_plan_workflow_actions_promotes_joint_refinement_to_residue_scope() -> N
                 ),
             )
         ),
-        planner_memory=WorkflowPlannerMemory(
-            adopted_transformers=(hydrogen_outcome.transformers[0],)
+        planner_memory=WorkflowPlannerMemory().with_adopted_transformer(
+            hydrogen_outcome.transformers[0], input_structure=structure
         ),
     )
 
@@ -1882,8 +1885,8 @@ def test_plan_workflow_actions_keeps_joint_scope_semantic_but_widens_execution()
                 ),
             )
         ),
-        planner_memory=WorkflowPlannerMemory(
-            adopted_transformers=(hydrogen_outcome.transformers[0],)
+        planner_memory=WorkflowPlannerMemory().with_adopted_transformer(
+            hydrogen_outcome.transformers[0], input_structure=structure
         ),
     )
 

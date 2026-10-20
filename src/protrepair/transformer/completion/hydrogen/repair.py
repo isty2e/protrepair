@@ -1,5 +1,7 @@
 """Hydrogen completion orchestration over primitive hydrogen transforms."""
 
+from dataclasses import replace
+
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
@@ -137,9 +139,9 @@ def _apply_hydrogen_cleanup_stage(
         target_residue_ids=target_residue_ids,
         fixed_hydrogen_atom_refs=fixed_hydrogen_atom_refs,
     )
-    return TransformationResult(
+    return replace(
+        result,
         structure=cleaned_structure,
-        repairs=result.repairs,
         issues=result.issues + tuple(cleanup_issues),
     )
 

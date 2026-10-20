@@ -238,11 +238,9 @@ def test_process_structure_reports_blocking_phase_for_matrix_blocked_scenario() 
     assert outcome.status is RequestedGoalStatus.BLOCKED
     assert outcome.blocking_phases == (WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION,)
 
-    assert result.terminal_branch_report is not None
-    coverage_phase = (
-        result.terminal_branch_report.preferred_outcome().phase_report.outcome_for(
-            WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION
-        )
+    assert result.branch_report is not None
+    coverage_phase = result.branch_report.preferred_outcome().phase_report.outcome_for(
+        WorkflowPlanningPhase.CHEMISTRY_NORMALIZATION
     )
     assert coverage_phase is not None
     assert coverage_phase.status is WorkflowPhaseStatus.BLOCKED
@@ -256,8 +254,8 @@ def test_terminal_branch_phase_report_distinguishes_matrix_failures() -> None:
 
     intrinsic_structure = load_case_structure(REFINEMENT_BENCHMARK_CASES["3g8l-asn182"])
     intrinsic_result = process_structure(intrinsic_structure)
-    assert intrinsic_result.terminal_branch_report is not None
-    intrinsic_outcome = intrinsic_result.terminal_branch_report.preferred_outcome()
+    assert intrinsic_result.branch_report is not None
+    intrinsic_outcome = intrinsic_result.branch_report.preferred_outcome()
     intrinsic_phase = intrinsic_outcome.phase_report.outcome_for(
         WorkflowPlanningPhase.INTRINSIC_GEOMETRY_CORRECTION,
     )
@@ -279,8 +277,8 @@ def test_terminal_branch_phase_report_distinguishes_matrix_failures() -> None:
             ligand_context_mode=WorkflowLigandContextMode.CONSIDER_IF_PRESENT,
         ),
     )
-    assert interaction_result.terminal_branch_report is not None
-    interaction_outcome = interaction_result.terminal_branch_report.preferred_outcome()
+    assert interaction_result.branch_report is not None
+    interaction_outcome = interaction_result.branch_report.preferred_outcome()
     interaction_only_phase = interaction_outcome.phase_report.outcome_for(
         WorkflowPlanningPhase.INTERACTION_AWARE_CORRECTION,
     )
@@ -341,9 +339,9 @@ def test_process_structure_defers_intrinsic_phase_report_for_hydrogen_complete_r
 
     result = process_structure(hydrogenated_structure)
 
-    assert result.terminal_branch_report is not None
+    assert result.branch_report is not None
     with pytest.raises(AssertionError, match="evaluated lazily"):
-        result.terminal_branch_report.preferred_outcome().phase_report.outcome_for(
+        result.branch_report.preferred_outcome().phase_report.outcome_for(
             WorkflowPlanningPhase.INTRINSIC_GEOMETRY_CORRECTION
         )
 
@@ -441,14 +439,12 @@ def test_terminal_branch_phase_report_surfaces_parser_incompatibility_as_intrins
 
     result = process_structure(hydrogenated_structure)
 
-    assert result.terminal_branch_report is not None
-    score = result.terminal_branch_report.preferred_outcome().branch_quality_score
+    assert result.branch_report is not None
+    score = result.branch_report.preferred_outcome().branch_quality_score
     assert score.parser_incompatible == 1
     assert score.parser_extra_heavy_bond_count == 1
-    intrinsic_phase = (
-        result.terminal_branch_report.preferred_outcome().phase_report.outcome_for(
-            WorkflowPlanningPhase.INTRINSIC_GEOMETRY_CORRECTION
-        )
+    intrinsic_phase = result.branch_report.preferred_outcome().phase_report.outcome_for(
+        WorkflowPlanningPhase.INTRINSIC_GEOMETRY_CORRECTION
     )
     assert intrinsic_phase is not None
     assert intrinsic_phase.status is WorkflowPhaseStatus.UNRESOLVED
@@ -549,11 +545,9 @@ def test_terminal_branch_phase_report_blocks_parser_incompatibility_on_topology(
 
     result = process_structure(hydrogenated_structure)
 
-    assert result.terminal_branch_report is not None
-    intrinsic_phase = (
-        result.terminal_branch_report.preferred_outcome().phase_report.outcome_for(
-            WorkflowPlanningPhase.INTRINSIC_GEOMETRY_CORRECTION
-        )
+    assert result.branch_report is not None
+    intrinsic_phase = result.branch_report.preferred_outcome().phase_report.outcome_for(
+        WorkflowPlanningPhase.INTRINSIC_GEOMETRY_CORRECTION
     )
     assert intrinsic_phase is not None
     assert intrinsic_phase.status is WorkflowPhaseStatus.BLOCKED
