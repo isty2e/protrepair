@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
@@ -16,7 +17,28 @@ from protrepair.transformer.completion.policies import OrphanFragmentPolicy
 
 @dataclass(frozen=True, slots=True)
 class TransformerExecutionContext:
-    """Execution dependencies shared by process-transformer invocations."""
+    """Execution dependencies shared by process-transformer invocations.
+
+    Parameters
+    ----------
+    component_library : ComponentLibrary
+        Active component definitions.
+    original_structure : ProteinStructure
+        Original workflow input for source-sensitive transformations.
+    orphan_fragment_policy : OrphanFragmentPolicy
+        Handling of disconnected heavy fragments.
+    reference_structure : ProteinStructure or None
+        Optional reconstruction donor.
+    histidine_protonation : HistidineProtonationRequest
+        New HIS selection, or no new request.
+    allow_retained_non_polymer_rdkit_fallback : bool
+        Whether retained-component preparation may infer chemistry.
+    retained_non_polymer_chemistry_evidence : tuple
+        RetainedNonPolymerChemistryEvidence values for explicit interpretation.
+    polymer_preparation : PolymerMicrostatePreparation or None
+        Optional non-semantic seed. Consumers rebind it to their exact current
+        snapshot, library and requests; it is not proposal-time authority.
+    """
 
     component_library: ComponentLibrary
     original_structure: ProteinStructure
@@ -30,3 +52,6 @@ class TransformerExecutionContext:
         RetainedNonPolymerChemistryEvidence,
         ...,
     ] = ()
+    polymer_preparation: PolymerMicrostatePreparation | None = field(
+        default=None, compare=False, repr=False
+    )

@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from rdkit import Chem
@@ -14,6 +15,7 @@ from tests.support.canonical_builders import (
 
 from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.chemistry.nonstandard.registry import build_bundled_nonstandard_registry
@@ -171,23 +173,62 @@ def _hydrogen_topology_state(structure: ProteinStructure) -> TopologyAvailabilit
         (True, frozenset({ResidueId("A", 99)})),
     ],
 )
-def test_no_selected_present_h_skips_preparation(has_hydrogens, targets, monkeypatch):
+@pytest.mark.parametrize("seeded", (False, True))
+def test_no_selected_present_h_skips_preparation(
+    has_hydrogens, targets, seeded, monkeypatch
+):
     source = _proline()
     if not has_hydrogens:
         source = source.without_hydrogens()
+    library = build_default_component_library()
+    seed = (
+        PolymerMicrostatePreparation(PolymerMicrostateContext(source), library)
+        if seeded
+        else None
+    )
 
     def unexpected_preparation(*args, **kwargs):
         raise AssertionError("no selected present H needs chemical preparation")
 
     monkeypatch.setattr(
+        PolymerMicrostatePreparation, "for_inputs", unexpected_preparation
+    )
+    monkeypatch.setattr(
         "protrepair.transformer.completion.hydrogen.topology.PolymerMicrostatePreparation",
         unexpected_preparation,
     )
     result = resolve_fixed_hydrogen_topology(
-        source, build_default_component_library(), target_residue_ids=targets
+        source, library, target_residue_ids=targets, observed_preparation=seed
     )
     assert result.structure is source
     assert not result.repairs and not result.issues
+
+
+@pytest.mark.parametrize("binding", ("exact", "source", "library", "requests"))
+def test_seeded_topology_preserves_cold_results_and_exact_binding(binding):
+    source = _proline()
+    library = build_default_component_library()
+    seed = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(source),
+        library,
+        requests={(_RID, PolymerChemicalSite.BACKBONE_N): None}
+        if binding == "requests"
+        else None,
+    )
+    if binding == "source":
+        source = source.with_provenance(source.provenance)
+    elif binding == "library":
+        library = replace(library)
+    cold = resolve_fixed_hydrogen_topology(source, library)
+    initialize = PolymerMicrostatePreparation.__init__
+    with patch.object(
+        PolymerMicrostatePreparation, "__init__", autospec=True, side_effect=initialize
+    ) as constructor:
+        warm = resolve_fixed_hydrogen_topology(
+            source, library, observed_preparation=seed
+        )
+    assert warm == cold
+    assert constructor.call_count == (0 if binding == "exact" else 1)
 
 
 @pytest.mark.parametrize(
@@ -204,7 +245,11 @@ def test_present_alias_bonds_preserve_all_other_facets_and_are_idempotent(
     assert query.fixed_hydrogen_topology_updates(_RID)
     assert _bond(source, alias, "CB") is None
 
-    result = resolve_fixed_hydrogen_topology(source, library)
+    cold = resolve_fixed_hydrogen_topology(source, library)
+    result = resolve_fixed_hydrogen_topology(
+        source, library, observed_preparation=query
+    )
+    assert result == cold
     after = result.structure
     bond = _bond(after, alias, "CB")
     assert bond is not None and bond.order == 1

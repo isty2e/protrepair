@@ -8,6 +8,7 @@ from protrepair.chemistry import (
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
+    evidence_by_residue_id,
 )
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.scope import Scope
@@ -525,8 +526,43 @@ def plan_workflow_actions(
         ...,
     ]
     | None = None,
+    chemistry_observation: StructureChemistryObservation | None = None,
 ) -> WorkflowPlanningOutcome:
-    """Return the generic workflow planning outcome for one canonical structure."""
+    """Plan from current facts without transferring proposal-time authority.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Exact current carrier.
+    requested_goals : RequestedGoalSet
+        Normalized target states.
+    transform_requests : WorkflowTransformRequests
+        Explicit transformation requests and preparation policy.
+    component_library : ComponentLibrary or None
+        Active definitions, or the default library.
+    planner_memory : WorkflowPlannerMemory or None
+        Prior attempts and adopted actions, or an empty history.
+    planning_context : WorkflowPlanningContext or None
+        Search and donor constraints, or defaults inferred from the request.
+    retained_non_polymer_chemistry_evidence : tuple
+        Explicit RetainedNonPolymerChemistryEvidence values.
+    action_registry : tuple or None
+        Available WorkflowActionRegistryEntry families, or the default registry.
+    chemistry_observation : StructureChemistryObservation or None
+        Observation bound to the exact carrier, library, canonical evidence and
+        default observation policy. None derives one independently.
+
+    Returns
+    -------
+    WorkflowPlanningOutcome
+        Selected proposals and current blockers.
+
+    Raises
+    ------
+    ValueError
+        The observation has different interpretation inputs, or required donor
+        availability is absent from the planning context.
+    """
 
     active_action_registry = (
         _default_workflow_action_registry()
@@ -561,11 +597,20 @@ def plan_workflow_actions(
             "when explicit external span reconstructions are requested"
         )
 
-    chemistry_observation = StructureChemistryObservation(
-        structure,
-        component_library=active_component_library,
-        retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
-    )
+    if chemistry_observation is None:
+        chemistry_observation = StructureChemistryObservation(
+            structure,
+            component_library=active_component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
+    else:
+        chemistry_observation.require_context(
+            structure,
+            component_library=active_component_library,
+            retained_non_polymer_chemistry_evidence=tuple(
+                evidence_by_residue_id(retained_non_polymer_chemistry_evidence).values()
+            ),
+        )
     coverage_facts, chemistry_readiness_facts = (
         chemistry_observation.whole_structure_facts()
     )

@@ -59,6 +59,7 @@ class PolymerHydrogenTopologyResolutionTransformer(
             projected_domain.state,
             context.component_library,
             target_residue_ids=self.covered_residue_ids(),
+            observed_preparation=context.polymer_preparation,
         )
         return ProjectedCodomainState(
             scope=self.scope,

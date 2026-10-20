@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field, replace
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
@@ -80,7 +81,12 @@ class WorkflowPlanningSession:
         RetainedNonPolymerChemistryEvidence, ...
     ]
     _outcomes_by_state: dict[
-        int, tuple[WorkflowRuntimeState, WorkflowPlanningOutcome]
+        int,
+        tuple[
+            WorkflowRuntimeState,
+            WorkflowPlanningOutcome,
+            StructureChemistryObservation,
+        ],
     ] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def known_outcome(
@@ -96,6 +102,13 @@ class WorkflowPlanningSession:
 
         outcome = self.known_outcome(state)
         if outcome is None:
+            observation = StructureChemistryObservation(
+                state.result.structure,
+                component_library=self.component_library,
+                retained_non_polymer_chemistry_evidence=(
+                    self.retained_non_polymer_chemistry_evidence
+                ),
+            )
             outcome = plan_workflow_actions(
                 state.result.structure,
                 requested_goals=self.requested_goals,
@@ -106,9 +119,32 @@ class WorkflowPlanningSession:
                 retained_non_polymer_chemistry_evidence=(
                     self.retained_non_polymer_chemistry_evidence
                 ),
+                chemistry_observation=observation,
             )
-            self._outcomes_by_state[id(state)] = (state, outcome)
+            self._outcomes_by_state[id(state)] = (state, outcome, observation)
         return outcome
+
+    def observed_polymer_preparation(
+        self, state: WorkflowRuntimeState
+    ) -> PolymerMicrostatePreparation:
+        """Supply execution with the observation retained by this exact plan.
+
+        Parameters
+        ----------
+        state : WorkflowRuntimeState
+            Current result and planning history.
+
+        Returns
+        -------
+        PolymerMicrostatePreparation
+            Exact-current seed without new transformation requests. Plan and
+            observation are evicted together when their state leaves the frontier.
+        """
+        self.plan(state)
+        observation = self._outcomes_by_state[id(state)][2]
+        return observation.hydrogen_expectation_model.polymer_preparation.for_inputs(
+            state.result.structure, self.component_library
+        )
 
     def retain_states(self, states: tuple[WorkflowRuntimeState, ...]) -> None:
         """Release plans and their strong input references outside the frontier."""
@@ -447,6 +483,9 @@ def execute_iterative_workflow(
             ),
             retained_non_polymer_chemistry_evidence=(
                 retained_non_polymer_chemistry_evidence
+            ),
+            polymer_preparation=planning_session.observed_polymer_preparation(
+                runtime_state
             ),
         )
         for proposal in proposal_batch:

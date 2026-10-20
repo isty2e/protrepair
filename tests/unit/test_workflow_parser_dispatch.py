@@ -28,6 +28,7 @@ from protrepair.transformer.local.models import LocalScopeSpec
 from protrepair.transformer.packing.spec import PackingScope, PackingSpec
 from protrepair.transformer.refinement.result import RefinementTransformationResult
 from protrepair.transformer.refinement.spec import RepairRefinementSpec
+from protrepair.workflow.actions import hydrogen_completion, hydrogen_topology
 from protrepair.workflow.actions.disulfide_topology import (
     DisulfideTopologyResolutionTransformer,
 )
@@ -120,6 +121,41 @@ def test_clean_workflow_plans_each_unchanged_state_once(monkeypatch):
 
     assert result.requested_goals_fully_satisfied()
     assert len(planning_inputs) == 4
+
+
+def test_hydrogen_actions_receive_the_exact_planning_preparation(monkeypatch):
+    source = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
+    topology = hydrogen_topology.resolve_fixed_hydrogen_topology
+    completion = hydrogen_completion.add_hydrogens
+    seen = []
+
+    def resolve(structure, *args, observed_preparation=None, **kwargs):
+        assert observed_preparation is not None
+        assert observed_preparation.context.source is structure
+        seen.append("topology")
+        return topology(
+            structure, *args, observed_preparation=observed_preparation, **kwargs
+        )
+
+    def place(structure, *, preparation=None, **kwargs):
+        assert preparation is not None
+        assert preparation.context.source is structure
+        seen.append("placement")
+        return completion(structure, preparation=preparation, **kwargs)
+
+    monkeypatch.setattr(hydrogen_topology, "resolve_fixed_hydrogen_topology", resolve)
+    monkeypatch.setattr(hydrogen_completion, "add_hydrogens", place)
+    result = process_structure(
+        source,
+        requested_goals=(
+            requested_process_goal(
+                scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+            ),
+        ),
+    )
+    assert result.requested_goals_fully_satisfied()
+    assert not result.has_errors()
+    assert seen == ["topology", "placement"]
 
 
 @pytest.mark.parametrize(

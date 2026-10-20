@@ -21,6 +21,10 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
+from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
+from protrepair.transformer.completion.hydrogen.protonation import (
+    PrasRatioHistidineProtonationRequest,
+)
 
 
 @pytest.fixture
@@ -54,6 +58,31 @@ def test_exact_binding_reuses_preparation_and_normalizes_empty_request(source):
     prepared = PolymerMicrostatePreparation(PolymerMicrostateContext(source), library)
     assert prepared.for_inputs(source, library) is prepared
     assert prepared.for_inputs(source, library, requests={}) is prepared
+
+
+@pytest.mark.parametrize("binding", ("exact", "source", "requests"))
+def test_seeded_execution_preserves_the_complete_cold_result_after_stage_edits(
+    source, binding
+):
+    library = build_default_component_library()
+    prepared = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(source),
+        library,
+        requests={(ResidueId("A", 1), PolymerChemicalSite.BACKBONE_N): None}
+        if binding == "requests"
+        else None,
+    )
+    if binding == "source":
+        source = source.with_provenance(source.provenance)
+    request = PrasRatioHistidineProtonationRequest(ratio=0.0)
+    cold = materialize_hydrogens_core(source, library, histidine_protonation=request)
+    warm = materialize_hydrogens_core(
+        source, library, histidine_protonation=request, preparation=prepared
+    )
+    assert warm == cold
+    assert len(warm.structure.constitution.chains[0].residues[0].atom_sites) > len(
+        source.constitution.chains[0].residues[0].atom_sites
+    )
 
 
 @pytest.mark.parametrize("change", ("equal_copy", "geometry", "provenance", "library"))

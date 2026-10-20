@@ -64,6 +64,7 @@ class HydrogenCompletionTransformer(ResidueSetWorkflowStructureTransformer):
             orphan_fragment_policy=context.orphan_fragment_policy,
             histidine_protonation=context.histidine_protonation,
             local_refinement=None,
+            preparation=context.polymer_preparation,
         )
         return ProjectedCodomainState(
             scope=self.scope,

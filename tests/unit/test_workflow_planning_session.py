@@ -7,9 +7,14 @@ from unittest.mock import Mock
 import pytest
 
 from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
 from protrepair.io import read_structure
 from protrepair.scope import AtomSetScope, ResidueSetScope
 from protrepair.state import StructureProjectionStateFacts
+from protrepair.state.chemistry_observation import StructureChemistryObservation
+from protrepair.structure.labels import ResidueId
 from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.continuous.settings import (
     ContinuousRelaxationProfile,
@@ -28,6 +33,7 @@ from protrepair.workflow.engine import runtime
 from protrepair.workflow.planning.planner import (
     WorkflowPlannerMemory,
     WorkflowPlanningOutcome,
+    plan_workflow_actions,
 )
 from protrepair.workflow.planning.transformation.runtime import (
     StructurePlanningSignature,
@@ -71,6 +77,64 @@ def test_exact_plan_reuse_and_frontier_eviction(planning_case):
     assert session.known_outcome(state) is None
     assert session.plan(state) is outcome
     assert plan.call_count == 2
+
+
+def test_execution_seed_shares_the_planning_observation_and_its_lifetime(planning_case):
+    state, session, plan = planning_case
+    session.plan(state)
+    observation = plan.call_args.kwargs["chemistry_observation"]
+    prepared = session.observed_polymer_preparation(state)
+    assert prepared is observation.hydrogen_expectation_model.polymer_preparation
+    assert session.observed_polymer_preparation(state) is prepared
+    assert prepared.context.source is state.result.structure
+    plan.assert_called_once()
+
+    session.retain_states(())
+    assert session.observed_polymer_preparation(state) is not prepared
+    assert plan.call_count == 2
+
+
+@pytest.mark.parametrize(
+    "binding", ("exact", "source", "library", "policy", "evidence")
+)
+def test_planner_observation_injection_validates_its_context(planning_case, binding):
+    state, session, _ = planning_case
+    source = state.result.structure
+    library = session.component_library
+    observation = StructureChemistryObservation(
+        source,
+        component_library=library,
+        allow_retained_non_polymer_rdkit_fallback=binding != "policy",
+        retained_non_polymer_chemistry_evidence=(
+            RetainedNonPolymerChemistryEvidence(ResidueId("Z", 99), "C", ("C1",)),
+        )
+        if binding == "evidence"
+        else (),
+    )
+    if binding == "source":
+        source = source.with_provenance(source.provenance)
+    elif binding == "library":
+        library = replace(library)
+
+    def plan():
+        return plan_workflow_actions(
+            source,
+            requested_goals=session.requested_goals,
+            transform_requests=session.transform_requests,
+            component_library=library,
+            chemistry_observation=observation,
+        )
+
+    if binding == "exact":
+        assert plan() == plan_workflow_actions(
+            source,
+            requested_goals=session.requested_goals,
+            transform_requests=session.transform_requests,
+            component_library=library,
+        )
+    else:
+        with pytest.raises(ValueError, match="exact context"):
+            plan()
 
 
 @pytest.mark.parametrize("change", ("result", "attempt", "native"))

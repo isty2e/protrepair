@@ -152,7 +152,10 @@ def materialize_hydrogens_core(
     )
     normalized = structure.without_atom_refs(forbidden) if forbidden else structure
     topology_result = resolve_fixed_hydrogen_topology(
-        normalized, library, target_residue_ids=targets
+        normalized,
+        library,
+        target_residue_ids=targets,
+        observed_preparation=preparation,
     )
     normalized = topology_result.structure
     result = TransformationResult(

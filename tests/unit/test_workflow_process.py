@@ -24,6 +24,7 @@ from tests.support.workflow_proposals import workflow_proposals
 
 from protrepair.api import process_structure
 from protrepair.chemistry import RestraintLibrary, build_default_component_library
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.diagnostics import (
     IssueSeverity,
     RepairEventKind,
@@ -57,6 +58,7 @@ from protrepair.state import (
     OxtPresenceState,
     StructureProjectionStateFacts,
 )
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure import (
     ProteinStructure,
     StructureIngress,
@@ -574,7 +576,14 @@ def test_execute_iterative_workflow_threads_retained_non_polymer_fallback_policy
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             current_structure,
             requested_goals,
@@ -669,7 +678,14 @@ def test_process_structure_threads_typed_histidine_request_to_hydrogen_completio
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -699,7 +715,11 @@ def test_process_structure_threads_typed_histidine_request_to_hydrogen_completio
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: PrasRatioHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
+        preparation: PolymerMicrostatePreparation | None = None,
     ) -> ProcessResult:
+        assert preparation is not None
+        assert preparation.context.source is structure
+        assert preparation.component_library is component_library
         assert component_library is not None
         assert reference_structure is None
         assert prepare_heavy_atoms is False
@@ -1731,7 +1751,11 @@ def test_process_structure_applies_local_refinement_after_heavy_repair(
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
+        preparation: PolymerMicrostatePreparation | None = None,
     ) -> ProcessResult:
+        assert preparation is not None
+        assert preparation.context.source is structure
+        assert preparation.component_library is component_library
         assert component_library is not None
         assert reference_structure is None
         residue = structure.constitution.residue_or_ligand(residue_id)
@@ -1861,7 +1885,14 @@ def test_process_structure_expands_multi_node_workflow_frontier_fifo(
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -2207,7 +2238,14 @@ def test_process_structure_executes_parser_witness_repair_inside_workflow_pass(
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -2379,7 +2417,14 @@ def test_execute_iterative_workflow_caps_runaway_frontier(
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -2472,7 +2517,14 @@ def test_execute_iterative_workflow_caps_current_proposal_batch(
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -2591,7 +2643,14 @@ def test_process_structure_requeries_parser_witness_repair_between_passes(
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -2789,7 +2848,14 @@ def test_process_structure_rolls_back_parser_witness_pass_that_worsens_witnesses
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -2997,7 +3063,14 @@ def test_process_structure_skips_unproductive_parser_witness_cluster(
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -3267,7 +3340,14 @@ def test_process_structure_prefers_terminal_branch_that_satisfies_requested_stat
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -3412,7 +3492,14 @@ def test_process_structure_rejects_dominated_sibling_branch_by_issue_counts(
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -3547,7 +3634,14 @@ def test_process_structure_prefers_goal_progress_when_pruning_siblings(
         planner_memory: WorkflowPlannerMemory | None = None,
         planning_context=None,
         retained_non_polymer_chemistry_evidence=(),
+        chemistry_observation: StructureChemistryObservation | None = None,
     ) -> WorkflowPlanningOutcome:
+        assert chemistry_observation is not None
+        chemistry_observation.require_context(
+            current_structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
         del (
             requested_goals,
             transform_requests,
@@ -3709,7 +3803,11 @@ def test_process_structure_applies_local_refinement_after_hydrogenation(
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
+        preparation: PolymerMicrostatePreparation | None = None,
     ) -> ProcessResult:
+        assert preparation is not None
+        assert preparation.context.source is structure
+        assert preparation.component_library is component_library
         assert component_library is not None
         assert reference_structure is None
         assert not prepare_heavy_atoms
@@ -3873,7 +3971,11 @@ def test_process_structure_applies_local_prerequisites_before_explicit_refinemen
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
+        preparation: PolymerMicrostatePreparation | None = None,
     ) -> ProcessResult:
+        assert preparation is not None
+        assert preparation.context.source is structure
+        assert preparation.component_library is component_library
         assert component_library is not None
         assert reference_structure is None
         residue = structure.constitution.residue_or_ligand(residue_id)
@@ -3985,7 +4087,11 @@ def test_process_structure_recommended_policy_defers_binding_until_hydrogens_exi
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
+        preparation: PolymerMicrostatePreparation | None = None,
     ) -> ProcessResult:
+        assert preparation is not None
+        assert preparation.context.source is structure
+        assert preparation.component_library is component_library
         assert component_library is not None
         assert reference_structure is None
         assert not prepare_heavy_atoms
@@ -4112,7 +4218,11 @@ def test_process_structure_does_not_hydrogenate_after_failed_heavy_completion(
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
+        preparation: PolymerMicrostatePreparation | None = None,
     ) -> ProcessResult:
+        assert preparation is not None
+        assert preparation.context.source is structure
+        assert preparation.component_library is component_library
         assert component_library is not None
         assert reference_structure is None
         assert not prepare_heavy_atoms
@@ -4182,7 +4292,11 @@ def test_process_structure_uses_partitioned_hydrogen_route_for_heterogeneous_inp
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
+        preparation: PolymerMicrostatePreparation | None = None,
     ) -> ProcessResult:
+        assert preparation is not None
+        assert preparation.context.source is structure
+        assert preparation.component_library is component_library
         assert component_library is not None
         assert reference_structure is None
         assert not prepare_heavy_atoms
@@ -4372,7 +4486,11 @@ def test_process_structure_recommended_policy_defers_binding_for_heavy_only_refi
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
+        preparation: PolymerMicrostatePreparation | None = None,
     ) -> ProcessResult:
+        assert preparation is not None
+        assert preparation.context.source is structure
+        assert preparation.component_library is component_library
         assert component_library is not None
         assert reference_structure is None
         residue = structure.constitution.residue_or_ligand(residue_id)
