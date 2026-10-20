@@ -84,6 +84,7 @@ def materialize_hydrogens_core(
     target_residue_ids: frozenset[ResidueId] | None = None,
     histidine_protonation: HistidineProtonationRequest = _NO_NEW_HISTIDINE_REQUEST,
     rebuild_existing: bool = False,
+    preparation: PolymerMicrostatePreparation | None = None,
 ) -> TransformationResult:
     """Place fixed-template H and atomically realize resolved polymer sites.
 
@@ -104,6 +105,9 @@ def materialize_hydrogens_core(
     rebuild_existing : bool
         Regenerate H coordinates while preserving identities and scalars.
         Moved pre-repair anchors also trigger residue-local rebuilding.
+    preparation : PolymerMicrostatePreparation or None
+        Optional seed. Each stage rebinds it after any snapshot, library or
+        request change; a count-compatible older snapshot is not reused.
 
     Returns
     -------
@@ -148,7 +152,10 @@ def materialize_hydrogens_core(
     )
     normalized = structure.without_atom_refs(forbidden) if forbidden else structure
     topology_result = resolve_fixed_hydrogen_topology(
-        normalized, library, target_residue_ids=targets
+        normalized,
+        library,
+        target_residue_ids=targets,
+        observed_preparation=preparation,
     )
     normalized = topology_result.structure
     result = TransformationResult(
@@ -184,11 +191,15 @@ def materialize_hydrogens_core(
 
     # Carbonyl orders are prerequisites for neighboring amide-H geometry.
     # These immutable staging snapshots never escape to FF or the workflow.
+    prepared = preparation
     for carbonyls in (True, False):
-        prepared = PolymerMicrostatePreparation(
-            PolymerMicrostateContext(result.structure),
-            library,
-            requests=histidine_microstate_requests(result.structure, request),
+        requests = histidine_microstate_requests(result.structure, request)
+        prepared = (
+            PolymerMicrostatePreparation(
+                PolymerMicrostateContext(result.structure), library, requests=requests
+            )
+            if prepared is None
+            else prepared.for_inputs(result.structure, library, requests=requests)
         )
         patches = []
         repairs = list(result.repairs)
@@ -265,8 +276,8 @@ def materialize_hydrogens_core(
 
     # Orient fixed H against applied chemistry, not choices that may fail or
     # belong to residues outside the requested mutation scope.
-    prepared = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(result.structure),
+    prepared = prepared.for_inputs(
+        result.structure,
         library,
         requests=histidine_microstate_requests(result.structure, request),
     )

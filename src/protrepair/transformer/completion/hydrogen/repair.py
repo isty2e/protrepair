@@ -39,8 +39,47 @@ def add_hydrogens(
     histidine_protonation: HistidineProtonationRequest | None = None,
     protonate_histidines: bool = False,
     local_refinement: RepairLocalRefinementDirective | None = None,
+    preparation: PolymerMicrostatePreparation | None = None,
 ) -> TransformationResult:
-    """Add hydrogens to supported chains while preserving input ligands."""
+    """Add hydrogens to supported chains while preserving input ligands.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Current canonical input.
+    component_library : ComponentLibrary or None
+        Active definitions, or the default library.
+    reference_structure : ProteinStructure or None
+        Optional heavy-atom reconstruction donor.
+    prepare_heavy_atoms : bool
+        Complete the scaffold and required terminal O before H placement.
+    target_residue_ids : frozenset[ResidueId] or None
+        Polymer residues to prepare; None selects all polymer residues.
+    orphan_fragment_policy : OrphanFragmentPolicy
+        Handling of disconnected heavy fragments.
+    histidine_protonation : HistidineProtonationRequest or None
+        Explicit HIS selection, or no new request.
+    protonate_histidines : bool
+        Request the default ratio; mutually exclusive with an explicit request.
+    local_refinement : RepairLocalRefinementDirective or None
+        Optional post-preparation refinement.
+    preparation : PolymerMicrostatePreparation or None
+        Optional seed; every consuming stage rebinds after input changes.
+
+    Returns
+    -------
+    TransformationResult
+        Prepared structure with repairs and residue-local diagnostics.
+
+    Raises
+    ------
+    TypeError
+        Histidine request inputs are not supported canonical values.
+    ValueError
+        Conflicting histidine request forms were supplied.
+    RdkitUnavailableError
+        Required native H placement is unavailable.
+    """
 
     library = (
         build_default_component_library()
@@ -75,8 +114,12 @@ def add_hydrogens(
         prepared_structure = heavy_result.structure
         repairs = heavy_result.repairs
         issues = heavy_result.issues
-        preparation = PolymerMicrostatePreparation(
-            PolymerMicrostateContext(prepared_structure), library
+        preparation = (
+            PolymerMicrostatePreparation(
+                PolymerMicrostateContext(prepared_structure), library
+            )
+            if preparation is None
+            else preparation.for_inputs(prepared_structure, library)
         )
         terminal_targets = frozenset(
             residue.residue_id
@@ -102,6 +145,7 @@ def add_hydrogens(
         source_isotope_structure=structure,
         target_residue_ids=target_residue_ids,
         histidine_protonation=histidine_protonation_request,
+        preparation=preparation,
     )
     staged_result = TransformationResult(
         structure=placement_result.structure,

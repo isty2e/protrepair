@@ -160,6 +160,7 @@ def plan_hydrogen_completion_transformers(
     coverage_facts: StructureCoverageFacts | None = None,
     chemistry_readiness_facts: StructureChemistryReadinessFacts | None = None,
     histidine_protonation: HistidineProtonationRequest | None = None,
+    observed_preparation: PolymerMicrostatePreparation | None = None,
 ) -> CompletionTransformerPlanningOutcome:
     """Propose H or coupled-chemistry completion from current state.
 
@@ -179,6 +180,9 @@ def plan_hydrogen_completion_transformers(
         Current-snapshot chemistry facts, or None to derive them.
     histidine_protonation : HistidineProtonationRequest or None
         New HIS selection. None retains applicable prior choices.
+    observed_preparation : PolymerMicrostatePreparation or None
+        Reusable seed, rebound to the exact snapshot, library and full requests.
+        None derives targets independently after the eligibility check.
 
     Returns
     -------
@@ -187,9 +191,8 @@ def plan_hydrogen_completion_transformers(
         remains a terminal-completion prerequisite, not an H-placement action.
     """
 
-    if (
-        not requested_goals.requests_whole_structure_hydrogen_population()
-        and not required_residue_ids
+    if not requested_goals.requests_hydrogen_preparation(
+        required_residue_ids=required_residue_ids
     ):
         return CompletionTransformerPlanningOutcome()
 
@@ -223,10 +226,15 @@ def plan_hydrogen_completion_transformers(
         required_residue_id_set=set(required_residue_ids),
     )
     request = normalize_histidine_protonation_request(histidine_protonation)
-    preparation = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(structure),
-        component_library,
-        requests=histidine_microstate_requests(structure, request),
+    requests = histidine_microstate_requests(structure, request)
+    preparation = (
+        PolymerMicrostatePreparation(
+            PolymerMicrostateContext(structure), component_library, requests=requests
+        )
+        if observed_preparation is None
+        else observed_preparation.for_inputs(
+            structure, component_library, requests=requests
+        )
     )
     selected = set(hydrogen_target_residue_ids)
     for fact in active_chemistry_readiness_facts.residue_facts:

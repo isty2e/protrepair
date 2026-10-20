@@ -20,6 +20,11 @@ def terminal_augmentation_is_admissible(domain: WorkflowActionDomain) -> bool:
             requested_goals=domain.requested_goals,
             component_library=domain.component_library,
             required_residue_ids=domain.explicit_repair.prerequisite_residue_ids(),
+            observed_preparation=(
+                domain.observed_preparation
+                if domain.hydrogen_preparation_is_requested()
+                else None
+            ),
         )
         is not None
     )
@@ -36,6 +41,11 @@ def terminal_augmentation_proposals(
         requested_goals=domain.requested_goals,
         component_library=domain.component_library,
         required_residue_ids=domain.explicit_repair.prerequisite_residue_ids(),
+        observed_preparation=(
+            domain.observed_preparation
+            if domain.hydrogen_preparation_is_requested()
+            else None
+        ),
     )
     if terminal_transformer is None:
         return ()

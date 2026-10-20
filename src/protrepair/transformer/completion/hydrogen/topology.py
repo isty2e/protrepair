@@ -20,6 +20,7 @@ def resolve_fixed_hydrogen_topology(
     component_library: ComponentLibrary,
     *,
     target_residue_ids: frozenset[ResidueId] | None = None,
+    observed_preparation: PolymerMicrostatePreparation | None = None,
 ) -> TransformationResult:
     """Attach present fixed H without changing atom identity or geometry.
 
@@ -31,6 +32,9 @@ def resolve_fixed_hydrogen_topology(
         Component definitions used to interpret names and fixed H inventory.
     target_residue_ids : frozenset[ResidueId] or None
         Polymer residues to update; None selects all polymer residues.
+    observed_preparation : PolymerMicrostatePreparation or None
+        Seed rebound to this exact snapshot and library without new requests.
+        Not acquired when no selected residue has H.
 
     Returns
     -------
@@ -54,8 +58,12 @@ def resolve_fixed_hydrogen_topology(
             if not any(atom.is_hydrogen() for atom in residue.atom_sites):
                 continue
             if prepared is None:
-                prepared = PolymerMicrostatePreparation(
-                    PolymerMicrostateContext(structure), component_library
+                prepared = (
+                    PolymerMicrostatePreparation(
+                        PolymerMicrostateContext(structure), component_library
+                    )
+                    if observed_preparation is None
+                    else observed_preparation.for_inputs(structure, component_library)
                 )
             try:
                 fixed_context = prepared.fixed_hydrogen_context(residue.residue_id)

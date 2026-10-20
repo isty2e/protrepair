@@ -1,7 +1,5 @@
 """Evidence-based topology-resolution workflow proposal adapters."""
 
-from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.scope import ResidueSetScope
 from protrepair.state import HydrogenCoverageState, TopologyAvailabilityState
 from protrepair.workflow.actions.disulfide_hydrogen import (
@@ -78,10 +76,7 @@ def polymer_hydrogen_topology_resolution_is_admissible(
     bool
         Whether preserved H topology resolution may contribute to the request.
     """
-    return (
-        domain.requested_goals.requests_whole_structure_hydrogen_population()
-        or bool(domain.explicit_repair.prerequisite_residue_ids())
-    )
+    return domain.hydrogen_preparation_is_requested()
 
 
 def polymer_hydrogen_topology_resolution_proposals(
@@ -116,9 +111,7 @@ def polymer_hydrogen_topology_resolution_proposals(
     )
     if not candidates:
         return ()
-    prepared = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(domain.structure), domain.component_library
-    )
+    prepared = domain.observed_preparation
     selected = []
     for residue_id in candidates:
         try:

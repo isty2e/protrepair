@@ -1,6 +1,7 @@
 """Integral local graphs, without a preferred protonation state or pH model."""
 
 from enum import Enum
+from functools import lru_cache
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.microstate.graph import MicrostateGraph
@@ -61,6 +62,13 @@ def standard_microstate_candidates(
         raise ValueError("side-chain sites do not have a backbone linkage")
     if component_id not in STANDARD_COMPONENT_ATOMS:
         return None
+    return _standard_microstate_candidates(component_id, site, linkage)
+
+
+@lru_cache(maxsize=256)
+def _standard_microstate_candidates(
+    component_id: str, site: PolymerChemicalSite, linkage: PeptideLinkage
+) -> MicrostateSite | None:
     if site is not PolymerChemicalSite.SIDECHAIN:
         if linkage is PeptideLinkage.UNKNOWN:
             return None

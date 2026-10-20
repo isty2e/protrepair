@@ -60,6 +60,10 @@ class PolymerMicrostateContext:
     _choices_by_residue: Mapping[ResidueId, tuple[AppliedMicrostateChoice, ...]] = (
         field(init=False, repr=False)
     )
+    _hydrogen_attachment_memo: dict[
+        tuple[ResidueId, int, int],
+        tuple[PolymerMicrostateSite, MicrostateResolution, dict[str, str]],
+    ] = field(default_factory=dict, init=False, repr=False, compare=False, hash=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, ProteinStructure):
@@ -412,6 +416,12 @@ class PolymerMicrostateContext:
             The graph is unresolved, the scaffold/boundary changed, or existing
             H atoms have unsupported charges, relationships or attachments.
         """
+        memo_key = (residue_id, id(site), id(resolution))
+        if proposed_parents is None:
+            cached = self._hydrogen_attachment_memo.get(memo_key)
+            if cached is not None:
+                return dict(cached[2])
+
         graph = resolution.graph
         if graph is None:
             raise ValueError("current chemistry requires a resolved microstate")
@@ -420,6 +430,7 @@ class PolymerMicrostateContext:
             raise ValueError(
                 "current microstate violates coordination donor requirements"
             )
+        reuse_attachments = proposed_parents is None
         proposed_parents = {} if proposed_parents is None else proposed_parents
         if not set(proposed_parents.values()) <= {atom.name for atom in graph.atoms}:
             raise ValueError("proposed H parent is outside the microstate")
@@ -578,6 +589,13 @@ class PolymerMicrostateContext:
             if not constitution.atom_site_at(index).is_hydrogen():
                 raise ValueError("microstate H identity collides with a heavy atom")
             hydrogens[name] = parent
+        if reuse_attachments:
+            # Retain the identity keys' objects to prevent id reuse in this context.
+            self._hydrogen_attachment_memo[memo_key] = (
+                site,
+                resolution,
+                dict(hydrogens),
+            )
         return hydrogens
 
     def hydrogen_parents(

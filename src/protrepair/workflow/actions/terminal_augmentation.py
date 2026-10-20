@@ -50,6 +50,7 @@ class TerminalAugmentationTransformer(ResidueSetWorkflowStructureTransformer):
         requested_goals: RequestedGoalSet,
         component_library: ComponentLibrary,
         required_residue_ids: tuple[ResidueId, ...] = (),
+        observed_preparation: PolymerMicrostatePreparation | None = None,
     ) -> "TerminalAugmentationTransformer | None":
         """Select OXT prerequisites without assuming free internal chain breaks.
 
@@ -65,6 +66,9 @@ class TerminalAugmentationTransformer(ResidueSetWorkflowStructureTransformer):
             Definitions used to bind coupled terminal chemistry.
         required_residue_ids : tuple[ResidueId, ...]
             Local preparation prerequisites requested by another action.
+        observed_preparation : PolymerMicrostatePreparation or None
+            Observed seed, rebound to this exact snapshot and library without
+            new requests. None derives it only when H prerequisites are needed.
 
         Returns
         -------
@@ -77,12 +81,15 @@ class TerminalAugmentationTransformer(ResidueSetWorkflowStructureTransformer):
             side=ResidueBoundarySide.C_TERMINUS,
         )
         target_residue_ids: list[ResidueId] = []
-        if (
-            requested_goals.requests_whole_structure_hydrogen_population()
-            or required_residue_ids
+        if requested_goals.requests_hydrogen_preparation(
+            required_residue_ids=required_residue_ids
         ):
-            preparation = PolymerMicrostatePreparation(
-                PolymerMicrostateContext(structure), component_library
+            preparation = (
+                PolymerMicrostatePreparation(
+                    PolymerMicrostateContext(structure), component_library
+                )
+                if observed_preparation is None
+                else observed_preparation.for_inputs(structure, component_library)
             )
             for chain in structure.constitution.chains:
                 for residue in chain.residues:

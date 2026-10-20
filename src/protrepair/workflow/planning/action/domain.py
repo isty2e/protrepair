@@ -1,8 +1,9 @@
 """Planner-readable transformer domain admissibility inputs."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.scope import AtomSetScope
 from protrepair.scope.relations import scopes_overlap
 from protrepair.state import (
@@ -16,6 +17,7 @@ from protrepair.state import (
     StructureIntrinsicGeometryFacts,
     StructureParserCompatibilityFacts,
 )
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.structure_topology import (
     StructureDisulfideHydrogenFacts,
     StructureDisulfideTopologyFacts,
@@ -45,6 +47,7 @@ from protrepair.workflow.planning.capability import (
     WorkflowActionEffectClass,
     WorkflowCapabilityDeficitFamily,
 )
+from protrepair.workflow.planning.completion import transformer_candidates
 from protrepair.workflow.planning.context_projection import (
     planning_context_is_holo_for_structure,
 )
@@ -363,14 +366,11 @@ class WorkflowSpanReconstructionReadView:
 class WorkflowActionDomain:
     """Planner-readable domain input for one workflow action family."""
 
-    structure: ProteinStructure
+    chemistry_observation: StructureChemistryObservation
     requested_goals: RequestedGoalSet
     transform_requests: WorkflowTransformRequests
-    component_library: ComponentLibrary
     planning_context: WorkflowPlanningContext
     state_deficit: WorkflowStateDeficit
-    coverage_facts: StructureCoverageFacts
-    chemistry_readiness_facts: StructureChemistryReadinessFacts
     boundary_facts: StructureBoundaryStateFacts
     disulfide_topology_facts: StructureDisulfideTopologyFacts
     disulfide_hydrogen_facts: StructureDisulfideHydrogenFacts
@@ -383,6 +383,12 @@ class WorkflowActionDomain:
     adopted_actions: tuple[WorkflowActionAdoption, ...] = ()
     relaxation_executions: tuple[ContinuousRelaxationExecution, ...] = ()
     attempts: tuple[WorkflowActionAttempt, ...] = ()
+    _observed_preparation: PolymerMicrostatePreparation | None = field(
+        default=None, init=False, compare=False, hash=False, repr=False
+    )
+    _hydrogen_planning_outcome: (
+        transformer_candidates.CompletionTransformerPlanningOutcome | None
+    ) = field(default=None, init=False, compare=False, hash=False, repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -422,6 +428,88 @@ class WorkflowActionDomain:
             relaxation_executions=self.relaxation_executions,
             attempts=self.attempts,
         )
+
+    @property
+    def structure(self) -> ProteinStructure:
+        """Return the exact carrier bound to the observed chemistry."""
+        return self.chemistry_observation.context_structure
+
+    @property
+    def component_library(self) -> ComponentLibrary:
+        """Return the observation's active component definitions."""
+        return self.chemistry_observation.component_library
+
+    @property
+    def coverage_facts(self) -> StructureCoverageFacts:
+        """Return coverage from the canonical observation."""
+        return self.chemistry_observation.whole_structure_facts()[0]
+
+    @property
+    def chemistry_readiness_facts(self) -> StructureChemistryReadinessFacts:
+        """Return readiness from the canonical observation."""
+        return self.chemistry_observation.whole_structure_facts()[1]
+
+    @property
+    def observed_preparation(self) -> PolymerMicrostatePreparation:
+        """Return observed targets bound once to this exact carrier.
+
+        Returns
+        -------
+        PolymerMicrostatePreparation
+            Current-source placement authority, even when count expectations
+            were reusable from an older equal-chemistry snapshot.
+        """
+        prepared = self._observed_preparation
+        if prepared is None:
+            model = self.chemistry_observation.hydrogen_expectation_model
+            prepared = model.polymer_preparation.for_inputs(
+                self.structure, self.component_library
+            )
+            object.__setattr__(self, "_observed_preparation", prepared)
+        return prepared
+
+    def hydrogen_preparation_is_requested(self) -> bool:
+        """Include the current local execution projection in H activation.
+
+        Returns
+        -------
+        bool
+            Whether H preparation can contribute to a requested goal or action.
+        """
+        return self.requested_goals.requests_hydrogen_preparation(
+            required_residue_ids=self.explicit_repair.prerequisite_residue_ids()
+        )
+
+    @property
+    def hydrogen_planning_outcome(
+        self,
+    ) -> transformer_candidates.CompletionTransformerPlanningOutcome:
+        """Compute one complete H family plan, including an empty outcome.
+
+        Returns
+        -------
+        CompletionTransformerPlanningOutcome
+            Candidates shared by admissibility and proposal queries. An inactive
+            H path does not acquire observed or requested preparation.
+        """
+        outcome = self._hydrogen_planning_outcome
+        if outcome is None:
+            required = self.explicit_repair.prerequisite_residue_ids()
+            if not self.hydrogen_preparation_is_requested():
+                outcome = transformer_candidates.CompletionTransformerPlanningOutcome()
+            else:
+                outcome = transformer_candidates.plan_hydrogen_completion_transformers(
+                    self.structure,
+                    requested_goals=self.requested_goals,
+                    component_library=self.component_library,
+                    required_residue_ids=required,
+                    coverage_facts=self.coverage_facts,
+                    chemistry_readiness_facts=self.chemistry_readiness_facts,
+                    histidine_protonation=self.transform_requests.histidine_protonation_request(),
+                    observed_preparation=self.observed_preparation,
+                )
+            object.__setattr__(self, "_hydrogen_planning_outcome", outcome)
+        return outcome
 
     @property
     def explicit_repair(self) -> WorkflowExplicitRepairReadView:

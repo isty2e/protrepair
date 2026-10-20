@@ -686,29 +686,6 @@ class PolymerMicrostateSite:
             aliases. Unrecognized names are omitted, not guessed geometrically.
             Actual bonds must be checked separately by the consumer.
         """
-        aliases = {
-            "H": "N",
-            "H1": "N",
-            "H2": "N",
-            "H3": "N",
-            "1H": "N",
-            "2H": "N",
-            "3H": "N",
-            "HXT": "OXT",
-            "HO": "O",
-        }
-        if self.template.component_id == "HIS":
-            aliases.update({"HD1": "ND1", "HE2": "NE2"})
-        elif self.template.component_id == "ARG":
-            aliases.update({"HH11": "NH1", "HH12": "NH1", "HH21": "NH2", "HH22": "NH2"})
-        elif self.template.component_id == "ASN":
-            aliases.update({"HD21": "ND2", "HD22": "ND2"})
-        elif self.template.component_id == "GLN":
-            aliases.update({"HE21": "NE2", "HE22": "NE2"})
-        elif self.template.component_id == "ASP":
-            aliases.update({"HD1": "OD1", "HD2": "OD2"})
-        elif self.template.component_id == "GLU":
-            aliases.update({"HE1": "OE1", "HE2": "OE2"})
         names = {}
         for atom in residue.atom_sites:
             if not atom.is_hydrogen():
@@ -725,24 +702,7 @@ class PolymerMicrostateSite:
                     + canonical[isotope_position + 1 :]
                 )
             names[atom.name] = canonical
-        anchors = self.template.template_hydrogen_anchor_by_name(names.values())
-        aliases.update(anchors)
-        # PDB suffix numbering and PRAS prefix numbering describe the same
-        # carbon-bound H families. Keep ambiguous families unresolved.
-        carbon_parents: dict[str, set[str]] = {}
-        for atom_name in self.template.expected_polymer_heavy_atom_names():
-            if not atom_name.startswith("C"):
-                continue
-            stem = "H" + atom_name[1:]
-            for name in (
-                stem,
-                *(f"{stem}{i}" for i in (1, 2, 3)),
-                *(f"{i}{stem}" for i in (1, 2, 3)),
-            ):
-                carbon_parents.setdefault(name, set()).add(atom_name)
-        for name, parents in carbon_parents.items():
-            if len(parents) == 1:
-                aliases.setdefault(name, next(iter(parents)))
+        aliases = self.template.polymer_hydrogen_parent_aliases()
         return {
             name: aliases[canonical]
             for name, canonical in names.items()
