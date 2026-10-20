@@ -70,10 +70,18 @@ from protrepair.workflow.contracts.result import (
     WorkflowPhaseReport,
 )
 from protrepair.workflow.engine.finalization import finalize_workflow_result
-from protrepair.workflow.engine.runtime import execute_iterative_workflow
+from protrepair.workflow.engine.runtime import (
+    WorkflowBranch,
+    WorkflowBranchEvaluator,
+    WorkflowRuntimeState,
+    execute_iterative_workflow,
+)
 from protrepair.workflow.planning.action.proposals import WorkflowProposalSelectionMode
 from protrepair.workflow.planning.action.registry import WorkflowStateAction
-from protrepair.workflow.planning.planner import WorkflowPlanningOutcome
+from protrepair.workflow.planning.planner import (
+    WorkflowPlannerMemory,
+    WorkflowPlanningOutcome,
+)
 from protrepair.workflow.planning.transformation.runtime import (
     StructurePlanningSignature,
 )
@@ -134,10 +142,14 @@ def test_zero_action_exhaustion_returns_unmodified_incomplete_structure(
     )
 
 
-@pytest.mark.parametrize("terminal_labels", ((), ("first",), ("first", "last")))
+@pytest.mark.parametrize(
+    "terminal_labels", ((), ("first",), ("last",), ("first", "last"))
+)
+@pytest.mark.parametrize("native_returned", (False, True))
 def test_exhaustion_selects_retained_branch_not_last_action_output(
     monkeypatch: pytest.MonkeyPatch,
     terminal_labels: tuple[str, ...],
+    native_returned: bool,
 ) -> None:
     source = load_case_structure(REFINEMENT_BENCHMARK_CASES["3g8l-asn182"])
     residue_ids = tuple(residue.residue_id for residue in source.iter_residue_sites())
@@ -194,7 +206,9 @@ def test_exhaustion_selects_retained_branch_not_last_action_output(
                     minimizer_status=1,
                     backend_version="test-return",
                 ),
-            ),
+            )
+            if native_returned
+            else (),
             structure=result.structure.with_provenance(
                 replace(
                     result.structure.provenance,
@@ -208,6 +222,14 @@ def test_exhaustion_selects_retained_branch_not_last_action_output(
         outputs.append(output)
         return output
 
+    assessed_plans = []
+    assess = WorkflowBranchEvaluator.branch_outcome
+
+    def observed_assessment(self, **kwargs):
+        assessed_plans.append(kwargs.get("planning_outcome"))
+        return assess(self, **kwargs)
+
+    monkeypatch.setattr(WorkflowBranchEvaluator, "branch_outcome", observed_assessment)
     monkeypatch.setattr(
         "protrepair.workflow.engine.runtime.plan_workflow_actions", plan
     )
@@ -233,7 +255,7 @@ def test_exhaustion_selects_retained_branch_not_last_action_output(
     assert all(
         branch.outcome.relaxation_executions == observed for branch in runtime.branches
     )
-    exhausted = "last" not in terminal_labels
+    exhausted = not all(label in terminal_labels for label in labels)
     assert runtime.stop_reason is (
         SpeculativeStopReason.ITERATION_LIMIT_REACHED
         if exhausted
@@ -246,10 +268,18 @@ def test_exhaustion_selects_retained_branch_not_last_action_output(
         else WorkflowBranchStatus.FRONTIER
     )
     assert runtime.branches[1].outcome.status is (
-        WorkflowBranchStatus.FRONTIER if exhausted else WorkflowBranchStatus.TERMINAL
+        WorkflowBranchStatus.TERMINAL
+        if "last" in terminal_labels
+        and ("first" in terminal_labels or not native_returned)
+        else WorkflowBranchStatus.FRONTIER
     )
     # The second node is not planned again merely to produce a partial result.
-    assert planned_labels.count("last") == (2 if terminal_labels else 1)
+    assert planned_labels.count("first") == (2 if native_returned else 1)
+    assert planned_labels.count("last") == (
+        2 if native_returned and "first" in terminal_labels else 1
+    )
+    if not native_returned:
+        assert all(plan is not None for plan in assessed_plans)
     result = finalize_workflow_result(
         branches=runtime.branches,
         stop_reason=runtime.stop_reason,
@@ -272,8 +302,11 @@ def test_exhaustion_selects_retained_branch_not_last_action_output(
     assert result.relaxation_executions == tuple(
         execution for output in outputs for execution in output.relaxation_executions
     )
-    assert result.relaxation_executions[0] is outputs[0].relaxation_executions[0]
-    assert result.relaxation_executions[0] is not outputs[-1].relaxation_executions[0]
+    if native_returned:
+        assert result.relaxation_executions[0] is outputs[0].relaxation_executions[0]
+        assert (
+            result.relaxation_executions[0] is not outputs[-1].relaxation_executions[0]
+        )
 
 
 @pytest.mark.parametrize("readable", (False, True))
@@ -372,6 +405,60 @@ def test_mixed_candidates_use_configured_quality_not_terminal_preference(
         stop_reason=SpeculativeStopReason.ITERATION_LIMIT_REACHED,
     )
     assert report.preferred_outcome() is terminal
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_incomplete_frontier_can_beat_hydrogenated_terminal_with_more_clashes(reverse):
+    source = load_case_structure(REFINEMENT_BENCHMARK_CASES["3g8l-asn182"])
+    prepared = add_hydrogens(source)
+    library = build_default_component_library()
+    context = WorkflowPlanningContext()
+    evaluator = WorkflowBranchEvaluator(
+        requested_goals=RequestedGoalSet(
+            whole_structure_requested_goals(HydrogenCoverageState.COMPLETE)
+        ),
+        component_library=library,
+        planning_context=context,
+        already_satisfied_requested_goals=(),
+    )
+    branches = []
+    for node_id, candidate, status in (
+        (1, prepared, WorkflowBranchStatus.TERMINAL),
+        (2, TransformationResult(source, (), ()), WorkflowBranchStatus.FRONTIER),
+    ):
+        branches.append(
+            WorkflowBranch(
+                result=candidate,
+                outcome=evaluator.branch_outcome(
+                    node_id=SpeculativePlanningNodeId(node_id),
+                    state=WorkflowRuntimeState(candidate, WorkflowPlannerMemory()),
+                    result=candidate,
+                    status=status,
+                ),
+            )
+        )
+    terminal, frontier = branches
+    assert terminal.outcome.requested_goal_report.unmet_count() == 0
+    assert frontier.outcome.requested_goal_report.unmet_count() == 1
+    assert (
+        frontier.outcome.branch_quality_score.protein_self_clash_count
+        < terminal.outcome.branch_quality_score.protein_self_clash_count
+    )
+    result = finalize_workflow_result(
+        branches=tuple(reversed(branches)) if reverse else tuple(branches),
+        planning_context=context,
+        component_library=library,
+        requested_analyses=frozenset(),
+        stop_reason=SpeculativeStopReason.ITERATION_LIMIT_REACHED,
+    )
+    assert result.structure is source
+    assert not result.requested_goals_fully_satisfied()
+    assert result.branch_report is not None
+    assert result.branch_report.preferred_outcome() is frontier.outcome
+    assert any(
+        issue.kind is ValidationIssueKind.WORKFLOW_SEARCH_EXHAUSTED
+        for issue in result.issues
+    )
 
 
 def test_report_rejects_absent_and_conflicting_candidate_evidence() -> None:

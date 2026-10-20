@@ -12,6 +12,7 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.completion.hydrogen.protonation import (
     HistidineProtonationRequest,
 )
+from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.refinement.result import RefinementTransformationResult
 from protrepair.transformer.refinement.speculative_planning import (
     EvaluatedSpeculativeProposal,
@@ -65,6 +66,57 @@ class WorkflowRuntimeState:
 
     result: TransformationResult
     planner_memory: WorkflowPlannerMemory
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowPlanningSession:
+    """Reuse exact-state plans within one workflow's fixed planning context."""
+
+    requested_goals: RequestedGoalSet
+    transform_requests: WorkflowTransformRequests
+    component_library: ComponentLibrary
+    planning_context: WorkflowPlanningContext
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence, ...
+    ]
+    _outcomes_by_state: dict[
+        int, tuple[WorkflowRuntimeState, WorkflowPlanningOutcome]
+    ] = field(default_factory=dict, init=False, repr=False, compare=False)
+
+    def known_outcome(
+        self, state: WorkflowRuntimeState
+    ) -> WorkflowPlanningOutcome | None:
+        """Return an existing plan without doing new planning work."""
+
+        cached = self._outcomes_by_state.get(id(state))
+        return cached[1] if cached is not None and cached[0] is state else None
+
+    def plan(self, state: WorkflowRuntimeState) -> WorkflowPlanningOutcome:
+        """Plan once for this exact immutable structure and history carrier."""
+
+        outcome = self.known_outcome(state)
+        if outcome is None:
+            outcome = plan_workflow_actions(
+                state.result.structure,
+                requested_goals=self.requested_goals,
+                transform_requests=self.transform_requests,
+                component_library=self.component_library,
+                planner_memory=state.planner_memory,
+                planning_context=self.planning_context,
+                retained_non_polymer_chemistry_evidence=(
+                    self.retained_non_polymer_chemistry_evidence
+                ),
+            )
+            self._outcomes_by_state[id(state)] = (state, outcome)
+        return outcome
+
+    def retain_states(self, states: tuple[WorkflowRuntimeState, ...]) -> None:
+        """Release plans and their strong input references outside the frontier."""
+
+        retained_ids = {id(state) for state in states}
+        for state_id in tuple(self._outcomes_by_state):
+            if state_id not in retained_ids:
+                del self._outcomes_by_state[state_id]
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +339,15 @@ def execute_iterative_workflow(
         )
     )
     branches: list[WorkflowBranch] = []
+    planning_session = WorkflowPlanningSession(
+        requested_goals=requested_goals,
+        transform_requests=transform_requests,
+        component_library=component_library,
+        planning_context=planning_context,
+        retained_non_polymer_chemistry_evidence=(
+            retained_non_polymer_chemistry_evidence
+        ),
+    )
     branch_evaluator: WorkflowBranchEvaluator | None = None
     while True:
         if not trace.frontier.active_nodes:
@@ -295,17 +356,7 @@ def execute_iterative_workflow(
 
         active_node = trace.frontier.select_next_active_node()
         runtime_state = active_node.state
-        planning_outcome = plan_workflow_actions(
-            runtime_state.result.structure,
-            requested_goals=requested_goals,
-            transform_requests=transform_requests,
-            component_library=component_library,
-            planner_memory=runtime_state.planner_memory,
-            planning_context=planning_context,
-            retained_non_polymer_chemistry_evidence=(
-                retained_non_polymer_chemistry_evidence
-            ),
-        )
+        planning_outcome = planning_session.plan(runtime_state)
         if branch_evaluator is None:
             branch_evaluator = WorkflowBranchEvaluator(
                 requested_goals=requested_goals,
@@ -340,6 +391,9 @@ def execute_iterative_workflow(
             branch_evaluator.retain_states(
                 tuple(node.state for node in trace.frontier.active_nodes)
             )
+            planning_session.retain_states(
+                tuple(node.state for node in trace.frontier.active_nodes)
+            )
             continue
         remaining_child_budget = planning_context.max_speculative_nodes - len(
             trace.nodes
@@ -347,9 +401,7 @@ def execute_iterative_workflow(
         if remaining_child_budget <= 0:
             for retained_node in trace.frontier.active_nodes:
                 retained_state = retained_node.state
-                known_outcome = (
-                    planning_outcome if retained_node is active_node else None
-                )
+                known_outcome = planning_session.known_outcome(retained_state)
                 retained_result = retained_state.result.with_appended_issues(
                     ()
                     if known_outcome is None
@@ -366,7 +418,12 @@ def execute_iterative_workflow(
                             state=retained_state,
                             result=retained_result,
                             planning_outcome=known_outcome,
-                            status=WorkflowBranchStatus.FRONTIER,
+                            status=(
+                                WorkflowBranchStatus.TERMINAL
+                                if known_outcome is not None
+                                and known_outcome.is_terminal()
+                                else WorkflowBranchStatus.FRONTIER
+                            ),
                         ),
                     )
                 )
@@ -407,17 +464,15 @@ def execute_iterative_workflow(
             ).with_returned_relaxations(
                 RefinementTransformationResult.observed_executions(execution_outcome)
             )
+            child_state = WorkflowRuntimeState(
+                result=execution_outcome,
+                planner_memory=planner_memory,
+            )
             if (
                 transform_requests.repair_refinement is None
                 and not isinstance(transformer, LocalRefinementTransformer)
                 and _next_batch_is_local_refinement(
-                    execution_outcome,
-                    planner_memory=planner_memory,
-                    requested_goals=requested_goals,
-                    transform_requests=transform_requests,
-                    component_library=component_library,
-                    planning_context=planning_context,
-                    retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+                    planning_session.plan(child_state),
                 )
             ):
                 parser_witness_repair = execute_bounded_parser_witness_repair_loop(
@@ -437,13 +492,18 @@ def execute_iterative_workflow(
                         execution_outcome
                     )
                 )
+                if (
+                    execution_outcome is not child_state.result
+                    or planner_memory != child_state.planner_memory
+                ):
+                    child_state = WorkflowRuntimeState(
+                        result=execution_outcome,
+                        planner_memory=planner_memory,
+                    )
 
             adopted_children.append(
                 SpeculativeAdoptedChild(
-                    state=WorkflowRuntimeState(
-                        result=execution_outcome,
-                        planner_memory=planner_memory,
-                    ),
+                    state=child_state,
                     adopted_decision=SpeculativeAdoptionDecision.adopt(
                         EvaluatedSpeculativeProposal(
                             execution=SpeculativeExecution(
@@ -455,13 +515,17 @@ def execute_iterative_workflow(
                     ),
                 ),
             )
-        batch_executions = tuple(
-            execution
-            for child in adopted_children
-            for execution in child.state.planner_memory.relaxation_executions
+        batch_executions = ContinuousRelaxationExecution.deduplicated(
+            tuple(
+                execution
+                for child in adopted_children
+                for execution in child.state.planner_memory.relaxation_executions
+            )
         )
         adopted_children = [
-            replace(
+            child
+            if child.state.planner_memory.relaxation_executions == batch_executions
+            else replace(
                 child,
                 state=replace(
                     child.state,
@@ -499,6 +563,9 @@ def execute_iterative_workflow(
             adopted_children=tuple(adopted_children),
         )
         branch_evaluator.retain_states(
+            tuple(node.state for node in trace.frontier.active_nodes)
+        )
+        planning_session.retain_states(
             tuple(node.state for node in trace.frontier.active_nodes)
         )
 
@@ -741,29 +808,9 @@ def workflow_children_within_node_budget(
     return tuple(child for child, _ in ranked_child_keys[:child_budget])
 
 
-def _next_batch_is_local_refinement(
-    result: TransformationResult,
-    *,
-    planner_memory: WorkflowPlannerMemory,
-    requested_goals: RequestedGoalSet,
-    transform_requests: WorkflowTransformRequests,
-    component_library: ComponentLibrary,
-    planning_context: WorkflowPlanningContext,
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ],
-) -> bool:
+def _next_batch_is_local_refinement(outcome: WorkflowPlanningOutcome) -> bool:
     """Keep attached parser work behind the planner's current prerequisites."""
 
-    outcome = plan_workflow_actions(
-        result.structure,
-        requested_goals=requested_goals,
-        transform_requests=transform_requests,
-        component_library=component_library,
-        planner_memory=planner_memory,
-        planning_context=planning_context,
-        retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
-    )
     return bool(outcome.proposals) and all(
         isinstance(proposal.transformer, LocalRefinementTransformer)
         for proposal in outcome.proposals

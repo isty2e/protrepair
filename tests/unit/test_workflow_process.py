@@ -1954,14 +1954,6 @@ def test_process_structure_expands_multi_node_workflow_frontier_fifo(
             "workflow-frontier-branch-b",
             (HeavyAtomCompletionTransformer,),
         ),
-        (
-            "workflow-frontier-branch-a",
-            (TerminalAugmentationTransformer,),
-        ),
-        (
-            "workflow-frontier-branch-b",
-            (HeavyAtomCompletionTransformer,),
-        ),
     ]
     assert (
         result.structure.provenance.ingress.source_name == "workflow-frontier-branch-a"
@@ -2435,7 +2427,7 @@ def test_execute_iterative_workflow_caps_runaway_frontier(
         histidine_protonation=DisabledHistidineProtonationRequest(),
     )
 
-    assert planner_call_count == 3
+    assert planner_call_count == 2
     assert len(result.branches) == 1
     assert result.branches[0].result.structure is structure
 
@@ -2528,7 +2520,7 @@ def test_execute_iterative_workflow_caps_current_proposal_batch(
         histidine_protonation=DisabledHistidineProtonationRequest(),
     )
 
-    assert planner_call_count == 3
+    assert planner_call_count == 2
     assert tuple(executed_transformers) == (transformers[0],)
     assert len(result.branches) == 1
 
@@ -3509,7 +3501,6 @@ def test_process_structure_rejects_dominated_sibling_branch_by_issue_counts(
         "workflow-reject-root",
         "workflow-reject-worse",
         "workflow-reject-better",
-        "workflow-reject-better",
     ]
     assert result.structure.provenance.ingress.source_name == "workflow-reject-better"
     assert result.branch_report is not None
@@ -3671,7 +3662,6 @@ def test_process_structure_prefers_goal_progress_when_pruning_siblings(
     assert planner_calls == [
         "workflow-goal-pruning-root",
         "workflow-goal-pruning-unmet",
-        "workflow-goal-pruning-satisfied",
         "workflow-goal-pruning-satisfied",
     ]
     assert (

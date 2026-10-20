@@ -95,6 +95,33 @@ def test_requested_hydrogens_are_prepared_before_eager_parser_repair(
     assert calls == []  # Clean terminal states need no unplanned optimizer loop.
 
 
+def test_clean_workflow_plans_each_unchanged_state_once(monkeypatch):
+    source = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
+    original_plan = runtime.plan_workflow_actions
+    planning_inputs = []
+
+    def observed_plan(structure, *, planner_memory, **kwargs):
+        assert not any(
+            previous_structure is structure and previous_memory == planner_memory
+            for previous_structure, previous_memory in planning_inputs
+        )
+        planning_inputs.append((structure, planner_memory))
+        return original_plan(structure, planner_memory=planner_memory, **kwargs)
+
+    monkeypatch.setattr(runtime, "plan_workflow_actions", observed_plan)
+    result = process_structure(
+        source,
+        requested_goals=(
+            requested_process_goal(
+                scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+            ),
+        ),
+    )
+
+    assert result.requested_goals_fully_satisfied()
+    assert len(planning_inputs) == 4
+
+
 @pytest.mark.parametrize(
     "next_family",
     ("hydrogen", "terminal", "packing", "stereo", "topology", "none", "local"),
@@ -213,3 +240,4 @@ def test_attached_repair_follows_current_proposal_family_and_history(
     assert planner_memories[1].has_adopted_transformer(primary)
     assert not planner_memories[1].has_adopted_transformer(local)
     assert planner_memories[1].relaxation_executions == executions
+    assert len(planner_memories) == (2 if following is None else 3)
