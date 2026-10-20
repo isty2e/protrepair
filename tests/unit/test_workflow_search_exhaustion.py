@@ -270,16 +270,12 @@ def test_exhaustion_selects_retained_branch_not_last_action_output(
     assert runtime.branches[1].outcome.status is (
         WorkflowBranchStatus.TERMINAL
         if "last" in terminal_labels
-        and ("first" in terminal_labels or not native_returned)
         else WorkflowBranchStatus.FRONTIER
     )
-    # The second node is not planned again merely to produce a partial result.
+    # Each retained state is assessed once under the complete sibling history.
     assert planned_labels.count("first") == (2 if native_returned else 1)
-    assert planned_labels.count("last") == (
-        2 if native_returned and "first" in terminal_labels else 1
-    )
-    if not native_returned:
-        assert all(plan is not None for plan in assessed_plans)
+    assert planned_labels.count("last") == (2 if native_returned else 1)
+    assert all(plan is not None for plan in assessed_plans)
     result = finalize_workflow_result(
         branches=runtime.branches,
         stop_reason=runtime.stop_reason,

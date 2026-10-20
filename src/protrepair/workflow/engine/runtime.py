@@ -401,11 +401,9 @@ def execute_iterative_workflow(
         if remaining_child_budget <= 0:
             for retained_node in trace.frontier.active_nodes:
                 retained_state = retained_node.state
-                known_outcome = planning_session.known_outcome(retained_state)
+                retained_plan = planning_session.plan(retained_state)
                 retained_result = retained_state.result.with_appended_issues(
-                    ()
-                    if known_outcome is None
-                    else known_outcome.blocker_issues(
+                    retained_plan.blocker_issues(
                         retained_state.result.structure,
                         component_library=component_library,
                     )
@@ -417,11 +415,10 @@ def execute_iterative_workflow(
                             node_id=retained_node.node_id,
                             state=retained_state,
                             result=retained_result,
-                            planning_outcome=known_outcome,
+                            planning_outcome=retained_plan,
                             status=(
                                 WorkflowBranchStatus.TERMINAL
-                                if known_outcome is not None
-                                and known_outcome.is_terminal()
+                                if retained_plan.is_terminal()
                                 else WorkflowBranchStatus.FRONTIER
                             ),
                         ),
