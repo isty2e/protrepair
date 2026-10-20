@@ -714,6 +714,12 @@ class ProcessResult(TransformationResult):
         Observed requested-goal outcomes.
     branch_report : WorkflowBranchReport or None
         Retained candidate selection and search termination evidence.
+
+    Notes
+    -----
+    Native history includes observed FF returns from sibling batches along the
+    selected ancestry, even when their coordinates were rejected. Returns from
+    other descendant subtrees are excluded; it is not a workflow-wide execution log.
     """
 
     analyses: AnalysisBundle | None = None
@@ -722,12 +728,13 @@ class ProcessResult(TransformationResult):
 
     @property
     def relaxation_executions(self) -> tuple[ContinuousRelaxationExecution, ...]:
-        """Return observed native history from the selected branch report.
+        """Return native calls from sibling batches along the selected ancestry.
 
         Returns
         -------
         tuple[ContinuousRelaxationExecution, ...]
-            Selected history, or no evidence when no branch report is attached.
+            Selected-ancestry batch history, including unselected siblings, or
+            no evidence when no branch report is attached.
             Empty evidence does not prove that no native work ran.
         """
 

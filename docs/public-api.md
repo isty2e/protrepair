@@ -88,7 +88,7 @@ whose chemistry cannot otherwise be resolved.
 | `analyses` | Optional `AnalysisBundle` |
 | `requested_goal_report` | Per-goal outcomes; `process_structure()` returns an empty report when no goals were requested |
 | `branch_report` | Retained candidates, selected node, and search stop reason |
-| `relaxation_executions` | Observed native FF returns from the selected branch history |
+| `relaxation_executions` | Observed native FF returns from batches along the selected ancestry, including sibling calls |
 
 Useful methods include `has_errors()`, `has_warnings()`, `repair_count()`,
 `error_count()`, `warning_count()`, `issue_count()`,
@@ -101,11 +101,20 @@ report and remaining diagnostics before using it: reaching the limit says
 nothing about whether the requested goals were met. `branch_report` distinguishes
 planner-terminal candidates from candidates still on the frontier, and records
 why search stopped. It replaces the former `terminal_branch_report` attribute.
+There is no compatibility alias for that attribute. Terminal means that the
+planner has no further proposals, not that the requested goals were met.
+When terminal and frontier candidates remain together, the same configured
+quality ordering compares them all. A frontier candidate can therefore win
+despite pending preparation, including missing H. Any unmet requested goals
+remain visible in its goal report; the exhaustion warning is not a success verdict.
 
 Native execution records describe returned calls, not successful repairs or
-adopted coordinates. Rejected candidates can therefore contribute records;
-exceptions may leave native work unobserved. The records contain settings,
-movable atoms, minimizer status, and backend version, not resumable solver state.
+adopted coordinates. Each batch along the selected ancestry contributes all
+its sibling calls, including rejected or unselected siblings. Calls in other
+descendant subtrees are not included, so this is not a complete workflow-wide
+execution log. Exceptions may leave native work unobserved. The records contain
+settings, movable atoms, minimizer status, and backend version, not resumable
+solver state.
 
 ## Structure I/O
 
