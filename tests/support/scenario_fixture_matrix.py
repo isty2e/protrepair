@@ -171,9 +171,7 @@ LOCAL_INTRINSIC_CORRECTION_EXPECTATION = _planner_expectation(
         WorkflowActionLocality.LOCAL_SCOPE,
         WorkflowActionLocality.RESIDUE_SET,
     ),
-    admissible_effect_classes=(
-        WorkflowActionEffectClass.REVISES_PRESENT_GEOMETRY,
-    ),
+    admissible_effect_classes=(WorkflowActionEffectClass.REVISES_PRESENT_GEOMETRY,),
     admissible_donor_requirements=(WorkflowActionDonorRequirement.NONE,),
 )
 
@@ -183,9 +181,7 @@ HOLO_INTERACTION_CORRECTION_EXPECTATION = _planner_expectation(
         WorkflowActionLocality.LOCAL_SCOPE,
         WorkflowActionLocality.RESIDUE_SET,
     ),
-    admissible_effect_classes=(
-        WorkflowActionEffectClass.REVISES_PRESENT_GEOMETRY,
-    ),
+    admissible_effect_classes=(WorkflowActionEffectClass.REVISES_PRESENT_GEOMETRY,),
     admissible_donor_requirements=(WorkflowActionDonorRequirement.NONE,),
     requires_holo_interaction_policy=True,
 )
@@ -208,9 +204,7 @@ SPAN_DONOR_EXPECTATION = _planner_expectation(
     reducible_deficit_families=(WorkflowCapabilityDeficitFamily.COVERAGE_GAP,),
     preferred_localities=(WorkflowActionLocality.RESIDUE_SPAN,),
     admissible_effect_classes=(WorkflowActionEffectClass.AUGMENTS_ABSENCE,),
-    admissible_donor_requirements=(
-        WorkflowActionDonorRequirement.EXTERNAL_DONOR,
-    ),
+    admissible_donor_requirements=(WorkflowActionDonorRequirement.EXTERNAL_DONOR,),
 )
 
 CHEMISTRY_AND_INTRINSIC_INTERPLAY_EXPECTATION = _planner_expectation(
@@ -500,9 +494,7 @@ SCENARIO_FIXTURE_MATRIX: dict[str, ScenarioFixtureMatrixEntry] = {
                 WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,
             ),
             preferred_localities=(WorkflowActionLocality.RESIDUE_SET,),
-            admissible_effect_classes=(
-                WorkflowActionEffectClass.AUGMENTS_ABSENCE,
-            ),
+            admissible_effect_classes=(WorkflowActionEffectClass.AUGMENTS_ABSENCE,),
             admissible_donor_requirements=(WorkflowActionDonorRequirement.NONE,),
             requires_holo_interaction_policy=True,
         ),
@@ -579,10 +571,8 @@ SCENARIO_FIXTURE_MATRIX: dict[str, ScenarioFixtureMatrixEntry] = {
         planning_phases=(ScenarioPlanningPhase.CHEMISTRY_AUGMENTATION,),
         capability_expectation=CHEMISTRY_AUGMENTATION_EXPECTATION,
         description=(
-            "Synthetic chemistry-readiness blocker for unsupported residue "
-            "templates."
+            "Synthetic chemistry-readiness blocker for unsupported residue templates."
         ),
-
         evidence_reference="tests/support/correction_state_registry.py",
     ),
     "synthetic-topology-coordinate-blocked": ScenarioFixtureMatrixEntry(

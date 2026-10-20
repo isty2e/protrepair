@@ -584,15 +584,13 @@ def test_execute_iterative_workflow_threads_retained_non_polymer_fallback_policy
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            current_structure,
-            requested_goals,
-            transform_requests,
-            component_library,
-            planner_memory,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del current_structure
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planner_memory
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         nonlocal planner_call_count
         planner_call_count += 1
         return WorkflowPlanningOutcome(
@@ -686,14 +684,12 @@ def test_process_structure_threads_typed_histidine_request_to_hydrogen_completio
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planner_memory,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planner_memory
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         nonlocal planner_call_count
         planner_call_count += 1
         return WorkflowPlanningOutcome(
@@ -1893,13 +1889,11 @@ def test_process_structure_expands_multi_node_workflow_frontier_fifo(
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         active_planner_memory = (
             WorkflowPlannerMemory() if planner_memory is None else planner_memory
         )
@@ -2246,13 +2240,11 @@ def test_process_structure_executes_parser_witness_repair_inside_workflow_pass(
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         active_planner_memory = (
             WorkflowPlannerMemory() if planner_memory is None else planner_memory
         )
@@ -2425,14 +2417,12 @@ def test_execute_iterative_workflow_caps_runaway_frontier(
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planner_memory,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planner_memory
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         nonlocal planner_call_count
         planner_call_count += 1
         return WorkflowPlanningOutcome(
@@ -2525,14 +2515,12 @@ def test_execute_iterative_workflow_caps_current_proposal_batch(
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planner_memory,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planner_memory
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         nonlocal planner_call_count
         planner_call_count += 1
         return WorkflowPlanningOutcome(
@@ -2651,13 +2639,11 @@ def test_process_structure_requeries_parser_witness_repair_between_passes(
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         active_planner_memory = (
             WorkflowPlannerMemory() if planner_memory is None else planner_memory
         )
@@ -2856,13 +2842,11 @@ def test_process_structure_rolls_back_parser_witness_pass_that_worsens_witnesses
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         active_planner_memory = (
             WorkflowPlannerMemory() if planner_memory is None else planner_memory
         )
@@ -3071,13 +3055,11 @@ def test_process_structure_skips_unproductive_parser_witness_cluster(
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         active_planner_memory = (
             WorkflowPlannerMemory() if planner_memory is None else planner_memory
         )
@@ -3348,13 +3330,11 @@ def test_process_structure_prefers_terminal_branch_that_satisfies_requested_stat
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         active_planner_memory = (
             WorkflowPlannerMemory() if planner_memory is None else planner_memory
         )
@@ -3500,13 +3480,11 @@ def test_process_structure_rejects_dominated_sibling_branch_by_issue_counts(
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         planner_calls.append(current_structure.provenance.ingress.source_name or "")
         active_planner_memory = (
             WorkflowPlannerMemory() if planner_memory is None else planner_memory
@@ -3642,13 +3620,11 @@ def test_process_structure_prefers_goal_progress_when_pruning_siblings(
             component_library=component_library,
             retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
-        del (
-            requested_goals,
-            transform_requests,
-            component_library,
-            planning_context,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del requested_goals
+        del transform_requests
+        del component_library
+        del planning_context
+        del retained_non_polymer_chemistry_evidence
         planner_calls.append(current_structure.provenance.ingress.source_name or "")
         active_planner_memory = (
             WorkflowPlannerMemory() if planner_memory is None else planner_memory

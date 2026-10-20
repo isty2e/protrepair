@@ -9,13 +9,6 @@ from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 
-__all__ = [
-    "AtomInput",
-    "AtomInputBasis",
-    "AtomInputRealization",
-    "structure_ordered_atom_refs",
-]
-
 
 class AtomInputBasis(str, Enum):
     """How one atom input was derived from boundary semantics."""
@@ -70,8 +63,7 @@ class AtomInput:
             )
         if not isinstance(realization, AtomInputRealization):
             raise TypeError(
-                "atom inputs require an AtomInputRealization value when one is "
-                "provided"
+                "atom inputs require an AtomInputRealization value when one is provided"
             )
         residuewise_realizations = {
             AtomInputRealization.RESIDUE_BACKBONE_ATOMS,
@@ -166,3 +158,11 @@ def _normalize_atom_index_tuple(
         seen_atom_indices.add(atom_index)
 
     return tuple(normalized_atom_indices)
+
+
+__all__ = [
+    "AtomInput",
+    "AtomInputBasis",
+    "AtomInputRealization",
+    "structure_ordered_atom_refs",
+]

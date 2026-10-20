@@ -1,6 +1,6 @@
 """Observed summaries derived over one selected atom scope."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
@@ -33,19 +33,19 @@ from protrepair.state.topology import (
     TopologyAvailabilityObservation,
 )
 from protrepair.state.topology import (
-    HydrogenAttachmentResolutionState as HydrogenAttachmentResolutionState,
+    HydrogenAttachmentResolutionState as HydrogenAttachmentResolutionState,  # noqa: PLC0414 - Explicit re-export for existing consumers.
 )
 from protrepair.state.topology import (
-    ResidueHydrogenAttachmentResolutionFact as ResidueHydrogenAttachmentResolutionFact,
+    ResidueHydrogenAttachmentResolutionFact as ResidueHydrogenAttachmentResolutionFact,  # noqa: PLC0414 - Explicit re-export for existing consumers.
 )
 from protrepair.state.topology import (
-    ResidueTopologyAvailabilityFact as ResidueTopologyAvailabilityFact,
+    ResidueTopologyAvailabilityFact as ResidueTopologyAvailabilityFact,  # noqa: PLC0414 - Explicit re-export for existing consumers.
 )
 from protrepair.state.topology import (
-    TopologyAvailabilityAspect as TopologyAvailabilityAspect,
+    TopologyAvailabilityAspect as TopologyAvailabilityAspect,  # noqa: PLC0414 - Explicit re-export for existing consumers.
 )
 from protrepair.state.topology import (
-    TopologyAvailabilityState as TopologyAvailabilityState,
+    TopologyAvailabilityState as TopologyAvailabilityState,  # noqa: PLC0414 - Explicit re-export for existing consumers.
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -330,8 +330,8 @@ class AtomScopeObservation:
     topology_availability: TopologyAvailabilityObservation
     hydrogen_attachment_resolution: HydrogenAttachmentResolutionObservation
     continuous_bond_realizability: ContinuousBondRealizabilityObservation
-    terminal_boundary_observation: TerminalBoundaryObservation = (
-        TerminalBoundaryObservation.empty()
+    terminal_boundary_observation: TerminalBoundaryObservation = field(
+        default_factory=TerminalBoundaryObservation.empty
     )
 
     def requires_heavy_atom_completion(self) -> bool:

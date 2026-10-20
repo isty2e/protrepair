@@ -90,7 +90,7 @@ def test_read_nonstandard_component_registry_reads_custom_monomer_cif(
 
     cif_path = tmp_path / "custom-components.cif"
     cif_path.write_text(
-        "\n".join(
+        "\n".join(  # noqa: FLY002 - Keep fixture records on separate readable lines.
             (
                 "data_MSE",
                 "_chem_comp.id MSE",
@@ -180,7 +180,7 @@ def test_read_nonstandard_component_registry_tolerates_missing_parent_mapping(
 
     cif_path = tmp_path / "custom-components.cif"
     cif_path.write_text(
-        "\n".join(
+        "\n".join(  # noqa: FLY002 - Keep fixture records on separate readable lines.
             (
                 "data_NSP",
                 "_chem_comp.id NSP",
@@ -221,7 +221,7 @@ def test_ingest_component_record_derives_planarity_targets_from_ideal_geometry(
 
     cif_path = tmp_path / "custom-planar.cif"
     cif_path.write_text(
-        "\n".join(
+        "\n".join(  # noqa: FLY002 - Keep fixture records on separate readable lines.
             (
                 "data_PTRX",
                 "_chem_comp.id PTRX",

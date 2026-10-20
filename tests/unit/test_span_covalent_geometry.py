@@ -523,6 +523,7 @@ def test_small_bond_excess_survives_until_final_state_assessment(
         context: TransformerExecutionContext,
     ) -> ProjectedCodomainState[ProteinStructure]:
         structure = projected_domain.state
+        assert reference_residue is not None
         assert structure.constitution.residue_or_ligand(gap[0]) is not None
         assert not any(
             issue.kind is ValidationIssueKind.INVALID_GEOMETRY

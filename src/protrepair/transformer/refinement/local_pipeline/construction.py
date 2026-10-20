@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         LocalRefinementRequest,
     )
 
+
 @dataclass(frozen=True, slots=True)
 class PreparedRefinementCandidateBase:
     """Prepared local-refinement base before optional seed expansion."""

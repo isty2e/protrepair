@@ -23,9 +23,7 @@ class ScopeCoarsening(ABC, Generic[SourceScopeT, TargetScopeT]):
         """Return the canonical coarsened scope for one semantic source scope."""
 
 
-class AtomToResidueSetScopeCoarsening(
-    ScopeCoarsening[AtomSetScope, ResidueSetScope]
-):
+class AtomToResidueSetScopeCoarsening(ScopeCoarsening[AtomSetScope, ResidueSetScope]):
     """Coarsen one atom-set scope into the residue set that covers it."""
 
     def coarsen(self, scope: AtomSetScope) -> ResidueSetScope:
@@ -37,9 +35,7 @@ class AtomToResidueSetScopeCoarsening(
         return ResidueSetScope(residue_ids=ordered_residue_ids)
 
 
-class ResidueToChainSetScopeCoarsening(
-    ScopeCoarsening[ResidueSetScope, ChainSetScope]
-):
+class ResidueToChainSetScopeCoarsening(ScopeCoarsening[ResidueSetScope, ChainSetScope]):
     """Coarsen one residue-set scope into the chain set that covers it."""
 
     def coarsen(self, scope: ResidueSetScope) -> ChainSetScope:

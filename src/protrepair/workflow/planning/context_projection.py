@@ -15,8 +15,7 @@ def planning_context_is_holo_for_structure(
 
     if not isinstance(planning_context, WorkflowPlanningContext):
         raise TypeError(
-            "planning_context_is_holo_for_structure requires a "
-            "WorkflowPlanningContext"
+            "planning_context_is_holo_for_structure requires a WorkflowPlanningContext"
         )
     if not isinstance(structure, ProteinStructure):
         raise TypeError(

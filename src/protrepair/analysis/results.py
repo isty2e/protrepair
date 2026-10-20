@@ -36,9 +36,7 @@ class SecondaryStructureAssignment:
 
     def __post_init__(self) -> None:
         if not isinstance(self.residue_id, ResidueId):
-            raise TypeError(
-                "secondary-structure assignments require a ResidueId"
-            )
+            raise TypeError("secondary-structure assignments require a ResidueId")
         if not isinstance(self.label, str):
             raise TypeError("secondary-structure labels must be strings")
 

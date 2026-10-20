@@ -751,13 +751,13 @@ def test_workflow_transformers_reject_invalid_family_payloads() -> None:
     with pytest.raises(TypeError, match="RepairRefinementSpec"):
         LocalRefinementTransformer(
             scope=ResidueSetScope(residue_ids=(residue_id,)),
-            repair_refinement="invalid-payload",  # type: ignore[arg-type]
+            repair_refinement="invalid-payload",  # pyrefly: ignore[bad-argument-type]
         )
 
     with pytest.raises(TypeError, match="PackingSpec"):
         CommittedPackingTransformer(
             scope=ResidueSetScope(residue_ids=(residue_id,)),
-            packing_spec="invalid-payload",  # type: ignore[arg-type]
+            packing_spec="invalid-payload",  # pyrefly: ignore[bad-argument-type]
         )
 
 

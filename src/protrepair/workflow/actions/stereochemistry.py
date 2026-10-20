@@ -17,12 +17,10 @@ from protrepair.workflow.actions.context import TransformerExecutionContext
 
 
 @dataclass(frozen=True, slots=True)
-class StereochemistryCorrectionTransformer(
-    ResidueSetWorkflowStructureTransformer
-):
+class StereochemistryCorrectionTransformer(ResidueSetWorkflowStructureTransformer):
     """Workflow-visible side-chain stereochemistry correction transformer."""
 
-    scope: ResidueSetScope
+    scope: ResidueSetScope  # pyrefly: ignore[bad-override]  # Frozen action implements the base scope field.
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, ResidueSetScope):

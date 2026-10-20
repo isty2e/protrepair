@@ -410,8 +410,7 @@ def _worst_contact_overlap_angstrom(
     worst_overlap = 0.0
     for contact in contacts:
         overlap_angstrom = contact.overlap_angstrom
-        if overlap_angstrom > worst_overlap:
-            worst_overlap = overlap_angstrom
+        worst_overlap = max(worst_overlap, overlap_angstrom)
 
     return worst_overlap
 

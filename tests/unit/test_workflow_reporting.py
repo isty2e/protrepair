@@ -14,7 +14,6 @@ from tests.support.refinement_benchmarks import load_case_structure
 from tests.support.refinement_cases import REFINEMENT_BENCHMARK_CASES
 from tests.support.scenario_fixture_matrix import SCENARIO_FIXTURE_MATRIX
 
-import protrepair.state.chemistry_observation as chemistry_observation
 from protrepair.api import process_structure
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.geometry import Vec3
@@ -31,6 +30,7 @@ from protrepair.state import (
     StructureChemistryReadinessFacts,
     StructureIntrinsicGeometryFacts,
     StructureParserCompatibilityFacts,
+    chemistry_observation,
 )
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import ResidueId

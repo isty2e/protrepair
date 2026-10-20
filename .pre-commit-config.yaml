@@ -1,29 +1,17 @@
 repos:
-  # pre-commit hooks
-  - repo: https://github.com/asottile/pyupgrade
-    rev: v3.20.0
-    hooks:
-      - id: pyupgrade
-        args: ["--py310-plus"]
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.13.2
+    rev: v0.17.1
     hooks:
-      # Run the linter.
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
         name: lint with ruff
-      # Run import sorting.
-      - id: ruff
-        name: sort imports with ruff
-        args: [--select, I, --fix]
-      # Run the formatter.
       - id: ruff-format
         name: format with ruff
+        types_or: [python, pyi, jupyter]
   - repo: local
     hooks:
-      - id: basedpyright
-        name: type check with basedpyright
-        entry: basedpyright
+      - id: pyrefly
+        name: type check with pyrefly
+        entry: .venv/bin/pyrefly check
         language: system
         pass_filenames: false

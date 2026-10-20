@@ -318,13 +318,11 @@ def test_local_refinement_stage_respects_strict_passive_context_policy(
         assert (
             chemistry_observation.context_structure is context.source_snapshot.structure
         )
-        del (
-            context,
-            spec,
-            component_library,
-            allow_retained_non_polymer_rdkit_fallback,
-            retained_non_polymer_chemistry_evidence,
-        )
+        del context
+        del spec
+        del component_library
+        del allow_retained_non_polymer_rdkit_fallback
+        del retained_non_polymer_chemistry_evidence
         raise AssertionError("strict fallback blocker should stop local refinement")
 
     monkeypatch.setattr(

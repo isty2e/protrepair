@@ -83,9 +83,9 @@ def test_invocation_identity_deduplication_and_immutability():
         (second, first, second, first)
     ) == (second, first)
     with pytest.raises(FrozenInstanceError):
-        first.minimizer_status = 0  # pyright: ignore[reportAttributeAccessIssue]
+        first.minimizer_status = 0  # pyrefly: ignore[read-only]
     with pytest.raises(TypeError, match="execution evidence"):
-        ContinuousRelaxationExecution.deduplicated((None,))  # pyright: ignore[reportArgumentType]
+        ContinuousRelaxationExecution.deduplicated((None,))  # pyrefly: ignore[bad-argument-type]
 
 
 def test_native_motion_authority_is_order_independent_but_not_subset_based():
@@ -237,7 +237,7 @@ def test_region_return_metadata_does_not_change_structure_value_semantics(
     assert repr(with_metadata) == repr(without_metadata)
     assert with_metadata.relaxation_executions == (record,)
     with pytest.raises(TypeError, match="execution evidence"):
-        replace(with_metadata, relaxation_executions=(None,))
+        replace(with_metadata, relaxation_executions=(None,))  # pyrefly: ignore[bad-argument-type]
 
 
 def test_native_result_requires_one_fact_and_selection_retains_it(
@@ -257,7 +257,7 @@ def test_native_result_requires_one_fact_and_selection_retains_it(
     assert native.backend_name == core.backend_name
     assert native.backend_version == core.backend_version
     with pytest.raises(TypeError, match="one native return"):
-        replace(native, execution=None)
+        replace(native, execution=None)  # pyrefly: ignore[bad-argument-type]
     with pytest.raises(ValueError, match="selected native return"):
         LocalRefinementResult.from_selection(native, relaxation_executions=())
     with pytest.raises(ValueError, match="selected native return"):

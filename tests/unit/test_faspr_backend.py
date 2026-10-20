@@ -394,7 +394,7 @@ def test_faspr_backend_converts_subprocess_timeout(
 
     executable_path = tmp_path / "FASPR"
     executable_path.write_text(
-        "\n".join(
+        "\n".join(  # noqa: FLY002 - Keep fixture records on separate readable lines.
             (
                 "#!/bin/sh",
                 "sleep 5",
@@ -480,7 +480,7 @@ def test_faspr_backend_bounds_subprocess_failure_output(
 
     executable_path = tmp_path / "FASPR"
     executable_path.write_text(
-        "\n".join(
+        "\n".join(  # noqa: FLY002 - Keep fixture records on separate readable lines.
             (
                 "#!/bin/sh",
                 "set -eu",
@@ -519,7 +519,7 @@ def test_faspr_backend_preserves_surviving_topology_bonds_with_fake_executable(
 
     executable_path = tmp_path / "FASPR"
     executable_path.write_text(
-        "\n".join(
+        "\n".join(  # noqa: FLY002 - Keep fixture records on separate readable lines.
             (
                 "#!/bin/sh",
                 "set -eu",
@@ -1160,7 +1160,7 @@ def copy_input_faspr_executable(tmp_path: Path) -> Path:
 
     executable_path = tmp_path / "FASPR"
     executable_path.write_text(
-        "\n".join(
+        "\n".join(  # noqa: FLY002 - Keep fixture records on separate readable lines.
             (
                 "#!/bin/sh",
                 "set -eu",

@@ -113,14 +113,10 @@ class StructureReference:
                 or member_references
             ):
                 raise ValueError(
-                    "atom-set structure references must not carry non-atom-set "
-                    "payload"
+                    "atom-set structure references must not carry non-atom-set payload"
                 )
         elif self.kind is StructureReferenceKind.ABSENT_RESIDUE_SPAN:
-            if (
-                self.preceding_residue_id is None
-                and self.following_residue_id is None
-            ):
+            if self.preceding_residue_id is None and self.following_residue_id is None:
                 raise ValueError(
                     "absent-residue-span structure references require at least one "
                     "anchor residue"
@@ -157,10 +153,7 @@ class StructureReference:
                         "the following anchor in absent_residue_ids"
                     )
         elif self.kind is StructureReferenceKind.ANCHOR_ATOM_PAIR:
-            if (
-                self.left_anchor_atom_ref is None
-                or self.right_anchor_atom_ref is None
-            ):
+            if self.left_anchor_atom_ref is None or self.right_anchor_atom_ref is None:
                 raise ValueError(
                     "anchor-atom-pair structure references require both anchor "
                     "atom refs"
@@ -213,9 +206,7 @@ class StructureReference:
                         "member references"
                     )
                 if member_reference.kind is StructureReferenceKind.COMPOSITE:
-                    raise ValueError(
-                        "composite structure references must stay flat"
-                    )
+                    raise ValueError("composite structure references must stay flat")
         else:
             raise TypeError(
                 "structure references require a StructureReferenceKind value"
@@ -420,9 +411,7 @@ def scope_from_reference(reference: StructureReference) -> Scope:
     """Project one semantic scope from one boundary structure reference."""
 
     if not isinstance(reference, StructureReference):
-        raise TypeError(
-            "scope projection requires one StructureReference value"
-        )
+        raise TypeError("scope projection requires one StructureReference value")
 
     if reference.kind is StructureReferenceKind.RESIDUE_SET:
         return ResidueSetScope(residue_ids=reference.residue_ids)

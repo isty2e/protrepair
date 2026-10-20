@@ -27,10 +27,28 @@ from protrepair.transformer.local import LocalScopeSpec
 
 @pytest.mark.parametrize(
     "component_id",
-    (
-        "ALA ARG ASN ASP CYS GLN GLU GLY HIS ILE LEU LYS "
-        "MET PHE PRO SER THR TRP TYR VAL"
-    ).split(),
+    [
+        "ALA",
+        "ARG",
+        "ASN",
+        "ASP",
+        "CYS",
+        "GLN",
+        "GLU",
+        "GLY",
+        "HIS",
+        "ILE",
+        "LEU",
+        "LYS",
+        "MET",
+        "PHE",
+        "PRO",
+        "SER",
+        "THR",
+        "TRP",
+        "TYR",
+        "VAL",
+    ],
 )
 def test_standard_backbone_carbonyl_is_a_double_bond(component_id: str) -> None:
     definition = build_standard_component_library().require(component_id).definition

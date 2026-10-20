@@ -25,7 +25,7 @@ class PolymerHydrogenTopologyResolutionTransformer(
         Polymer residues whose present H attachments need materialization.
     """
 
-    scope: ResidueSetScope
+    scope: ResidueSetScope  # pyrefly: ignore[bad-override]  # Frozen action implements the base scope field.
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, ResidueSetScope):

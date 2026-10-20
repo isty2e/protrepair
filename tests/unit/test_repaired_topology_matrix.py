@@ -196,11 +196,9 @@ def test_coordinate_only_bonds_do_not_satisfy_readiness_or_egress() -> None:
         source_name="repaired-topology-matrix-coordinate-only",
     )
 
-    _, chemistry_readiness = (
-        derive_structure_coverage_and_chemistry_readiness_facts(
-            structure,
-            component_library=build_default_component_library(),
-        )
+    _, chemistry_readiness = derive_structure_coverage_and_chemistry_readiness_facts(
+        structure,
+        component_library=build_default_component_library(),
     )
 
     assert _topology_bond_between(structure, residue_id, "CA", "CB") is None
@@ -335,12 +333,8 @@ def _assert_mmcif_struct_conn_between(
     atom_name_1: str,
     atom_name_2: str,
 ) -> None:
-    atom_index_1 = structure.constitution.atom_index(
-        AtomRef(residue_id, atom_name_1)
-    )
-    atom_index_2 = structure.constitution.atom_index(
-        AtomRef(residue_id, atom_name_2)
-    )
+    atom_index_1 = structure.constitution.atom_index(AtomRef(residue_id, atom_name_1))
+    atom_index_2 = structure.constitution.atom_index(AtomRef(residue_id, atom_name_2))
     connection_id = (
         f"protrepair_{min(atom_index_1.value, atom_index_2.value)}_"
         f"{max(atom_index_1.value, atom_index_2.value)}"

@@ -102,9 +102,7 @@ def _require_grounded_structure_endpoint(
     if _structure_endpoint_is_grounded_in_snapshot(structure_endpoint, snapshot):
         return
 
-    raise ValueError(
-        f"{field_name} must ground in the active {snapshot_name} snapshot"
-    )
+    raise ValueError(f"{field_name} must ground in the active {snapshot_name} snapshot")
 
 
 def _context_endpoint_covers(
@@ -293,9 +291,7 @@ class ProteinTransformationContext:
                 "protein transformation contexts require a ProteinStructureSnapshot"
             )
         if not isinstance(self.atom_input, AtomInput):
-            raise TypeError(
-                "protein transformation contexts require an AtomInput"
-            )
+            raise TypeError("protein transformation contexts require an AtomInput")
         supporting_structures = tuple(self.supporting_structures)
         for supporting_structure in supporting_structures:
             if not isinstance(supporting_structure, SupportingStructureContext):
@@ -343,10 +339,7 @@ class ProteinTransformationContext:
                 _require_grounded_structure_endpoint(
                     evidence.target_structure_endpoint,
                     self.source_snapshot,
-                    field_name=(
-                        f"{type(evidence).__name__} "
-                        "target_structure_endpoint"
-                    ),
+                    field_name=(f"{type(evidence).__name__} target_structure_endpoint"),
                     snapshot_name="source",
                 )
             else:

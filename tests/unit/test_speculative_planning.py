@@ -72,8 +72,9 @@ def test_speculative_planning_trace_appends_single_active_child() -> None:
     assert active_node.state == "child-state"
 
 
-def test_speculative_planning_trace_expands_active_node_with_multiple_children(
-) -> None:
+def test_speculative_planning_trace_expands_active_node_with_multiple_children() -> (
+    None
+):
     """Active-node expansion should retire the parent and append child worklist."""
 
     trace = SpeculativePlanningTrace[str, str, str, float].root(
@@ -124,9 +125,7 @@ def test_speculative_planning_trace_stop_clears_frontier() -> None:
         initial_state="root-state"
     )
 
-    stopped_trace = trace.stop(
-        reason=SpeculativeStopReason.NO_PROPOSALS_AVAILABLE
-    )
+    stopped_trace = trace.stop(reason=SpeculativeStopReason.NO_PROPOSALS_AVAILABLE)
 
     assert stopped_trace.stop_reason is SpeculativeStopReason.NO_PROPOSALS_AVAILABLE
     assert stopped_trace.frontier == SpeculativePlanningFrontier.empty()

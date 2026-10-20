@@ -166,10 +166,13 @@ def test_template_hydrogen_definitions_do_not_treat_ligand_n_as_polymer_context(
         template,
         hydrogen_atom_names=("H1",),
     ) == (BondDefinition("N", "H1"),)
-    assert polymer_template_hydrogen_bond_definitions_for_names(
-        template,
-        hydrogen_atom_names=("H1",),
-    ) == ()
+    assert (
+        polymer_template_hydrogen_bond_definitions_for_names(
+            template,
+            hydrogen_atom_names=("H1",),
+        )
+        == ()
+    )
 
 
 def _has_template_bond(
@@ -179,12 +182,8 @@ def _has_template_bond(
     atom_name_1: str,
     atom_name_2: str,
 ) -> bool:
-    atom_index_1 = structure.constitution.atom_index(
-        AtomRef(residue_id, atom_name_1)
-    )
-    atom_index_2 = structure.constitution.atom_index(
-        AtomRef(residue_id, atom_name_2)
-    )
+    atom_index_1 = structure.constitution.atom_index(AtomRef(residue_id, atom_name_1))
+    atom_index_2 = structure.constitution.atom_index(AtomRef(residue_id, atom_name_2))
     return any(
         {bond.atom_index_1, bond.atom_index_2} == {atom_index_1, atom_index_2}
         and bond.relationship_type is BondRelationshipType.COVALENT

@@ -34,10 +34,13 @@ jobs:
         run: .venv/bin/python -m pip install -c constraints/release.txt ".[dev]"
 
       - name: Ruff
-        run: .venv/bin/ruff check src/protrepair tests --extend-select=I,UP
+        run: .venv/bin/ruff check src/protrepair tests scripts/run_installed_artifact_smoke.py
 
-      - name: Basedpyright
-        run: .venv/bin/basedpyright src/protrepair tests
+      - name: Ruff format
+        run: .venv/bin/ruff format --check src/protrepair tests scripts/run_installed_artifact_smoke.py
+
+      - name: Pyrefly
+        run: .venv/bin/pyrefly check
 
       - name: Unit tests
         run: .venv/bin/pytest tests/unit tests/corpus tests/workflow -m "not benchmark" -q --durations=25 --durations-min=1

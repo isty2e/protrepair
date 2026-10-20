@@ -33,7 +33,7 @@ from protrepair.workflow.contracts.request import (
 class TerminalAugmentationTransformer(ResidueSetWorkflowStructureTransformer):
     """Workflow-visible terminal OXT augmentation transformer."""
 
-    scope: ResidueSetScope
+    scope: ResidueSetScope  # pyrefly: ignore[bad-override]  # Frozen action implements the base scope field.
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, ResidueSetScope):

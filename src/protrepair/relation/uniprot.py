@@ -162,8 +162,7 @@ def _single_chain_id(endpoint: StructureEndpoint) -> str:
     """Return the single chain covered by one polymer-region endpoint."""
 
     chain_ids = {
-        residue_id.chain_id
-        for residue_id in _referenced_residue_ids(endpoint)
+        residue_id.chain_id for residue_id in _referenced_residue_ids(endpoint)
     }
     if not chain_ids:
         raise ValueError(

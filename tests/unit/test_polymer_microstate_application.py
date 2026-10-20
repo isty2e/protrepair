@@ -486,7 +486,7 @@ def test_provenance_rejects_overlapping_applied_site_choices() -> None:
     with pytest.raises(ValueError, match="original evidence"):
         replace(saved, basis=MicrostateSelectionBasis.EVIDENCE)
     with pytest.raises(TypeError, match="canonical basis"):
-        replace(saved, basis="default")
+        replace(saved, basis="default")  # pyrefly: ignore[bad-argument-type]
 
 
 def test_saved_default_survives_h_removal_but_cannot_override_source() -> None:

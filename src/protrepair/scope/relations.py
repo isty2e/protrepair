@@ -137,8 +137,7 @@ def scopes_overlap(left: Scope, right: Scope) -> bool:
 
     if isinstance(left, ResidueSetScope) and isinstance(right, AtomSetScope):
         return any(
-            atom_ref.residue_id in set(left.residue_ids)
-            for atom_ref in right.atom_refs
+            atom_ref.residue_id in set(left.residue_ids) for atom_ref in right.atom_refs
         )
     if isinstance(left, AtomSetScope) and isinstance(right, ResidueSetScope):
         return scopes_overlap(right, left)

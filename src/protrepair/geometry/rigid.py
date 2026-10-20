@@ -65,9 +65,8 @@ class RigidTransform:
 
         point_array = Vec3.coerce(point).to_array()
         return (
-            (point_array - self.moving_centroid) @ self.rotation_matrix
-            + self.target_centroid
-        )
+            point_array - self.moving_centroid
+        ) @ self.rotation_matrix + self.target_centroid
 
     def apply_many(self, points: FloatArray) -> FloatArray:
         """Apply this rigid transform to one point cloud."""
@@ -76,6 +75,5 @@ class RigidTransform:
             raise ValueError("rigid transform expects point clouds with shape (n, 3)")
 
         return (
-            (points - self.moving_centroid) @ self.rotation_matrix
-            + self.target_centroid
-        )
+            points - self.moving_centroid
+        ) @ self.rotation_matrix + self.target_centroid

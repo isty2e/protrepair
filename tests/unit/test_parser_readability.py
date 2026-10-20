@@ -13,7 +13,6 @@ import protrepair.io.pdb_projection as pdb_projection_module
 from protrepair.chemistry import build_default_component_library
 from protrepair.diagnostics import parser_readability as parser_readability_module
 from protrepair.diagnostics.parser_readability import (
-    _atom_ref_from_pdb_atom_line,
     prepare_rdkit_no_conect_known_bond_lookup,
 )
 from protrepair.errors import RdkitUnavailableError
@@ -69,10 +68,7 @@ def test_parser_readability_raises_when_required_rdkit_backend_missing(
         parser_readability_module.measure_rdkit_no_conect_sanitize_readability(
             structure
         )
-    extra_heavy_bond_count = (
-        parser_readability_module
-        .measure_rdkit_no_conect_extra_heavy_proximity_bond_count
-    )
+    extra_heavy_bond_count = parser_readability_module.measure_rdkit_no_conect_extra_heavy_proximity_bond_count
     with pytest.raises(RdkitUnavailableError, match="operational RDKit installation"):
         extra_heavy_bond_count(structure)
 
@@ -80,7 +76,7 @@ def test_parser_readability_raises_when_required_rdkit_backend_missing(
 def test_pdb_atom_line_parser_normalizes_blank_chain_id() -> None:
     """Diagnostics PDB parsing should share ingress blank-chain normalization."""
 
-    atom_ref = _atom_ref_from_pdb_atom_line(
+    atom_ref = parser_readability_module._atom_ref_from_pdb_atom_line(
         "ATOM      1  N   GLY     1       1.000   2.000   3.000  "
         "1.00 20.00           N  "
     )
@@ -320,9 +316,7 @@ def test_no_conect_pdb_block_projector_patches_coordinate_only_updates() -> None
     assert projector.render(updated_structure) == pdb_without_conect(updated_structure)
 
 
-def test_no_conect_pdb_block_projector_matches_gemmi_coordinate_formatting() -> (
-    None
-):
+def test_no_conect_pdb_block_projector_matches_gemmi_coordinate_formatting() -> None:
     """Projection should match Gemmi across rounding and field-width regimes."""
 
     residue_id = ResidueId("A", 1)
@@ -334,9 +328,7 @@ def test_no_conect_pdb_block_projector_matches_gemmi_coordinate_formatting() -> 
                     residue_payload(
                         component_id="ALA",
                         residue_id=residue_id,
-                        atoms=(
-                            atom_payload("CA", "C", Vec3(0.0, 0.0, 0.0)),
-                        ),
+                        atoms=(atom_payload("CA", "C", Vec3(0.0, 0.0, 0.0)),),
                     ),
                 ),
             ),
@@ -405,9 +397,7 @@ def test_no_conect_pdb_block_projector_avoids_repeated_gemmi_writes(
                     residue_payload(
                         component_id="ALA",
                         residue_id=residue_id,
-                        atoms=(
-                            atom_payload("CA", "C", Vec3(0.0, 0.0, 0.0)),
-                        ),
+                        atoms=(atom_payload("CA", "C", Vec3(0.0, 0.0, 0.0)),),
                     ),
                 ),
             ),
@@ -415,9 +405,7 @@ def test_no_conect_pdb_block_projector_avoids_repeated_gemmi_writes(
         source_format=FileFormat.PDB,
     )
     writer_structure_ids: list[int] = []
-    canonical_writer = (
-        pdb_projection_module.write_pdb_structure_string_without_conect
-    )
+    canonical_writer = pdb_projection_module.write_pdb_structure_string_without_conect
 
     def _recording_writer(candidate_structure: ProteinStructure) -> str:
         writer_structure_ids.append(id(candidate_structure))
@@ -503,15 +491,11 @@ def test_no_conect_pdb_block_projector_formats_only_changed_coordinates(
     )
     assert formatted_coordinate_triples == []
 
-    assert projector.render(updated_structure) == pdb_without_conect(
-        updated_structure
-    )
+    assert projector.render(updated_structure) == pdb_without_conect(updated_structure)
     assert formatted_coordinate_triples == [(7.0, 8.0, 9.0)]
 
 
-def test_no_conect_pdb_block_projector_falls_back_on_address_space_mismatch() -> (
-    None
-):
+def test_no_conect_pdb_block_projector_falls_back_on_address_space_mismatch() -> None:
     """Equal atom counts must not permit projection across atom identities."""
 
     residue_id = ResidueId("A", 1)
@@ -561,9 +545,7 @@ def test_no_conect_pdb_block_projector_falls_back_on_address_space_mismatch() ->
     ) == pdb_without_conect(same_size_different_address_space)
 
 
-def test_no_conect_pdb_block_projector_rejects_non_coordinate_metadata_drift() -> (
-    None
-):
+def test_no_conect_pdb_block_projector_rejects_non_coordinate_metadata_drift() -> None:
     """Same-address candidates must preserve parser-visible metadata."""
 
     residue_id = ResidueId("A", 1)
@@ -575,9 +557,7 @@ def test_no_conect_pdb_block_projector_rejects_non_coordinate_metadata_drift() -
                     residue_payload(
                         component_id="ALA",
                         residue_id=residue_id,
-                        atoms=(
-                            atom_payload("CA", "C", Vec3(1.0, 2.0, 3.0)),
-                        ),
+                        atoms=(atom_payload("CA", "C", Vec3(1.0, 2.0, 3.0)),),
                     ),
                 ),
             ),
@@ -595,9 +575,7 @@ def test_no_conect_pdb_block_projector_rejects_non_coordinate_metadata_drift() -
                     residue_payload(
                         component_id="GLY",
                         residue_id=residue_id,
-                        atoms=(
-                            atom_payload("CA", "C", Vec3(1.0, 2.0, 3.0)),
-                        ),
+                        atoms=(atom_payload("CA", "C", Vec3(1.0, 2.0, 3.0)),),
                     ),
                 ),
             ),
@@ -612,9 +590,7 @@ def test_no_conect_pdb_block_projector_rejects_non_coordinate_metadata_drift() -
                     residue_payload(
                         component_id="ALA",
                         residue_id=residue_id,
-                        atoms=(
-                            atom_payload("CA", "N", Vec3(1.0, 2.0, 3.0)),
-                        ),
+                        atoms=(atom_payload("CA", "N", Vec3(1.0, 2.0, 3.0)),),
                     ),
                 ),
             ),

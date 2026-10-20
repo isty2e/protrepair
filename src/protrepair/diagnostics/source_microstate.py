@@ -584,7 +584,7 @@ def _geometry_bond_mismatch_descriptors(
         )
     except RdkitUnavailableError:
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 - Backend failures are collected as diagnostic results.
         return ()
 
     template_bonds_by_key = _bond_payload_by_key(template_bonds)
@@ -617,7 +617,7 @@ def _unknown_charge_geometry_contradiction_descriptors(
         )
     except RdkitUnavailableError:
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 - Backend failures are collected as diagnostic results.
         return (
             "geometry-backed RDKit inference fails for charged atoms "
             + ", ".join(sorted(source_nonzero_formal_charges)),
@@ -634,7 +634,7 @@ def _unknown_charge_geometry_contradiction_descriptors(
         )
     except RdkitUnavailableError:
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 - Backend failures are collected as diagnostic results.
         return (
             "source-charge-aware RDKit sanitization fails for charged atoms "
             + ", ".join(sorted(charged_atom_names)),

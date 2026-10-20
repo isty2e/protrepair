@@ -36,10 +36,7 @@ class PackingCapabilities:
         if spec.mode is PackingMode.REFINE and not self.supports_refinement:
             return False
 
-        if spec.has_sequence_override() and not self.supports_partial_sequence:
-            return False
-
-        return True
+        return not (spec.has_sequence_override() and not self.supports_partial_sequence)
 
     def require_support_for(self, spec: PackingSpec) -> None:
         """Raise when a packing spec exceeds these capabilities."""
@@ -91,11 +88,13 @@ class PackingPlan:
 
         polymer_residue_id_set = set(polymer_residue_ids)
         for residue_id in self.spec.referenced_residue_ids():
-            if residue_id not in polymer_residue_id_set:
-                if self.structure.constitution.residue_or_ligand(residue_id) is None:
-                    raise ResidueNotFoundError(
-                        f"structure has no residue {residue_id.display_token()}"
-                    )
+            if (
+                residue_id not in polymer_residue_id_set
+                and self.structure.constitution.residue_or_ligand(residue_id) is None
+            ):
+                raise ResidueNotFoundError(
+                    f"structure has no residue {residue_id.display_token()}"
+                )
 
         if (
             self.spec.target_sequence is not None

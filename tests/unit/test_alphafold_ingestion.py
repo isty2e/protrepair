@@ -69,9 +69,7 @@ def test_ingest_alphafold_structure_artifact_attaches_polymer_blueprint() -> Non
         chains=(
             PolymerChainBlueprint(
                 chain_id="A",
-                residue_slots=(
-                    PolymerResidueSlot(sequence_position=1, token="G"),
-                ),
+                residue_slots=(PolymerResidueSlot(sequence_position=1, token="G"),),
             ),
         )
     )

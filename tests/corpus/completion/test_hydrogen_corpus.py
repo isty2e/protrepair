@@ -1,5 +1,6 @@
 """Corpus regression snapshots for coupled polymer hydrogen placement."""
 
+import itertools
 from pathlib import Path
 
 import gemmi
@@ -92,7 +93,7 @@ def _assert_2a1d_chemistry(structure):
         ids = [ResidueId(chain, 1, code) for code in "MLKJIHGFEDCBA"] + [
             ResidueId(chain, 1)
         ]
-        pairs.extend(zip(ids, ids[1:], strict=False))
+        pairs.extend(itertools.pairwise(ids))
     for chain in ("B", "F"):
         pairs.extend(
             (

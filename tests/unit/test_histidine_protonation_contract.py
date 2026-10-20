@@ -62,7 +62,7 @@ def test_pras_ratio_histidine_protonation_request_normalizes_ratio() -> None:
 )
 def test_pras_ratio_histidine_request_rejects_non_numeric_ratio(ratio) -> None:
     with pytest.raises(TypeError, match="ratio must be an int or float"):
-        PrasRatioHistidineProtonationRequest(ratio=ratio)  # type: ignore[arg-type]
+        PrasRatioHistidineProtonationRequest(ratio=ratio)  # pyrefly: ignore[bad-argument-type]
 
 
 @pytest.mark.parametrize("ratio", (math.nan, math.inf, -math.inf))
@@ -89,7 +89,7 @@ def test_histidine_delta_assignment_records_residue() -> None:
 
 def test_histidine_delta_assignment_rejects_raw_residue_index() -> None:
     with pytest.raises(TypeError, match="residue_index must be a ResidueIndex"):
-        HistidineDeltaProtonationAssignment(3)  # type: ignore[arg-type]
+        HistidineDeltaProtonationAssignment(3)  # pyrefly: ignore[bad-argument-type]
 
 
 def test_histidine_protonation_contract_values_are_immutable() -> None:
@@ -97,9 +97,9 @@ def test_histidine_protonation_contract_values_are_immutable() -> None:
     assignment = HistidineDeltaProtonationAssignment(ResidueIndex(3))
 
     with pytest.raises(FrozenInstanceError):
-        request.ratio = 0.0  # type: ignore[misc]
+        request.ratio = 0.0  # pyrefly: ignore[read-only]
     with pytest.raises(FrozenInstanceError):
-        assignment.residue_index = ResidueIndex(4)  # type: ignore[misc]
+        assignment.residue_index = ResidueIndex(4)  # pyrefly: ignore[read-only]
 
 
 def test_normalize_histidine_protonation_request_defaults_to_disabled() -> None:
@@ -133,7 +133,7 @@ def test_normalize_histidine_protonation_request_rejects_conflicting_inputs() ->
 def test_normalize_histidine_protonation_request_rejects_non_bool_shorthand() -> None:
     with pytest.raises(TypeError, match="protonate_histidines must be a bool"):
         normalize_histidine_protonation_request(
-            protonate_histidines=1,  # type: ignore[arg-type]
+            protonate_histidines=1,  # pyrefly: ignore[bad-argument-type]
         )
 
 
@@ -169,12 +169,12 @@ def test_workflow_transform_requests_preserves_legacy_positional_field_order() -
 
 def test_workflow_transform_requests_rejects_invalid_histidine_request() -> None:
     with pytest.raises(TypeError, match="HistidineProtonationRequest"):
-        WorkflowTransformRequests(histidine_protonation=object())  # type: ignore[arg-type]
+        WorkflowTransformRequests(histidine_protonation=object())  # pyrefly: ignore[bad-argument-type]
 
 
 def test_workflow_transform_requests_rejects_non_bool_histidine_shorthand() -> None:
     with pytest.raises(TypeError, match="protonate_histidines must be a bool"):
-        WorkflowTransformRequests(protonate_histidines=1)  # type: ignore[arg-type]
+        WorkflowTransformRequests(protonate_histidines=1)  # pyrefly: ignore[bad-argument-type]
 
 
 def test_add_hydrogens_rejects_conflicting_histidine_inputs() -> None:
@@ -190,7 +190,7 @@ def test_materialize_hydrogens_core_rejects_legacy_histidine_bool() -> None:
     with pytest.raises(TypeError, match="protonate_histidines"):
         materialize_hydrogens_core(
             _empty_chain_structure(),
-            protonate_histidines=True,  # type: ignore[call-arg]
+            protonate_histidines=True,  # pyrefly: ignore[unexpected-keyword]
         )
 
 

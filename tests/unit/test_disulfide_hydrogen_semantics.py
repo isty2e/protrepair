@@ -105,13 +105,17 @@ def test_disulfide_hydrogen_facts_follow_relationship_and_element_identity(
 
     facts = StructureDisulfideHydrogenFacts.from_structure(structure)
 
-    assert tuple(
-        atom_ref.atom_name for atom_ref in facts.forbidden_hydrogen_atom_refs()
-    ) == expected_atom_names
-    assert sum(
-        contradiction.present_endpoint_count()
-        for contradiction in facts.contradictions
-    ) == expected_endpoint_count
+    assert (
+        tuple(atom_ref.atom_name for atom_ref in facts.forbidden_hydrogen_atom_refs())
+        == expected_atom_names
+    )
+    assert (
+        sum(
+            contradiction.present_endpoint_count()
+            for contradiction in facts.contradictions
+        )
+        == expected_endpoint_count
+    )
 
 
 @pytest.mark.parametrize(
@@ -142,9 +146,7 @@ def test_nonstandard_hydrogen_name_requires_explicit_covalent_sg_attachment(
     )
 
     assert (
-        StructureDisulfideHydrogenFacts.from_structure(
-            structure
-        ).has_contradictions()
+        StructureDisulfideHydrogenFacts.from_structure(structure).has_contradictions()
         is expected
     )
 
@@ -241,9 +243,7 @@ def test_runtime_type_validation_precedes_identity_sorting() -> None:
                 tuple[AtomRef, AtomRef],
                 (AtomRef(ResidueId("A", 1), "SG"), "bad"),
             ),
-            forbidden_hydrogen_atom_refs=(
-                AtomRef(ResidueId("A", 1), "HG"),
-            ),
+            forbidden_hydrogen_atom_refs=(AtomRef(ResidueId("A", 1), "HG"),),
         )
 
 
@@ -311,9 +311,12 @@ def test_workflow_removes_only_forbidden_isotopes_and_is_idempotent() -> None:
     first = process_structure(structure)
     second = process_structure(first.structure)
 
-    assert first.structure.geometry.atom_geometry(
-        first.structure.constitution.atom_index(preserved_ref)
-    ) == preserved_geometry
+    assert (
+        first.structure.geometry.atom_geometry(
+            first.structure.constitution.atom_index(preserved_ref)
+        )
+        == preserved_geometry
+    )
     assert disulfide_atom_ref_pairs(first.structure) == disulfide_atom_ref_pairs(
         structure
     )
@@ -327,8 +330,7 @@ def test_workflow_removes_only_forbidden_isotopes_and_is_idempotent() -> None:
     ) == (("HG",), ("DG",))
     assert second.structure == first.structure
     assert not any(
-        repair.kind is RepairEventKind.HYDROGENS_REMOVED
-        for repair in second.repairs
+        repair.kind is RepairEventKind.HYDROGENS_REMOVED for repair in second.repairs
     )
     _, chemistry_facts = derive_structure_coverage_and_chemistry_readiness_facts(
         first.structure,
@@ -354,9 +356,7 @@ def test_normalized_disulfide_roundtrips_without_reintroducing_hydrogen(
         file_format,
     )
 
-    left = roundtripped.constitution.residue_or_ligand(
-        ResidueId("A", 1, "A")
-    )
+    left = roundtripped.constitution.residue_or_ligand(ResidueId("A", 1, "A"))
     assert left is not None
     assert not left.has_atom_site("HG")
     assert disulfide_atom_ref_pairs(roundtripped)
@@ -378,9 +378,7 @@ def test_retained_disulfide_uses_the_same_normalization_action() -> None:
         ingress=StructureIngressOptions(ligand_policy=LigandPolicy.KEEP),
     )
 
-    left = result.structure.constitution.residue_or_ligand(
-        ResidueId("A", 1, "A")
-    )
+    left = result.structure.constitution.residue_or_ligand(ResidueId("A", 1, "A"))
     assert left is not None
     assert not left.has_atom_site("HG")
     assert disulfide_atom_ref_pairs(result.structure)
@@ -396,9 +394,7 @@ def test_shared_disulfide_endpoint_keeps_pair_facts_but_deduplicates_action() ->
     facts = StructureDisulfideHydrogenFacts.from_structure(structure)
 
     assert len(facts.contradictions) == 2
-    assert facts.forbidden_hydrogen_atom_refs() == (
-        AtomRef(ResidueId("A", 1), "HG"),
-    )
+    assert facts.forbidden_hydrogen_atom_refs() == (AtomRef(ResidueId("A", 1), "HG"),)
     action = DisulfideHydrogenNormalizationTransformer(
         forbidden_hydrogen_atom_refs=facts.forbidden_hydrogen_atom_refs()
     )
@@ -443,8 +439,7 @@ def test_workflow_blocks_multiply_bonded_disulfide_endpoint_before_backend(
     assert result.has_errors()
     assert len(disulfide_atom_ref_pairs(result.structure)) == 2
     assert not any(
-        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED
-        for issue in result.issues
+        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
     )
     assert any(
         issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
@@ -526,16 +521,23 @@ def test_selective_removal_preserves_orthogonal_sulfur_charge_and_metadata() -> 
         provenance=structure.provenance,
     )
     facts = StructureDisulfideHydrogenFacts.from_structure(structure)
-    normalized = DisulfideHydrogenNormalizationTransformer(
-        forbidden_hydrogen_atom_refs=facts.forbidden_hydrogen_atom_refs()
-    ).execute(
-        TransformationResult(structure=structure, repairs=(), issues=()),
-        context=_execution_context(structure),
-    ).structure
+    normalized = (
+        DisulfideHydrogenNormalizationTransformer(
+            forbidden_hydrogen_atom_refs=facts.forbidden_hydrogen_atom_refs()
+        )
+        .execute(
+            TransformationResult(structure=structure, repairs=(), issues=()),
+            context=_execution_context(structure),
+        )
+        .structure
+    )
 
-    assert normalized.topology.formal_charge(
-        normalized.constitution.atom_index(sulfur_ref)
-    ) == -1
+    assert (
+        normalized.topology.formal_charge(
+            normalized.constitution.atom_index(sulfur_ref)
+        )
+        == -1
+    )
     assert normalized.polymer_blueprint is structure.polymer_blueprint
     assert normalized.provenance is structure.provenance
 
@@ -586,9 +588,7 @@ def _disulfide_structure(
                 payload
             )
     if include_passive_polymer_context:
-        passive_chain_ids = tuple(
-            dict.fromkeys((left_id.chain_id, right_id.chain_id))
-        )
+        passive_chain_ids = tuple(dict.fromkeys((left_id.chain_id, right_id.chain_id)))
         for index, chain_id in enumerate(passive_chain_ids):
             polymer_payloads_by_chain_id.setdefault(chain_id, []).append(
                 _passive_polymer_payload(
@@ -637,9 +637,7 @@ def _shared_disulfide_endpoint_structure(
                         residue_id,
                         sg_x=sg_x,
                         direction=-1.0 if index == 0 else 1.0,
-                        thiol_hydrogen=(
-                            thiol_hydrogen if index == 0 else None
-                        ),
+                        thiol_hydrogen=(thiol_hydrogen if index == 0 else None),
                     ),
                 ),
             )

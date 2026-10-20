@@ -6,11 +6,6 @@ from types import MappingProxyType
 
 from protrepair.structure.labels import ResidueId
 
-__all__ = [
-    "RetainedNonPolymerChemistryEvidence",
-    "evidence_by_residue_id",
-]
-
 
 @dataclass(frozen=True, slots=True)
 class RetainedNonPolymerChemistryEvidence:
@@ -42,9 +37,7 @@ class RetainedNonPolymerChemistryEvidence:
                 "retained non-polymer chemistry evidence heavy_atom_names must "
                 "not be blank"
             )
-        if len(normalized_heavy_atom_names) != len(
-            set(normalized_heavy_atom_names)
-        ):
+        if len(normalized_heavy_atom_names) != len(set(normalized_heavy_atom_names)):
             raise ValueError(
                 "retained non-polymer chemistry evidence heavy_atom_names must "
                 "be unique"
@@ -69,3 +62,9 @@ def evidence_by_residue_id(
         evidence_map[item.residue_id] = item
 
     return MappingProxyType(evidence_map)
+
+
+__all__ = [
+    "RetainedNonPolymerChemistryEvidence",
+    "evidence_by_residue_id",
+]

@@ -27,8 +27,9 @@ python -m pip install -c constraints/release.txt \
 Run the permanent code-quality and unit surface:
 
 ```bash
-python -m ruff check
-python -m basedpyright
+python -m ruff check src/protrepair tests scripts/run_installed_artifact_smoke.py
+python -m ruff format --check src/protrepair tests scripts/run_installed_artifact_smoke.py
+python -m pyrefly check
 PROTREPAIR_RELEASE_STRICT_RDKIT=1 python -m pytest \
   tests/unit tests/corpus tests/workflow -m "not benchmark" -q
 ```

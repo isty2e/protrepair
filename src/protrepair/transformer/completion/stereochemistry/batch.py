@@ -34,8 +34,8 @@ class StereochemistryCorrectionBatch:
     ) -> "StereochemistryCorrectionBatch":
         """Group stereochemistry violations into one canonical correction batch."""
 
-        grouped: dict[ResidueId, list[SidechainStereochemistryViolation]] = (
-            defaultdict(list)
+        grouped: dict[ResidueId, list[SidechainStereochemistryViolation]] = defaultdict(
+            list
         )
         for violation in violations:
             grouped[violation.residue_id].append(violation)

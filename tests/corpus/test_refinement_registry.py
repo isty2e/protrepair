@@ -141,7 +141,9 @@ def test_low_resolution_sidechain_cases_are_operator_support_gaps() -> None:
     ("fixture_path", "expected_residues"),
     (
         (
-            Path("tests/fixtures/pdb/refinement/3j6b_terminal_helix_misthread_local.pdb"),
+            Path(
+                "tests/fixtures/pdb/refinement/3j6b_terminal_helix_misthread_local.pdb"
+            ),
             {("SER", "9", 228), ("VAL", "9", 237)},
         ),
         (
@@ -233,9 +235,7 @@ def test_perturbation_benchmark_registry_separates_reference_provenance() -> Non
     """Perturbation fixtures should distinguish external and self references."""
 
     assert "1xgo-leu253" in REFERENCE_REFINEMENT_BENCHMARK_CASES
-    assert (
-        "1jd0-gln92-self-reference" in SELF_REFERENCE_REFINEMENT_BENCHMARK_CASES
-    )
+    assert "1jd0-gln92-self-reference" in SELF_REFERENCE_REFINEMENT_BENCHMARK_CASES
     assert "4jfx-ptr8-self-reference" in SELF_REFERENCE_REFINEMENT_BENCHMARK_CASES
     assert set(PERTURBATION_REFINEMENT_BENCHMARK_CASES) == (
         set(REFERENCE_REFINEMENT_BENCHMARK_CASES)
@@ -394,8 +394,9 @@ def test_refinement_corpus_execution_policy_separates_gating_from_tracking() -> 
     assert "2h6o-glycan-problematic" in tracking_case_ids
 
 
-def test_refinement_corpus_tracking_pressure_queries_surface_current_failure_classes(
-) -> None:
+def test_refinement_corpus_tracking_pressure_queries_surface_current_failure_classes() -> (
+    None
+):
     """Tracking pressure queries should expose the current failure buckets."""
 
     assert corpus_case_ids_for_tracking_pressure(

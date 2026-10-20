@@ -151,8 +151,7 @@ def _assert_existing_virtual_environment(venv_path: Path) -> None:
         raise SystemExit(f"venv path is not a directory: {venv_path}")
     if not (venv_path / "pyvenv.cfg").is_file():
         raise SystemExit(
-            "refusing to use existing --venv-path without pyvenv.cfg: "
-            f"{venv_path}"
+            f"refusing to use existing --venv-path without pyvenv.cfg: {venv_path}"
         )
 
 

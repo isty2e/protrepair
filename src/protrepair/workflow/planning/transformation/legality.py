@@ -64,8 +64,7 @@ class LegalTransformationFamily:
             and self.preparation_reason is not None
         ):
             raise ValueError(
-                "only preparation-stage legal families may carry a "
-                "preparation reason"
+                "only preparation-stage legal families may carry a preparation reason"
             )
 
 
@@ -237,9 +236,7 @@ def selected_region_legal_transformations(
                 (
                     LocalTransformationStratum.PREPARATION,
                     family,
-                    _discrete_preparation_reason(
-                        atom_scope_facts.selected_scope_facts
-                    ),
+                    _discrete_preparation_reason(atom_scope_facts.selected_scope_facts),
                 )
             )
             continue
@@ -285,9 +282,7 @@ def _requires_chemistry_preparation(
 ) -> bool:
     """Return whether local chemistry detail still needs non-topology repair."""
 
-    return (
-        selected_scope_facts.hydrogen_attachment_resolution_facts.any_coordinate_inferred()
-    )
+    return selected_scope_facts.hydrogen_attachment_resolution_facts.any_coordinate_inferred()
 
 
 def selected_region_termination_decision(

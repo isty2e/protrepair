@@ -357,6 +357,7 @@ def test_rebuild_does_not_restore_stale_original_h_coordinates(source):
     repaired = apply_polymer_microstate_patches(moved, (patch,))
     h = repaired.constitution.resolve_atom_index(AtomRef(residue_id, "DZ1"))
     n = repaired.constitution.resolve_atom_index(AtomRef(residue_id, "NZ"))
+    assert h is not None and n is not None
     assert (
         0.9
         < repaired.geometry.position(h).distance_to(repaired.geometry.position(n))

@@ -66,9 +66,7 @@ class AlphaFoldModelRecord:
             self.global_metric_value is not None
             and not 0.0 <= self.global_metric_value <= 100.0
         ):
-            raise ValueError(
-                "AlphaFold global_metric_value must lie in [0, 100]"
-            )
+            raise ValueError("AlphaFold global_metric_value must lie in [0, 100]")
         if self.latest_version is not None and self.latest_version <= 0:
             raise ValueError("AlphaFold latest_version must be positive")
 
@@ -282,9 +280,7 @@ class AlphaFoldStructureArtifact:
                 "AlphaFold structure artifacts require an AlphaFoldModelRecord"
             )
         if not isinstance(self.file_format, FileFormat):
-            raise TypeError(
-                "AlphaFold structure artifacts require a FileFormat value"
-            )
+            raise TypeError("AlphaFold structure artifacts require a FileFormat value")
 
         structure_text = self.structure_text.strip()
         if not structure_text:

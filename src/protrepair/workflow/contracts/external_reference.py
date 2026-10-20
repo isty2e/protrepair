@@ -1,5 +1,6 @@
 """Workflow requests grounded in external sequence and structure references."""
 
+import itertools
 from dataclasses import dataclass
 
 from protrepair.relation.blueprint import (
@@ -80,10 +81,8 @@ class ExternalSpanReconstructionSpec:
             )
         if any(
             not left_residue_id.immediately_precedes(right_residue_id)
-            for left_residue_id, right_residue_id in zip(
-                target_residue_ids,
-                target_residue_ids[1:],
-                strict=False,
+            for left_residue_id, right_residue_id in itertools.pairwise(
+                target_residue_ids
             )
         ):
             raise ValueError(

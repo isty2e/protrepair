@@ -18,8 +18,8 @@ __all__ = [
     "BondTopologyRewrite",
     "GraphBondState",
     "MovedAtomDelta",
+    "RegionTransformationResult",
     "ResidueIdentityRewrite",
     "ResidueTopologyRewrite",
-    "RegionTransformationResult",
     "StructureDelta",
 ]

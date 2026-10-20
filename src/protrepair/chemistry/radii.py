@@ -356,9 +356,7 @@ class ElementRadiusResolution:
         ):
             raise ValueError("radius_angstrom must be finite and positive when present")
 
-        requested_element_symbol = _radius_lookup_key(
-            self.requested_element_symbol
-        )
+        requested_element_symbol = _radius_lookup_key(self.requested_element_symbol)
         if requested_element_symbol != self.requested_element_symbol:
             raise ValueError("requested element symbol must be a canonical lookup key")
         expected_normalized_element_symbol = normalize_radius_element_symbol(

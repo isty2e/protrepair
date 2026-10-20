@@ -71,9 +71,12 @@ class RDKitNoConectPDBBlockProjector:
         atom_geometries = structure.geometry.atom_geometries
         base_atom_geometries = self.base_geometry.atom_geometries
         lines: list[str] | None = None
-        for line_index, atom_index_value, prefix, suffix in (
-            self.coordinate_line_patches
-        ):
+        for (
+            line_index,
+            atom_index_value,
+            prefix,
+            suffix,
+        ) in self.coordinate_line_patches:
             atom_geometry = atom_geometries[atom_index_value]
             base_atom_geometry = base_atom_geometries[atom_index_value]
             if not self._atom_geometry_is_projection_compatible(
@@ -229,18 +232,10 @@ def _format_pdb_coordinates(x: float, y: float, z: float) -> str:
     normalized_x = 0.0 if -5e-4 < x < 0.0 else x + 1e-10
     normalized_y = 0.0 if -5e-4 < y < 0.0 else y + 1e-10
     normalized_z = 0.0 if -5e-4 < z < 0.0 else z + 1e-10
-    normalized_fields = (
-        f"{normalized_x:8.3f}"
-        f"{normalized_y:8.3f}"
-        f"{normalized_z:8.3f}"
-    )
+    normalized_fields = f"{normalized_x:8.3f}{normalized_y:8.3f}{normalized_z:8.3f}"
     if len(normalized_fields) == 24:
         return normalized_fields
 
     # Gemmi fixes overflowed records in-place: x keeps its normalized field,
     # while y and z are rewritten from the original values at fixed columns.
-    return (
-        normalized_fields[:8]
-        + f"{y:8.3f}"[:8]
-        + f"{z:8.3f}"[:8]
-    )
+    return normalized_fields[:8] + f"{y:8.3f}"[:8] + f"{z:8.3f}"[:8]

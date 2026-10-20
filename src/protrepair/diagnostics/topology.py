@@ -51,10 +51,7 @@ class LikelyDisulfideBond:
             left_residue_id = self.left_residue_id
             object.__setattr__(self, "left_residue_id", self.right_residue_id)
             object.__setattr__(self, "right_residue_id", left_residue_id)
-        if (
-            not isfinite(self.sg_distance_angstrom)
-            or self.sg_distance_angstrom <= 0.0
-        ):
+        if not isfinite(self.sg_distance_angstrom) or self.sg_distance_angstrom <= 0.0:
             raise ValueError(
                 "likely disulfide evidence requires a finite positive distance"
             )
@@ -73,13 +70,8 @@ class DisulfideCandidate:
     sg_distance_angstrom: float
 
     def __post_init__(self) -> None:
-        if (
-            not isfinite(self.sg_distance_angstrom)
-            or self.sg_distance_angstrom <= 0.0
-        ):
-            raise ValueError(
-                "disulfide candidates require a finite positive distance"
-            )
+        if not isfinite(self.sg_distance_angstrom) or self.sg_distance_angstrom <= 0.0:
+            raise ValueError("disulfide candidates require a finite positive distance")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,12 +84,8 @@ class AmbiguousDisulfideFinding:
     def __post_init__(self) -> None:
         candidates = tuple(self.candidates)
         if len(candidates) < 2:
-            raise ValueError(
-                "ambiguous disulfide findings require multiple candidates"
-            )
-        candidate_residue_ids = tuple(
-            candidate.residue_id for candidate in candidates
-        )
+            raise ValueError("ambiguous disulfide findings require multiple candidates")
+        candidate_residue_ids = tuple(candidate.residue_id for candidate in candidates)
         if self.residue_id in candidate_residue_ids:
             raise ValueError("ambiguous disulfide candidates must be distinct")
         if len(set(candidate_residue_ids)) != len(candidate_residue_ids):
@@ -126,9 +114,7 @@ class TopologyReport:
         """Return whether the report contains no findings."""
 
         return not (
-            self.cis_peptides
-            or self.likely_disulfides
-            or self.ambiguous_disulfides
+            self.cis_peptides or self.likely_disulfides or self.ambiguous_disulfides
         )
 
     def to_issues(self) -> tuple[ValidationIssue, ...]:
@@ -166,8 +152,7 @@ class TopologyReport:
                         (
                             finding.residue_id,
                             *tuple(
-                                candidate.residue_id
-                                for candidate in finding.candidates
+                                candidate.residue_id for candidate in finding.candidates
                             ),
                         )
                     ),

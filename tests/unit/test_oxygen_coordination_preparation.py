@@ -484,11 +484,11 @@ def test_wrong_or_unadmitted_metal_partner_is_not_silently_ignored(
 
 
 @pytest.mark.parametrize(
-    "field,value,original_only",
-    (("order", 1, True), ("order", 1, False), ("aromatic", True, False)),
+    "order,aromatic,original_only",
+    ((1, False, True), (1, False, False), (None, True, False)),
 )
 def test_invalid_coordination_edge_is_rechecked_in_original_and_current_context(
-    field: str, value: int | bool, original_only: bool
+    order: int | None, aromatic: bool, original_only: bool
 ) -> None:
     source = _source("ASP", ("OD1",))
     coordinate = next(
@@ -499,10 +499,9 @@ def test_invalid_coordination_edge_is_rechecked_in_original_and_current_context(
     assert coordinate.source_metadata is not None
     changed = replace(
         coordinate,
-        **{field: value},
-        source_metadata=replace(
-            coordinate.source_metadata, reported_order=1 if field == "order" else None
-        ),
+        order=order,
+        aromatic=aromatic,
+        source_metadata=replace(coordinate.source_metadata, reported_order=order),
     )
     bonds = tuple(
         changed if edge == coordinate else edge for edge in source.topology.bonds

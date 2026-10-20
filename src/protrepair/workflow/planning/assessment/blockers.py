@@ -33,9 +33,7 @@ class WorkflowBlocker:
 
     def __post_init__(self) -> None:
         if not isinstance(self.phase, WorkflowPlanningPhase):
-            raise TypeError(
-                "workflow blockers require a WorkflowPlanningPhase value"
-            )
+            raise TypeError("workflow blockers require a WorkflowPlanningPhase value")
         if not isinstance(
             self.deficit_family,
             WorkflowCapabilityDeficitFamily,
@@ -89,7 +87,7 @@ class WorkflowBlocker:
             raise NotImplementedError(
                 "workflow blocker issue projection currently supports only "
                 "unsupported-component blockers"
-        )
+            )
 
         residue_ids = self.residue_ids()
         residue_id = next(iter(residue_ids))

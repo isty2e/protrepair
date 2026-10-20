@@ -200,13 +200,17 @@ def test_conflicting_residue_is_rejected_before_chemistry_derivation(consumer):
     source = _polymer()
     residue = source.constitution.chains[0].residues[0]
     conflicting = replace(residue, atom_sites=residue.atom_sites[:-1])
-    with patch.object(
-        observation_module,
-        "StructureHydrogenExpectationModel",
-        side_effect=AssertionError("invalid residue triggered chemistry derivation"),
+    with (
+        patch.object(
+            observation_module,
+            "StructureHydrogenExpectationModel",
+            side_effect=AssertionError(
+                "invalid residue triggered chemistry derivation"
+            ),
+        ),
+        pytest.raises(ValueError, match="residue.*context"),
     ):
-        with pytest.raises(ValueError, match="residue.*context"):
-            _facts_for_supplied_residue(consumer, source, conflicting)
+        _facts_for_supplied_residue(consumer, source, conflicting)
 
 
 @pytest.mark.parametrize("project_first", [True, False])

@@ -58,11 +58,7 @@ class ResidueGeometry:
     def __hash__(self) -> int:
         """Return a stable hash over residue-local geometry payload."""
 
-        return hash(
-            (
-                tuple(self.atoms_by_name.items()),
-            )
-        )
+        return hash((tuple(self.atoms_by_name.items()),))
 
     def atom_names(self) -> tuple[str, ...]:
         """Return atom names in stored order."""

@@ -410,7 +410,8 @@ class StructureDisulfideTopologyFacts:
                 )
             except ValueError:
                 continue
-            pairs.append(tuple(sorted(refs)))
+            first, second = sorted(refs)
+            pairs.append((first, second))
         return tuple(sorted(pairs))
 
     @staticmethod

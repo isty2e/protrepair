@@ -139,8 +139,8 @@ def test_generated_h_preserves_deposited_stereo_positions_and_native_lengths(
         if parent not in mismatched:
             assert np.array_equal(current, original)
     # This geometric check does not reuse the native stereo comparator.
-    for index in mismatched:
-        atom = corrected.GetAtomWithIdx(index)
+    for mismatched_index in mismatched:
+        atom = corrected.GetAtomWithIdx(mismatched_index)
         anchors = [
             a.GetIdx() for a in atom.GetNeighbors() if a.GetIdx() < pose.GetNumAtoms()
         ]
@@ -148,7 +148,7 @@ def test_generated_h_preserves_deposited_stereo_positions_and_native_lengths(
             a.GetIdx() for a in atom.GetNeighbors() if a.GetIdx() >= pose.GetNumAtoms()
         )
         conformer = corrected.GetConformer()
-        center = np.array(conformer.GetAtomPosition(index))
+        center = np.array(conformer.GetAtomPosition(mismatched_index))
         original_vectors = np.array(
             [np.array(conformer.GetAtomPosition(i)) - center for i in anchors]
         )

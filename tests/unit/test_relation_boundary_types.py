@@ -119,7 +119,7 @@ def test_local_transformation_context_models_supporting_structures() -> None:
 
     with pytest.raises(TypeError, match="SupportingStructureSpec"):
         LocalTransformationContextSpec(
-            supporting_structures=("donor",)  # type: ignore[arg-type]
+            supporting_structures=("donor",)  # pyrefly: ignore[bad-argument-type]
         )
 
     with pytest.raises(ValueError, match="at least one authoritative aspect"):

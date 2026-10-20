@@ -387,9 +387,7 @@ EXPLORATORY_CORPUS_METADATA: dict[str, CorpusCaseMetadata] = {
         ),
         execution_policy=CorpusExecutionPolicy.TRACKING_ONLY,
         tracking_pressure=CorpusTrackingPressure.SCOPING_GAP,
-        literature_references=(
-            "https://pmc.ncbi.nlm.nih.gov/articles/PMC4589481/",
-        ),
+        literature_references=("https://pmc.ncbi.nlm.nih.gov/articles/PMC4589481/",),
     ),
     "3j6b-terminal-helix-misthread": CorpusCaseMetadata(
         case_id="3j6b-terminal-helix-misthread",
@@ -407,12 +405,8 @@ EXPLORATORY_CORPUS_METADATA: dict[str, CorpusCaseMetadata] = {
         ),
         execution_policy=CorpusExecutionPolicy.TRACKING_ONLY,
         tracking_pressure=CorpusTrackingPressure.OPERATOR_CAPABILITY,
-        required_operator_family=(
-            RefinementOperatorFamily.BACKBONE_WINDOW_REFINEMENT
-        ),
-        literature_references=(
-            "https://pmc.ncbi.nlm.nih.gov/articles/PMC10024464/",
-        ),
+        required_operator_family=(RefinementOperatorFamily.BACKBONE_WINDOW_REFINEMENT),
+        literature_references=("https://pmc.ncbi.nlm.nih.gov/articles/PMC10024464/",),
     ),
     "3j7h-binding-site-backbone": CorpusCaseMetadata(
         case_id="3j7h-binding-site-backbone",
@@ -431,9 +425,7 @@ EXPLORATORY_CORPUS_METADATA: dict[str, CorpusCaseMetadata] = {
         ),
         execution_policy=CorpusExecutionPolicy.TRACKING_ONLY,
         tracking_pressure=CorpusTrackingPressure.SCALING_GAP,
-        literature_references=(
-            "https://pmc.ncbi.nlm.nih.gov/articles/PMC4990421/",
-        ),
+        literature_references=("https://pmc.ncbi.nlm.nih.gov/articles/PMC4990421/",),
     ),
     "3j9e-loop-backbone-error": CorpusCaseMetadata(
         case_id="3j9e-loop-backbone-error",
@@ -451,12 +443,8 @@ EXPLORATORY_CORPUS_METADATA: dict[str, CorpusCaseMetadata] = {
         ),
         execution_policy=CorpusExecutionPolicy.TRACKING_ONLY,
         tracking_pressure=CorpusTrackingPressure.OPERATOR_CAPABILITY,
-        required_operator_family=(
-            RefinementOperatorFamily.BACKBONE_WINDOW_REFINEMENT
-        ),
-        literature_references=(
-            "https://pmc.ncbi.nlm.nih.gov/articles/PMC10330749/",
-        ),
+        required_operator_family=(RefinementOperatorFamily.BACKBONE_WINDOW_REFINEMENT),
+        literature_references=("https://pmc.ncbi.nlm.nih.gov/articles/PMC10330749/",),
     ),
     "5k12-tyr471-sidechain": CorpusCaseMetadata(
         case_id="5k12-tyr471-sidechain",
@@ -473,9 +461,7 @@ EXPLORATORY_CORPUS_METADATA: dict[str, CorpusCaseMetadata] = {
         ),
         execution_policy=CorpusExecutionPolicy.TRACKING_ONLY,
         tracking_pressure=CorpusTrackingPressure.SCOPING_GAP,
-        literature_references=(
-            "https://pmc.ncbi.nlm.nih.gov/articles/PMC7787109/",
-        ),
+        literature_references=("https://pmc.ncbi.nlm.nih.gov/articles/PMC7787109/",),
     ),
     "5xm5-metal-sites": CorpusCaseMetadata(
         case_id="5xm5-metal-sites",
@@ -493,9 +479,7 @@ EXPLORATORY_CORPUS_METADATA: dict[str, CorpusCaseMetadata] = {
         evaluation_mode=CorpusEvaluationMode.CHEMISTRY_ADMISSIBILITY,
         execution_policy=CorpusExecutionPolicy.TRACKING_ONLY,
         tracking_pressure=CorpusTrackingPressure.CHEMISTRY_BLOCKER,
-        literature_references=(
-            "https://pmc.ncbi.nlm.nih.gov/articles/PMC10321142/",
-        ),
+        literature_references=("https://pmc.ncbi.nlm.nih.gov/articles/PMC10321142/",),
     ),
     "7s9d-prestin-segment": CorpusCaseMetadata(
         case_id="7s9d-prestin-segment",
@@ -514,12 +498,8 @@ EXPLORATORY_CORPUS_METADATA: dict[str, CorpusCaseMetadata] = {
         ),
         execution_policy=CorpusExecutionPolicy.TRACKING_ONLY,
         tracking_pressure=CorpusTrackingPressure.OPERATOR_CAPABILITY,
-        required_operator_family=(
-            RefinementOperatorFamily.BACKBONE_WINDOW_REFINEMENT
-        ),
-        literature_references=(
-            "https://pmc.ncbi.nlm.nih.gov/articles/PMC10330749/",
-        ),
+        required_operator_family=(RefinementOperatorFamily.BACKBONE_WINDOW_REFINEMENT),
+        literature_references=("https://pmc.ncbi.nlm.nih.gov/articles/PMC10330749/",),
     ),
     "2dn2-whole-structure": CorpusCaseMetadata(
         case_id="2dn2-whole-structure",
@@ -628,7 +608,9 @@ EXPLORATORY_CORPUS_METADATA: dict[str, CorpusCaseMetadata] = {
         ),
         execution_policy=CorpusExecutionPolicy.TRACKING_ONLY,
         tracking_pressure=CorpusTrackingPressure.SCOPING_GAP,
-        literature_references=("https://journals.iucr.org/m/issues/2024/06/00/lz5074/",),
+        literature_references=(
+            "https://journals.iucr.org/m/issues/2024/06/00/lz5074/",
+        ),
     ),
     "3ja8-whole-structure": CorpusCaseMetadata(
         case_id="3ja8-whole-structure",
@@ -763,7 +745,9 @@ EXPLORATORY_CORPUS_METADATA: dict[str, CorpusCaseMetadata] = {
         ),
         execution_policy=CorpusExecutionPolicy.TRACKING_ONLY,
         tracking_pressure=CorpusTrackingPressure.SCOPING_GAP,
-        literature_references=("https://journals.iucr.org/m/issues/2024/06/00/lz5074/",),
+        literature_references=(
+            "https://journals.iucr.org/m/issues/2024/06/00/lz5074/",
+        ),
     ),
     "6htx-whole-structure": CorpusCaseMetadata(
         case_id="6htx-whole-structure",

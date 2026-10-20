@@ -711,9 +711,11 @@ def test_cap_failure_is_local_to_its_residue_in_a_mixed_batch():
             if line[21] == "B" and line[12:16].strip() == "N":
                 line = line.ljust(80)[:78] + "1+"
             records.append(line)
-        elif line.startswith("HETATM") and line[17:20] == "ACE":
-            records.append(line)
-        elif line.startswith("LINK  "):
+        elif (
+            line.startswith("HETATM")
+            and line[17:20] == "ACE"
+            or line.startswith("LINK  ")
+        ):
             records.append(line)
     source = read_structure_string("\n".join(records) + "\nEND\n", FileFormat.PDB)
     failed_cap = ResidueId("B", 0)

@@ -69,9 +69,7 @@ def test_rdkit_hydrogen_append_patch_is_noop_without_hydrogens() -> None:
     payload = _payload()
     patch = rdkit_patch.rdkit_hydrogen_append_patch(
         payload,
-        hydrogenated_molecule=_molecule_with_coordinates(
-            ((6, Vec3(8.0, 8.0, 8.0)),)
-        ),
+        hydrogenated_molecule=_molecule_with_coordinates(((6, Vec3(8.0, 8.0, 8.0)),)),
         hydrogen_atom_names=(),
     )
 
@@ -124,9 +122,7 @@ def test_rdkit_hydrogen_append_patch_can_replace_existing_hydrogen_position() ->
     )
     patch = rdkit_patch.rdkit_hydrogen_append_patch(
         payload,
-        hydrogenated_molecule=_molecule_with_coordinates(
-            ((1, Vec3(0.0, 2.0, 0.0)),)
-        ),
+        hydrogenated_molecule=_molecule_with_coordinates(((1, Vec3(0.0, 2.0, 0.0)),)),
         hydrogen_atom_names=(" hx ",),
     )
 
@@ -257,9 +253,10 @@ def test_evidence_hydrogen_names_count_all_hydrogen_isotopes() -> None:
     editable_molecule.AddAtom(deuterium)
     editable_molecule.AddAtom(Chem.Atom(1))
 
-    assert rdkit_evidence._evidence_hydrogen_atom_names(
-        editable_molecule.GetMol()
-    ) == ("H001", "H002")
+    assert rdkit_evidence._evidence_hydrogen_atom_names(editable_molecule.GetMol()) == (
+        "H001",
+        "H002",
+    )
 
 
 def _payload() -> CompletionResiduePayload:

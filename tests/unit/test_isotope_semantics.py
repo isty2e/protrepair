@@ -170,7 +170,9 @@ def test_hydrogen_isotopes_share_retained_non_polymer_readiness() -> None:
         StructureChemistryReadinessFacts.from_structure(
             _retained_isotope_structure(isotope_symbol),
             component_library=build_default_component_library(),
-        ).retained_non_polymer_facts[0].hydrogen_coverage_state
+        )
+        .retained_non_polymer_facts[0]
+        .hydrogen_coverage_state
         for isotope_symbol in HYDROGEN_ISOTOPE_SYMBOLS
     )
 

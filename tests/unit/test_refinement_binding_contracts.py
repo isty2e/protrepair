@@ -88,10 +88,10 @@ def test_direct_region_transformation_rejects_non_scope_specs() -> None:
 
     with pytest.raises(TypeError, match="LocalScopeSpec scope_spec"):
         DirectRegionTransformationSpec(
-            scope_spec=AbsentResidueSpanScope(
+            scope_spec=AbsentResidueSpanScope(  # pyrefly: ignore[bad-argument-type]
                 preceding_residue_id=ResidueId(chain_id="A", seq_num=10),
                 following_residue_id=ResidueId(chain_id="A", seq_num=13),
-            ),  # type: ignore[arg-type]
+            ),
             force_field=ContinuousRelaxationForceField.UFF,
         )
 
@@ -121,14 +121,14 @@ def test_direct_region_transformation_rejects_non_scope_specs() -> None:
             scope_spec=scope_spec,
             force_field=ContinuousRelaxationForceField.UFF,
             config=ContinuousRelaxationConfig(
-                max_iterations=1.5,  # pyright: ignore[reportArgumentType]
+                max_iterations=1.5,  # pyrefly: ignore[bad-argument-type]
             ),
         )
 
     with pytest.raises(TypeError, match="ContinuousRelaxationForceField"):
         DirectRegionTransformationSpec(
             scope_spec=scope_spec,
-            force_field="uff",  # type: ignore[arg-type]
+            force_field="uff",  # pyrefly: ignore[bad-argument-type]
         )
 
 
@@ -152,7 +152,7 @@ def test_backbone_window_refinement_spec_is_not_a_direct_ff_scope() -> None:
 
     with pytest.raises(TypeError, match="LocalScopeSpec scope_spec"):
         DirectRegionTransformationSpec(
-            scope_spec=spec,  # type: ignore[arg-type]
+            scope_spec=spec,  # pyrefly: ignore[bad-argument-type]
             force_field=ContinuousRelaxationForceField.UFF,
         )
 
@@ -161,9 +161,7 @@ def test_backbone_window_refinement_spec_requires_ordered_chain_window() -> None
     """Backbone-window contracts should reject non-window scope shapes."""
 
     with pytest.raises(ValueError, match="at least two residues"):
-        BackboneWindowRefinementSpec(
-            residue_ids=(ResidueId(chain_id="A", seq_num=10),)
-        )
+        BackboneWindowRefinementSpec(residue_ids=(ResidueId(chain_id="A", seq_num=10),))
 
     with pytest.raises(ValueError, match="one ordered chain window"):
         BackboneWindowRefinementSpec(
@@ -212,8 +210,7 @@ def test_backend_capabilities_choose_preferred_force_field() -> None:
     assert decision.settings.profile is ContinuousRelaxationProfile.RDKIT_MMFF
     assert decision.settings.force_field is ContinuousRelaxationForceField.MMFF
     assert (
-        decision.reason
-        is ContinuousRelaxationBindingReason.BACKEND_PREFERRED_PROFILE
+        decision.reason is ContinuousRelaxationBindingReason.BACKEND_PREFERRED_PROFILE
     )
 
 
@@ -230,9 +227,7 @@ def test_backend_capabilities_fall_back_to_only_supported_force_field() -> None:
 
     assert decision.settings.profile is ContinuousRelaxationProfile.RDKIT_UFF
     assert decision.settings.force_field is ContinuousRelaxationForceField.UFF
-    assert (
-        decision.reason is ContinuousRelaxationBindingReason.ONLY_SUPPORTED_PROFILE
-    )
+    assert decision.reason is ContinuousRelaxationBindingReason.ONLY_SUPPORTED_PROFILE
 
 
 def test_backend_capabilities_reject_ambiguous_recommended_binding() -> None:

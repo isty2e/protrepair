@@ -389,8 +389,7 @@ def test_heavy_repair_adds_topology_for_sidechain_branch_atoms() -> None:
     assert has_atom(result.structure, residue_id, "OG")
     assert has_template_topology_bond(result.structure, residue_id, "CB", "OG")
     assert any(
-        event.kind is RepairEventKind.HEAVY_ATOMS_ADDED
-        and event.atom_names == ("OG",)
+        event.kind is RepairEventKind.HEAVY_ATOMS_ADDED and event.atom_names == ("OG",)
         for event in result.repairs
     )
 
@@ -796,8 +795,7 @@ def test_repair_heavy_atoms_keeps_backbone_o_when_sidechain_placement_fails() ->
     assert has_atom(result.structure, residue_id, "O")
     assert not has_atom(result.structure, residue_id, "OG")
     assert any(
-        event.kind is RepairEventKind.HEAVY_ATOMS_ADDED
-        and event.atom_names == ("O",)
+        event.kind is RepairEventKind.HEAVY_ATOMS_ADDED and event.atom_names == ("O",)
         for event in result.repairs
     )
     assert any(

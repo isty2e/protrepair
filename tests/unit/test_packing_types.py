@@ -161,9 +161,7 @@ def test_packing_plan_resolves_selection_and_fixed_residues() -> None:
     )
 
     assert plan.selected_residue_ids() == (ResidueId(chain_id="A", seq_num=2),)
-    assert plan.fixed_residue_ids() == (
-        ResidueId(chain_id="A", seq_num=1),
-    )
+    assert plan.fixed_residue_ids() == (ResidueId(chain_id="A", seq_num=1),)
     assert plan.selected_residue_count() == 1
     assert plan.selected_residue_sites() == (
         structure.constitution.chain("A").residue(ResidueId(chain_id="A", seq_num=2)),

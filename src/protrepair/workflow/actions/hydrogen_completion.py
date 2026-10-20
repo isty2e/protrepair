@@ -18,7 +18,7 @@ from protrepair.workflow.actions.context import TransformerExecutionContext
 class HydrogenCompletionTransformer(ResidueSetWorkflowStructureTransformer):
     """Workflow-visible hydrogen completion transformer."""
 
-    scope: ResidueSetScope
+    scope: ResidueSetScope  # pyrefly: ignore[bad-override]  # Frozen action implements the base scope field.
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, ResidueSetScope):

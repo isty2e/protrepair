@@ -11,7 +11,7 @@ class SourceResponseTooLargeError(ValueError):
     """Raised when a source response exceeds the configured byte budget."""
 
 
-class _ReadableResponse(Protocol):
+class ReadableResponse(Protocol):
     """Minimal response protocol needed for bounded body reads."""
 
     def read(self, size: int = -1) -> bytes:
@@ -37,7 +37,7 @@ def normalize_source_retrieval_timeout(timeout_seconds: float) -> float:
 
 
 def read_bounded_response_text(
-    response: _ReadableResponse,
+    response: ReadableResponse,
     *,
     source_name: str,
     max_bytes: int | None = None,

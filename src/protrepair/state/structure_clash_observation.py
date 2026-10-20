@@ -10,16 +10,6 @@ from protrepair.state.structure_readiness import StructureChemistryReadinessFact
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 
-__all__ = [
-    "active_chemistry_readiness_facts",
-    "clash_state_from_count",
-    "heavy_heavy_clashes",
-    "polymer_ligand_clashes",
-    "protein_self_clashes",
-    "total_clash_overlap_angstrom",
-    "worst_clash_overlap_angstrom",
-]
-
 
 def active_chemistry_readiness_facts(
     structure: ProteinStructure,
@@ -45,11 +35,7 @@ def active_chemistry_readiness_facts(
 def clash_state_from_count(clash_count: int) -> ClashPresenceState:
     """Return one clash state for a non-negative clash count."""
 
-    return (
-        ClashPresenceState.PRESENT
-        if clash_count > 0
-        else ClashPresenceState.NONE
-    )
+    return ClashPresenceState.PRESENT if clash_count > 0 else ClashPresenceState.NONE
 
 
 def worst_clash_overlap_angstrom(clashes: Iterable[StericClash]) -> float:
@@ -57,8 +43,7 @@ def worst_clash_overlap_angstrom(clashes: Iterable[StericClash]) -> float:
 
     worst_overlap = 0.0
     for clash in clashes:
-        if clash.overlap_angstrom > worst_overlap:
-            worst_overlap = clash.overlap_angstrom
+        worst_overlap = max(worst_overlap, clash.overlap_angstrom)
     return worst_overlap
 
 
@@ -130,3 +115,14 @@ def polymer_ligand_clashes(
         if {clash.left_domain, clash.right_domain}
         == {ContactDomain.POLYMER, ContactDomain.RETAINED_NON_POLYMER}
     )
+
+
+__all__ = [
+    "active_chemistry_readiness_facts",
+    "clash_state_from_count",
+    "heavy_heavy_clashes",
+    "polymer_ligand_clashes",
+    "protein_self_clashes",
+    "total_clash_overlap_angstrom",
+    "worst_clash_overlap_angstrom",
+]

@@ -74,10 +74,7 @@ def scaled_point_from_origin_or_none(
         + direction_y * direction_y
         + direction_z * direction_z
     )
-    if (
-        not isfinite(direction_norm)
-        or direction_norm <= PLACEMENT_VECTOR_NORM_EPSILON
-    ):
+    if not isfinite(direction_norm) or direction_norm <= PLACEMENT_VECTOR_NORM_EPSILON:
         return None
 
     scale = distance / direction_norm

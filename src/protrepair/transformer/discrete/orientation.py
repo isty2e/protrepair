@@ -39,10 +39,7 @@ def rotate_residue_atoms_about_axis(
         if atom_site.name in rotated_atom_names
     )
     rotated_positions = axis_rotation.rotate_points(
-        (
-            residue_geometry.position(atom_site.name)
-            for atom_site in rotated_atom_sites
-        ),
+        (residue_geometry.position(atom_site.name) for atom_site in rotated_atom_sites),
         origin=axis_start,
         theta_radians=theta_radians,
     )

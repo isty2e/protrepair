@@ -71,9 +71,7 @@ class NearCovalentContactPolicy:
         if not isfinite(self.covalent_distance_margin_angstrom):
             raise ValueError("covalent_distance_margin_angstrom must be finite")
         if self.covalent_distance_margin_angstrom < 0.0:
-            raise ValueError(
-                "covalent_distance_margin_angstrom must be non-negative"
-            )
+            raise ValueError("covalent_distance_margin_angstrom must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +106,7 @@ class NearCovalentContact:
 
 
 @dataclass(frozen=True, slots=True)
-class _NearCovalentCandidateContext:
+class NearCovalentCandidateContext:
     """Prepared candidate context for covalent-radius proximity diagnostics."""
 
     atom_sites: tuple[AtomSite, ...]
@@ -132,8 +130,7 @@ class _NearCovalentCandidateContext:
         )
         expected_endpoint_pairs = frozenset(self.expected_topology_endpoint_pairs)
         if any(
-            left_ref >= right_ref
-            for left_ref, right_ref in expected_endpoint_pairs
+            left_ref >= right_ref for left_ref, right_ref in expected_endpoint_pairs
         ):
             raise ValueError(
                 "expected topology endpoint pairs must be distinct and ordered"
@@ -278,7 +275,7 @@ class NearCovalentContactBasis:
     def bind_context(
         self,
         context: ClashDetectionContext,
-    ) -> _NearCovalentCandidateContext:
+    ) -> NearCovalentCandidateContext:
         """Project one compatible clash context into near-covalent semantics."""
 
         if (
@@ -301,7 +298,7 @@ class NearCovalentContactBasis:
                 "near-covalent basis requires a sufficiently large spatial cell"
             )
 
-        return _NearCovalentCandidateContext(
+        return NearCovalentCandidateContext(
             atom_sites=context.atom_sites,
             pair_policy=self.pair_policy,
             covalent_radius_by_element=self.covalent_radius_by_element,
@@ -406,9 +403,7 @@ def detect_near_covalent_contacts_from_context(
     context.require_compatible_structure(structure)
     if policy is None:
         active_policy = (
-            NearCovalentContactPolicy()
-            if basis is None
-            else basis.contact_policy
+            NearCovalentContactPolicy() if basis is None else basis.contact_policy
         )
     else:
         active_policy = policy
@@ -422,9 +417,7 @@ def detect_near_covalent_contacts_from_context(
         )
     else:
         if active_policy != basis.contact_policy:
-            raise ValueError(
-                "near-covalent basis requires a matching contact policy"
-            )
+            raise ValueError("near-covalent basis requires a matching contact policy")
         basis.require_compatible_structure(structure)
         candidate_context = basis.bind_context(context)
 
@@ -437,7 +430,7 @@ def detect_near_covalent_contacts_from_context(
 
 
 def _detect_near_covalent_contacts_from_candidate_context(
-    context: _NearCovalentCandidateContext,
+    context: NearCovalentCandidateContext,
     *,
     focus_residue_ids: frozenset[ResidueId] | None,
     policy: NearCovalentContactPolicy,
@@ -477,7 +470,7 @@ def _prepare_near_covalent_candidate_context(
     component_library: ComponentLibrary,
     pair_policy: ContactPairPolicy | None,
     policy: NearCovalentContactPolicy,
-) -> _NearCovalentCandidateContext:
+) -> NearCovalentCandidateContext:
     """Prepare covalent-radius atom-pair candidates without vdW lookup."""
 
     active_pair_policy = (
@@ -505,7 +498,7 @@ def _prepare_near_covalent_candidate_context(
         covalent_radius_lookup=covalent_radius_lookup,
         policy=policy,
     )
-    return _NearCovalentCandidateContext(
+    return NearCovalentCandidateContext(
         atom_sites=build_atom_sites(
             residue_contexts,
             policy=active_pair_policy,
@@ -528,7 +521,7 @@ def _candidate_context_from_clash_context(
     context: ClashDetectionContext,
     *,
     policy: NearCovalentContactPolicy,
-) -> _NearCovalentCandidateContext:
+) -> NearCovalentCandidateContext:
     """Project a clash context into a covalent-radius candidate context."""
 
     elements = tuple(dict.fromkeys(site.element for site in context.atom_sites))
@@ -543,7 +536,7 @@ def _candidate_context_from_clash_context(
         context.candidate_cell_size_angstrom,
         cell_size_angstrom,
     )
-    return _NearCovalentCandidateContext(
+    return NearCovalentCandidateContext(
         atom_sites=_atom_sites_with_cell_size(
             context,
             cell_size_angstrom=actual_cell_size_angstrom,
@@ -586,7 +579,7 @@ def _near_covalent_contact_for_atom_site_pair(
     left_site: AtomSite,
     right_site: AtomSite,
     *,
-    context: _NearCovalentCandidateContext,
+    context: NearCovalentCandidateContext,
     policy: NearCovalentContactPolicy,
 ) -> NearCovalentContact | None:
     """Return a near-covalent contact for one atom-site pair if admitted."""
@@ -619,10 +612,7 @@ def _near_covalent_contact_for_atom_site_pair(
         policy=policy,
     )
     overlap_angstrom = covalent_distance_cutoff - distance
-    if (
-        overlap_angstrom <= 0.0
-        or overlap_angstrom < policy.minimum_overlap_angstrom
-    ):
+    if overlap_angstrom <= 0.0 or overlap_angstrom < policy.minimum_overlap_angstrom:
         return None
 
     return NearCovalentContact(
@@ -679,10 +669,7 @@ def _near_covalent_candidate_cell_size_angstrom(
     """Return a grid cell width that cannot miss near-covalent candidates."""
 
     return _near_covalent_candidate_cell_size_from_radii(
-        (
-            covalent_radius_lookup.radius_angstrom(element)
-            for element in elements
-        ),
+        (covalent_radius_lookup.radius_angstrom(element) for element in elements),
         policy=policy,
     )
 
@@ -697,8 +684,7 @@ def _near_covalent_candidate_cell_size_from_radii(
     maximum_radius_angstrom = max(radii_angstrom, default=0.0)
     return max(
         MINIMUM_NEAR_COVALENT_GRID_CELL_SIZE_ANGSTROM,
-        (2.0 * maximum_radius_angstrom)
-        + policy.covalent_distance_margin_angstrom,
+        (2.0 * maximum_radius_angstrom) + policy.covalent_distance_margin_angstrom,
     )
 
 
@@ -706,7 +692,7 @@ def _covalent_distance_cutoff_angstrom(
     left_site: AtomSite,
     right_site: AtomSite,
     *,
-    context: _NearCovalentCandidateContext,
+    context: NearCovalentCandidateContext,
     policy: NearCovalentContactPolicy,
 ) -> float:
     """Return the near-covalent distance cutoff for one atom-site pair."""

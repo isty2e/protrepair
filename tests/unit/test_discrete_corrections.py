@@ -657,14 +657,12 @@ def test_refine_local_region_keeps_seed_candidates_when_baseline_candidate_fails
         clash_basis: ClashDetectionBasis | None = None,
         pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
     ) -> AssessedRefinementResult:
-        del (
-            selected_scope,
-            component_library,
-            restraint_library,
-            before_metrics,
-            clash_basis,
-            pdb_block_projector,
-        )
+        del selected_scope
+        del component_library
+        del restraint_library
+        del before_metrics
+        del clash_basis
+        del pdb_block_projector
         zero_metrics = RefinementAcceptanceMetrics(
             focus_quality=FocusRefinementQualityMetrics(
                 clash_count=0,

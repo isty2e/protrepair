@@ -28,9 +28,7 @@ def rdkit_hydrogen_append_patch(
             "retained non-polymer hydrogen atom names must be non-empty after "
             "normalization"
         )
-    if len(set(normalized_hydrogen_atom_names)) != len(
-        normalized_hydrogen_atom_names
-    ):
+    if len(set(normalized_hydrogen_atom_names)) != len(normalized_hydrogen_atom_names):
         raise ValueError(
             "retained non-polymer hydrogen atom names must be unique after "
             "normalization"

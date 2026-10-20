@@ -130,9 +130,9 @@ def ambiguous_disulfide_parser_witness_blockers(
             if possible_disulfide_residue_ids is None:
                 continue
 
-            witnesses_by_possible_disulfide_set[
-                possible_disulfide_residue_ids
-            ].append(witness)
+            witnesses_by_possible_disulfide_set[possible_disulfide_residue_ids].append(
+                witness
+            )
 
     return tuple(
         AmbiguousDisulfideParserWitnessBlocker(
@@ -154,8 +154,7 @@ def _ambiguous_disulfide_blocker_issue(
     """Return one validation issue from a structured parser/topology blocker."""
 
     display_witnesses = ", ".join(
-        witness.display_token()
-        for witness in blocker.witnesses[:3]
+        witness.display_token() for witness in blocker.witnesses[:3]
     )
     partner_text = ", ".join(
         residue_id.display_token()

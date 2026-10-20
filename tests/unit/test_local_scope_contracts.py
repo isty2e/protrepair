@@ -242,9 +242,10 @@ def test_residue_sidechain_selection_realizes_sidechain_atoms() -> None:
 
     assert atom_input.is_residuewise()
     assert atom_input.realizes_residue_sidechains()
-    assert atom_input.as_scope() == LocalScopeSpec.from_residue_sidechains(
-        case.focus_residue_ids
-    ).as_scope()
+    assert (
+        atom_input.as_scope()
+        == LocalScopeSpec.from_residue_sidechains(case.focus_residue_ids).as_scope()
+    )
 
     observed_atom_scope = atom_input.observed_atom_scope(snapshot)
     observed_atom_names = {

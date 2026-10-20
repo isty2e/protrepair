@@ -115,8 +115,7 @@ def _requires_intrinsic_geometry_correction(
     """Return whether intrinsic geometry warrants correction planning."""
 
     return (
-        intrinsic_geometry_facts.protein_self_clash_state
-        is ClashPresenceState.PRESENT
+        intrinsic_geometry_facts.protein_self_clash_state is ClashPresenceState.PRESENT
         or intrinsic_geometry_facts.orientation_correction_eligibility_state
         is OrientationCorrectionEligibilityState.ELIGIBLE
         or intrinsic_geometry_facts.stereochemistry_state

@@ -9,7 +9,6 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
-import protrepair.state.retained_non_polymer_chemistry as retained_non_polymer_chemistry
 from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.inference import retained_non_polymer_fallback
 from protrepair.chemistry.retained_non_polymer.evidence import (
@@ -19,6 +18,7 @@ from protrepair.errors import RdkitUnavailableError, RefinementError
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat
 from protrepair.scope import AtomSetScope
+from protrepair.state import retained_non_polymer_chemistry
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot

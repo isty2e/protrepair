@@ -290,7 +290,9 @@ def bundled_nonstandard_asset_path() -> str:
     """Return the packaged path for the bundled nonstandard asset."""
 
     return str(
-        files("protrepair.chemistry.resources").joinpath("nonstandard_components.json.gz")
+        files("protrepair.chemistry.resources").joinpath(
+            "nonstandard_components.json.gz"
+        )
     )
 
 
@@ -605,12 +607,12 @@ def expect_mapping(value: object, *, path: str) -> Mapping[str, object]:
     """Return one mapping payload or raise with a precise path."""
 
     if not isinstance(value, dict):
-        raise ValueError(f"{path} must be a mapping")
+        raise ValueError(f"{path} must be a mapping")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
 
     normalized_mapping: dict[str, object] = {}
     for key, item in value.items():
         if not isinstance(key, str):
-            raise ValueError(f"{path} keys must be strings")
+            raise ValueError(f"{path} keys must be strings")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
         normalized_mapping[key] = item
 
     return normalized_mapping
@@ -620,7 +622,7 @@ def expect_sequence(value: object, *, path: str) -> Sequence[object]:
     """Return one sequence payload or raise with a precise path."""
 
     if not isinstance(value, list):
-        raise ValueError(f"{path} must be a list")
+        raise ValueError(f"{path} must be a list")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
 
     return value
 
@@ -629,7 +631,7 @@ def expect_string(value: object, *, path: str) -> str:
     """Return one required string payload or raise."""
 
     if not isinstance(value, str):
-        raise ValueError(f"{path} must be a string")
+        raise ValueError(f"{path} must be a string")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
 
     normalized_value = value.strip()
     if not normalized_value:
@@ -662,7 +664,7 @@ def expect_int(value: object, *, path: str) -> int:
     """Return one integer payload or raise."""
 
     if not isinstance(value, int) or isinstance(value, bool):
-        raise ValueError(f"{path} must be an integer")
+        raise ValueError(f"{path} must be an integer")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
 
     return value
 
@@ -671,7 +673,7 @@ def expect_float(value: object, *, path: str) -> float:
     """Return one floating-point payload or raise."""
 
     if isinstance(value, bool) or not isinstance(value, int | float):
-        raise ValueError(f"{path} must be a float")
+        raise ValueError(f"{path} must be a float")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
 
     return float(value)
 
@@ -689,7 +691,7 @@ def expect_bool(value: object, *, path: str) -> bool:
     """Return one boolean payload or raise."""
 
     if not isinstance(value, bool):
-        raise ValueError(f"{path} must be a boolean")
+        raise ValueError(f"{path} must be a boolean")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
 
     return value
 

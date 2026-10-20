@@ -56,6 +56,6 @@ def build_default_restraint_library() -> RestraintLibrary:
             if component_id in retained_non_polymer_templates
         },
     )
-    return standard_restraints.merged_with(
-        nonstandard_restraints
-    ).merged_with(retained_non_polymer_restraints)
+    return standard_restraints.merged_with(nonstandard_restraints).merged_with(
+        retained_non_polymer_restraints
+    )

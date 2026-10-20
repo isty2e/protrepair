@@ -690,9 +690,7 @@ def _repair_standard_residue(
             finalized_snapshot,
         )
 
-    placement_outcome = InternalCoordinatePlacementTransformer(
-        site
-    ).placement_outcome(
+    placement_outcome = InternalCoordinatePlacementTransformer(site).placement_outcome(
         ProteinTransformationContext.from_snapshot_atom_input(
             guided_snapshot,
             atom_input,

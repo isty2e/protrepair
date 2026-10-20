@@ -112,8 +112,8 @@ def _normalize_backbone_window_atom_names(
 
 
 @dataclass(frozen=True, slots=True)
-class _StageRefinementSpec:
-    """Private shared fields for stage refinement specs."""
+class StageRefinementSpec:
+    """Shared fields for stage refinement specs."""
 
     scope_spec: LocalScopeSpec
     execution_scope_spec: LocalScopeSpec | None = field(
@@ -154,9 +154,7 @@ class _StageRefinementSpec:
             )
 
         semantic_residue_ids = set(self.scope_spec.referenced_residue_ids())
-        execution_residue_ids = set(
-            self.execution_scope_spec.referenced_residue_ids()
-        )
+        execution_residue_ids = set(self.execution_scope_spec.referenced_residue_ids())
         if not semantic_residue_ids <= execution_residue_ids:
             raise ValueError(
                 "stage refinement execution_scope_spec must cover the semantic "
@@ -174,7 +172,7 @@ class _StageRefinementSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class RepairRefinementSpec(_StageRefinementSpec):
+class RepairRefinementSpec(StageRefinementSpec):
     """Repair-stage local-refinement spec."""
 
     binding: ContinuousRelaxationBinding
@@ -183,7 +181,7 @@ class RepairRefinementSpec(_StageRefinementSpec):
     )
 
     def __post_init__(self) -> None:
-        _StageRefinementSpec.__post_init__(self)
+        StageRefinementSpec.__post_init__(self)
         if not isinstance(
             self.binding,
             (

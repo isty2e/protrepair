@@ -575,13 +575,13 @@ def test_typed_coordination_on_a_non_donor_is_unsupported(
     )
 
 
-@pytest.mark.parametrize("field,value", (("order", 1), ("aromatic", True)))
+@pytest.mark.parametrize("order,aromatic", ((1, False), (None, True)))
 def test_coordinate_edge_does_not_admit_covalent_semantics(
-    histidine_pdb: str, field: str, value: int | bool, coordination_metal: str
+    histidine_pdb: str, order: int | None, aromatic: bool, coordination_metal: str
 ) -> None:
     source = _source(histidine_pdb, observed=False, element=coordination_metal)
     bonds = tuple(
-        replace(bond, **{field: value})
+        replace(bond, order=order, aromatic=aromatic)
         if bond.relationship_type is BondRelationshipType.METAL_COORDINATION
         else bond
         for bond in source.topology.bonds

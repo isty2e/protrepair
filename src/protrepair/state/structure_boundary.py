@@ -10,12 +10,6 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import ResidueId
 
-__all__ = [
-    "StructureBoundaryStateFacts",
-    "TerminalBoundaryObservation",
-    "terminal_boundary_observation",
-]
-
 
 @dataclass(frozen=True, slots=True)
 class TerminalBoundaryObservation:
@@ -205,9 +199,9 @@ def terminal_boundary_observation(
     authenticity_facts: list[
         CarrierScopedState[ProteinStructure, BoundaryAuthenticityState]
     ] = []
-    oxt_presence_facts: list[CarrierScopedState[ProteinStructure, OxtPresenceState]] = (
-        []
-    )
+    oxt_presence_facts: list[
+        CarrierScopedState[ProteinStructure, OxtPresenceState]
+    ] = []
     for chain in context_structure.constitution.chains:
         projected_chain_residues = tuple(
             residue
@@ -269,3 +263,10 @@ def terminal_boundary_observation(
         authenticity_facts=tuple(authenticity_facts),
         oxt_presence_facts=tuple(oxt_presence_facts),
     )
+
+
+__all__ = [
+    "StructureBoundaryStateFacts",
+    "TerminalBoundaryObservation",
+    "terminal_boundary_observation",
+]

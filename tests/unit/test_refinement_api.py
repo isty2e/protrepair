@@ -122,10 +122,10 @@ def test_refine_local_region_rejects_internal_canonical_spec_at_public_boundary(
     with pytest.raises(TypeError, match="DirectRegionTransformationSpec"):
         transform_local_region(
             build_toy_structure(),
-            ContinuousRelaxationSettings(
+            ContinuousRelaxationSettings(  # pyrefly: ignore[bad-argument-type]
                 backend_name="rdkit",
                 force_field=ContinuousRelaxationForceField.UFF,
-            ),  # type: ignore[arg-type]
+            ),
             component_library=build_toy_component_library(),
         )
 
@@ -598,13 +598,11 @@ def test_refine_local_region_can_adopt_discrete_preconditioning_candidate(
         clash_basis: ClashDetectionBasis | None = None,
         pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
     ) -> AssessedRefinementResult:
-        del (
-            selected_scope,
-            component_library,
-            restraint_library,
-            clash_basis,
-            pdb_block_projector,
-        )
+        del selected_scope
+        del component_library
+        del restraint_library
+        del clash_basis
+        del pdb_block_projector
         assessed_backend_names.append(result.backend_name)
         if result.backend_name == "discrete_preconditioning":
             return AssessedRefinementResult(
@@ -756,13 +754,11 @@ def test_refine_local_region_revalidates_dependent_h_after_h_only_parser_failure
         clash_basis: ClashDetectionBasis | None = None,
         pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
     ) -> RefinementAcceptanceMetrics:
-        del (
-            structure,
-            selected_scope,
-            component_library,
-            restraint_library,
-            clash_basis,
-        )
+        del structure
+        del selected_scope
+        del component_library
+        del restraint_library
+        del clash_basis
         revalidation_projectors.append(pdb_block_projector)
         return _refinement_metrics(rdkit_readable=True)
 
@@ -1465,13 +1461,11 @@ def _accepted_h_only_parser_failure(
 ) -> AssessedRefinementResult:
     """Return an accepted assessment carrying an H-only parser failure."""
 
-    del (
-        selected_scope,
-        component_library,
-        restraint_library,
-        clash_basis,
-        pdb_block_projector,
-    )
+    del selected_scope
+    del component_library
+    del restraint_library
+    del clash_basis
+    del pdb_block_projector
     return AssessedRefinementResult(
         executed_result=result,
         before_metrics=before_metrics,
@@ -1495,13 +1489,11 @@ def _accepted_mixed_parser_failure(
 ) -> AssessedRefinementResult:
     """Return an accepted assessment carrying mixed heavy and H parser failures."""
 
-    del (
-        selected_scope,
-        component_library,
-        restraint_library,
-        clash_basis,
-        pdb_block_projector,
-    )
+    del selected_scope
+    del component_library
+    del restraint_library
+    del clash_basis
+    del pdb_block_projector
     return AssessedRefinementResult(
         executed_result=result,
         before_metrics=before_metrics,

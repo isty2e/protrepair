@@ -358,12 +358,13 @@ class PolarContactChemistry:
                     hydrogens or any(self._atoms[n].element == "S" for n in heavy)
                 ):
                     return False
-                if hydrogens and (
-                    self._resonance_center(heavy[0], ref)
-                    or self._carboxyl_oxygen_peer(ref) is not None
-                ):
-                    return False
-                return True
+                return not (
+                    hydrogens
+                    and (
+                        self._resonance_center(heavy[0], ref)
+                        or self._carboxyl_oxygen_peer(ref) is not None
+                    )
+                )
             # Stock carboxyl groups can have all-single bonds before charges are
             # published. This contact projection does not choose a charge state.
             return (

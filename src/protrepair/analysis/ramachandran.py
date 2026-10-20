@@ -18,18 +18,10 @@ def build_ramachandran_analysis(
 
     points: list[RamachandranPoint] = []
     for chain in structure.constitution.chains:
-        residues = tuple(
-            residue
-            for residue in chain.residues
-            if not residue.is_hetero
-        )
+        residues = tuple(residue for residue in chain.residues if not residue.is_hetero)
         for index, residue in enumerate(residues):
             previous_residue = residues[index - 1] if index > 0 else None
-            next_residue = (
-                residues[index + 1]
-                if index + 1 < len(residues)
-                else None
-            )
+            next_residue = residues[index + 1] if index + 1 < len(residues) else None
             phi_degrees = _phi_degrees(
                 previous_residue,
                 residue,

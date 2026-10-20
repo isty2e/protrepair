@@ -594,9 +594,9 @@ def max_rotatable_hydrogen_interaction_horizon_angstrom(
 
 
 __all__ = [
-    "CoordinateLike",
     "ROTATABLE_HYDROGEN_LOCAL_IGNORE_BOND_HOPS",
     "ROTATABLE_HYDROGEN_POTENTIAL_ENERGY_CUTOFF_SQ_ANGSTROM",
+    "CoordinateLike",
     "RotatableHydrogenCandidateRank",
     "RotatableHydrogenClashBurden",
     "RotatableHydrogenEnvironment",

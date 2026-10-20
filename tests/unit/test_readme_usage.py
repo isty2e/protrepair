@@ -11,7 +11,7 @@ from protrepair.io import read_structure
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _README_PATH = _REPO_ROOT / "README.md"
 _GETTING_STARTED_PATH = _REPO_ROOT / "docs" / "getting-started.md"
-_PYTHON_BLOCK_PATTERN = re.compile(r"```python\n(?P<body>.*?)\n```", re.S)
+_PYTHON_BLOCK_PATTERN = re.compile(r"```python\n(?P<body>.*?)\n```", re.DOTALL)
 
 
 @pytest.mark.parametrize(
@@ -39,7 +39,7 @@ def test_primary_documentation_python_examples_run_in_document_order(
         _python_examples(document_path),
         start=1,
     ):
-        exec(
+        exec(  # noqa: S102 - Execute only version-controlled usage examples.
             compile(
                 snippet,
                 f"{document_path.name} python example {example_index}",

@@ -552,12 +552,12 @@ def validate_workflow_goal_scope(goal: WorkflowGoal) -> None:
         goal.scope,
         WholeStructureScope,
     ):
-        raise ValueError("whole-structure clash goals must use ClashPresenceState")
+        raise ValueError("whole-structure clash goals must use ClashPresenceState")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
     if isinstance(goal.value, ClashPresenceState) and not isinstance(
         goal.scope,
         WholeStructureScope,
     ):
-        raise ValueError("ClashPresenceState goals require WholeStructureScope")
+        raise ValueError("ClashPresenceState goals require WholeStructureScope")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
     if isinstance(goal.value, OxtPresenceState) and (
         not isinstance(goal.scope, ResidueBoundaryScope)
         or goal.scope.side is not ResidueBoundarySide.C_TERMINUS

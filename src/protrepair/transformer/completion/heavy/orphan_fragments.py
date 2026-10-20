@@ -123,12 +123,8 @@ def salvage_orphan_fragments(
                             occupancy=original_residue.atom_geometry(
                                 atom_name
                             ).occupancy,
-                            b_factor=original_residue.atom_geometry(
-                                atom_name
-                            ).b_factor,
-                            altloc=original_residue.atom_geometry(
-                                atom_name
-                            ).altloc,
+                            b_factor=original_residue.atom_geometry(atom_name).b_factor,
+                            altloc=original_residue.atom_geometry(atom_name).altloc,
                         ),
                     )
                     for index, atom_name in enumerate(fragment)

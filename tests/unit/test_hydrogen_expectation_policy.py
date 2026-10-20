@@ -12,7 +12,6 @@ from tests.support.retained_non_polymer_components import (
     build_retained_non_polymer_component_library,
 )
 
-import protrepair.state.retained_non_polymer_chemistry as retained_non_polymer_chemistry
 from protrepair.chemistry import (
     build_default_component_library,
 )
@@ -25,6 +24,7 @@ from protrepair.io import FileFormat
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state import (
     derive_structure_coverage_and_chemistry_readiness_facts,
+    retained_non_polymer_chemistry,
 )
 from protrepair.state.hydrogen_expectation import (
     StructureHydrogenExpectationModel,

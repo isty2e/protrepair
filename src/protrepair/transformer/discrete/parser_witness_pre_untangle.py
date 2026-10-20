@@ -570,9 +570,7 @@ class ParserWitnessPreUntangleTransformer(
                     break
 
                 candidate = ranked_candidate.candidate
-                working_snapshot = working_snapshot.with_structure(
-                    candidate.structure
-                )
+                working_snapshot = working_snapshot.with_structure(candidate.structure)
                 baseline_rank = _baseline_rank_from_accepted_candidate_rank(
                     ranked_candidate.rank
                 )

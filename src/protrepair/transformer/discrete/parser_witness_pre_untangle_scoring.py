@@ -55,8 +55,7 @@ class ParserWitnessContactAssessmentBasis:
     def __post_init__(self) -> None:
         if (
             self.near_covalent_basis.constitution is not self.clash_basis.constitution
-            and self.near_covalent_basis.constitution
-            != self.clash_basis.constitution
+            and self.near_covalent_basis.constitution != self.clash_basis.constitution
         ):
             raise ValueError(
                 "parser-witness contact bases require one immutable constitution"
@@ -144,9 +143,7 @@ class ParserWitnessContactAssessmentBasis:
         self.near_covalent_basis.require_compatible_structure(structure)
         clash_context = self.clash_basis.bind_context(
             structure,
-            candidate_cell_size_angstrom=(
-                self.shared_candidate_cell_size_angstrom
-            ),
+            candidate_cell_size_angstrom=(self.shared_candidate_cell_size_angstrom),
         )
         prepared_pair_index = PreparedAtomSitePairIndex(
             atom_sites=clash_context.atom_sites,

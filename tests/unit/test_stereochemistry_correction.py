@@ -187,9 +187,7 @@ def test_stereochemistry_batch_matches_sequential_topology_remapping() -> None:
         sequentially_prepared = sequentially_prepared.with_updated_residue_facets(
             prepared_residue.residue_site,
             residue_geometry=prepared_residue.residue_geometry,
-            formal_charge_by_atom_name=(
-                prepared_residue.formal_charge_by_atom_name
-            ),
+            formal_charge_by_atom_name=(prepared_residue.formal_charge_by_atom_name),
         )
 
     batch_prepared = batch.prepared_structure(
@@ -209,9 +207,7 @@ def test_stereochemistry_batch_matches_sequential_topology_remapping() -> None:
         sequentially_merged = sequentially_merged.with_updated_residue_facets(
             corrected_residue.residue_site,
             residue_geometry=corrected_residue.residue_geometry,
-            formal_charge_by_atom_name=(
-                corrected_residue.formal_charge_by_atom_name
-            ),
+            formal_charge_by_atom_name=(corrected_residue.formal_charge_by_atom_name),
         )
 
     batch_merged = batch.merged_structure(
@@ -481,8 +477,10 @@ def _structure_issue(message: str) -> ValidationIssue:
     )
 
 
-class _ReportWithIssues(StereochemistryReport):
+class _ReportWithIssues(StereochemistryReport):  # pyrefly: ignore[bad-class-definition]  # Explicit slots are valid on this undecorated subclass.
     __slots__ = ("_issues",)
+
+    _issues: tuple[ValidationIssue, ...]
 
     def __init__(self, issues: tuple[ValidationIssue, ...]) -> None:
         object.__setattr__(self, "_issues", issues)

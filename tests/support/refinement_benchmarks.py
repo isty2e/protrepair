@@ -469,7 +469,7 @@ def run_refinement_benchmark_case(
                 spec,
                 component_library=active_component_library,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - Benchmarks record per-case failures and continue the cohort.
             runtime_samples_ms.append((perf_counter() - start) * 1000.0)
             return RefinementBenchmarkResult(
                 case_id=case.case_id,
@@ -521,7 +521,7 @@ def run_refinement_benchmark_case(
                 plan,
                 restraint_library=active_restraint_library,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Benchmarks record per-case failures and continue the cohort.
             backend_runtime_samples_ms.append((perf_counter() - start) * 1000.0)
             return RefinementBenchmarkResult(
                 case_id=case.case_id,
@@ -560,7 +560,7 @@ def run_refinement_benchmark_case(
                 spec,
                 component_library=active_component_library,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Benchmarks record per-case failures and continue the cohort.
             runtime_samples_ms.append((perf_counter() - start) * 1000.0)
             return RefinementBenchmarkResult(
                 case_id=case.case_id,
@@ -628,9 +628,7 @@ def run_refinement_benchmark_case(
     )
     error_type = None if status == "success" else "NoOpRefinement"
     error_message = (
-        None
-        if status == "success"
-        else _no_op_refinement_error_message(final_issues)
+        None if status == "success" else _no_op_refinement_error_message(final_issues)
     )
     return RefinementBenchmarkResult(
         case_id=case.case_id,
@@ -863,8 +861,7 @@ def focus_atom_displacement_metrics(
             )
         )
         squared_distances.append(distance * distance)
-        if distance > max_distance:
-            max_distance = distance
+        max_distance = max(max_distance, distance)
 
     if not squared_distances:
         return None, None
@@ -983,11 +980,11 @@ __all__ = [
     "REFINEMENT_BENCHMARK_TRACKS",
     "REFINEMENT_STRATEGIES",
     "RefinementBenchmarkCase",
-    "RefinementBenchmarkExpectedOutcome",
     "RefinementBenchmarkExecutionProfile",
-    "RefinementBenchmarkTrack",
-    "RefinementBenchmarkResult",
+    "RefinementBenchmarkExpectedOutcome",
     "RefinementBenchmarkQualityMetrics",
+    "RefinementBenchmarkResult",
+    "RefinementBenchmarkTrack",
     "RefinementStrategy",
     "RefinementStrategySelectionMode",
     "benchmark_quality_metrics_from_acceptance",
