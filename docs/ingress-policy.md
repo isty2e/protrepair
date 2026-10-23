@@ -47,6 +47,21 @@ PDB extensions are not supported by every downstream tool. RDKit parser
 probes and FASPR use internal calculation projections with separate contracts;
 successful public serialization does not establish native-tool compatibility.
 
+RDKit diagnostics associate parsed atoms with the original canonical atoms by
+the serials in the emitted PDB, not RDKit's one-character chain labels or atom
+indices. This keeps diagnostic and repair targets distinct for chains such as
+`A` and `AA` without relabeling the parser input, which could change proximity
+bonds. RDKit still requires decimal atom serials and residue numbers: emitted
+hybrid-36 fields cause a nonlocalized parser failure. The serial limit applies
+to the emitted records, not just the atom count, since `TER` records consume
+serials too. A successful probe describes the atoms RDKit retained; it is not
+a guarantee that RDKit read every canonical atom or alternate-location record.
+Canonical chain IDs or residue numbers outside Gemmi's PDB capacity cannot reach
+that reader unchanged. For hydrogenated structures, ProtRepair keeps the workflow
+result and reports the unsupported projection as one structure-level parser
+error, with the original field and location. This does not mean the source
+chemistry is invalid.
+
 ## Numeric Atom Values
 
 Atom coordinates, occupancy, and B factors must be finite.

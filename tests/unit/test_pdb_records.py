@@ -10,9 +10,30 @@ from protrepair.io.pdb_records import (
     encode_pdb_integer,
     pdb_atom_identity,
     pdb_atom_identity_matches,
+    pdb_text_field_fits,
 )
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.source_connection import SourceAtomIdentity
+
+
+@pytest.mark.parametrize(
+    ("value", "width", "expected"),
+    [
+        ("", 1, True),
+        ("A", 1, True),
+        ("AA", 2, True),
+        ("AA", 1, False),
+        ("A B", 3, True),
+        ("AAA", 2, False),
+        ("\x00", 1, False),
+        ("\x7f", 1, False),
+        ("\u00c5", 1, False),
+    ],
+)
+def test_text_fields_require_printable_ascii_within_the_column_width(
+    value: str, width: int, expected: bool
+) -> None:
+    assert pdb_text_field_fits(value, width=width) is expected
 
 
 def _native_record(serial: int, residue_number: int) -> str:

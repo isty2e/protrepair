@@ -1,26 +1,183 @@
 """PDB text projections for parser-facing structure consumers."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
+from protrepair.errors import ModelInvariantError
 from protrepair.io.gemmi_writer import (
     atom_index_values_in_coordinate_write_order,
     pdb_typed_connection_topology_bonds_for_egress,
     write_pdb_structure_string_without_conect,
 )
+from protrepair.io.pdb_records import (
+    decode_pdb_integer,
+    encode_pdb_integer,
+    pdb_atom_identity_matches,
+    pdb_text_field_fits,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import StructureConstitution
+from protrepair.structure.element import ElementIdentity
 from protrepair.structure.geometry import AtomGeometry, StructureGeometry
+from protrepair.structure.labels import AtomRef
+from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import StructureTopology
 
 
 @dataclass(frozen=True, slots=True)
+class RDKitPDBAtomCorrespondence:
+    """Immutable source identities and emitted signatures keyed by PDB serial.
+
+    Parameters
+    ----------
+    records_by_serial : Mapping[int, tuple[AtomRef, str, ElementIdentity]]
+        Canonical reference, emitted atom name and element for each record.
+    """
+
+    records_by_serial: Mapping[int, tuple[AtomRef, str, ElementIdentity]]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "records_by_serial", MappingProxyType(dict(self.records_by_serial))
+        )
+
+    def require_atom_ref(
+        self,
+        serial: int,
+        *,
+        atom_name: str,
+        element_symbol: str,
+        isotope_mass_number: int,
+    ) -> AtomRef:
+        """Resolve native metadata only when its emitted signature agrees.
+
+        Parameters
+        ----------
+        serial : int
+            Serial preserved by the native reader, not its atom index.
+        atom_name : str
+            Native PDB atom-name metadata.
+        element_symbol : str
+            Native chemical element symbol.
+        isotope_mass_number : int
+            Native isotope mass, or zero for an unspecified isotope.
+
+        Returns
+        -------
+        AtomRef
+            The original canonical atom identity.
+
+        Raises
+        ------
+        ModelInvariantError
+            The native atom has no unique compatible source record.
+        """
+        record = self.records_by_serial.get(serial)
+        if record is None:
+            raise ModelInvariantError(
+                f"PDB atom correspondence has unknown native serial {serial}"
+            )
+        atom_ref, expected_name, element = record
+        if (
+            atom_name.strip().upper() != expected_name
+            or element_symbol.upper() != element.chemical_symbol
+            or isotope_mass_number != (element.isotope_mass_number or 0)
+        ):
+            raise ModelInvariantError(
+                f"PDB atom correspondence signature differs at {atom_ref.display_token()}"
+            )
+        return atom_ref
+
+
+@dataclass(frozen=True, slots=True)
+class RDKitNoConectPDBInput:
+    """Rendered parser input paired with its source atom correspondence.
+
+    Parameters
+    ----------
+    pdb_block : str
+        The unchanged no-CONECT parser surface.
+    correspondence : RDKitPDBAtomCorrespondence
+        Immutable source association for those emitted records.
+    """
+
+    pdb_block: str
+    correspondence: RDKitPDBAtomCorrespondence
+
+
+@dataclass(frozen=True, slots=True)
+class RDKitPDBProjectionUnavailable:
+    """A valid canonical identity outside the internal PDB transport capacity.
+
+    Parameters
+    ----------
+    reason : str
+        Unsupported field and original source location, not a chemistry verdict.
+    """
+
+    reason: str
+
+
+def rdkit_pdb_projection_unavailability(
+    structure: ProteinStructure,
+) -> RDKitPDBProjectionUnavailable | None:
+    """Check chain and residue identifiers before PDB output can alter them.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Source whose chain IDs and residue numbers must be preserved.
+
+    Returns
+    -------
+    RDKitPDBProjectionUnavailable or None
+        First unsupported chain ID or residue number, or None.
+    """
+    for residue in structure.constitution.iter_residues(include_ligands=True):
+        residue_id = residue.residue_id
+        chain = residue_id.chain_id
+        if not pdb_text_field_fits(chain, width=2):
+            return RDKitPDBProjectionUnavailable(
+                f"chain ID {chain!r} at {residue_id.display_token()} cannot fit "
+                "Gemmi PDB's two printable ASCII columns"
+            )
+        try:
+            encode_pdb_integer(residue_id.seq_num, width=4)
+        except ValueError:
+            return RDKitPDBProjectionUnavailable(
+                f"residue number {residue_id.seq_num} at "
+                f"{residue_id.display_token()} is outside the Gemmi PDB range"
+            )
+    return None
+
+
+@dataclass(frozen=True, slots=True)
 class RDKitNoConectPDBBlockProjector:
-    """Coordinate-only no-CONECT PDB block projection for parser probes."""
+    """Coordinate-only no-CONECT PDB block projection for parser probes.
+
+    Parameters
+    ----------
+    base_constitution : StructureConstitution
+        Source atom identities and write order.
+    base_topology : StructureTopology
+        Source charges and connections affecting serialization.
+    base_geometry : StructureGeometry
+        Coordinates and PDB metadata used for compatibility checks.
+    base_input : RDKitNoConectPDBInput
+        Original text and immutable source association.
+    base_lines : tuple[str, ...]
+        Original records without newline terminators.
+    coordinate_line_patches : tuple[tuple[int, int, str, str], ...]
+        Record index, atom slot and text surrounding each coordinate field.
+    _connection_endpoint_atom_index_values : frozenset[int]
+        Atoms whose motion requires regenerating connection records.
+    """
 
     base_constitution: StructureConstitution
     base_topology: StructureTopology
     base_geometry: StructureGeometry
-    base_pdb_block: str
+    base_input: RDKitNoConectPDBInput
     base_lines: tuple[str, ...]
     coordinate_line_patches: tuple[tuple[int, int, str, str], ...]
     _connection_endpoint_atom_index_values: frozenset[int]
@@ -66,7 +223,7 @@ class RDKitNoConectPDBBlockProjector:
         if not self._has_compatible_immutable_facets(structure):
             return None
         if structure.geometry is self.base_geometry:
-            return self.base_pdb_block
+            return self.base_input.pdb_block
 
         atom_geometries = structure.geometry.atom_geometries
         base_atom_geometries = self.base_geometry.atom_geometries
@@ -101,7 +258,7 @@ class RDKitNoConectPDBBlockProjector:
             )
 
         if lines is None:
-            return self.base_pdb_block
+            return self.base_input.pdb_block
 
         return "\n".join(lines) + "\n"
 
@@ -156,7 +313,26 @@ class RDKitNoConectPDBBlockProjector:
 def prepare_rdkit_no_conect_pdb_block_projector(
     structure: ProteinStructure,
 ) -> RDKitNoConectPDBBlockProjector | None:
-    """Return a coordinate-only no-CONECT PDB projection when safely mappable."""
+    """Prepare coordinate-only PDB projection when source labels fit unchanged.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Canonical source for the projected text and correspondence.
+
+    Returns
+    -------
+    RDKitNoConectPDBBlockProjector or None
+        Reusable projection, or None for unsupported identifiers or row counts.
+
+    Raises
+    ------
+    ModelInvariantError
+        Rendered identities contradict the admitted source write order.
+    """
+
+    if rdkit_pdb_projection_unavailability(structure) is not None:
+        return None
 
     pdb_block = pdb_without_conect(structure)
     base_lines = tuple(pdb_block.splitlines())
@@ -183,7 +359,7 @@ def prepare_rdkit_no_conect_pdb_block_projector(
         base_constitution=structure.constitution,
         base_topology=structure.topology,
         base_geometry=structure.geometry,
-        base_pdb_block=pdb_block,
+        base_input=_parser_input_with_correspondence(structure, pdb_block),
         base_lines=base_lines,
         coordinate_line_patches=tuple(coordinate_line_patches),
         _connection_endpoint_atom_index_values=frozenset(
@@ -218,6 +394,99 @@ def pdb_without_conect_for_parser_probe(
             return projected_pdb_block
 
     return pdb_without_conect(structure)
+
+
+def prepare_rdkit_no_conect_pdb_input(
+    structure: ProteinStructure,
+    pdb_block_projector: RDKitNoConectPDBBlockProjector | None,
+) -> RDKitNoConectPDBInput | RDKitPDBProjectionUnavailable:
+    """Render parser input with the source association for its actual records.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        The current canonical source, including its selected atom cohort.
+    pdb_block_projector : RDKitNoConectPDBBlockProjector or None
+        Optional coordinate preparation; incompatible inputs are rendered afresh.
+
+    Returns
+    -------
+    RDKitNoConectPDBInput or RDKitPDBProjectionUnavailable
+        Exact parser text and matching source correspondence, or the unsupported
+        identifier that prevents an unchanged projection.
+
+    Raises
+    ------
+    ModelInvariantError
+        Emitted atom records cannot be associated with the source write order.
+    """
+    if pdb_block_projector is not None:
+        text = pdb_block_projector._render_if_compatible(structure)
+        if text is not None:
+            return RDKitNoConectPDBInput(
+                text, pdb_block_projector.base_input.correspondence
+            )
+
+    unavailable = rdkit_pdb_projection_unavailability(structure)
+    if unavailable is not None:
+        return unavailable
+
+    return _parser_input_with_correspondence(structure, pdb_without_conect(structure))
+
+
+def _parser_input_with_correspondence(
+    structure: ProteinStructure, pdb_block: str
+) -> RDKitNoConectPDBInput:
+    indices = atom_index_values_in_coordinate_write_order(structure)
+    records: dict[int, tuple[AtomRef, str, ElementIdentity]] = {}
+    cursor = 0
+    constitution = structure.constitution
+    for line in pdb_block.splitlines():
+        if not _is_pdb_atom_line(line):
+            continue
+        if cursor >= len(indices):
+            raise ModelInvariantError(
+                "PDB atom correspondence has extra emitted records"
+            )
+        index = AtomIndex(indices[cursor])
+        ref = constitution.atom_ref_at(index)
+        site = constitution.atom_site_at(index)
+        residue = constitution.residue_site_at(
+            constitution.residue_index_for_atom_index(index)
+        )
+        geometry = structure.geometry.atom_geometry(index)
+        # The private transport retains Gemmi's existing four-/three-column aliases.
+        emitted_ref = (
+            ref
+            if len(ref.atom_name) <= 4
+            else AtomRef(ref.residue_id, ref.atom_name[:4])
+        )
+        try:
+            serial = decode_pdb_integer(line[6:11], width=5)
+            matches = pdb_atom_identity_matches(
+                line,
+                emitted_ref,
+                residue.component_id[:3],
+                None if geometry.altloc is None else geometry.altloc.upper(),
+            )
+            element = ElementIdentity(line[76:78])
+        except ValueError as error:
+            raise ModelInvariantError(
+                "PDB atom correspondence has an invalid emitted identity"
+            ) from error
+        if not matches or element != site.element_identity:
+            raise ModelInvariantError(
+                f"PDB atom correspondence does not match {ref.display_token()}"
+            )
+        if serial in records:
+            raise ModelInvariantError(
+                f"PDB atom correspondence has duplicate emitted serial {serial}"
+            )
+        records[serial] = (ref, line[12:16].strip().upper(), element)
+        cursor += 1
+    if cursor != len(indices):
+        raise ModelInvariantError("PDB atom correspondence has missing emitted records")
+    return RDKitNoConectPDBInput(pdb_block, RDKitPDBAtomCorrespondence(records))
 
 
 def _is_pdb_atom_line(line: str) -> bool:

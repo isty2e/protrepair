@@ -93,6 +93,13 @@
 
 ### Fixed
 
+- attribute RDKit parser failures, inferred bonds and H/D/T attachment warnings
+  to the original canonical atoms, including two-character chains and serial
+  gaps from `TER` records. Known-bond checks and repair targets use the same
+  correspondence, without relabeling native input or changing parsing policy.
+  Keep workflow results when canonical chain IDs or residue numbers exceed the
+  internal PDB projection capacity, reporting a structure-level parser error
+  with the unsupported field instead of aborting processing
 - preserve two-character chain and uppercase hybrid-36 identities across PDB
   input, source-attribute association and CONECT output. Associate emitted
   serials with canonical write order, and preserve public altloc case

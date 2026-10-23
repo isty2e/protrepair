@@ -14,7 +14,7 @@ class RefinementError(ProtrepairError):
 
 
 class ModelInvariantError(ProtrepairError):
-    """Raised when a canonical model invariant is violated."""
+    """Raised when a canonical model or internal projection invariant is violated."""
 
 
 class AtomNotFoundError(ProtrepairError):

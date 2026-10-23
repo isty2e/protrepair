@@ -73,17 +73,6 @@ def test_parser_readability_raises_when_required_rdkit_backend_missing(
         extra_heavy_bond_count(structure)
 
 
-def test_pdb_atom_line_parser_normalizes_blank_chain_id() -> None:
-    """Diagnostics PDB parsing should share ingress blank-chain normalization."""
-
-    atom_ref = parser_readability_module._atom_ref_from_pdb_atom_line(
-        "ATOM      1  N   GLY     1       1.000   2.000   3.000  "
-        "1.00 20.00           N  "
-    )
-
-    assert atom_ref == AtomRef(ResidueId("_", 1), "N")
-
-
 def test_known_bond_lookup_compiles_intra_residue_template_pairs() -> None:
     """Parser-count probes should reuse residue-local known-bond topology."""
 

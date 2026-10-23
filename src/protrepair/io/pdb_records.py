@@ -15,6 +15,26 @@ PDB_MAX_RESIDUE_NUMBER = 1223055
 _BASE36_DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
+def pdb_text_field_fits(value: str, *, width: int) -> bool:
+    """Check whether text fits a fixed-width printable ASCII field.
+
+    Parameters
+    ----------
+    value : str
+        Unpadded text, including an allowed empty field.
+    width : int
+        Maximum number of columns.
+
+    Returns
+    -------
+    bool
+        Whether the value fits without truncation or encoding loss.
+    """
+    return (
+        len(value) <= width and value.isascii() and (not value or value.isprintable())
+    )
+
+
 def decode_pdb_integer(field: str, *, width: Literal[4, 5]) -> int:
     """Decode decimal or uppercase hybrid-36 without accepting the lowercase block.
 
