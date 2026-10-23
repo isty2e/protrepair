@@ -13,7 +13,11 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
-from protrepair.errors import ProtrepairError, StructureNormalizationError
+from protrepair.errors import (
+    ProtrepairError,
+    StructureNormalizationError,
+    StructureSerializationError,
+)
 from protrepair.geometry import Vec3
 from protrepair.io import (
     gemmi_writer,
@@ -222,7 +226,16 @@ def test_pdb_rejects_unrepresentable_identity_without_changing_mmcif(
         structure = _one_atom(altloc="AB")
     else:
         structure = _one_atom(insertion="AB")
-    with pytest.raises(ProtrepairError):
+    field_name = {
+        "component": "component ID",
+        "name": "atom name",
+        "chain": "chain ID",
+        "seq": "residue number",
+        "charge": "formal charge",
+        "altloc": "altloc",
+        "insertion": "insertion code",
+    }[field]
+    with pytest.raises(StructureSerializationError, match="PDB " + field_name):
         write_structure_string(structure, FileFormat.PDB)
     if field not in {"altloc", "insertion"}:
         reread = read_structure_string(
@@ -381,8 +394,14 @@ def test_invalid_serial_in_later_model_does_not_reject_the_first_model() -> None
     assert reread.topology.formal_charge(AtomIndex(0)) == 0
 
 
-def test_normal_numeric_fields_still_match_the_native_projection() -> None:
-    structure = _one_atom(x=-0.0001, b=999.994)
+@pytest.mark.parametrize(
+    "x", [-999.999, -999.9989999, -0.0005, -0.0001, 0.0, 9999.9989999, 9999.999]
+)
+@pytest.mark.parametrize("b", [0.0, 999.99, 999.994])
+def test_normal_numeric_fields_still_match_the_native_projection(
+    x: float, b: float
+) -> None:
+    structure = _one_atom(x=x, b=b)
     public = write_structure_string(structure, FileFormat.PDB)
     native = write_pdb_structure_string_without_conect(structure)
     public_row = next(r for r in public.splitlines() if r.startswith("ATOM"))

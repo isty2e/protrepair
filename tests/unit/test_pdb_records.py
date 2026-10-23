@@ -5,7 +5,14 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from protrepair.io.pdb_records import decode_pdb_integer, encode_pdb_integer
+from protrepair.io.pdb_records import (
+    decode_pdb_integer,
+    encode_pdb_integer,
+    pdb_atom_identity,
+    pdb_atom_identity_matches,
+)
+from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.source_connection import SourceAtomIdentity
 
 
 def _native_record(serial: int, residue_number: int) -> str:
@@ -87,3 +94,79 @@ def test_serial_encoding_rejects_gemmi_wraparound() -> None:
 def test_decoder_does_not_accept_other_integer_dialects(token: str) -> None:
     with pytest.raises(ValueError):
         decode_pdb_integer(token, width=4)
+
+
+@given(
+    number=st.integers(min_value=-999, max_value=1223055),
+    chain_field=st.sampled_from((" A", "AA", "AB", "  ", " _")),
+    name=st.sampled_from(("CA", "ca", "HB2")),
+    component=st.sampled_from(("ALA", "ala", "GLY")),
+    altloc=st.sampled_from((" ", "A", "a", "\x00")),
+    insertion=st.sampled_from((" ", "B", "b")),
+)
+@settings(max_examples=60)
+def test_record_predicate_preserves_normalized_identity_and_checks_each_field(
+    number: int,
+    chain_field: str,
+    name: str,
+    component: str,
+    altloc: str,
+    insertion: str,
+) -> None:
+    record = _native_record(1, number)
+    record = (
+        record[:12]
+        + name.ljust(4)
+        + altloc
+        + component
+        + chain_field
+        + record[22:26]
+        + insertion
+        + record[27:]
+    )
+    expected_altloc = None if altloc in {" ", "\x00"} else altloc
+    ref = AtomRef(
+        ResidueId(chain_field.strip() or "_", number, insertion.strip() or None), name
+    )
+    expected = SourceAtomIdentity(ref, component, expected_altloc)
+    assert pdb_atom_identity(record) == expected
+    assert pdb_atom_identity_matches(
+        record, ref, expected.component_id, expected_altloc
+    )
+
+    alternative_refs = (
+        AtomRef(ResidueId("Z", number, ref.residue_id.insertion_code), name),
+        AtomRef(
+            ResidueId(
+                ref.residue_id.chain_id, number + 1, ref.residue_id.insertion_code
+            ),
+            name,
+        ),
+        AtomRef(ResidueId(ref.residue_id.chain_id, number, "C"), name),
+        AtomRef(ref.residue_id, "OTHER"),
+    )
+    assert all(
+        not pdb_atom_identity_matches(
+            record, other, expected.component_id, expected_altloc
+        )
+        for other in alternative_refs
+    )
+    assert not pdb_atom_identity_matches(record, ref, "SER", expected_altloc)
+    assert not pdb_atom_identity_matches(record, ref, expected.component_id, "z")
+
+
+@pytest.mark.parametrize("record", ["HEADER", "TER", "ATOM", "ATOM  " + " " * 74])
+def test_empty_identity_has_no_match(record: str) -> None:
+    assert pdb_atom_identity(record) is None
+    assert not pdb_atom_identity_matches(
+        record, AtomRef(ResidueId("A", 1), "CA"), "ALA", None
+    )
+
+
+def test_record_predicate_keeps_decode_errors_ahead_of_identity_mismatches() -> None:
+    record = _native_record(1, 1)
+    record = record[:22] + "a000" + record[26:]
+    with pytest.raises(ValueError, match="unsupported 4-column PDB integer"):
+        pdb_atom_identity(record)
+    with pytest.raises(ValueError, match="unsupported 4-column PDB integer"):
+        pdb_atom_identity_matches(record, AtomRef(ResidueId("B", 1), "CB"), "GLY", "B")

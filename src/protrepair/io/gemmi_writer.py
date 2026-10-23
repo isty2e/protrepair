@@ -28,6 +28,7 @@ from protrepair.io.pdb_records import (
     decode_pdb_integer,
     encode_pdb_integer,
     pdb_atom_identity,
+    pdb_atom_identity_matches,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite, ResidueSite
@@ -36,7 +37,6 @@ from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
 from protrepair.structure.labels import AtomRef
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import AtomIndex
-from protrepair.structure.source_connection import SourceAtomIdentity
 from protrepair.structure.topology import (
     BondProvenance,
     BondRelationshipType,
@@ -228,16 +228,26 @@ def _validate_pdb_output(
     patches: dict[int, tuple[tuple[int, str], ...]] = {}
     for value, atom in enumerate(structure.constitution.atom_slots):
         index = AtomIndex(value)
-        label = structure.constitution.atom_ref_at(index).display_token()
         geometry = structure.geometry.atom_geometry(index)
-        _require_pdb_field(atom.name, 4, f"atom name at {label}")
-        _require_pdb_field(
-            geometry.altloc or "", 1, f"altloc at {label}", shared_adapter_limit=True
-        )
+        if not _pdb_field_fits(atom.name, 4):
+            _require_pdb_field(
+                atom.name,
+                4,
+                f"atom name at {structure.constitution.atom_ref_at(index).display_token()}",
+            )
+        if not _pdb_field_fits(geometry.altloc or "", 1):
+            _require_pdb_field(
+                geometry.altloc or "",
+                1,
+                f"altloc at {structure.constitution.atom_ref_at(index).display_token()}",
+                shared_adapter_limit=True,
+            )
         charge = structure.topology.formal_charge(index)
         if charge is not None and abs(charge) > 9:
             raise StructureSerializationError(
-                f"PDB formal charge {charge} at {label} exceeds one digit; use mmCIF"
+                f"PDB formal charge {charge} at "
+                f"{structure.constitution.atom_ref_at(index).display_token()} "
+                "exceeds one digit; use mmCIF"
             )
         fields: list[tuple[int, str]] = []
         for offset, coordinate in zip(
@@ -245,24 +255,29 @@ def _validate_pdb_output(
             (geometry.position.x, geometry.position.y, geometry.position.z),
             strict=True,
         ):
+            # Interior values fit 8.3 without formatting; boundary values use the oracle below.
+            if -999.999 <= coordinate <= 9999.999:
+                continue
             token = _pdb_overflow_field(
                 coordinate,
                 width=8,
                 normal_places=3,
                 minimum_places=2,
-                label=f"coordinate at {label}",
+                label=f"coordinate at {structure.constitution.atom_ref_at(index).display_token()}",
             )
             if token is not None:
                 fields.append((offset, token))
-        token = _pdb_overflow_field(
-            0.0 if geometry.b_factor is None else geometry.b_factor,
-            width=6,
-            normal_places=2,
-            minimum_places=0,
-            label=f"B-factor at {label}",
-        )
-        if token is not None:
-            fields.append((60, token))
+        b_factor = 0.0 if geometry.b_factor is None else geometry.b_factor
+        if not 0.0 <= b_factor <= 999.99:
+            token = _pdb_overflow_field(
+                b_factor,
+                width=6,
+                normal_places=2,
+                minimum_places=0,
+                label=f"B-factor at {structure.constitution.atom_ref_at(index).display_token()}",
+            )
+            if token is not None:
+                fields.append((60, token))
         if fields:
             patches[value] = tuple(fields)
     return patches
@@ -275,7 +290,7 @@ def _require_pdb_field(
     *,
     shared_adapter_limit: bool = False,
 ) -> None:
-    if len(value) <= width and value.isascii() and all(c.isprintable() for c in value):
+    if _pdb_field_fits(value, width):
         return
     remedy = (
         "the coordinate adapter requires a single printable character"
@@ -283,6 +298,12 @@ def _require_pdb_field(
         else "use mmCIF"
     )
     raise StructureSerializationError(f"PDB {label} {value!r} does not fit; {remedy}")
+
+
+def _pdb_field_fits(value: str, width: int) -> bool:
+    return (
+        len(value) <= width and value.isascii() and (not value or value.isprintable())
+    )
 
 
 def _pdb_overflow_field(
@@ -351,8 +372,9 @@ def _project_public_pdb_records(
     lower_altlocs: dict[AtomRef, str] = {}
     for line_index, index, serial in _pdb_atom_records(lines, structure):
         ref = structure.constitution.atom_ref_at(index)
-        residue = structure.constitution.residue_or_ligand(ref.residue_id)
-        assert residue is not None
+        residue = structure.constitution.residue_site_at(
+            structure.constitution.residue_index_for_atom_index(index)
+        )
         atom = structure.constitution.atom_site_at(index)
         geometry = structure.geometry.atom_geometry(index)
         if geometry.altloc is not None and geometry.altloc != geometry.altloc.upper():
@@ -372,12 +394,14 @@ def _project_public_pdb_records(
             record = record[:offset] + token + record[offset + len(token) :]
 
         try:
-            identity = pdb_atom_identity(record)
+            matches = pdb_atom_identity_matches(
+                record, ref, residue.component_id, geometry.altloc
+            )
         except ValueError as error:
             raise StructureSerializationError(
                 f"invalid PDB identity at {ref.display_token()}: {error}"
             ) from error
-        if identity != SourceAtomIdentity(ref, residue.component_id, geometry.altloc):
+        if not matches:
             raise StructureSerializationError(
                 f"PDB output identity does not match {ref.display_token()}"
             )

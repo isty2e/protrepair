@@ -95,20 +95,76 @@ def pdb_atom_identity(line: str) -> SourceAtomIdentity | None:
     ValueError
         A populated residue number has unsupported encoding.
     """
+    fields = _pdb_atom_identity_fields(line)
+    if fields is None:
+        return None
+    atom_name, component, chain, number, insertion, altloc = fields
+    return SourceAtomIdentity(
+        atom_ref=AtomRef(
+            residue_id=ResidueId(
+                chain_id=chain,
+                seq_num=number,
+                insertion_code=insertion,
+            ),
+            atom_name=atom_name,
+        ),
+        component_id=component,
+        altloc=altloc,
+    )
+
+
+def pdb_atom_identity_matches(
+    line: str,
+    atom_ref: AtomRef,
+    component_id: str,
+    altloc: str | None,
+) -> bool:
+    """Compare a record with canonical identity without constructing source objects.
+
+    Parameters
+    ----------
+    line : str
+        One fixed-column PDB record.
+    atom_ref : AtomRef
+        Expected canonical residue and atom name.
+    component_id : str
+        Expected canonical uppercase component identifier.
+    altloc : str or None
+        Expected normalized alternate location.
+
+    Returns
+    -------
+    bool
+        Whether every source identity field matches the expected identity.
+
+    Raises
+    ------
+    ValueError
+        A populated residue number has unsupported encoding.
+    """
+    return _pdb_atom_identity_fields(line) == (
+        atom_ref.atom_name,
+        component_id,
+        atom_ref.residue_id.chain_id,
+        atom_ref.residue_id.seq_num,
+        atom_ref.residue_id.insertion_code,
+        altloc,
+    )
+
+
+def _pdb_atom_identity_fields(
+    line: str,
+) -> tuple[str, str, str, int, str | None, str | None] | None:
     if not line.startswith(("ATOM  ", "HETATM")):
         return None
     atom_name, component = line[12:16].strip(), line[17:20].strip()
     if not atom_name or not component or not line[22:26].strip():
         return None
-    return SourceAtomIdentity(
-        atom_ref=AtomRef(
-            residue_id=ResidueId(
-                chain_id=normalize_chain_id(line[20:22]),
-                seq_num=decode_pdb_integer(line[22:26], width=4),
-                insertion_code=normalize_insertion_code(line[26:27]),
-            ),
-            atom_name=atom_name,
-        ),
-        component_id=component,
-        altloc=normalize_altloc(line[16:17]),
+    return (
+        atom_name.upper(),
+        component.upper(),
+        normalize_chain_id(line[20:22]),
+        decode_pdb_integer(line[22:26], width=4),
+        normalize_insertion_code(line[26:27]),
+        normalize_altloc(line[16:17]),
     )
