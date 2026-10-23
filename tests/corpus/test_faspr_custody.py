@@ -1,5 +1,6 @@
 """Canonical chemistry and motion boundaries through the real packing backend."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.io import read_structure
 from protrepair.state import HydrogenCoverageState
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.transformer.completion.hydrogen import add_hydrogens
@@ -42,6 +44,39 @@ def prepared_1aho() -> ProteinStructure:
         for atom in prepared.topology.atom_topologies
     )
     return prepared
+
+
+@pytest.mark.parametrize("altloc", ["B", "b"])
+def test_native_packing_observes_selected_non_a_atoms_without_losing_metadata(
+    prepared_1aho: ProteinStructure, altloc: str
+) -> None:
+    base = prepared_1aho
+    source = ProteinStructure.from_payload(
+        constitution=base.constitution,
+        geometry=StructureGeometry(
+            constitution=base.constitution,
+            atom_geometries=tuple(
+                replace(geometry, altloc=altloc, occupancy=0.3)
+                for geometry in base.geometry.atom_geometries
+            ),
+        ),
+        topology=base.topology,
+        polymer_blueprint=base.polymer_blueprint,
+        provenance=base.provenance,
+    )
+    spec = PackingSpec(
+        backend_name="faspr",
+        frozen_residue_ids=tuple(
+            residue.residue_id for residue in source.constitution.iter_residues()
+        ),
+    )
+    result = execute_sidechain_packing(source, spec)
+    assert result.packed_structure.constitution == source.constitution
+    assert result.packed_structure.geometry == source.geometry
+    assert result.packed_structure.topology == source.topology
+    assert result.packed_structure.provenance is source.provenance
+    assert result.changed_residue_ids == ()
+    assert result.issues == ()
 
 
 @pytest.mark.parametrize("scope", (PackingScope.LOCAL, PackingScope.FULL))

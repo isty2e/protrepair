@@ -29,7 +29,9 @@ neutral or unknown chemistry. Original input observations remain separate;
 packing does not replay them over an applied microstate or explicit override.
 
 FASPR input uses an internal calculation PDB, not the public file writer's
-full-fidelity policy. Large B factors do not block packing: the merge restores
+full-fidelity policy. Selected altloc labels are blank in that temporary input
+so FASPR does not skip those atoms; canonical labels are preserved in the result.
+Large B factors do not block packing: the merge restores
 canonical scalar metadata rather than adopting the native file's values.
 This does not extend FASPR's native chain-ID or numbering capabilities.
 

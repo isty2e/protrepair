@@ -311,8 +311,11 @@ def test_retained_hydrogen_attachment_reaches_canonical_workflow_burden(
     assert score.parser_extra_bond_count == 1
 
 
-def test_cached_and_rebuilt_projection_bind_the_actual_current_source() -> None:
-    source = _failing_structure((ResidueId("AA", 1),))
+@pytest.mark.parametrize("altloc", [None, "B", "b"])
+def test_cached_and_rebuilt_projection_bind_the_actual_current_source(
+    altloc: str | None,
+) -> None:
+    source = _failing_structure((ResidueId("AA", 1),), altloc=altloc)
     projector = prepare_rdkit_no_conect_pdb_block_projector(source)
     assert projector is not None
     geometries = list(source.geometry.atom_geometries)
@@ -355,6 +358,8 @@ def test_projection_rebuilds_after_h_inventory_or_pdb_metadata_changes() -> None
     for changed in (
         source.without_atom_refs((AtomRef(residue_id, "H4"),)),
         _failing_structure((residue_id,), altloc="A"),
+        _failing_structure((residue_id,), altloc="B"),
+        _failing_structure((residue_id,), altloc="b"),
         changed_charge,
     ):
         assert not projector.can_render(changed)
@@ -428,11 +433,54 @@ def test_native_serial_limit_does_not_renumber_the_parser_input(
         assert probe.parser_problem_witnesses()[0].residue_id == ResidueId("AA", 1)
 
 
-def test_native_filtered_cohort_semantics_are_not_changed_by_correspondence() -> None:
-    source = _failing_structure((ResidueId("AA", 1),), altloc="B")
+@pytest.mark.parametrize("altloc", [None, "A", "B", "C", "1", "2", "a", "b"])
+def test_selected_altloc_reaches_native_parsing_and_exposes_invalid_chemistry(
+    altloc: str | None,
+) -> None:
+    residue_id = ResidueId("AA", 1)
+    source = _failing_structure((residue_id,), altloc=altloc)
+    text = pdb_without_conect(source)
+    molecule = Chem.MolFromPDBBlock(
+        text, sanitize=False, removeHs=False, proximityBonding=True
+    )
+    assert molecule is not None
+    assert {
+        atom.GetPDBResidueInfo().GetSerialNumber() for atom in molecule.GetAtoms()
+    } == {int(row[6:11]) for row in text.splitlines() if row.startswith("ATOM  ")}
+    control = Chem.MolFromPDBBlock(
+        pdb_without_conect(_failing_structure((residue_id,))),
+        sanitize=False,
+        removeHs=False,
+        proximityBonding=True,
+    )
+    assert control is not None
+    assert tuple(
+        (bond.GetBeginAtomIdx(), bond.GetEndAtomIdx(), bond.GetBondType())
+        for bond in molecule.GetBonds()
+    ) == tuple(
+        (bond.GetBeginAtomIdx(), bond.GetEndAtomIdx(), bond.GetBondType())
+        for bond in control.GetBonds()
+    )
     probe = diagnostics.probe_rdkit_no_conect_parser_readability(source)
-    assert probe.sanitize_readable is True
-    assert probe.parser_problem_witnesses() == ()
+    assert probe.sanitize_readable is False
+    assert tuple(w.residue_id for w in probe.parser_problem_witnesses()) == (
+        residue_id,
+    )
+    assert probe.parser_problem_witnesses()[0].atom_names == ("N",)
+    assert diagnostics.measure_rdkit_no_conect_sanitize_readability(source) is False
+
+
+def test_workflow_finalization_does_not_hide_invalid_selected_b_atoms() -> None:
+    residue_id = ResidueId("AA", 1)
+    source = _failing_structure((residue_id,), altloc="B")
+    result = process_structure(source)
+    assert result.structure.geometry == source.geometry
+    assert any(
+        issue.kind is ValidationIssueKind.PARSER_READABILITY
+        and issue.severity is IssueSeverity.ERROR
+        and issue.scope.targets_residue(residue_id)
+        for issue in result.issues
+    )
 
 
 def test_native_hybrid_residue_limit_remains_a_nonlocalized_parse_failure() -> None:

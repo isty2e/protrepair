@@ -2,7 +2,9 @@
 
 from collections import Counter
 
+import gemmi
 import pytest
+from rdkit.Chem.rdchem import Mol
 from tests.support.canonical_builders import (
     atom_payload,
     build_structure,
@@ -39,10 +41,14 @@ from protrepair.diagnostics.kinds import (
     RepairEventKind,
     ValidationIssueKind,
 )
+from protrepair.diagnostics.source_microstate import (
+    diagnose_source_microstate_contradictions,
+)
 from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import Vec3
-from protrepair.io import read_structure, write_structure_string
+from protrepair.io import read_structure, read_structure_string, write_structure_string
 from protrepair.io.gemmi_writer import pdb_atom_serial_by_atom_ref
+from protrepair.io.ingress_policy import LigandHandling, StructureNormalizationPolicy
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state import (
     RetainedNonPolymerChemistryReadinessFact,
@@ -1130,6 +1136,88 @@ def test_add_retained_non_polymer_hydrogens_uses_rdkit_fallback_without_support(
         if line.startswith("CONECT")
     )
     assert any(line.startswith("CONECT    1    2") for line in pdb_conect_lines)
+
+
+@pytest.mark.parametrize("altloc", ["B", "b"])
+@pytest.mark.parametrize("charge, expected_hydrogens", [(0, 7), (1, 8)])
+def test_selected_ligand_altloc_survives_fallback_repair_and_charge_diagnostics(
+    altloc: str,
+    charge: int,
+    expected_hydrogens: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = gemmi.Structure()
+    model = gemmi.Model(1)
+    chain = gemmi.Chain("L")
+    residue = gemmi.Residue()
+    residue.name = "ZZQ"
+    residue.seqid = gemmi.SeqId(1, " ")
+    residue.het_flag = "H"
+    residue.entity_type = gemmi.EntityType.NonPolymer
+    for label, occupancy, offset in (("A", 0.3, 10.0), (altloc, 0.7, 0.0)):
+        for name, element, x, y in (
+            ("C1", "C", -1.45, 0.0),
+            ("N1", "N", 0.0, 0.0),
+            ("C2", "C", 0.5, 1.36),
+        ):
+            atom = gemmi.Atom()
+            atom.name = name
+            atom.element = gemmi.Element(element)
+            atom.pos = gemmi.Position(x + offset, y, 0.0)
+            atom.altloc = label
+            atom.occ = occupancy
+            atom.charge = charge if name == "N1" else 0
+            residue.add_atom(atom)
+    chain.add_residue(residue)
+    model.add_chain(chain)
+    raw.add_model(model)
+    source = read_structure_string(
+        raw.make_mmcif_document().as_string(),
+        FileFormat.MMCIF,
+        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+    )
+    assert len(source.constitution.atom_slots) == 3
+    assert all(atom.altloc == altloc for atom in source.geometry.atom_geometries)
+    assert Chem is not None
+    reader = Chem.MolFromPDBBlock
+    observed_atom_counts: list[int] = []
+
+    def observed_reader(
+        block: str, *, sanitize: bool, removeHs: bool, proximityBonding: bool
+    ) -> Mol | None:
+        molecule = reader(
+            block,
+            sanitize=sanitize,
+            removeHs=removeHs,
+            proximityBonding=proximityBonding,
+        )
+        assert molecule is not None
+        observed_atom_counts.append(molecule.GetNumAtoms())
+        return molecule
+
+    monkeypatch.setattr(Chem, "MolFromPDBBlock", observed_reader)
+    assert diagnose_source_microstate_contradictions(source) == ()
+    if charge:
+        assert observed_atom_counts
+        assert set(observed_atom_counts) == {3}
+
+    result = add_retained_non_polymer_hydrogens(source)
+    assert sum(
+        atom.is_hydrogen() for atom in result.structure.constitution.atom_slots
+    ) == (expected_hydrogens)
+    for atom in source.constitution.atom_slots:
+        ref = AtomRef(ResidueId("L", 1), atom.name)
+        before_index = source.constitution.atom_index(ref)
+        after_index = result.structure.constitution.atom_index(ref)
+        assert result.structure.geometry.atom_geometry(after_index) == (
+            source.geometry.atom_geometry(before_index)
+        )
+        assert result.structure.topology.formal_charge(after_index) == (
+            source.topology.formal_charge(before_index)
+        )
+    assert diagnose_source_microstate_contradictions(result.structure) == ()
+    assert observed_atom_counts
+    assert set(observed_atom_counts) == {3}
 
 
 def test_retained_non_polymer_fallback_preserves_partial_source_h_names() -> None:

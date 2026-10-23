@@ -187,6 +187,10 @@ Hydrogen-bond interactions are not chemical edges in this export. A known-charge
 flag describes current selected chemistry, not whether the original file
 reported that charge. Native export and PDB/mmCIF serialization remain separate
 operations; successful export does not guarantee equivalent PDB re-reading.
+Native atom metadata retains selected altloc labels. RDKit's own PDB writer
+can recreate `B` or lowercase records that its default reader skips; use
+ProtRepair's PDB writer on the `ProteinStructure` when blank selected-altloc
+labels are needed.
 
 `protrepair_formal_charge_known=False` means canonical topology has no assigned
 formal charge. This is common for neutral C and H; it is not a confidence score

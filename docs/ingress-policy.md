@@ -17,6 +17,14 @@ during ingress. A selected atom cohort is kept consistently for the residue;
 discarded source variants and connectivity that points only to them do not
 enter canonical topology.
 
+PDB output leaves alternate-location labels blank on the selected atoms and
+their `LINK` endpoints. It does not combine discarded alternatives with the
+selected coordinates. This keeps downstream readers from dropping a selected
+atom because it still carries a `B` or lowercase label. Coordinates, occupancy
+and B factors are unchanged apart from normal output rounding. The structure
+object and mmCIF output retain the selected labels; use mmCIF if they matter,
+because the PDB alone cannot recover them.
+
 ## PDB Identifiers And Output Limits
 
 ProtRepair supports Gemmi's two-character chain IDs and uppercase hybrid-36
@@ -40,19 +48,21 @@ longer than four, chains longer than two, or formal charges outside one digit.
 Writers raise `StructureSerializationError` instead of changing these facts;
 use mmCIF for those cases. Insertion and altloc codes must be a single
 printable ASCII character in the current coordinate adapter, so switching
-to mmCIF does not resolve that adapter limit. Representable altloc case,
-H/D/T and explicit zero charges are preserved in public PDB output.
+to mmCIF does not resolve that adapter limit. H/D/T and explicit zero charges
+are preserved in public PDB output.
 
 PDB extensions are not supported by every downstream tool. RDKit parser
 probes and FASPR use internal calculation projections with separate contracts;
 successful public serialization does not establish native-tool compatibility.
+Both projections use the same blank-altloc policy as public PDB output.
 
 RDKit diagnostics associate parsed atoms with the original canonical atoms by
 the serials in the emitted PDB, not RDKit's one-character chain labels or atom
 indices. This keeps diagnostic and repair targets distinct for chains such as
-`A` and `AA` without relabeling the parser input, which could change proximity
-bonds. RDKit still requires decimal atom serials and residue numbers: emitted
-hybrid-36 fields cause a nonlocalized parser failure. The serial limit applies
+`A` and `AA` without renaming chains or renumbering residues, which could change
+proximity bonds. Selected altloc labels are omitted. RDKit still requires decimal
+atom serials and residue numbers: emitted hybrid-36 fields cause a nonlocalized
+parser failure. The serial limit applies
 to the emitted records, not just the atom count, since `TER` records consume
 serials too. A successful probe describes the atoms RDKit retained; it is not
 a guarantee that RDKit read every canonical atom or alternate-location record.
