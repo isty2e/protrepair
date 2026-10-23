@@ -10,7 +10,11 @@ from protrepair.io.gemmi_writer import (
     pdb_typed_connection_topology_bonds_for_egress,
     write_pdb_structure_string_without_conect,
 )
-from protrepair.io.pdb_records import decode_pdb_integer, pdb_atom_identity_matches
+from protrepair.io.pdb_records import (
+    decode_pdb_integer,
+    encode_pdb_integer,
+    pdb_atom_identity_matches,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import StructureConstitution
 from protrepair.structure.element import ElementIdentity
@@ -99,6 +103,52 @@ class RDKitNoConectPDBInput:
 
     pdb_block: str
     correspondence: RDKitPDBAtomCorrespondence
+
+
+@dataclass(frozen=True, slots=True)
+class RDKitPDBProjectionUnavailable:
+    """A valid canonical identity outside the internal PDB transport capacity.
+
+    Parameters
+    ----------
+    reason : str
+        Unsupported field and original source location, not a chemistry verdict.
+    """
+
+    reason: str
+
+
+def rdkit_pdb_projection_unavailability(
+    structure: ProteinStructure,
+) -> RDKitPDBProjectionUnavailable | None:
+    """Check chain and residue identifiers before PDB output can alter them.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Source whose chain IDs and residue numbers must be preserved.
+
+    Returns
+    -------
+    RDKitPDBProjectionUnavailable or None
+        First unsupported chain ID or residue number, or None.
+    """
+    for residue in structure.constitution.iter_residues(include_ligands=True):
+        residue_id = residue.residue_id
+        chain = residue_id.chain_id
+        if len(chain) > 2 or not chain.isascii() or not chain.isprintable():
+            return RDKitPDBProjectionUnavailable(
+                f"chain ID {chain!r} at {residue_id.display_token()} cannot fit "
+                "Gemmi PDB's two printable ASCII columns"
+            )
+        try:
+            encode_pdb_integer(residue_id.seq_num, width=4)
+        except ValueError:
+            return RDKitPDBProjectionUnavailable(
+                f"residue number {residue_id.seq_num} at "
+                f"{residue_id.display_token()} is outside the Gemmi PDB range"
+            )
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +312,26 @@ class RDKitNoConectPDBBlockProjector:
 def prepare_rdkit_no_conect_pdb_block_projector(
     structure: ProteinStructure,
 ) -> RDKitNoConectPDBBlockProjector | None:
-    """Return a coordinate-only no-CONECT PDB projection when safely mappable."""
+    """Prepare coordinate-only PDB projection when source labels fit unchanged.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Canonical source for the projected text and correspondence.
+
+    Returns
+    -------
+    RDKitNoConectPDBBlockProjector or None
+        Reusable projection, or None for unsupported identifiers or row counts.
+
+    Raises
+    ------
+    ModelInvariantError
+        Rendered identities contradict the admitted source write order.
+    """
+
+    if rdkit_pdb_projection_unavailability(structure) is not None:
+        return None
 
     pdb_block = pdb_without_conect(structure)
     base_lines = tuple(pdb_block.splitlines())
@@ -329,7 +398,7 @@ def pdb_without_conect_for_parser_probe(
 def prepare_rdkit_no_conect_pdb_input(
     structure: ProteinStructure,
     pdb_block_projector: RDKitNoConectPDBBlockProjector | None,
-) -> RDKitNoConectPDBInput:
+) -> RDKitNoConectPDBInput | RDKitPDBProjectionUnavailable:
     """Render parser input with the source association for its actual records.
 
     Parameters
@@ -341,8 +410,9 @@ def prepare_rdkit_no_conect_pdb_input(
 
     Returns
     -------
-    RDKitNoConectPDBInput
-        Exact parser text and its matching immutable source correspondence.
+    RDKitNoConectPDBInput or RDKitPDBProjectionUnavailable
+        Exact parser text and matching source correspondence, or the unsupported
+        identifier that prevents an unchanged projection.
 
     Raises
     ------
@@ -355,6 +425,11 @@ def prepare_rdkit_no_conect_pdb_input(
             return RDKitNoConectPDBInput(
                 text, pdb_block_projector.base_input.correspondence
             )
+
+    unavailable = rdkit_pdb_projection_unavailability(structure)
+    if unavailable is not None:
+        return unavailable
+
     return _parser_input_with_correspondence(structure, pdb_without_conect(structure))
 
 

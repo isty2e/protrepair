@@ -14,8 +14,10 @@ from protrepair.errors import ModelInvariantError, RdkitUnavailableError
 from protrepair.io.pdb_projection import (
     RDKitNoConectPDBBlockProjector,
     RDKitNoConectPDBInput,
+    RDKitPDBProjectionUnavailable,
     pdb_without_conect,
     prepare_rdkit_no_conect_pdb_input,
+    rdkit_pdb_projection_unavailability,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import StructureConstitution
@@ -259,7 +261,7 @@ class RDKitNoConectParserReadabilityProbe:
     residue_problem_witnesses : tuple[RDKitParserProblemWitness, ...]
         Localized native sanitation failures and their neighboring bonds.
     structure_messages : tuple[str, ...]
-        Sanitation failures that cannot be assigned to a residue.
+        Nonlocalized sanitation failures or unsupported PDB projection causes.
     hydrogen_attachment_witnesses : tuple[RDKitProximityBondWitness, ...], default=()
         Observed attachments outside declared canonical H/D/T parents, even
         when sanitation succeeds. Undeclared parents are not inferred here.
@@ -305,6 +307,18 @@ class RDKitNoConectParserReadabilityProbe:
 
     def issues(self) -> tuple[ValidationIssue, ...]:
         """Return typed parser-readability issues for this probe."""
+
+        if self.structure_messages[:1] == ("_pdb_projection_unavailable",):
+            return (
+                ValidationIssue(
+                    kind=ValidationIssueKind.PARSER_READABILITY,
+                    severity=IssueSeverity.ERROR,
+                    message=(
+                        "RDKit could not observe the no-CONECT PDB surface: "
+                        + "; ".join(self.structure_messages[1:])
+                    ),
+                ),
+            )
 
         if self.structure_messages == ("_pdb_parse_failed_before_sanitize",):
             return (
@@ -750,6 +764,9 @@ def measure_rdkit_no_conect_sanitize_readability(
     if not _structure_contains_hydrogens(structure):
         return None
 
+    if rdkit_pdb_projection_unavailability(structure) is not None:
+        return False
+
     pdb_block = pdb_without_conect(structure)
     with _expected_rdkit_parser_probe_logs_blocked():
         try:
@@ -1059,6 +1076,16 @@ def _rdkit_no_conect_problem_surface(
         structure,
         pdb_block_projector,
     )
+    if isinstance(parser_input, RDKitPDBProjectionUnavailable):
+        return _RDKitNoConectProblemSurface(
+            molecule=None,
+            atom_refs_by_native_index={},
+            residue_atom_names={},
+            residue_messages={},
+            residue_problem_atom_indices={},
+            structure_messages=("_pdb_projection_unavailable", parser_input.reason),
+        )
+
     with _expected_rdkit_parser_probe_logs_blocked():
         molecule = Chem.MolFromPDBBlock(
             parser_input.pdb_block,

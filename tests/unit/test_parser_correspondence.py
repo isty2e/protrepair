@@ -13,8 +13,10 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 
+from protrepair import process_structure
 from protrepair.chemistry import build_default_component_library
 from protrepair.diagnostics import parser_readability as diagnostics
+from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.errors import ModelInvariantError
 from protrepair.geometry import Vec3
 from protrepair.io import pdb_projection
@@ -359,6 +361,7 @@ def test_projection_rebuilds_after_h_inventory_or_pdb_metadata_changes() -> None
         parser_input = pdb_projection.prepare_rdkit_no_conect_pdb_input(
             changed, projector
         )
+        assert isinstance(parser_input, pdb_projection.RDKitNoConectPDBInput)
         assert parser_input.pdb_block == pdb_without_conect(changed)
         assert diagnostics.probe_rdkit_no_conect_parser_readability(
             changed, pdb_block_projector=projector
@@ -475,3 +478,84 @@ def test_native_blank_chain_metadata_still_targets_the_canonical_default_chain(
     )
     probe = diagnostics.probe_rdkit_no_conect_parser_readability(source)
     assert probe.parser_problem_witnesses()[0].residue_id == ResidueId("_", 1)
+
+
+_UNSUPPORTED_PDB_IDENTITIES = (
+    (ResidueId("A", -1000), "residue number"),
+    (ResidueId("A", 1223056), "residue number"),
+    (ResidueId("AAA", 1), "chain ID"),
+)
+
+
+@pytest.mark.parametrize(("residue_id", "reason"), _UNSUPPORTED_PDB_IDENTITIES)
+def test_native_pdb_capacity_is_reported_without_losing_the_workflow_result(
+    residue_id: ResidueId, reason: str
+) -> None:
+    source = _failing_structure((residue_id,))
+    result = process_structure(source)
+    assert result.structure.constitution == source.constitution
+    issues = tuple(
+        issue
+        for issue in result.issues
+        if issue.kind is ValidationIssueKind.PARSER_READABILITY
+    )
+    assert len(issues) == 1
+    assert issues[0].severity is IssueSeverity.ERROR
+    assert not issues[0].scope.residue_ids
+    assert reason in issues[0].message
+    assert residue_id.display_token() in issues[0].message
+    assert "chemistry problems" not in issues[0].message
+
+    no_h = process_structure(source.without_hydrogens())
+    assert not any(
+        issue.kind is ValidationIssueKind.PARSER_READABILITY for issue in no_h.issues
+    )
+
+
+@pytest.mark.parametrize(("residue_id", "reason"), _UNSUPPORTED_PDB_IDENTITIES)
+def test_unsupported_native_identity_does_not_call_the_writer_or_reader(
+    residue_id: ResidueId, reason: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _failing_structure((residue_id,))
+    valid = _failing_structure((ResidueId("AA", 1),))
+    projector = prepare_rdkit_no_conect_pdb_block_projector(valid)
+    assert projector is not None
+
+    def unexpected_writer(structure: ProteinStructure) -> str:
+        pytest.fail("unsupported identifiers must be screened before PDB writing")
+
+    def unexpected_reader(
+        block: str, *, sanitize: bool, removeHs: bool, proximityBonding: bool
+    ) -> Mol | None:
+        pytest.fail("unsupported projections must not enter the native reader")
+
+    monkeypatch.setattr(
+        pdb_projection, "write_pdb_structure_string_without_conect", unexpected_writer
+    )
+    monkeypatch.setattr(Chem, "MolFromPDBBlock", unexpected_reader)
+    assert prepare_rdkit_no_conect_pdb_block_projector(source) is None
+    for preparation in (None, projector):
+        probe = diagnostics.probe_rdkit_no_conect_parser_readability(
+            source, pdb_block_projector=preparation
+        )
+        assert probe.sanitize_readable is False
+        assert not probe.parser_problem_witnesses()
+        assert not probe.extra_proximity_bonds()
+        assert len(probe.issues()) == 1
+        assert reason in probe.issues()[0].message
+    assert diagnostics.measure_rdkit_no_conect_sanitize_readability(source) is False
+
+
+@pytest.mark.parametrize("number", [-999, 1223055])
+def test_gemmi_residue_boundaries_still_reach_native_parsing(number: int) -> None:
+    source = _failing_structure((ResidueId("AA", number),))
+    projector = prepare_rdkit_no_conect_pdb_block_projector(source)
+    assert projector is not None
+    probe = diagnostics.probe_rdkit_no_conect_parser_readability(
+        source, pdb_block_projector=projector
+    )
+    assert probe.sanitize_readable is False
+    if number < 0:
+        assert probe.parser_problem_witnesses()[0].residue_id == ResidueId("AA", number)
+    else:
+        assert probe.structure_messages == ("_pdb_parse_failed_before_sanitize",)
