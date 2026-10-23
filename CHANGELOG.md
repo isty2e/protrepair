@@ -86,6 +86,10 @@
 
 ### Fixed
 
+- report unresolved fixed-polymer H once per current affected residue in workflow
+  results and branch scores, rather than accumulating a warning on each H
+  preparation. These warnings use `unresolved_polymer_hydrogen` instead of
+  `chemistry_contradiction`; unrelated execution warnings retain their multiplicity
 - leave fixed polymer H unresolved at unexplained external covalent or untyped
   connections, instead of adding an isolated-residue H inventory. Prepare
   independent H in the same residue, preserve existing H/D/T and source

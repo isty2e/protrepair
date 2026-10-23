@@ -7,6 +7,8 @@ import pytest
 from tests.support.workflow_proposals import workflow_proposals
 
 from protrepair.chemistry import build_default_component_library
+from protrepair.diagnostics.events import ValidationIssue
+from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.io import read_structure
 from protrepair.scope import AtomSetScope
 from protrepair.state import StructureProjectionStateFacts
@@ -29,6 +31,7 @@ from protrepair.transformer.refinement.spec import (
     RepairRefinementSpec,
 )
 from protrepair.workflow.actions import local_refinement as local
+from protrepair.workflow.actions.context import TransformerExecutionContext
 from protrepair.workflow.contracts.planning import WorkflowPlanningContext
 from protrepair.workflow.contracts.request import (
     RequestedGoalSet,
@@ -59,6 +62,52 @@ def _evidence(profile=ContinuousRelaxationProfile.RDKIT_UFF, *, status=1):
         minimizer_status=status,
         backend_version="2026.03.2",
     )
+
+
+def test_current_h_warning_filter_preserves_native_returns_and_other_issues(
+    source, monkeypatch
+):
+    execution = _evidence()
+    transformer = local.LocalRefinementTransformer.from_repair_refinement(
+        RepairRefinementSpec(
+            scope_spec=LocalScopeSpec.from_atoms(execution.movable_scope.atom_refs),
+            binding=ManualContinuousRelaxationBinding(
+                ContinuousRelaxationProfile.RDKIT_MMFF
+            ),
+        )
+    )
+    state_warning = ValidationIssue(
+        kind=ValidationIssueKind.UNRESOLVED_POLYMER_HYDROGEN,
+        severity=IssueSeverity.WARNING,
+        message="current unresolved fixed H",
+    )
+    other_warning = ValidationIssue(
+        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+        severity=IssueSeverity.WARNING,
+        message="attempt-specific chemistry failure",
+    )
+    returned = RefinementTransformationResult(
+        source,
+        repairs=(),
+        issues=(state_warning, other_warning, state_warning, other_warning),
+        relaxation_executions=(execution,),
+    )
+    monkeypatch.setattr(
+        local, "apply_repair_stage_local_refinement", lambda *args, **kwargs: returned
+    )
+    actual = workflow_runtime.execute_workflow_transformer(
+        ProcessResult(source, repairs=(), issues=()),
+        transformer=transformer,
+        execution_context=TransformerExecutionContext(
+            component_library=build_default_component_library(),
+            original_structure=source,
+            orphan_fragment_policy=OrphanFragmentPolicy.PRESERVE,
+        ),
+    )
+    assert isinstance(actual, RefinementTransformationResult)
+    assert actual.structure is source
+    assert actual.relaxation_executions == (execution,)
+    assert actual.issues == (other_warning, other_warning)
 
 
 def test_workflow_records_actual_returns_in_next_planning_pass(source, monkeypatch):

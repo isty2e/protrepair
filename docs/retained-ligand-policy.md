@@ -262,7 +262,12 @@ H/D/T, coordinates, known charges and source connections are preserved; the
 unresolved H is not rotated by rotatable-H cleanup.
 
 An H-completion goal remains unmet at these sites, with a warning on the final
-result, even when there is no further supported H to add. Local refinement
+result, even when there is no further supported H to add. The
+`unresolved_polymer_hydrogen` warning describes the current residue, not a failed
+attempt. Branch scores and final output include it once per affected residue
+within the requested H or local preparation scope; repeated H preparation does
+not add copies, and resolving the site removes the warning. Other execution
+warnings keep their existing counts. Local refinement
 including the unresolved site is not ready. This prevents an isolated hydroxyl
 H from being added to an oxygen already linked to another heavy atom; it does
 not infer the product's charge or remove an H already present in the input.

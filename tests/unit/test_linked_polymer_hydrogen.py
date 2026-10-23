@@ -17,9 +17,12 @@ from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.component.semantics import HydrogenSemantics
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.diagnostics.events import ValidationIssue
+from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
+from protrepair.diagnostics.polymer_hydrogen import unresolved_fixed_hydrogen_issue
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure_string, write_structure_string
-from protrepair.scope import AtomSetScope
+from protrepair.scope import AtomSetScope, ResidueSetScope
 from protrepair.state import HydrogenApplicabilityState, HydrogenCoverageState
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure import AtomRef, ProteinStructure, ResidueId
@@ -51,10 +54,18 @@ from protrepair.transformer.continuous.readiness import (
 )
 from protrepair.transformer.local import LocalScopeSpec
 from protrepair.transformer.refinement.spec import RepairRefinementSpec
+from protrepair.transformer.result import TransformationResult
 from protrepair.workflow.contracts import LigandPolicy, StructureIngressOptions
+from protrepair.workflow.contracts.planning import WorkflowPlanningContext
 from protrepair.workflow.contracts.request import (
     RequestedGoalSet,
     WorkflowTransformRequests,
+    requested_process_goal,
+)
+from protrepair.workflow.engine.polymer_hydrogen import project_polymer_hydrogen_issues
+from protrepair.workflow.engine.reporting import (
+    evaluate_requested_goal_report,
+    evaluate_workflow_branch_quality_score,
 )
 from protrepair.workflow.planning.completion.transformer_candidates import (
     plan_hydrogen_completion_transformers,
@@ -437,11 +448,112 @@ def test_explicit_local_prerequisite_reports_current_unresolved_h() -> None:
             )
         ),
     )
-    assert any(
-        issue.residue_id == SERINE and "linked polymer H" in issue.message
-        for issue in result.issues
+    assert (
+        sum(
+            issue.residue_id == SERINE and "linked polymer H" in issue.message
+            for issue in result.issues
+        )
+        == 1
     )
     assert not result.relaxation_executions
+
+
+@pytest.mark.parametrize("history_count", (0, 1, 11))
+def test_branch_issue_burden_counts_current_h_state_not_preparation_history(
+    history_count: int,
+) -> None:
+    source = materialize_hydrogens_core(linked_serine()).structure
+    library = build_default_component_library()
+    preparation = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(source), library
+    )
+    current_issue = unresolved_fixed_hydrogen_issue(preparation, SERINE)
+    assert current_issue is not None
+    unrelated = ValidationIssue(
+        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+        severity=IssueSeverity.WARNING,
+        message="an independent execution warning",
+    )
+    result = TransformationResult(
+        source,
+        repairs=(),
+        issues=(unrelated, unrelated) + (current_issue,) * history_count,
+    )
+    report = evaluate_requested_goal_report(
+        source,
+        requested_goals=whole_structure_requested_goals(HydrogenCoverageState.COMPLETE),
+        component_library=library,
+    )
+    score = evaluate_workflow_branch_quality_score(
+        result,
+        requested_goal_report=report,
+        component_library=library,
+        planning_context=WorkflowPlanningContext(),
+    )
+    assert score.warning_count == 3
+    assert score.issue_count == 3
+
+
+@pytest.mark.parametrize("mode", ("no-goal", "other-scope", "resolved", "removed"))
+def test_current_h_projection_drops_stale_warnings_not_unrelated_history(
+    mode: str,
+) -> None:
+    source = materialize_hydrogens_core(linked_serine()).structure
+    library = build_default_component_library()
+    preparation = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(source), library
+    )
+    stale = unresolved_fixed_hydrogen_issue(preparation, SERINE)
+    assert stale is not None
+    unrelated = ValidationIssue(
+        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+        severity=IssueSeverity.WARNING,
+        message="independent failure",
+    )
+    if mode == "resolved":
+        source = ProteinStructure.from_payload(
+            constitution=source.constitution,
+            geometry=source.geometry,
+            topology=StructureTopology(
+                constitution=source.constitution,
+                atom_topologies=source.topology.atom_topologies,
+                bonds=tuple(
+                    replace(
+                        bond, relationship_type=BondRelationshipType.METAL_COORDINATION
+                    )
+                    if bond.involves(
+                        source.constitution.atom_index(AtomRef(PARTNER, "X"))
+                    )
+                    else bond
+                    for bond in source.topology.bonds
+                ),
+            ),
+            provenance=source.provenance,
+        )
+    elif mode == "removed":
+        source = source.without_atom_refs((AtomRef(SERINE, "OG"),))
+
+    goals = whole_structure_requested_goals(HydrogenCoverageState.COMPLETE)
+    if mode == "no-goal":
+        goals = ()
+    elif mode == "other-scope":
+        goals = (
+            requested_process_goal(
+                scope=ResidueSetScope((PARTNER,)), value=HydrogenCoverageState.COMPLETE
+            ),
+        )
+    report = evaluate_requested_goal_report(
+        source, requested_goals=goals, component_library=library
+    )
+    result = TransformationResult(
+        source, repairs=(), issues=(stale, unrelated, stale, unrelated)
+    )
+    assert project_polymer_hydrogen_issues(
+        result,
+        requested_goal_report=report,
+        component_library=library,
+        preparation=preparation,
+    ) == (unrelated, unrelated)
 
 
 def test_cleanup_preserves_h_when_its_template_parent_is_missing() -> None:

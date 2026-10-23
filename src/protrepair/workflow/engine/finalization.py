@@ -5,8 +5,6 @@ from dataclasses import replace
 from protrepair.analysis.kinds import AnalysisKind
 from protrepair.analysis.runtime import build_analysis_bundle
 from protrepair.chemistry import ComponentLibrary
-from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.diagnostics.events import EventScope, ValidationIssue
 from protrepair.diagnostics.geometry import detect_heavy_geometry
 from protrepair.diagnostics.kinds import (
@@ -20,14 +18,10 @@ from protrepair.diagnostics.parser_readability import (
 from protrepair.diagnostics.parser_topology import (
     ambiguous_disulfide_parser_witness_blocker_issues,
 )
-from protrepair.diagnostics.polymer_hydrogen import unresolved_fixed_hydrogen_issue
 from protrepair.diagnostics.source_coordination import (
     diagnose_source_coordination_omissions,
 )
 from protrepair.io.pdb_projection import prepare_rdkit_no_conect_pdb_block_projector
-from protrepair.scope import WholeStructureScope
-from protrepair.scope.observed_atom_scope_lowering import OBSERVED_ATOM_SCOPE_LOWERING
-from protrepair.state import HydrogenCoverageState
 from protrepair.state.structure_topology import (
     DisulfideEndpointMultiplicityContradiction,
     DisulfideTopologyConflict,
@@ -35,11 +29,6 @@ from protrepair.state.structure_topology import (
     StructureDisulfideTopologyFacts,
 )
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.labels import ResidueId
-from protrepair.structure.snapshot import ProteinStructureSnapshot
-from protrepair.transformer.local.projection import (
-    LocalContinuousExecutionResidueProjection,
-)
 from protrepair.transformer.refinement.spec import RepairRefinementSpec
 from protrepair.transformer.refinement.speculative_planning import SpeculativeStopReason
 from protrepair.workflow.contracts.planning import WorkflowPlanningContext
@@ -47,6 +36,7 @@ from protrepair.workflow.contracts.result import (
     ProcessResult,
     WorkflowBranchReport,
 )
+from protrepair.workflow.engine.polymer_hydrogen import project_polymer_hydrogen_issues
 from protrepair.workflow.engine.runtime import WorkflowBranch
 
 
@@ -134,73 +124,20 @@ def finalize_workflow_result(
     )
     if geometry_issues:
         result = result.with_appended_issues(geometry_issues)
-    fixed_hydrogen_issues = _final_fixed_hydrogen_issues(
-        result, component_library=component_library, repair_refinement=repair_refinement
-    )
-    if fixed_hydrogen_issues:
-        result = result.with_appended_issues(fixed_hydrogen_issues)
     if preliminary_issues:
         result = result.with_appended_issues(preliminary_issues)
+    result = replace(
+        result,
+        issues=project_polymer_hydrogen_issues(
+            result,
+            requested_goal_report=result.requested_goal_report,
+            component_library=component_library,
+            repair_refinement=repair_refinement,
+        ),
+    )
     return _attach_requested_analyses(
         result,
         requested_analyses=requested_analyses,
-    )
-
-
-def _final_fixed_hydrogen_issues(
-    result: ProcessResult,
-    *,
-    component_library: ComponentLibrary,
-    repair_refinement: RepairRefinementSpec | None,
-) -> tuple[ValidationIssue, ...]:
-    """Report current unresolved H even when no productive H action ran."""
-    structure = result.structure
-    selected: set[ResidueId] = set()
-    snapshot: ProteinStructureSnapshot | None = None
-    if result.requested_goal_report is not None:
-        for outcome in result.requested_goal_report.outcomes:
-            if (
-                outcome.requested_goal.value is not HydrogenCoverageState.COMPLETE
-                or outcome.is_satisfied()
-            ):
-                continue
-            scope = outcome.requested_goal.scope
-            if isinstance(scope, WholeStructureScope):
-                selected.update(
-                    r.residue_id for r in structure.constitution.iter_residues()
-                )
-            elif OBSERVED_ATOM_SCOPE_LOWERING.supports(scope):
-                if snapshot is None:
-                    snapshot = ProteinStructureSnapshot.from_structure(structure)
-                lowered = OBSERVED_ATOM_SCOPE_LOWERING.lower(scope, carrier=snapshot)
-                selected.update(ref.residue_id for ref in lowered.atom_refs)
-    if repair_refinement is not None:
-        if snapshot is None:
-            snapshot = ProteinStructureSnapshot.from_structure(structure)
-        scope_spec = repair_refinement.resolved_execution_scope_spec()
-        try:
-            projection = LocalContinuousExecutionResidueProjection.from_scope_spec(
-                snapshot,
-                scope_spec,
-                context_radius_angstrom=repair_refinement.config.context_radius_angstrom,
-                component_library=component_library,
-            )
-            selected.update(projection.included_polymer_residue_ids)
-        except ValueError:
-            # Missing prerequisites can prevent region projection before H work.
-            selected.update(scope_spec.referenced_residue_ids())
-    if not selected:
-        return ()
-
-    preparation = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(structure), component_library
-    )
-    return tuple(
-        issue
-        for residue in structure.constitution.iter_residues()
-        if residue.residue_id in selected
-        for issue in (unresolved_fixed_hydrogen_issue(preparation, residue.residue_id),)
-        if issue is not None and issue not in result.issues
     )
 
 

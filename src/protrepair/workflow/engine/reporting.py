@@ -5,6 +5,7 @@ from protrepair.diagnostics.geometry import (
     detect_heavy_geometry,
     severe_intrinsic_geometry_residues,
 )
+from protrepair.diagnostics.kinds import IssueSeverity
 from protrepair.diagnostics.parser_readability import (
     rdkit_no_conect_extra_proximity_bond_clusters,
 )
@@ -31,6 +32,7 @@ from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
+from protrepair.transformer.refinement.spec import RepairRefinementSpec
 from protrepair.transformer.refinement.speculative_planning import (
     SpeculativePlanningNodeId,
 )
@@ -51,6 +53,7 @@ from protrepair.workflow.contracts.result import (
     WorkflowPhaseReport,
     WorkflowPhaseStatus,
 )
+from protrepair.workflow.engine.polymer_hydrogen import project_polymer_hydrogen_issues
 from protrepair.workflow.planning.assessment.blockers import WorkflowBlocker
 from protrepair.workflow.planning.assessment.goal_support import (
     observed_requested_goal_value,
@@ -349,9 +352,9 @@ def evaluate_workflow_branch_outcome(
             blockers=blockers,
         ),
         branch_quality_score=branch_quality_score,
-        error_count=result.error_count(),
-        warning_count=result.warning_count(),
-        issue_count=result.issue_count(),
+        error_count=branch_quality_score.error_count,
+        warning_count=branch_quality_score.warning_count,
+        issue_count=branch_quality_score.issue_count,
         status=status,
         relaxation_executions=relaxation_executions,
     )
@@ -365,6 +368,7 @@ def evaluate_workflow_branch_quality_score(
     component_library: ComponentLibrary | None,
     search_depth: int = 0,
     chemistry_observation: StructureChemistryObservation | None = None,
+    repair_refinement: RepairRefinementSpec | None = None,
 ) -> WorkflowBranchQualityScore:
     """Return the canonical branch score projection for one workflow result.
 
@@ -382,6 +386,8 @@ def evaluate_workflow_branch_quality_score(
         Branch depth used by the preference policy.
     chemistry_observation : StructureChemistryObservation or None
         Shared observation with matching snapshot, library and default evidence policy.
+    repair_refinement : RepairRefinementSpec or None
+        Local request whose included region requires current H diagnostics.
 
     Returns
     -------
@@ -437,11 +443,18 @@ def evaluate_workflow_branch_quality_score(
     severe_geometry_residue_count = len(
         severe_intrinsic_geometry_residues(geometry_report)
     )
+    issues = project_polymer_hydrogen_issues(
+        result,
+        requested_goal_report=requested_goal_report,
+        component_library=active_component_library,
+        repair_refinement=repair_refinement,
+        preparation=observation.hydrogen_expectation_model.polymer_preparation,
+    )
     return WorkflowBranchQualityScore.from_requested_goal_report(
         requested_goal_report,
-        error_count=result.error_count(),
-        warning_count=result.warning_count(),
-        issue_count=result.issue_count(),
+        error_count=sum(issue.severity is IssueSeverity.ERROR for issue in issues),
+        warning_count=sum(issue.severity is IssueSeverity.WARNING for issue in issues),
+        issue_count=len(issues),
         parser_incompatible=(
             0 if not parser_facts.compatibility_state.is_incompatible() else 1
         ),

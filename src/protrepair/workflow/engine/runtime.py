@@ -8,6 +8,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
 from protrepair.diagnostics.events import ValidationIssue
+from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.completion.hydrogen.protonation import (
@@ -15,6 +16,7 @@ from protrepair.transformer.completion.hydrogen.protonation import (
 )
 from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.refinement.result import RefinementTransformationResult
+from protrepair.transformer.refinement.spec import RepairRefinementSpec
 from protrepair.transformer.refinement.speculative_planning import (
     EvaluatedSpeculativeProposal,
     SpeculativeAdoptedChild,
@@ -171,6 +173,7 @@ class WorkflowBranchEvaluator:
     component_library: ComponentLibrary
     planning_context: WorkflowPlanningContext
     already_satisfied_requested_goals: tuple[WorkflowGoal, ...]
+    repair_refinement: RepairRefinementSpec | None = None
     _evaluations_by_result_depth: dict[
         tuple[int, int],
         tuple[TransformationResult, WorkflowBranchEvaluation],
@@ -249,6 +252,7 @@ class WorkflowBranchEvaluator:
                 component_library=self.component_library,
                 search_depth=search_depth,
                 chemistry_observation=chemistry_observation,
+                repair_refinement=self.repair_refinement,
             ),
         )
 
@@ -401,6 +405,7 @@ def execute_iterative_workflow(
                 already_satisfied_requested_goals=(
                     planning_outcome.already_satisfied_requested_goals
                 ),
+                repair_refinement=transform_requests.repair_refinement,
             )
         if planning_outcome.is_terminal():
             terminal_result = runtime_state.result.with_appended_issues(
@@ -624,9 +629,20 @@ def execute_workflow_transformer(
 ) -> TransformationResult:
     """Execute one workflow transformer through transformer-owned behavior."""
 
-    return transformer.execute(
+    outcome = transformer.execute(
         result,
         context=execution_context,
+    )
+    # Current-state H diagnostics belong to assessment, not execution history.
+    issues = tuple(
+        issue
+        for issue in outcome.issues
+        if issue.kind is not ValidationIssueKind.UNRESOLVED_POLYMER_HYDROGEN
+    )
+    return (
+        outcome
+        if len(issues) == len(outcome.issues)
+        else replace(outcome, issues=issues)
     )
 
 

@@ -56,7 +56,7 @@ def unresolved_fixed_hydrogen_issue(
         else ""
     )
     return ValidationIssue.for_residue(
-        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+        kind=ValidationIssueKind.UNRESOLVED_POLYMER_HYDROGEN,
         severity=IssueSeverity.WARNING,
         residue_id=residue_id,
         component_id=residue.component_id,

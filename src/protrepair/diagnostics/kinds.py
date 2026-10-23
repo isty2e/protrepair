@@ -42,6 +42,7 @@ class ValidationIssueKind(str, Enum):
     COORDINATED_COMPONENT_PREPARATION = "coordinated_component_preparation"
     UNSUPPORTED_TEMPLATE_REPAIR = "unsupported_template_repair"
     UNSUPPORTED_HYDROGENATION = "unsupported_hydrogenation"
+    UNRESOLVED_POLYMER_HYDROGEN = "unresolved_polymer_hydrogen"
     PACKING_INVALIDATED_HYDROGENS = "packing_invalidated_hydrogens"
     RETAINED_NON_POLYMER_FALLBACK_USED = "retained_non_polymer_fallback_used"
     RETAINED_NON_POLYMER_FALLBACK_BLOCKED = "retained_non_polymer_fallback_blocked"

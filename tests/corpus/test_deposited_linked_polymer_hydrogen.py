@@ -1,12 +1,16 @@
 """Deposited covalent and untyped attachments must not acquire isolated OH H."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from tests.support.request_builders import whole_structure_requested_goals
 
+from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.io import read_structure, read_structure_string, write_structure_string
 from protrepair.state import HydrogenCoverageState
 from protrepair.state.chemistry_observation import StructureChemistryObservation
@@ -14,8 +18,56 @@ from protrepair.structure import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.topology import BondRelationshipType
 from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
+from protrepair.transformer.continuous.binding import (
+    RecommendedContinuousRelaxationBinding,
+)
+from protrepair.transformer.continuous.rdkit import RdkitContinuousRelaxationBackend
+from protrepair.transformer.local import LocalScopeSpec
+from protrepair.transformer.refinement.spec import RepairRefinementSpec
+from protrepair.workflow.contracts import LigandPolicy, StructureIngressOptions
+from protrepair.workflow.contracts.request import WorkflowTransformRequests
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
+
+
+@pytest.mark.parametrize("refine", (False, True))
+def test_4xlw_reports_current_linked_h_once_with_or_without_local_prerequisites(
+    refine: bool,
+) -> None:
+    with patch.object(
+        RdkitContinuousRelaxationBackend,
+        "relax",
+        side_effect=AssertionError("unresolved H must not reach native refinement"),
+    ) as native:
+        result = process_structure(
+            FIXTURES / "pdb/linked_o_glycan_4xlw.pdb",
+            ingress=StructureIngressOptions(ligand_policy=LigandPolicy.KEEP),
+            requested_goals=whole_structure_requested_goals(
+                HydrogenCoverageState.COMPLETE
+            ),
+            transform_requests=WorkflowTransformRequests(
+                repair_refinement=RepairRefinementSpec(
+                    scope_spec=LocalScopeSpec.from_residues((ResidueId("A", 458),)),
+                    binding=RecommendedContinuousRelaxationBinding(),
+                )
+                if refine
+                else None
+            ),
+        )
+    native.assert_not_called()
+    warnings = tuple(
+        issue
+        for issue in result.issues
+        if issue.kind is ValidationIssueKind.UNRESOLVED_POLYMER_HYDROGEN
+    )
+    assert len(warnings) == 1
+    assert warnings[0].residue_id == ResidueId("A", 458)
+    assert not result.requested_goals_fully_satisfied()
+    assert result.branch_report is not None
+    for outcome in result.branch_report.outcomes:
+        assert outcome.warning_count == outcome.branch_quality_score.warning_count
+        assert outcome.issue_count == outcome.branch_quality_score.issue_count
+        assert outcome.warning_count >= 1
 
 
 @pytest.mark.parametrize(
