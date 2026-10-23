@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
 from protrepair.diagnostics import (
     ClashPolicy,
     ClashReport,
@@ -11,7 +13,7 @@ from protrepair.diagnostics import (
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.transformer.completion.hydrogen.rotatable import (
     RotatableHydrogenPlacementSpec,
     rotatable_hydrogen_placement_spec,
@@ -44,6 +46,8 @@ def cleanup_targets_from_report(
     """Return unique rotatable-hydrogen cleanup targets from one clash report."""
 
     targets_by_key: dict[tuple[str, int, str, str], RotatableHydrogenCleanupTarget] = {}
+    context: PolymerMicrostateContext | None = None
+    preparation: PolymerMicrostatePreparation | None = None
     for clash in report.clashes:
         for residue_id, atom_name in (
             (clash.left_residue_id, clash.left_atom_name),
@@ -69,6 +73,24 @@ def cleanup_targets_from_report(
                 or atom_site.name != placement_spec.hydrogen_atom_name
             ):
                 continue
+
+            if not residue_site.is_hetero:
+                if context is None:
+                    context = PolymerMicrostateContext(structure)
+                parents = template.template_hydrogen_anchor_by_name((atom_name,))
+                parent = parents.get(atom_name)
+                if (
+                    parent is not None
+                    and residue_site.has_atom_site(parent)
+                    and context.external_heavy_bonds(AtomRef(residue_id, parent))
+                ):
+                    if preparation is None:
+                        preparation = PolymerMicrostatePreparation(
+                            context, component_library
+                        )
+                    fixed = preparation.fixed_hydrogen_context(residue_id)
+                    if fixed is not None and parent in fixed.unresolved_parent_names:
+                        continue
 
             key = (
                 residue_id.chain_id,
@@ -172,7 +194,7 @@ def hydrogen_is_supported_cleanup_target(
     residue_id: ResidueId,
     atom_name: str,
 ) -> bool:
-    """Return whether one residue-local atom is a supported rotatable hydrogen."""
+    """Recognize template H names for residual clash reporting, not motion."""
 
     residue_site = structure_residue_site_or_ligand(structure, residue_id)
     if residue_site is None or not residue_site.has_atom_site(atom_name):

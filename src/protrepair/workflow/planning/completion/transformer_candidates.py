@@ -258,6 +258,14 @@ def plan_hydrogen_completion_transformers(
             for target in targets
         ):
             selected.add(fact.residue_id)
+        if fact.residue_id in selected:
+            fixed = preparation.fixed_hydrogen_context(fact.residue_id)
+            if (
+                fixed is not None
+                and fixed.unresolved_parent_names
+                and not preparation.has_pending_hydrogen_updates(fact.residue_id)
+            ):
+                selected.discard(fact.residue_id)
     return CompletionTransformerPlanningOutcome(
         transformers=tuple(
             transformer

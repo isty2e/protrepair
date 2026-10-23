@@ -29,12 +29,14 @@ from protrepair.state.structure_topology import (
     StructureDisulfideTopologyFacts,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.transformer.refinement.spec import RepairRefinementSpec
 from protrepair.transformer.refinement.speculative_planning import SpeculativeStopReason
 from protrepair.workflow.contracts.planning import WorkflowPlanningContext
 from protrepair.workflow.contracts.result import (
     ProcessResult,
     WorkflowBranchReport,
 )
+from protrepair.workflow.engine.polymer_hydrogen import project_polymer_hydrogen_issues
 from protrepair.workflow.engine.runtime import WorkflowBranch
 
 
@@ -46,8 +48,33 @@ def finalize_workflow_result(
     requested_analyses: frozenset[AnalysisKind],
     stop_reason: SpeculativeStopReason = SpeculativeStopReason.NO_PROPOSALS_AVAILABLE,
     preliminary_issues: tuple[ValidationIssue, ...] = (),
+    repair_refinement: RepairRefinementSpec | None = None,
 ) -> ProcessResult:
-    """Select the preferred assessed branch and attach final diagnostics."""
+    """Select the preferred assessed branch and attach final diagnostics.
+
+    Parameters
+    ----------
+    branches : tuple[WorkflowBranch, ...]
+        Assessed terminal and frontier candidates.
+    planning_context : WorkflowPlanningContext
+        Selection policy and search limits for these candidates.
+    component_library : ComponentLibrary
+        Active chemistry for diagnostics and requested analyses.
+    requested_analyses : frozenset[AnalysisKind]
+        Analyses to compute on the selected structure.
+    stop_reason : SpeculativeStopReason
+        Why exploration ended.
+    preliminary_issues : tuple[ValidationIssue, ...]
+        Request-level issues to retain on the selected result.
+    repair_refinement : RepairRefinementSpec or None
+        Active local request whose included region requires H preparation,
+        even without an explicit H-completion goal.
+
+    Returns
+    -------
+    ProcessResult
+        Selected structure, branch assessment and current final diagnostics.
+    """
 
     branch_report = _branch_report(
         branches=branches,
@@ -99,6 +126,15 @@ def finalize_workflow_result(
         result = result.with_appended_issues(geometry_issues)
     if preliminary_issues:
         result = result.with_appended_issues(preliminary_issues)
+    result = replace(
+        result,
+        issues=project_polymer_hydrogen_issues(
+            result,
+            requested_goal_report=result.requested_goal_report,
+            component_library=component_library,
+            repair_refinement=repair_refinement,
+        ),
+    )
     return _attach_requested_analyses(
         result,
         requested_analyses=requested_analyses,

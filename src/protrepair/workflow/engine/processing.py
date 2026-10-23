@@ -120,6 +120,7 @@ def process_canonical_structure(
         component_library=component_library,
         requested_analyses=normalized_analyses,
         preliminary_issues=packing_reference_issues,
+        repair_refinement=active_transform_requests.repair_refinement,
     )
 
 

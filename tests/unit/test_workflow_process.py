@@ -2072,6 +2072,9 @@ def test_workflow_children_retain_current_branch_when_child_regresses(
                 source_name in {"workflow-child-regressed", "workflow-child-peer"}
             ),
             search_depth=kwargs["search_depth"],
+            error_count=result.error_count(),
+            warning_count=result.warning_count(),
+            issue_count=result.issue_count(),
         )
 
     quality_score_sources: list[str] = []
