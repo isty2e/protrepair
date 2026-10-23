@@ -10,15 +10,12 @@ from typing import Protocol
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
-from protrepair.errors import RdkitUnavailableError
+from protrepair.errors import ModelInvariantError, RdkitUnavailableError
 from protrepair.io.pdb_projection import (
     RDKitNoConectPDBBlockProjector,
+    RDKitNoConectPDBInput,
     pdb_without_conect,
-    pdb_without_conect_for_parser_probe,
-)
-from protrepair.io.source_identity import (
-    normalize_chain_id,
-    normalize_insertion_code,
+    prepare_rdkit_no_conect_pdb_input,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import StructureConstitution
@@ -50,20 +47,12 @@ def _require_rdkit_parser_backend(context: str) -> None:
 class _RDKitResidueInfo(Protocol):
     """PDB residue metadata surface consumed from RDKit atoms."""
 
-    def GetChainId(self) -> str:
-        """Return the PDB chain identifier."""
+    def GetSerialNumber(self) -> int:
+        """Return the serial carried by the emitted PDB atom record."""
         ...
 
     def GetName(self) -> str:
         """Return the PDB atom name."""
-        ...
-
-    def GetResidueNumber(self) -> int:
-        """Return the PDB residue sequence number."""
-        ...
-
-    def GetInsertionCode(self) -> str:
-        """Return the PDB insertion code."""
         ...
 
 
@@ -81,6 +70,14 @@ class _RDKitBond(Protocol):
 
 class _RDKitAtom(Protocol):
     """RDKit atom surface needed for parser witnesses."""
+
+    def GetIdx(self) -> int:
+        """Return this atom's index in the current native molecule."""
+        ...
+
+    def GetIsotope(self) -> int:
+        """Return isotope mass, or zero for an unspecified isotope."""
+        ...
 
     def GetPDBResidueInfo(self) -> _RDKitResidueInfo | None:
         """Return PDB residue metadata if present."""
@@ -427,12 +424,18 @@ class _RDKitNoConectProblemSurface:
     """Private parsed RDKit problem surface before ProtRepair-specific projections."""
 
     molecule: _RDKitMol | None
+    atom_refs_by_native_index: Mapping[int, AtomRef]
     residue_atom_names: Mapping[ResidueId, frozenset[str]]
     residue_messages: Mapping[ResidueId, frozenset[str]]
     residue_problem_atom_indices: Mapping[ResidueId, frozenset[int]]
     structure_messages: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "atom_refs_by_native_index",
+            MappingProxyType(dict(self.atom_refs_by_native_index)),
+        )
         object.__setattr__(
             self,
             "residue_atom_names",
@@ -622,6 +625,8 @@ def probe_rdkit_no_conect_parser_readability(
         A supplied bond lookup has different derivation inputs.
     RdkitUnavailableError
         The required parser backend is unavailable.
+    ModelInvariantError
+        Emitted records or native metadata cannot identify source atoms uniquely.
     """
 
     _require_rdkit_parser_backend("RDKit no-CONECT parser-readability probe")
@@ -710,10 +715,12 @@ def measure_rdkit_no_conect_extra_heavy_proximity_bond_count(
             if begin_atom.GetAtomicNum() == 1 or end_atom.GetAtomicNum() == 1:
                 continue
 
-            begin_ref = _atom_ref_from_rdkit_atom(begin_atom)
-            end_ref = _atom_ref_from_rdkit_atom(end_atom)
-            if begin_ref is None or end_ref is None:
-                continue
+            begin_ref = _require_native_atom_ref(
+                begin_atom.GetIdx(), problem_surface.atom_refs_by_native_index
+            )
+            end_ref = _require_native_atom_ref(
+                end_atom.GetIdx(), problem_surface.atom_refs_by_native_index
+            )
 
             left_ref, right_ref = sorted((begin_ref, end_ref))
             pair = (left_ref, right_ref)
@@ -789,6 +796,8 @@ def measure_rdkit_no_conect_sanitize_readability_metrics(
         A supplied lookup has different derivation inputs.
     RdkitUnavailableError
         The required parser backend is unavailable.
+    ModelInvariantError
+        Emitted records or native metadata cannot identify source atoms uniquely.
     """
 
     return probe_rdkit_no_conect_parser_readability(
@@ -934,25 +943,6 @@ def _structure_contains_hydrogens(structure: ProteinStructure) -> bool:
     )
 
 
-def _atom_ref_from_pdb_atom_line(line: str) -> AtomRef | None:
-    """Return the atom reference encoded in one PDB ATOM/HETATM line."""
-
-    if len(line) < 54:
-        return None
-
-    try:
-        return AtomRef(
-            residue_id=ResidueId(
-                chain_id=normalize_chain_id(line[21:22]),
-                seq_num=int(line[22:26]),
-                insertion_code=normalize_insertion_code(line[26:27]),
-            ),
-            atom_name=line[12:16].strip(),
-        )
-    except ValueError:
-        return None
-
-
 def _rdkit_no_conect_problem_witnesses(
     structure: ProteinStructure,
     *,
@@ -979,7 +969,9 @@ def _rdkit_no_conect_problem_witnesses(
             component_library=component_library,
         )
     attachments = _unexpected_hydrogen_attachments(
-        problem_surface.molecule, known_bond_lookup
+        problem_surface.molecule,
+        known_bond_lookup,
+        problem_surface.atom_refs_by_native_index,
     )
     if not problem_surface.residue_problem_atom_indices:
         return ({}, problem_surface.structure_messages, attachments)
@@ -995,6 +987,7 @@ def _rdkit_no_conect_problem_witnesses(
                     problem_surface.residue_problem_atom_indices[residue_id]
                 ),
                 known_bond_lookup=known_bond_lookup,
+                atom_refs_by_native_index=problem_surface.atom_refs_by_native_index,
             ),
         )
         for residue_id in problem_surface.residue_atom_names
@@ -1007,7 +1000,9 @@ def _rdkit_no_conect_problem_witnesses(
 
 
 def _unexpected_hydrogen_attachments(
-    molecule: _RDKitMol, lookup: RDKitKnownBondLookup
+    molecule: _RDKitMol,
+    lookup: RDKitKnownBondLookup,
+    atom_refs_by_native_index: Mapping[int, AtomRef],
 ) -> tuple[RDKitProximityBondWitness, ...]:
     if not lookup.hydrogen_parent_refs:
         return ()
@@ -1016,14 +1011,18 @@ def _unexpected_hydrogen_attachments(
     for hydrogen in molecule.GetAtoms():
         if hydrogen.GetAtomicNum() != 1:
             continue
-        hydrogen_ref = _atom_ref_from_rdkit_atom(hydrogen)
-        if hydrogen_ref is None or hydrogen_ref not in lookup.hydrogen_parent_refs:
+        hydrogen_ref = _require_native_atom_ref(
+            hydrogen.GetIdx(), atom_refs_by_native_index
+        )
+        if hydrogen_ref not in lookup.hydrogen_parent_refs:
             continue
         for bond in hydrogen.GetBonds():
             first, second = bond.GetBeginAtom(), bond.GetEndAtom()
             parent = second if first.GetAtomicNum() == 1 else first
-            parent_ref = _atom_ref_from_rdkit_atom(parent)
-            if parent_ref is None or lookup.is_known_bond(hydrogen_ref, parent_ref):
+            parent_ref = _require_native_atom_ref(
+                parent.GetIdx(), atom_refs_by_native_index
+            )
+            if lookup.is_known_bond(hydrogen_ref, parent_ref):
                 continue
             witnesses.append(
                 RDKitProximityBondWitness(
@@ -1049,19 +1048,20 @@ def _rdkit_no_conect_problem_surface(
     if not _structure_contains_hydrogens(structure):
         return _RDKitNoConectProblemSurface(
             molecule=None,
+            atom_refs_by_native_index={},
             residue_atom_names={},
             residue_messages={},
             residue_problem_atom_indices={},
             structure_messages=(),
         )
 
-    pdb_block = pdb_without_conect_for_parser_probe(
+    parser_input = prepare_rdkit_no_conect_pdb_input(
         structure,
         pdb_block_projector,
     )
     with _expected_rdkit_parser_probe_logs_blocked():
         molecule = Chem.MolFromPDBBlock(
-            pdb_block,
+            parser_input.pdb_block,
             sanitize=False,
             removeHs=False,
             proximityBonding=True,
@@ -1069,6 +1069,7 @@ def _rdkit_no_conect_problem_surface(
         if molecule is None:
             return _RDKitNoConectProblemSurface(
                 molecule=None,
+                atom_refs_by_native_index={},
                 residue_atom_names={},
                 residue_messages={},
                 residue_problem_atom_indices={},
@@ -1087,12 +1088,16 @@ def _rdkit_no_conect_problem_surface(
         else:
             return _RDKitNoConectProblemSurface(
                 molecule=molecule,
+                atom_refs_by_native_index=_bind_native_atom_references(
+                    molecule, parser_input
+                ),
                 residue_atom_names={},
                 residue_messages={},
                 residue_problem_atom_indices={},
                 structure_messages=(),
             )
 
+        atom_refs_by_native_index = _bind_native_atom_references(molecule, parser_input)
         try:
             chemistry_problems = Chem.DetectChemistryProblems(molecule)
         except Exception:  # noqa: BLE001 - Backend failures are collected as diagnostic results.
@@ -1100,6 +1105,7 @@ def _rdkit_no_conect_problem_surface(
     if not chemistry_problems:
         return _RDKitNoConectProblemSurface(
             molecule=molecule,
+            atom_refs_by_native_index=atom_refs_by_native_index,
             residue_atom_names={},
             residue_messages={},
             residue_problem_atom_indices={},
@@ -1118,27 +1124,15 @@ def _rdkit_no_conect_problem_surface(
             structure_messages.add(message)
             continue
 
-        atom = molecule.GetAtomWithIdx(atom_index)
-        residue_info = atom.GetPDBResidueInfo()
-        if residue_info is None:
-            structure_messages.add(message)
-            continue
-
-        residue_id = ResidueId(
-            chain_id=residue_info.GetChainId().strip(),
-            seq_num=residue_info.GetResidueNumber(),
-            insertion_code=(
-                None
-                if not residue_info.GetInsertionCode().strip()
-                else residue_info.GetInsertionCode().strip()
-            ),
-        )
-        residue_atom_names[residue_id].add(residue_info.GetName().strip())
+        atom_ref = _require_native_atom_ref(atom_index, atom_refs_by_native_index)
+        residue_id = atom_ref.residue_id
+        residue_atom_names[residue_id].add(atom_ref.atom_name)
         residue_messages[residue_id].add(message)
         residue_problem_atom_indices[residue_id].add(atom_index)
 
     return _RDKitNoConectProblemSurface(
         molecule=molecule,
+        atom_refs_by_native_index=atom_refs_by_native_index,
         residue_atom_names={
             residue_id: frozenset(atom_names)
             for residue_id, atom_names in residue_atom_names.items()
@@ -1161,6 +1155,7 @@ def _problem_proximity_bond_witnesses(
     residue_id: ResidueId | None,
     atom_indices: set[int],
     known_bond_lookup: RDKitKnownBondLookup,
+    atom_refs_by_native_index: Mapping[int, AtomRef],
 ) -> tuple[RDKitProximityBondWitness, ...]:
     """Return RDKit-inferred bonds adjacent to the failing atom indices."""
 
@@ -1170,10 +1165,12 @@ def _problem_proximity_bond_witnesses(
         for bond in atom.GetBonds():
             begin_atom = bond.GetBeginAtom()
             end_atom = bond.GetEndAtom()
-            begin_ref = _atom_ref_from_rdkit_atom(begin_atom)
-            end_ref = _atom_ref_from_rdkit_atom(end_atom)
-            if begin_ref is None or end_ref is None:
-                continue
+            begin_ref = _require_native_atom_ref(
+                begin_atom.GetIdx(), atom_refs_by_native_index
+            )
+            end_ref = _require_native_atom_ref(
+                end_atom.GetIdx(), atom_refs_by_native_index
+            )
             if residue_id is not None and residue_id not in (
                 begin_ref.residue_id,
                 end_ref.residue_id,
@@ -1277,27 +1274,51 @@ def _extra_proximity_bond_clusters_from_witnesses(
     )
 
 
-def _atom_ref_from_rdkit_atom(atom: _RDKitAtom) -> AtomRef | None:
-    """Return a canonical atom reference from RDKit PDB residue metadata."""
+def _bind_native_atom_references(
+    molecule: _RDKitMol, parser_input: RDKitNoConectPDBInput
+) -> dict[int, AtomRef]:
+    """Verify native serial/signature evidence before canonical attribution."""
 
-    residue_info = atom.GetPDBResidueInfo()
-    if residue_info is None:
-        return None
+    atom_refs: dict[int, AtomRef] = {}
+    seen_serials: set[int] = set()
+    for atom in molecule.GetAtoms():
+        index = atom.GetIdx()
+        try:
+            info = atom.GetPDBResidueInfo()
+        except ValueError as error:
+            raise ModelInvariantError(
+                "PDB atom correspondence requires native PDB residue metadata"
+            ) from error
+        if info is None:
+            raise ModelInvariantError(
+                "PDB atom correspondence requires native serial metadata"
+            )
+        serial = info.GetSerialNumber()
+        if serial in seen_serials or index in atom_refs:
+            raise ModelInvariantError(
+                "PDB atom correspondence has duplicate native atom identity"
+            )
+        atom_refs[index] = parser_input.correspondence.require_atom_ref(
+            serial,
+            atom_name=info.GetName(),
+            element_symbol=atom.GetSymbol(),
+            isotope_mass_number=atom.GetIsotope(),
+        )
+        seen_serials.add(serial)
+    return atom_refs
 
-    chain_id = residue_info.GetChainId().strip()
-    atom_name = residue_info.GetName().strip()
-    if not chain_id or not atom_name:
-        return None
 
-    insertion_code = residue_info.GetInsertionCode().strip()
-    return AtomRef(
-        residue_id=ResidueId(
-            chain_id=chain_id,
-            seq_num=residue_info.GetResidueNumber(),
-            insertion_code=None if not insertion_code else insertion_code,
-        ),
-        atom_name=atom_name,
-    )
+def _require_native_atom_ref(
+    index: int, atom_refs_by_native_index: Mapping[int, AtomRef]
+) -> AtomRef:
+    """Reject native indices outside the verified current correspondence."""
+
+    ref = atom_refs_by_native_index.get(index)
+    if ref is None:
+        raise ModelInvariantError(
+            f"PDB atom correspondence has unknown native atom index {index}"
+        )
+    return ref
 
 
 def _known_atom_name_pairs_for_residue(
