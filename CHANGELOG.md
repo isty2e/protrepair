@@ -16,8 +16,9 @@
   supported numeric precision, using `StructureSerializationError`. Coordinates
   may round from three to two decimal places; B factors may use fewer decimal
   places instead of being clamped. Use mmCIF for PDB-specific capacity limits.
-  Invalid nonblank PDB serial fields now identify the field and token, including
-  malformed `CONECT` fields that were previously skipped
+  Invalid PDB atom serial fields, including blanks, now identify the field and
+  token. Malformed nonblank `CONECT` serial fields also raise an error instead of
+  being silently skipped
 - skip unused orientation searches when scoring workflow branches; correction
   planning and phase reports still evaluate orientation eligibility
 - reuse polymer chemistry preparation and complete hydrogen plans within each

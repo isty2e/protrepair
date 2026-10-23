@@ -70,4 +70,4 @@ class StructureNormalizationError(ProtrepairError):
 
 
 class StructureSerializationError(ProtrepairError):
-    """Raised when an output format cannot preserve the admitted structure facts."""
+    """Raised when output cannot preserve identifiers or required numeric precision."""
