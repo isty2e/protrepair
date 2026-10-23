@@ -2,6 +2,7 @@
 
 import math
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -21,6 +22,7 @@ from protrepair.diagnostics import ValidationIssueKind
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, write_structure_string
 from protrepair.structure import ProteinStructure
+from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import (
     AtomRef,
     ResidueId,
@@ -49,6 +51,37 @@ from protrepair.transformer.packing.faspr.paths import faspr_executable_path
 from protrepair.workflow.contracts import StructureIngressOptions
 
 FASPR_FIXTURE_PATH = Path("tests/fixtures/pdb/1aho_faspr_input.pdb")
+
+
+def test_faspr_calculation_transport_preserves_b_factors_outside_public_pdb_capacity(
+    tmp_path: Path,
+) -> None:
+    base = build_heavy_only_packed_structure()
+    structure = ProteinStructure.from_payload(
+        constitution=base.constitution,
+        topology=base.topology,
+        geometry=StructureGeometry(
+            constitution=base.constitution,
+            atom_geometries=tuple(
+                replace(geometry, b_factor=100000.0)
+                for geometry in base.geometry.atom_geometries
+            ),
+        ),
+        polymer_blueprint=base.polymer_blueprint,
+        provenance=base.provenance,
+    )
+    executable_path = copy_template_faspr_executable(tmp_path)
+    (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
+    (tmp_path / "packed-output.pdb").write_text(
+        write_structure_string(base, FileFormat.PDB), encoding="utf-8"
+    )
+    plan = PackingPlan.from_inputs(
+        structure, PackingSpec(backend_name="faspr", scope=PackingScope.FULL)
+    )
+    result = FasprPackingBackend(executable_path=executable_path).pack(plan)
+    assert all(
+        g.b_factor == 100000.0 for g in result.packed_structure.geometry.atom_geometries
+    )
 
 
 def test_faspr_backend_declares_expected_capabilities() -> None:

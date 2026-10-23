@@ -67,3 +67,7 @@ class StructureInputTooLargeError(ProtrepairError):
 
 class StructureNormalizationError(ProtrepairError):
     """Raised when ingress normalization cannot produce a canonical structure."""
+
+
+class StructureSerializationError(ProtrepairError):
+    """Raised when output cannot preserve identifiers or required numeric precision."""

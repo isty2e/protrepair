@@ -1779,7 +1779,7 @@ def _has_pdb_conect_between(
     """Return whether PDB egress emits one residue-local CONECT pair."""
 
     pdb_text = write_structure_string(structure, FileFormat.PDB)
-    serial_by_atom_ref = pdb_atom_serial_by_atom_ref(pdb_text)
+    serial_by_atom_ref = pdb_atom_serial_by_atom_ref(pdb_text, structure)
     serial_1 = serial_by_atom_ref[AtomRef(residue_id, atom_name_1)]
     serial_2 = serial_by_atom_ref[AtomRef(residue_id, atom_name_2)]
     return frozenset((serial_1, serial_2)) in _pdb_conect_serial_pairs(pdb_text)

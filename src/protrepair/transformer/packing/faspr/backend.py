@@ -18,11 +18,11 @@ from protrepair.errors import (
     ResidueNotFoundError,
     StructureNormalizationError,
 )
-from protrepair.io import write_structure_string
 from protrepair.io.gemmi_ingress import (
     MAX_STRUCTURE_INPUT_BYTES,
     read_structure_string_with_policy,
 )
+from protrepair.io.gemmi_writer import write_pdb_structure_string_without_conect
 from protrepair.io.ingress_policy import (
     LigandHandling,
     StructureNormalizationPolicy,
@@ -503,8 +503,8 @@ def run_faspr(
         temp_dir = Path(temp_dir_name)
         input_path = temp_dir / "input.pdb"
         output_path = temp_dir / "output.pdb"
-        input_text = write_structure_string(
-            _polymer_only_structure(execution_input.structure), FileFormat.PDB
+        input_text = write_pdb_structure_string_without_conect(
+            _polymer_only_structure(execution_input.structure)
         )
         input_path.write_text(input_text, encoding="utf-8")
 

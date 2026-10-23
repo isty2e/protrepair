@@ -12,6 +12,13 @@
 
 ### Changed
 
+- refuse PDB output that would shorten identifiers, wrap numbering or lose the
+  supported numeric precision, using `StructureSerializationError`. Coordinates
+  may round from three to two decimal places; B factors may use fewer decimal
+  places instead of being clamped. Use mmCIF for PDB-specific capacity limits.
+  Invalid PDB atom serial fields, including blanks, now identify the field and
+  token. Malformed nonblank `CONECT` serial fields also raise an error instead of
+  being silently skipped
 - skip unused orientation searches when scoring workflow branches; correction
   planning and phase reports still evaluate orientation eligibility
 - reuse polymer chemistry preparation and complete hydrogen plans within each
@@ -86,6 +93,9 @@
 
 ### Fixed
 
+- preserve two-character chain and uppercase hybrid-36 identities across PDB
+  input, source-attribute association and CONECT output. Associate emitted
+  serials with canonical write order, and preserve public altloc case
 - leave fixed polymer H unresolved at unexplained external covalent or untyped
   connections, instead of adding an isolated-residue H inventory. Prepare
   independent H in the same residue, preserve existing H/D/T and source

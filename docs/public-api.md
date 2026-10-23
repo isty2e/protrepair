@@ -131,6 +131,14 @@ Import these functions from `protrepair.io`:
 Writers project canonical topology and residue roles. They do not maintain a
 separate writer-owned connectivity model.
 
+PDB output supports two-character chains and uppercase hybrid-36 numbers.
+It permits coordinate rounding down to two decimal places and variable
+B-factor precision, but does not silently shorten identifiers or clamp values.
+Unrepresentable output raises `protrepair.errors.StructureSerializationError`,
+a `ProtrepairError`; path-based failure leaves an existing file unchanged.
+See [PDB Output Limits](ingress-policy.md#pdb-identifiers-and-output-limits)
+for the supported envelope and when to use mmCIF.
+
 ### Native RDKit Export
 
 `to_rdkit_molecule()` takes a prepared `ProteinStructure`, not a path or PDB

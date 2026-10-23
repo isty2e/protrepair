@@ -17,6 +17,36 @@ during ingress. A selected atom cohort is kept consistently for the residue;
 discarded source variants and connectivity that points only to them do not
 enter canonical topology.
 
+## PDB Identifiers And Output Limits
+
+ProtRepair supports Gemmi's two-character chain IDs and uppercase hybrid-36
+numbering. Residue numbers can range from `-999` to `1223055`; emitted atom
+serials, including numbered `TER` records, cannot exceed `43770015`. Lowercase
+hybrid-36 is not supported: Gemmi reads it as a different numbering scheme.
+Malformed or unsupported serial fields raise `StructureNormalizationError`
+with the field and token, including invalid nonblank `CONECT` fields.
+See [Topology Bond Policy](topology-bond-policy.md#source-bond-orders) for
+ambiguous and missing connection endpoints.
+
+Public PDB writers keep coordinates at three decimal places when they fit,
+or round to two places when needed to stay within eight columns. B factors
+use two, one, or zero decimal places within six columns; zero-place fields
+retain a decimal point. Values that still do not fit are refused, not
+clamped or truncated. These are output-format limits, not ingress validation
+or scientific quality thresholds.
+
+PDB cannot preserve component IDs longer than three characters, atom names
+longer than four, chains longer than two, or formal charges outside one digit.
+Writers raise `StructureSerializationError` instead of changing these facts;
+use mmCIF for those cases. Insertion and altloc codes must be a single
+printable ASCII character in the current coordinate adapter, so switching
+to mmCIF does not resolve that adapter limit. Representable altloc case,
+H/D/T and explicit zero charges are preserved in public PDB output.
+
+PDB extensions are not supported by every downstream tool. RDKit parser
+probes and FASPR use internal calculation projections with separate contracts;
+successful public serialization does not establish native-tool compatibility.
+
 ## Numeric Atom Values
 
 Atom coordinates, occupancy, and B factors must be finite.

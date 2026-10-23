@@ -28,6 +28,11 @@ B factors and altloc metadata. Blank charge fields in FASPR output do not mean
 neutral or unknown chemistry. Original input observations remain separate;
 packing does not replay them over an applied microstate or explicit override.
 
+FASPR input uses an internal calculation PDB, not the public file writer's
+full-fidelity policy. Large B factors do not block packing: the merge restores
+canonical scalar metadata rather than adopting the native file's values.
+This does not extend FASPR's native chain-ID or numbering capabilities.
+
 Requested component mutations discard the old residue's H, charges and saved
 microstate choices. New sidechain bonds come from the new component template,
 not from old bonds between atoms with matching names. Source-declared bonds

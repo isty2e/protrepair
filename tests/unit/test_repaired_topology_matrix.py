@@ -299,7 +299,7 @@ def _has_pdb_conect_between(
     atom_name_2: str,
 ) -> bool:
     pdb_text = write_structure_string(structure, FileFormat.PDB)
-    serial_by_atom_ref = pdb_atom_serial_by_atom_ref(pdb_text)
+    serial_by_atom_ref = pdb_atom_serial_by_atom_ref(pdb_text, structure)
     serial_1 = serial_by_atom_ref[AtomRef(residue_id, atom_name_1)]
     serial_2 = serial_by_atom_ref[AtomRef(residue_id, atom_name_2)]
 

@@ -3331,15 +3331,20 @@ def test_write_pdb_preserves_link_metadata_via_topology_connections() -> None:
         (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
     ),
 )
+@pytest.mark.parametrize("linked_altloc", ["A", "a"])
 def test_write_structure_string_preserves_source_connection_altloc(
     file_format: FileFormat,
     record_type: SourceBondRecordType,
+    linked_altloc: str,
 ) -> None:
     """Connection egress must preserve source endpoint altloc identity."""
 
+    source_format = FileFormat.PDB if linked_altloc == "A" else FileFormat.MMCIF
     structure = read_structure_string(
-        build_source_connection_text(FileFormat.PDB, linked_altloc="A"),
-        FileFormat.PDB,
+        build_source_connection_text(
+            source_format, selected_altloc=linked_altloc, linked_altloc=linked_altloc
+        ),
+        source_format,
         policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
     )
 

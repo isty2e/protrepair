@@ -2,7 +2,9 @@
 
 import os
 import secrets
+from collections.abc import Iterator
 from itertools import groupby
+from math import isfinite
 from os import PathLike
 from pathlib import Path
 
@@ -12,16 +14,27 @@ from protrepair.chemistry.nonstandard.registry import (
 from protrepair.chemistry.standard.components import (
     build_standard_component_library,
 )
-from protrepair.errors import ModelInvariantError, UnsupportedFileFormatError
+from protrepair.errors import (
+    ModelInvariantError,
+    StructureSerializationError,
+    UnsupportedFileFormatError,
+)
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
+)
+from protrepair.io.pdb_records import (
+    PDB_MAX_ATOM_SERIAL,
+    decode_pdb_integer,
+    encode_pdb_integer,
+    pdb_atom_identity,
+    pdb_atom_identity_matches,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite, ResidueSite
 from protrepair.structure.disulfide import disulfide_atom_ref_pair
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
-from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.labels import AtomRef
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
@@ -125,8 +138,31 @@ def _preserve_existing_output_mode(temp_path: Path, output_path: Path) -> None:
 
 
 def write_structure_string(structure: ProteinStructure, file_format: FileFormat) -> str:
-    """Serialize a canonical structure to a coordinate string."""
+    """Serialize a canonical structure to a coordinate string.
 
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Canonical facts to project.
+    file_format : FileFormat
+        PDB or mmCIF output.
+
+    Returns
+    -------
+    str
+        The complete coordinate payload.
+
+    Raises
+    ------
+    StructureSerializationError
+        PDB cannot preserve the admitted identities or numeric precision.
+    UnsupportedFileFormatError
+        The format selector is unsupported.
+    """
+
+    numeric_patches = (
+        _validate_pdb_output(structure) if file_format is FileFormat.PDB else {}
+    )
     raw_structure = build_gemmi_structure(structure)
     if file_format is FileFormat.PDB:
         add_topology_connections_to_gemmi_structure(
@@ -135,13 +171,15 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             file_format=file_format,
             bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
         )
-        pdb_text = _restore_pdb_atom_attributes(
+        pdb_text, serial_by_atom_ref = _project_public_pdb_records(
             raw_structure.make_pdb_string(),
             structure,
+            numeric_patches=numeric_patches,
         )
         return append_pdb_conect_records_from_topology(
             pdb_text,
             structure,
+            serial_by_atom_ref=serial_by_atom_ref,
         )
 
     if file_format is FileFormat.MMCIF:
@@ -161,6 +199,233 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         return mmcif_document.as_string()
 
     raise UnsupportedFileFormatError(f"unsupported file format: {file_format}")
+
+
+def _validate_pdb_output(
+    structure: ProteinStructure,
+) -> dict[int, tuple[tuple[int, str], ...]]:
+    if structure.geometry.atom_count() > PDB_MAX_ATOM_SERIAL:
+        raise StructureSerializationError(
+            "PDB atom serial capacity exceeded; use mmCIF"
+        )
+    for residue in structure.constitution.iter_residues(include_ligands=True):
+        label = residue.residue_id.display_token()
+        _require_pdb_field(residue.residue_id.chain_id, 2, f"chain ID at {label}")
+        _require_pdb_field(residue.component_id, 3, f"component ID at {label}")
+        _require_pdb_field(
+            residue.residue_id.insertion_code or "",
+            1,
+            f"insertion code at {label}",
+            shared_adapter_limit=True,
+        )
+        try:
+            encode_pdb_integer(residue.residue_id.seq_num, width=4)
+        except ValueError as error:
+            raise StructureSerializationError(
+                f"PDB residue number at {label} is outside the supported range; use mmCIF"
+            ) from error
+
+    patches: dict[int, tuple[tuple[int, str], ...]] = {}
+    for value, atom in enumerate(structure.constitution.atom_slots):
+        index = AtomIndex(value)
+        geometry = structure.geometry.atom_geometry(index)
+        if not _pdb_field_fits(atom.name, 4):
+            _require_pdb_field(
+                atom.name,
+                4,
+                f"atom name at {structure.constitution.atom_ref_at(index).display_token()}",
+            )
+        if not _pdb_field_fits(geometry.altloc or "", 1):
+            _require_pdb_field(
+                geometry.altloc or "",
+                1,
+                f"altloc at {structure.constitution.atom_ref_at(index).display_token()}",
+                shared_adapter_limit=True,
+            )
+        charge = structure.topology.formal_charge(index)
+        if charge is not None and abs(charge) > 9:
+            raise StructureSerializationError(
+                f"PDB formal charge {charge} at "
+                f"{structure.constitution.atom_ref_at(index).display_token()} "
+                "exceeds one digit; use mmCIF"
+            )
+        fields: list[tuple[int, str]] = []
+        for offset, coordinate in zip(
+            (30, 38, 46),
+            (geometry.position.x, geometry.position.y, geometry.position.z),
+            strict=True,
+        ):
+            # Interior values fit 8.3 without formatting; boundary values use the oracle below.
+            if -999.999 <= coordinate <= 9999.999:
+                continue
+            token = _pdb_overflow_field(
+                coordinate,
+                width=8,
+                normal_places=3,
+                minimum_places=2,
+                label=f"coordinate at {structure.constitution.atom_ref_at(index).display_token()}",
+            )
+            if token is not None:
+                fields.append((offset, token))
+        b_factor = 0.0 if geometry.b_factor is None else geometry.b_factor
+        if not 0.0 <= b_factor <= 999.99:
+            token = _pdb_overflow_field(
+                b_factor,
+                width=6,
+                normal_places=2,
+                minimum_places=0,
+                label=f"B-factor at {structure.constitution.atom_ref_at(index).display_token()}",
+            )
+            if token is not None:
+                fields.append((60, token))
+        if fields:
+            patches[value] = tuple(fields)
+    return patches
+
+
+def _require_pdb_field(
+    value: str,
+    width: int,
+    label: str,
+    *,
+    shared_adapter_limit: bool = False,
+) -> None:
+    if _pdb_field_fits(value, width):
+        return
+    remedy = (
+        "the coordinate adapter requires a single printable character"
+        if shared_adapter_limit
+        else "use mmCIF"
+    )
+    raise StructureSerializationError(f"PDB {label} {value!r} does not fit; {remedy}")
+
+
+def _pdb_field_fits(value: str, width: int) -> bool:
+    return (
+        len(value) <= width and value.isascii() and (not value or value.isprintable())
+    )
+
+
+def _pdb_overflow_field(
+    value: float,
+    *,
+    width: int,
+    normal_places: int,
+    minimum_places: int,
+    label: str,
+) -> str | None:
+    if isfinite(value):
+        for places in range(normal_places, minimum_places - 1, -1):
+            token = f"{value:.{places}f}" + ("." if places == 0 else "")
+            if len(token) <= width:
+                return None if places == normal_places else token.rjust(width)
+    raise StructureSerializationError(
+        f"PDB {label} value {value!r} cannot fit with {minimum_places} fractional "
+        "digits; use mmCIF"
+    )
+
+
+def _pdb_atom_records(
+    lines: list[str],
+    structure: ProteinStructure,
+) -> Iterator[tuple[int, AtomIndex, int]]:
+    atom_indices = atom_index_values_in_coordinate_write_order(structure)
+    cursor = 0
+    seen_serials: set[int] = set()
+    for line_index, line in enumerate(lines):
+        is_atom = line.startswith(("ATOM  ", "HETATM"))
+        if not is_atom and not (line.startswith("TER   ") and line[6:11].strip()):
+            continue
+        try:
+            serial = decode_pdb_integer(line[6:11], width=5)
+        except ValueError as error:
+            raise StructureSerializationError(
+                f"invalid emitted PDB serial: {error}"
+            ) from error
+        if not 1 <= serial <= PDB_MAX_ATOM_SERIAL or serial in seen_serials:
+            raise StructureSerializationError(
+                f"PDB serial collision or overflow {serial}; use mmCIF"
+            )
+        seen_serials.add(serial)
+        if not is_atom:
+            continue
+        if cursor >= len(atom_indices):
+            raise StructureSerializationError(
+                "PDB output has more atom records than canonical atoms"
+            )
+        yield line_index, AtomIndex(atom_indices[cursor]), serial
+        cursor += 1
+    if cursor != len(atom_indices):
+        raise StructureSerializationError(
+            "PDB output has fewer atom records than canonical atoms"
+        )
+
+
+def _project_public_pdb_records(
+    pdb_text: str,
+    structure: ProteinStructure,
+    *,
+    numeric_patches: dict[int, tuple[tuple[int, str], ...]],
+) -> tuple[str, dict[AtomRef, int]]:
+    lines = pdb_text.splitlines(keepends=True)
+    serial_by_atom_ref: dict[AtomRef, int] = {}
+    lower_altlocs: dict[AtomRef, str] = {}
+    for line_index, index, serial in _pdb_atom_records(lines, structure):
+        ref = structure.constitution.atom_ref_at(index)
+        residue = structure.constitution.residue_site_at(
+            structure.constitution.residue_index_for_atom_index(index)
+        )
+        atom = structure.constitution.atom_site_at(index)
+        geometry = structure.geometry.atom_geometry(index)
+        if geometry.altloc is not None and geometry.altloc != geometry.altloc.upper():
+            lower_altlocs[ref] = geometry.altloc
+        charge = structure.topology.formal_charge(index)
+        line = lines[line_index]
+        ending = line[len(line.rstrip("\r\n")) :]
+        record = line.removesuffix(ending).ljust(80)
+        record = record[:16] + (geometry.altloc or " ") + record[17:]
+        if atom.element_identity.is_isotope_alias():
+            record = (
+                record[:76] + f"{atom.element_identity.source_symbol:>2}" + record[78:]
+            )
+        if charge == 0:
+            record = record[:78] + "0+" + record[80:]
+        for offset, token in numeric_patches.get(index.value, ()):
+            record = record[:offset] + token + record[offset + len(token) :]
+
+        try:
+            matches = pdb_atom_identity_matches(
+                record, ref, residue.component_id, geometry.altloc
+            )
+        except ValueError as error:
+            raise StructureSerializationError(
+                f"invalid PDB identity at {ref.display_token()}: {error}"
+            ) from error
+        if not matches:
+            raise StructureSerializationError(
+                f"PDB output identity does not match {ref.display_token()}"
+            )
+        serial_by_atom_ref[ref] = serial
+        lines[line_index] = record + ending
+    if lower_altlocs:
+        _restore_pdb_link_altlocs(lines, lower_altlocs)
+    return "".join(lines), serial_by_atom_ref
+
+
+def _restore_pdb_link_altlocs(lines: list[str], altlocs: dict[AtomRef, str]) -> None:
+    for index, line in enumerate(lines):
+        if not line.startswith(("LINK  ", "LINKR ")):
+            continue
+        for offset in (12, 42):
+            # LINK endpoints have the same fifteen identity columns as atom records.
+            identity = pdb_atom_identity(
+                "ATOM  " + " " * 6 + line[offset : offset + 15]
+            )
+            if identity is not None and identity.atom_ref in altlocs:
+                line = (
+                    line[: offset + 4] + altlocs[identity.atom_ref] + line[offset + 5 :]
+                )
+        lines[index] = line
 
 
 def _set_mmcif_connection_orders(
@@ -573,10 +838,33 @@ def gemmi_connection_type(
 def append_pdb_conect_records_from_topology(
     pdb_text: str,
     structure: ProteinStructure,
+    *,
+    serial_by_atom_ref: dict[AtomRef, int],
 ) -> str:
-    """Append PDB CONECT records projected from canonical topology."""
+    """Append selected topology bonds using the validated output serial map.
 
-    serial_by_atom_ref = pdb_atom_serial_by_atom_ref(pdb_text)
+    Parameters
+    ----------
+    pdb_text : str
+        Coordinate records already projected from the structure.
+    structure : ProteinStructure
+        Canonical topology to serialize.
+    serial_by_atom_ref : dict[AtomRef, int]
+        Output serials keyed by canonical atoms, including both bond endpoints.
+
+    Returns
+    -------
+    str
+        Coordinate text with CONECT records.
+
+    Raises
+    ------
+    StructureSerializationError
+        A selected endpoint is missing from the serial map.
+    ModelInvariantError
+        A bond order exceeds the CONECT multiplicity limit.
+    """
+
     neighbor_serials_by_source: dict[int, list[int]] = {}
     for bond in pdb_conect_topology_bonds_for_egress(structure):
         atom_ref_1 = structure.constitution.atom_ref_at(bond.atom_index_1)
@@ -584,7 +872,10 @@ def append_pdb_conect_records_from_topology(
         serial_1 = serial_by_atom_ref.get(atom_ref_1)
         serial_2 = serial_by_atom_ref.get(atom_ref_2)
         if serial_1 is None or serial_2 is None:
-            continue
+            raise StructureSerializationError(
+                "PDB CONECT endpoint is missing from output: "
+                f"{atom_ref_1.display_token()}--{atom_ref_2.display_token()}"
+            )
 
         multiplicity = 1 if bond.order is None else bond.order
         if multiplicity > 4:
@@ -668,40 +959,33 @@ def _source_metadata_id_is_specific(bond: TopologyBond) -> bool:
     )
 
 
-def pdb_atom_serial_by_atom_ref(pdb_text: str) -> dict[AtomRef, int]:
-    """Return assigned PDB atom serials keyed by canonical atom reference."""
+def pdb_atom_serial_by_atom_ref(
+    pdb_text: str,
+    structure: ProteinStructure,
+) -> dict[AtomRef, int]:
+    """Associate emitted serials with canonical atoms in coordinate write order.
 
-    serial_by_atom_ref: dict[AtomRef, int] = {}
-    for line in pdb_text.splitlines():
-        if not line.startswith(("ATOM  ", "HETATM")):
-            continue
+    Parameters
+    ----------
+    pdb_text : str
+        Text emitted for the supplied structure.
+    structure : ProteinStructure
+        Canonical source of atom keys and write order.
 
-        serial_token = line[6:11].strip()
-        atom_name = line[12:16].strip()
-        chain_id = line[21:22].strip()
-        seq_num_token = line[22:26].strip()
-        if not serial_token or not atom_name or not chain_id or not seq_num_token:
-            continue
+    Returns
+    -------
+    dict[AtomRef, int]
+        Canonical atom keys associated with emitted serials.
 
-        try:
-            serial = int(serial_token)
-            seq_num = int(seq_num_token)
-        except ValueError:
-            continue
-
-        insertion_code = line[26:27].strip() or None
-        serial_by_atom_ref[
-            AtomRef(
-                residue_id=ResidueId(
-                    chain_id=chain_id,
-                    seq_num=seq_num,
-                    insertion_code=insertion_code,
-                ),
-                atom_name=atom_name,
-            )
-        ] = serial
-
-    return serial_by_atom_ref
+    Raises
+    ------
+    StructureSerializationError
+        Atom counts or emitted serials do not admit a one-to-one association.
+    """
+    return {
+        structure.constitution.atom_ref_at(index): serial
+        for _, index, serial in _pdb_atom_records(pdb_text.splitlines(), structure)
+    }
 
 
 def atom_index_values_in_coordinate_write_order(
@@ -743,7 +1027,9 @@ def format_pdb_conect_lines(
             chunks.append([])
         chunks[-1].extend([neighbor] * count)
     return tuple(
-        f"CONECT{source_serial:>5}" + "".join(f"{neighbor:>5}" for neighbor in chunk)
+        "CONECT"
+        + encode_pdb_integer(source_serial, width=5)
+        + "".join(encode_pdb_integer(neighbor, width=5) for neighbor in chunk)
         for chunk in chunks
         if chunk
     )
