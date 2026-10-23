@@ -70,6 +70,16 @@ The reader accepts RDKit's extension through the sixth neighbor field; the
 writer uses four fields per row and keeps each multiplicity together.
 Legacy pre-3.2 hydrogen/salt-bridge column semantics are not supported.
 
+Serials identify `CONECT` endpoints only when they are unique in the selected
+first model. Connections with duplicate or missing serials, discarded variants
+or self-links are excluded without a warning; the reader does not guess an
+endpoint. Reuse in a later model does not make a first-model serial ambiguous.
+Invalid nonblank serial fields raise `StructureNormalizationError` rather
+than producing a partly decoded connection row. On output, every selected
+connection must map to emitted atoms; a missing endpoint is a serialization
+error, not an omitted bond. Serial-map keys come from canonical write order,
+not from reverse-interpreting output labels.
+
 mmCIF carries explicit `sing`, `doub`, `trip`, and `quad` values in
 [`_struct_conn.pdbx_value_order`](https://mmcif.wwpdb.org/dictionaries/mmcif_pdbx_v50.dic/Items/_struct_conn.pdbx_value_order.html),
 including connections within a residue. An absent field or `?`/`.` supplies

@@ -17,6 +17,7 @@ from protrepair.io.gemmi_normalization import (
     to_gemmi_coor_format,
 )
 from protrepair.io.ingress_policy import StructureNormalizationPolicy
+from protrepair.io.pdb_records import decode_pdb_integer, pdb_atom_identity
 from protrepair.io.source_identity import (
     normalize_altloc,
     normalize_chain_id,
@@ -131,7 +132,11 @@ def _normalize_structure_text(
     source_orders_by_id: dict[str, int | None] = {}
     if file_format is FileFormat.PDB:
         raw_structure = gemmi.read_pdb_string(contents)
-        pdb_conect_source_connections = _pdb_conect_source_connections(contents)
+        # Validate serials even without CONECT, independently of atom attributes.
+        atom_identity_by_serial = _first_model_unambiguous_pdb_atom_identities(contents)
+        pdb_conect_source_connections = _pdb_conect_source_connections(
+            contents, atom_identity_by_serial=atom_identity_by_serial
+        )
         source_element_by_atom_identity, source_charges, peptide_break_after = (
             _pdb_source_atom_attributes(contents)
         )
@@ -342,10 +347,10 @@ def _normalize_reported_connection_distance(
 
 def _pdb_conect_source_connections(
     contents: str,
+    *,
+    atom_identity_by_serial: dict[int, SourceAtomIdentity],
 ) -> tuple[SourceConnection, ...]:
     """Return boundary-normalized connections declared by PDB CONECT."""
-
-    atom_identity_by_serial = _first_model_unambiguous_pdb_atom_identities(contents)
 
     connections_by_pair: dict[
         tuple[SourceAtomIdentity, SourceAtomIdentity], SourceConnection
@@ -443,11 +448,9 @@ def _pdb_source_atom_attributes(
             if previous_residue is not None:
                 peptide_break_after.add(previous_residue)
             continue
-        atom_serial_and_identity = _pdb_atom_serial_and_identity(line)
-        if atom_serial_and_identity is None:
+        identity = pdb_atom_identity(line)
+        if identity is None:
             continue
-
-        identity = atom_serial_and_identity[1]
         previous_residue = identity.atom_ref.residue_id
         token = line[78:80].strip()
         if not token:
@@ -463,7 +466,7 @@ def _pdb_source_atom_attributes(
             continue
         _record_source_isotope_element(
             source_elements,
-            atom_serial_and_identity[1],
+            identity,
             source_symbol,
         )
 
@@ -682,53 +685,37 @@ def _pdb_atom_serial_and_identity(
     if not line.startswith(("ATOM  ", "HETATM")):
         return None
 
-    serial_token = line[6:11].strip()
-    atom_name = line[12:16].strip()
-    residue_name = line[17:20].strip()
-    chain_id = normalize_chain_id(line[21:22])
-    seq_num_token = line[22:26].strip()
-    if not serial_token or not atom_name or not residue_name or not seq_num_token:
-        return None
-
     try:
-        serial = int(serial_token)
-        seq_num = int(seq_num_token)
-    except ValueError:
-        return None
-
-    return (
-        serial,
-        SourceAtomIdentity(
-            atom_ref=AtomRef(
-                residue_id=ResidueId(
-                    chain_id=chain_id,
-                    seq_num=seq_num,
-                    insertion_code=normalize_insertion_code(line[26:27]),
-                ),
-                atom_name=atom_name,
-            ),
-            component_id=residue_name,
-            altloc=normalize_altloc(line[16:17]),
-        ),
-    )
+        serial = decode_pdb_integer(line[6:11], width=5)
+    except ValueError as error:
+        raise StructureNormalizationError(
+            f"invalid PDB atom serial {line[6:11]!r}: {error}"
+        ) from error
+    try:
+        identity = pdb_atom_identity(line)
+    except ValueError as error:
+        raise StructureNormalizationError(
+            f"invalid PDB residue number {line[22:26]!r}: {error}"
+        ) from error
+    return None if identity is None else (serial, identity)
 
 
 def _pdb_conect_serials(line: str) -> tuple[int, ...]:
     """Return serial numbers encoded in one fixed-width PDB CONECT line."""
 
-    try:
-        serials = [int(line[6:11])]
-    except ValueError:
-        return ()
+    serials: list[int] = []
     # Accept RDKit's extended fifth/sixth neighbor fields through column 41.
-    for offset in range(11, min(len(line), 41), 5):
-        token = line[offset : offset + 5].strip()
-        if not token:
+    for offset in range(6, min(len(line), 41), 5):
+        field = line[offset : offset + 5]
+        if not field.strip():
+            if offset == 6:
+                return ()
             continue
-
         try:
-            serials.append(int(token))
-        except ValueError:
-            continue
+            serials.append(decode_pdb_integer(field.ljust(5), width=5))
+        except ValueError as error:
+            raise StructureNormalizationError(
+                f"invalid PDB CONECT serial {field!r}: {error}"
+            ) from error
 
     return tuple(serials)

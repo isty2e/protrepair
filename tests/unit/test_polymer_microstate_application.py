@@ -997,6 +997,15 @@ def test_original_h_cannot_be_replaced_by_an_equivalent_new_name() -> None:
 def test_egress_projects_effective_charge_and_orders(file_format: FileFormat) -> None:
     source = _structure("ARG")
     patch = _patch(source)
+    # Test charge/order projection with H identities representable in both formats.
+    patch = replace(
+        patch,
+        hydrogens=tuple(
+            replace(entry, atom=AtomSite(f"H{index}", "H"))
+            for index, entry in enumerate(patch.hydrogens)
+        ),
+        preferences=pras_microstate_preferences(patch.site),
+    )
     repaired = apply_polymer_microstate_patches(source, (patch,))
     reread = read_structure_string(
         write_structure_string(repaired, file_format), file_format

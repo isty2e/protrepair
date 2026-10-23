@@ -350,10 +350,8 @@ def test_mmcif_unsupported_explicit_order_is_not_silently_defaulted() -> None:
 
 
 def test_bad_conect_source_serial_does_not_reassign_first_target_as_source() -> None:
-    structure = read_structure_string(
-        _conect_input(("CONECTxxxxx    1    2",)), FileFormat.PDB
-    )
-    assert structure.topology.bonds == ()
+    with pytest.raises(StructureNormalizationError, match="CONECT.*serial.*xxxxx"):
+        read_structure_string(_conect_input(("CONECTxxxxx    1    2",)), FileFormat.PDB)
 
 
 @pytest.mark.parametrize("order", (1, 2, 3, None))
