@@ -454,7 +454,6 @@ def _parser_input_with_correspondence(
         residue = constitution.residue_site_at(
             constitution.residue_index_for_atom_index(index)
         )
-        geometry = structure.geometry.atom_geometry(index)
         # The private transport retains Gemmi's existing four-/three-column aliases.
         emitted_ref = (
             ref
@@ -467,7 +466,7 @@ def _parser_input_with_correspondence(
                 line,
                 emitted_ref,
                 residue.component_id[:3],
-                None if geometry.altloc is None else geometry.altloc.upper(),
+                None,
             )
             element = ElementIdentity(line[76:78])
         except ValueError as error:

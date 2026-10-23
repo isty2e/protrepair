@@ -27,7 +27,6 @@ from protrepair.io.pdb_records import (
     PDB_MAX_ATOM_SERIAL,
     decode_pdb_integer,
     encode_pdb_integer,
-    pdb_atom_identity,
     pdb_atom_identity_matches,
     pdb_text_field_fits,
 )
@@ -151,7 +150,8 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
     Returns
     -------
     str
-        The complete coordinate payload.
+        The complete coordinate payload. PDB omits selected alternate-location
+        labels; mmCIF retains them.
 
     Raises
     ------
@@ -172,6 +172,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             file_format=file_format,
             bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
         )
+        _normalize_pdb_altlocs(raw_structure)
         pdb_text, serial_by_atom_ref = _project_public_pdb_records(
             raw_structure.make_pdb_string(),
             structure,
@@ -364,21 +365,16 @@ def _project_public_pdb_records(
 ) -> tuple[str, dict[AtomRef, int]]:
     lines = pdb_text.splitlines(keepends=True)
     serial_by_atom_ref: dict[AtomRef, int] = {}
-    lower_altlocs: dict[AtomRef, str] = {}
     for line_index, index, serial in _pdb_atom_records(lines, structure):
         ref = structure.constitution.atom_ref_at(index)
         residue = structure.constitution.residue_site_at(
             structure.constitution.residue_index_for_atom_index(index)
         )
         atom = structure.constitution.atom_site_at(index)
-        geometry = structure.geometry.atom_geometry(index)
-        if geometry.altloc is not None and geometry.altloc != geometry.altloc.upper():
-            lower_altlocs[ref] = geometry.altloc
         charge = structure.topology.formal_charge(index)
         line = lines[line_index]
         ending = line[len(line.rstrip("\r\n")) :]
         record = line.removesuffix(ending).ljust(80)
-        record = record[:16] + (geometry.altloc or " ") + record[17:]
         if atom.element_identity.is_isotope_alias():
             record = (
                 record[:76] + f"{atom.element_identity.source_symbol:>2}" + record[78:]
@@ -389,9 +385,7 @@ def _project_public_pdb_records(
             record = record[:offset] + token + record[offset + len(token) :]
 
         try:
-            matches = pdb_atom_identity_matches(
-                record, ref, residue.component_id, geometry.altloc
-            )
+            matches = pdb_atom_identity_matches(record, ref, residue.component_id, None)
         except ValueError as error:
             raise StructureSerializationError(
                 f"invalid PDB identity at {ref.display_token()}: {error}"
@@ -402,25 +396,20 @@ def _project_public_pdb_records(
             )
         serial_by_atom_ref[ref] = serial
         lines[line_index] = record + ending
-    if lower_altlocs:
-        _restore_pdb_link_altlocs(lines, lower_altlocs)
     return "".join(lines), serial_by_atom_ref
 
 
-def _restore_pdb_link_altlocs(lines: list[str], altlocs: dict[AtomRef, str]) -> None:
-    for index, line in enumerate(lines):
-        if not line.startswith(("LINK  ", "LINKR ")):
-            continue
-        for offset in (12, 42):
-            # LINK endpoints have the same fifteen identity columns as atom records.
-            identity = pdb_atom_identity(
-                "ATOM  " + " " * 6 + line[offset : offset + 15]
-            )
-            if identity is not None and identity.atom_ref in altlocs:
-                line = (
-                    line[: offset + 4] + altlocs[identity.atom_ref] + line[offset + 5 :]
-                )
-        lines[index] = line
+def _normalize_pdb_altlocs(raw_structure: gemmi.Structure) -> None:
+    # Ingress already selected the atoms; do not run another conformer selection.
+    for model in raw_structure:
+        for chain in model:
+            for residue in chain:
+                for atom in residue:
+                    atom.altloc = "\0"
+
+    for connection in raw_structure.connections:
+        connection.partner1.altloc = "\0"
+        connection.partner2.altloc = "\0"
 
 
 def _set_mmcif_connection_orders(
@@ -458,6 +447,7 @@ def write_pdb_structure_string_without_conect(structure: ProteinStructure) -> st
         file_format=FileFormat.PDB,
         bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
     )
+    _normalize_pdb_altlocs(raw_structure)
     return _restore_pdb_atom_attributes(
         raw_structure.make_pdb_string(),
         structure,

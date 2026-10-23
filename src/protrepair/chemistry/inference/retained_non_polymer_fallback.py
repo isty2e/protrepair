@@ -916,7 +916,7 @@ def _retained_non_polymer_heavy_atom_pdb_block(
     residue_site: ResidueSite,
     residue_geometry: ResidueGeometry,
 ) -> str:
-    """Return one heavy-atom-only PDB block for RDKit pose inference."""
+    """Return a heavy-atom PDB block with blank altlocs for RDKit inference."""
 
     record_name = "HETATM" if residue_site.is_hetero else "ATOM  "
     residue_name = residue_site.component_id[:3].rjust(3)
@@ -930,12 +930,11 @@ def _retained_non_polymer_heavy_atom_pdb_block(
 
         atom_geometry = residue_geometry.atom_geometry(atom_site.name)
         position = atom_geometry.position
-        altloc = (atom_geometry.altloc or " ")[:1]
         occupancy = atom_geometry.occupancy
         b_factor = 0.0 if atom_geometry.b_factor is None else atom_geometry.b_factor
         pdb_lines.append(
             f"{record_name:<6}{atom_serial:5d} "
-            f"{atom_site.name:>4}{altloc}{residue_name} {chain_id}"
+            f"{atom_site.name:>4} {residue_name} {chain_id}"
             f"{residue_site.residue_id.seq_num:4d}{insertion_code}   "
             f"{position.x:8.3f}{position.y:8.3f}{position.z:8.3f}"
             f"{occupancy:6.2f}{b_factor:6.2f}          "

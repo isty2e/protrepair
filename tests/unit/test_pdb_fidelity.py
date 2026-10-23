@@ -47,6 +47,7 @@ def _one_atom(
     insertion: str | None = None,
     x: float = 0.0,
     b: float | None = 10.0,
+    occupancy: float = 1.0,
 ) -> ProteinStructure:
     residue = residue_payload(
         component_id=component,
@@ -59,6 +60,7 @@ def _one_atom(
                 formal_charge=charge,
                 altloc=altloc,
                 b_factor=b,
+                occupancy=occupancy,
             ),
         ),
     )
@@ -253,15 +255,34 @@ def test_pdb_rejects_unrepresentable_identity_without_changing_mmcif(
         ) == structure.topology.formal_charge(AtomIndex(0))
 
 
-def test_public_altloc_case_is_preserved_without_changing_native_projection() -> None:
-    structure = _one_atom(altloc="a", charge=0, element="D", name="HD1")
+@pytest.mark.parametrize("altloc", [None, "A", "B", "C", "1", "2", "a", "b"])
+@pytest.mark.parametrize("element", ["H", "D", "T"])
+@pytest.mark.parametrize("occupancy", [0.0, 0.3])
+def test_pdb_normalizes_selected_altloc_without_mutating_source_metadata(
+    altloc: str | None, element: str, occupancy: float
+) -> None:
+    structure = _one_atom(
+        altloc=altloc, charge=0, element=element, name="HD1", occupancy=occupancy
+    )
+    geometry = structure.geometry
+    provenance = structure.provenance
+    mmcif = write_structure_string(structure, FileFormat.MMCIF)
     text = write_structure_string(structure, FileFormat.PDB)
     reread = read_structure_string(text, FileFormat.PDB)
-    assert reread.geometry.atom_geometry(AtomIndex(0)).altloc == "a"
-    assert reread.constitution.atom_site_at(AtomIndex(0)).element == "D"
+    after = reread.geometry.atom_geometry(AtomIndex(0))
+    assert after.altloc is None
+    assert after.position == geometry.atom_geometry(AtomIndex(0)).position
+    assert after.occupancy == pytest.approx(occupancy)
+    assert after.b_factor == 10.0
+    assert reread.constitution.atom_site_at(AtomIndex(0)).element == element
     assert reread.topology.formal_charge(AtomIndex(0)) == 0
     native = write_pdb_structure_string_without_conect(structure)
-    assert next(row for row in native.splitlines() if row.startswith("ATOM"))[16] == "A"
+    assert next(row for row in native.splitlines() if row.startswith("ATOM"))[16] == " "
+    assert structure.geometry is geometry
+    assert structure.provenance is provenance
+    assert write_structure_string(structure, FileFormat.MMCIF) == mmcif
+    restored = read_structure_string(mmcif, FileFormat.MMCIF)
+    assert restored.geometry.atom_geometry(AtomIndex(0)).altloc == altloc
 
 
 def test_pdb_admission_failure_preserves_existing_file(tmp_path: Path) -> None:

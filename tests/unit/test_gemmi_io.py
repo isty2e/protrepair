@@ -3331,18 +3331,19 @@ def test_write_pdb_preserves_link_metadata_via_topology_connections() -> None:
         (FileFormat.MMCIF, SourceBondRecordType.MMCIF_STRUCT_CONN),
     ),
 )
-@pytest.mark.parametrize("linked_altloc", ["A", "a"])
-def test_write_structure_string_preserves_source_connection_altloc(
+@pytest.mark.parametrize("linked_altloc", ["A", "B", "1", "2", "a", "b"])
+def test_write_structure_string_projects_source_connection_altloc_consistently(
     file_format: FileFormat,
     record_type: SourceBondRecordType,
     linked_altloc: str,
 ) -> None:
-    """Connection egress must preserve source endpoint altloc identity."""
-
-    source_format = FileFormat.PDB if linked_altloc == "A" else FileFormat.MMCIF
+    source_format = FileFormat.MMCIF
     structure = read_structure_string(
         build_source_connection_text(
-            source_format, selected_altloc=linked_altloc, linked_altloc=linked_altloc
+            source_format,
+            selected_altloc=linked_altloc,
+            linked_altloc=linked_altloc,
+            discarded_altloc="Z",
         ),
         source_format,
         policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
@@ -3363,6 +3364,62 @@ def test_write_structure_string_preserves_source_connection_altloc(
 
     assert len(source_bonds) == 1
     assert _bond_display_token(roundtripped, source_bonds[0]) == "A:1.C1-L:1.O1"
+    index = roundtripped.constitution.atom_index(AtomRef(ResidueId("A", 1), "C1"))
+    expected = None if file_format is FileFormat.PDB else linked_altloc
+    assert roundtripped.geometry.atom_geometry(index).altloc == expected
+    if file_format is FileFormat.PDB:
+        link = next(
+            row for row in structure_text.splitlines() if row.startswith("LINK")
+        )
+        assert link[16] == link[46] == " "
+        without_conect = (
+            "\n".join(
+                row
+                for row in structure_text.splitlines()
+                if not row.startswith("CONECT")
+            )
+            + "\n"
+        )
+        linked = read_structure_string(
+            without_conect,
+            FileFormat.PDB,
+            policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP),
+        )
+        assert len(linked.topology.bonds) == 1
+
+
+@pytest.mark.parametrize("altloc", ["B", "b"])
+def test_calculation_pdb_normalizes_both_link_endpoint_labels(altloc: str) -> None:
+    raw = build_raw_source_connection_structure(
+        selected_altloc=altloc, linked_altloc=altloc, discarded_altloc="Z"
+    )
+    raw[0][1][0][0].altloc = altloc
+    raw.connections[0].partner2.altloc = altloc
+    policy = StructureNormalizationPolicy(ligand_handling=LigandHandling.KEEP)
+    source = read_structure_string(
+        raw.make_mmcif_document().as_string(), FileFormat.MMCIF, policy=policy
+    )
+
+    for text in (
+        write_structure_string(source, FileFormat.PDB),
+        gemmi_writer.write_pdb_structure_string_without_conect(source),
+    ):
+        link = next(row for row in text.splitlines() if row.startswith("LINK"))
+        assert link[16] == link[46] == " "
+        without_conect = (
+            "\n".join(row for row in text.splitlines() if not row.startswith("CONECT"))
+            + "\n"
+        )
+        reread = read_structure_string(without_conect, FileFormat.PDB, policy=policy)
+        assert len(reread.constitution.atom_slots) == 2
+        assert len(reread.topology.bonds) == 1
+        assert _bond_display_token(reread, reread.topology.bonds[0]) == "A:1.C1-L:1.O1"
+        assert all(
+            geometry.altloc is None for geometry in reread.geometry.atom_geometries
+        )
+    assert all(
+        geometry.altloc == altloc for geometry in source.geometry.atom_geometries
+    )
 
 
 def test_write_pdb_does_not_emit_non_covalent_source_bonds_as_conect() -> None:

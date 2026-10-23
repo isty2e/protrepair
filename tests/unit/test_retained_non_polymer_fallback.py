@@ -1,6 +1,7 @@
 """Unit tests for retained non-polymer RDKit fallback chemistry."""
 
 from collections import Counter
+from dataclasses import replace
 from math import cos, pi, sin
 
 import pytest
@@ -200,6 +201,45 @@ def test_fallback_perceives_carbonyl_bond_order_before_hydrogenation() -> None:
         residue_site,
         residue_geometry,
     ) == ("H001", "H002", "H003", "H004")
+
+
+@pytest.mark.parametrize("altloc", [None, "A", "1", "B", "2", "a", "b"])
+def test_fallback_keeps_every_selected_heavy_atom_independent_of_altloc(
+    altloc: str | None,
+) -> None:
+    residue, geometry = _retained_ligand_pose(
+        (
+            ("C1", "C", Vec3(0.0, 0.0, 0.0)),
+            ("C2", "C", Vec3(1.50, 0.0, 0.0)),
+            ("O1", "O", Vec3(2.71, 0.0, 0.0)),
+        )
+    )
+    geometry = ResidueGeometry(
+        atoms_by_name={
+            name: replace(atom, altloc=altloc, occupancy=0.7)
+            for name, atom in geometry.atoms_by_name.items()
+        }
+    )
+    names = retained_non_polymer_rdkit_fallback_expected_hydrogen_atom_names(
+        residue, geometry
+    )
+    assert names == ("H001", "H002", "H003", "H004")
+    molecule = retained_non_polymer_rdkit_fallback_hydrogenated_molecule(
+        residue, geometry
+    )
+    heavy_atoms = tuple(
+        atom for atom in molecule.GetAtoms() if atom.GetAtomicNum() != 1
+    )
+    assert {atom.GetPDBResidueInfo().GetName().strip() for atom in heavy_atoms} == {
+        "C1",
+        "C2",
+        "O1",
+    }
+    assert len(heavy_atoms) == 3
+    assert all(
+        atom.GetPDBResidueInfo().GetAltLoc().strip() == "" for atom in heavy_atoms
+    )
+    assert all(atom.altloc == altloc for atom in geometry.atoms_by_name.values())
 
 
 def test_fallback_perceives_aromatic_carbon_ring_before_hydrogenation() -> None:

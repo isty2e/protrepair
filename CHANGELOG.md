@@ -12,6 +12,11 @@
 
 ### Changed
 
+- omit selected alternate-location labels from public and calculation PDB atom
+  records and their LINK endpoints, so default RDKit and FASPR readers retain
+  those atoms. Keep the existing input conformer selection, coordinates,
+  occupancy, B factors and canonical/source metadata. mmCIF retains the selected
+  labels; they cannot be recovered from the PDB alone
 - refuse PDB output that would shorten identifiers, wrap numbering or lose the
   supported numeric precision, using `StructureSerializationError`. Coordinates
   may round from three to two decimal places; B factors may use fewer decimal
@@ -96,13 +101,14 @@
 - attribute RDKit parser failures, inferred bonds and H/D/T attachment warnings
   to the original canonical atoms, including two-character chains and serial
   gaps from `TER` records. Known-bond checks and repair targets use the same
-  correspondence, without relabeling native input or changing parsing policy.
+  correspondence, without renaming chains, renumbering residues or changing
+  native reader options.
   Keep workflow results when canonical chain IDs or residue numbers exceed the
   internal PDB projection capacity, reporting a structure-level parser error
   with the unsupported field instead of aborting processing
 - preserve two-character chain and uppercase hybrid-36 identities across PDB
   input, source-attribute association and CONECT output. Associate emitted
-  serials with canonical write order, and preserve public altloc case
+  serials with canonical write order
 - leave fixed polymer H unresolved at unexplained external covalent or untyped
   connections, instead of adding an isolated-residue H inventory. Prepare
   independent H in the same residue, preserve existing H/D/T and source

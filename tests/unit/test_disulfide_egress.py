@@ -196,7 +196,7 @@ def test_generic_sulfur_bond_is_not_silently_narrowed_to_single_disulfide(
 @pytest.mark.parametrize(
     "relationship_type", [BondRelationshipType.DISULFIDE, BondRelationshipType.COVALENT]
 )
-def test_resolved_disulfide_retains_chain_insertion_and_selected_altloc_identity(
+def test_resolved_disulfide_retains_identity_with_format_specific_altloc(
     file_format: FileFormat, relationship_type: BondRelationshipType
 ) -> None:
     left = AtomRef(ResidueId("A", 10, "B"), "SG")
@@ -244,7 +244,14 @@ def test_resolved_disulfide_retains_chain_insertion_and_selected_altloc_identity
         geometry = roundtripped.residue_geometry(
             roundtripped.constitution.residue_index(ref.residue_id)
         )
-        assert geometry.atom_geometry(ref.atom_name).altloc == altloc
+        expected = None if file_format is FileFormat.PDB else altloc
+        assert geometry.atom_geometry(ref.atom_name).altloc == expected
+        assert (
+            structure.geometry.atom_geometry(
+                structure.constitution.atom_index(ref)
+            ).altloc
+            == altloc
+        )
 
 
 @pytest.mark.parametrize(
