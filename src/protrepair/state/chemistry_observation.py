@@ -475,12 +475,13 @@ class StructureChemistryObservation:
                 residue.residue_id
             )
         )
-        if (
-            fixed_context is not None
-            and fixed_context.unresolved_parent_names
-            and h_coverage_state is HydrogenCoverageState.COMPLETE
-        ):
-            h_coverage_state = HydrogenCoverageState.PARTIAL
+        if fixed_context is not None and fixed_context.unresolved_parent_names:
+            h_applicability_state = HydrogenApplicabilityState.APPLICABLE
+            h_coverage_state = (
+                HydrogenCoverageState.PARTIAL
+                if any(atom.is_hydrogen() for atom in residue.atom_sites)
+                else HydrogenCoverageState.NONE
+            )
         heavy_atom_topology_availability_state = (
             _polymer_heavy_topology_availability_state(
                 self.context_structure,

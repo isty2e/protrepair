@@ -250,7 +250,12 @@ def _extend_chain_expected_hydrogens(
         if template is None or not template.can_add_hydrogens():
             continue
 
-        expected_hydrogen_atom_names = list(template.expected_hydrogen_atom_names())
+        fixed_context = preparation.fixed_hydrogen_context(residue.residue_id)
+        expected_hydrogen_atom_names = list(
+            fixed_context.hydrogen_atom_names()
+            if fixed_context is not None
+            else template.expected_hydrogen_atom_names()
+        )
         if (
             residue.component_id == "CYS"
             and residue.residue_id in disulfide_bonded_residue_ids

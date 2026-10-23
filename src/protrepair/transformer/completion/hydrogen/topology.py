@@ -9,6 +9,7 @@ from protrepair.diagnostics.kinds import (
     RepairEventKind,
     ValidationIssueKind,
 )
+from protrepair.diagnostics.polymer_hydrogen import unresolved_fixed_hydrogen_issue
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.topology import StructureTopology
@@ -66,23 +67,9 @@ def resolve_fixed_hydrogen_topology(
                     else observed_preparation.for_inputs(structure, component_library)
                 )
             try:
-                fixed_context = prepared.fixed_hydrogen_context(residue.residue_id)
-                if fixed_context is not None and fixed_context.failure_reason:
-                    unresolved = ", ".join(
-                        sorted(fixed_context.unresolved_parent_names)
-                    )
-                    issues.append(
-                        ValidationIssue.for_residue(
-                            kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
-                            severity=IssueSeverity.WARNING,
-                            message=(
-                                f"linked polymer H at {unresolved} left unresolved: "
-                                f"{fixed_context.failure_reason}"
-                            ),
-                            residue_id=residue.residue_id,
-                            component_id=residue.component_id,
-                        )
-                    )
+                issue = unresolved_fixed_hydrogen_issue(prepared, residue.residue_id)
+                if issue is not None:
+                    issues.append(issue)
                 bonds = prepared.fixed_hydrogen_topology_updates(residue.residue_id)
             except ValueError as error:
                 issues.append(

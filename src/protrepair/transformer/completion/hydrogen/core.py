@@ -30,6 +30,7 @@ from protrepair.diagnostics.kinds import (
     RepairEventKind,
     ValidationIssueKind,
 )
+from protrepair.diagnostics.polymer_hydrogen import unresolved_fixed_hydrogen_issue
 from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.geometry.placement_vector import normalized_vector_or_none
 from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
@@ -356,20 +357,9 @@ def _fixed_hydrogens(
             assert fixed_context is not None
             binding = fixed_context.glycosidic
             template = fixed_context.template
-            if fixed_context.failure_reason:
-                unresolved = ", ".join(sorted(fixed_context.unresolved_parent_names))
-                issues.append(
-                    ValidationIssue.for_residue(
-                        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
-                        severity=IssueSeverity.WARNING,
-                        residue_id=payload.residue_id,
-                        component_id=payload.component_id,
-                        message=(
-                            f"linked polymer H at {unresolved} left unresolved: "
-                            f"{fixed_context.failure_reason}"
-                        ),
-                    )
-                )
+            issue = unresolved_fixed_hydrogen_issue(prepared, payload.residue_id)
+            if issue is not None:
+                issues.append(issue)
             site_targets = prepared.targets_for(payload.residue_id)
             controlled = frozenset(
                 name

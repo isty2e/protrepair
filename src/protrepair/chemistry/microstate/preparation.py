@@ -36,7 +36,10 @@ from protrepair.structure.disulfide import (
     disulfide_bonded_cysteine_residue_ids,
 )
 from protrepair.structure.labels import AtomRef, ResidueId
-from protrepair.structure.topology import BondRelationshipType, TopologyBond
+from protrepair.structure.topology import (
+    BondRelationshipType,
+    TopologyBond,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,13 +173,15 @@ class FixedPolymerHydrogenContext:
         Isolated fixed-H chemistry.
     component_library : ComponentLibrary
         Partner definitions for contextual ASN chemistry.
+    controlled_parent_names : frozenset[str]
+        Parents whose inventory belongs to coupled microstate targets.
     cysteine_adduct : CysteineMichaelAdductBinding or None
         Realized product selected for this polymer site, when available.
 
     Notes
     -----
-    Failed ASN binding leaves ND2 unresolved; an unrealized CYS product leaves
-    SG unresolved. Other fixed parents retain their independently selected H.
+    Unexplained external covalent-like relationships leave only the affected
+    parents unresolved. Supported products and coupled sites keep their owners.
     This value does not place atoms or certify completed H coverage.
     """
 
@@ -192,6 +197,7 @@ class FixedPolymerHydrogenContext:
         template: ResidueTemplate,
         component_library: ComponentLibrary,
         *,
+        controlled_parent_names: frozenset[str],
         cysteine_adduct: CysteineMichaelAdductBinding | None = None,
     ) -> None:
         if cysteine_adduct is not None:
@@ -203,23 +209,25 @@ class FixedPolymerHydrogenContext:
         residue = context.source.constitution.residue_or_ligand(residue_id)
         if residue is None:
             raise ValueError("fixed H preparation requires a present residue")
+        covalent_or_untyped = (
+            BondRelationshipType.COVALENT,
+            BondRelationshipType.DISULFIDE,
+            BondRelationshipType.UNKNOWN,
+        )
+        cysteine_sg_explained = cysteine_adduct is not None
         if residue.component_id == "CYS" and residue.has_atom_site("SG"):
             external = context.external_heavy_bonds(AtomRef(residue_id, "SG"))
-            if (
-                cysteine_adduct is None
-                and not any(
-                    disulfide_atom_ref_pair(context.source.constitution, bond)
-                    is not None
-                    for bond in external
+            cysteine_sg_explained = cysteine_sg_explained or any(
+                disulfide_atom_ref_pair(context.source.constitution, bond) is not None
+                for bond in external
+            )
+            if not cysteine_sg_explained and any(
+                bond.relationship_type
+                not in (
+                    BondRelationshipType.HYDROGEN_BOND,
+                    BondRelationshipType.METAL_COORDINATION,
                 )
-                and any(
-                    bond.relationship_type
-                    not in (
-                        BondRelationshipType.HYDROGEN_BOND,
-                        BondRelationshipType.METAL_COORDINATION,
-                    )
-                    for bond in external
-                )
+                for bond in external
             ):
                 object.__setattr__(
                     self,
@@ -227,27 +235,62 @@ class FixedPolymerHydrogenContext:
                     "contextual cysteine product is unsupported or not yet realized",
                 )
                 object.__setattr__(self, "_unresolved_parent_names", frozenset(("SG",)))
-            return
-        if residue.component_id != "ASN" or not residue.has_atom_site("ND2"):
-            return
-        if not any(
-            bond.relationship_type
-            not in (
-                BondRelationshipType.HYDROGEN_BOND,
-                BondRelationshipType.METAL_COORDINATION,
+        if (
+            residue.component_id == "ASN"
+            and residue.has_atom_site("ND2")
+            and any(
+                bond.relationship_type in covalent_or_untyped
+                for bond in context.external_heavy_bonds(AtomRef(residue_id, "ND2"))
             )
-            for bond in context.external_heavy_bonds(AtomRef(residue_id, "ND2"))
         ):
-            return
-        try:
-            binding = GlycosidicTemplateBinding(
-                context.source, residue, template, component_library
+            try:
+                binding = GlycosidicTemplateBinding(
+                    context.source, residue, template, component_library
+                )
+            except ValueError as error:
+                object.__setattr__(self, "failure_reason", str(error))
+                object.__setattr__(
+                    self, "_unresolved_parent_names", frozenset(("ND2",))
+                )
+            else:
+                object.__setattr__(self, "glycosidic", binding)
+
+        active = self.template
+        parents = set(
+            active.template_hydrogen_anchor_by_name(
+                active.expected_hydrogen_atom_names()
+            ).values()
+        ).difference(controlled_parent_names, self.unresolved_parent_names)
+        if cysteine_sg_explained:
+            parents.discard("SG")
+        if self.glycosidic is not None and self.glycosidic.amide_partner is not None:
+            parents.discard("ND2")
+        unresolved = set(self.unresolved_parent_names)
+        reasons = [self.failure_reason] if self.failure_reason else []
+        for parent in sorted(parents):
+            if not residue.has_atom_site(parent):
+                continue
+            ref = AtomRef(residue_id, parent)
+            external = tuple(
+                bond
+                for bond in context.external_heavy_bonds(ref)
+                if bond.relationship_type in covalent_or_untyped
             )
-        except ValueError as error:
-            object.__setattr__(self, "failure_reason", str(error))
-            object.__setattr__(self, "_unresolved_parent_names", frozenset(("ND2",)))
-        else:
-            object.__setattr__(self, "glycosidic", binding)
+            if not external:
+                continue
+            unresolved.add(parent)
+            partners = sorted(
+                context.source.constitution.atom_ref_at(index).display_token()
+                for bond in external
+                for index in bond.endpoint_pair()
+                if context.source.constitution.atom_ref_at(index) != ref
+            )
+            reasons.append(
+                f"isolated fixed H inventory at {ref.display_token()} cannot "
+                f"interpret external covalent-like relationship with {', '.join(partners)}"
+            )
+        object.__setattr__(self, "_unresolved_parent_names", frozenset(unresolved))
+        object.__setattr__(self, "failure_reason", "; ".join(reasons))
 
     @property
     def template(self) -> ResidueTemplate:
@@ -271,7 +314,7 @@ class FixedPolymerHydrogenContext:
         Returns
         -------
         frozenset[str]
-            SG or ND2 when the corresponding linked chemistry is unresolved.
+            Present parents whose linked H inventory is not selected.
         """
         return self._unresolved_parent_names
 
@@ -565,6 +608,11 @@ class PolymerMicrostatePreparation:
             residue_id,
             template,
             self.component_library,
+            controlled_parent_names=frozenset(
+                name
+                for target in self.targets_for(residue_id)
+                for name in target.controlled_parent_names()
+            ),
             cysteine_adduct=self._cysteine_adducts.get(residue_id),
         )
 
@@ -721,6 +769,46 @@ class PolymerMicrostatePreparation:
             not evidence of chemistry readiness.
         """
         return self._targets.get(residue_id, ())
+
+    def has_pending_hydrogen_updates(self, residue_id: ResidueId) -> bool:
+        """Return whether supported H or selected chemistry still needs an edit.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Polymer identity in this preparation's snapshot.
+
+        Returns
+        -------
+        bool
+            Whether a selected graph, H identity or fixed H bond needs an edit.
+            An unresolved or incompatible fixed inventory does not create work.
+
+        Raises
+        ------
+        ValueError
+            The residue is absent from the snapshot.
+
+        Notes
+        -----
+        Unresolved parents do not become executable work merely because the
+        residue's overall H coverage remains incomplete.
+        """
+        if any(
+            target.resolution.graph is not None and not target.is_realized()
+            for target in self.targets_for(residue_id)
+        ):
+            return True
+        residue = self.context.source.constitution.residue_or_ligand(residue_id)
+        if residue is None:
+            raise ValueError("H update assessment requires a present residue")
+        try:
+            selected = self.fixed_hydrogen_atom_sites(residue_id)
+            if any(not residue.has_atom_site(atom.name) for atom, _ in selected):
+                return True
+            return bool(self.fixed_hydrogen_topology_updates(residue_id))
+        except ValueError:
+            return False
 
 
 def pras_polymer_microstate_sites(

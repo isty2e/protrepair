@@ -251,6 +251,34 @@ The actual-pose stereo checks described here apply to the linked path. Isolated
 fixed-template preparation does not yet certify every declared center against
 the deposited pose; that broader admission policy remains separate work.
 
+### Unresolved Polymer H At External Links
+
+A polymer template describes an isolated residue's fixed H inventory. It does
+not explain every substituent in a deposited structure. If a fixed H parent
+has an external covalent, disulfide or untyped heavy-atom connection that no
+supported product model explains, ProtRepair leaves that parent's H inventory
+unresolved. Other parents in the same residue can still receive H. Existing
+H/D/T, coordinates, known charges and source connections are preserved; the
+unresolved H is not rotated by rotatable-H cleanup.
+
+An H-completion goal remains unmet at these sites, with a warning on the final
+result, even when there is no further supported H to add. Local refinement
+including the unresolved site is not ready. This prevents an isolated hydroxyl
+H from being added to an oxygen already linked to another heavy atom; it does
+not infer the product's charge or remove an H already present in the input.
+
+This also applies to metal connections recorded only as untyped PDB `CONECT`.
+A metal element or a short distance does not turn an untyped edge into
+coordination. A chemically appropriate `LINK` or mmCIF `_struct_conn` record can
+resolve that relationship ambiguity. Typed metal coordination follows its
+existing preparation policy; typing a bond does not by itself add support for
+an otherwise unsupported product.
+
+SER/THR O-linked glycans remain unsupported by the glycosidic product model,
+which currently admits polymer ASN ND2 only. Their linked oxygen therefore
+receives no new hydroxyl H and remains unresolved. Supporting O-glycosylation
+requires a separate chemical interpretation, not a component-specific exception.
+
 ### Stereochemistry In RDKit Placement
 
 For mapped SMILES, preparation and readiness compare declared stereochemistry
