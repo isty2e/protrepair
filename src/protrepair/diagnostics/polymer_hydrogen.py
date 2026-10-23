@@ -10,7 +10,7 @@ from protrepair.structure.topology import BondRelationshipType
 def unresolved_fixed_hydrogen_issue(
     preparation: PolymerMicrostatePreparation, residue_id: ResidueId
 ) -> ValidationIssue | None:
-    """Describe an unresolved parent without reinterpreting its H inventory.
+    """Report unresolved fixed H without reinterpreting its inventory.
 
     Parameters
     ----------
@@ -22,7 +22,8 @@ def unresolved_fixed_hydrogen_issue(
     Returns
     -------
     ValidationIssue or None
-        Parent-local reason and untyped-link guidance, or no unresolved parent.
+        Parent-local reason, any independent inventory failure and untyped-link
+        guidance, or no unresolved parent.
 
     Raises
     ------
@@ -36,6 +37,12 @@ def unresolved_fixed_hydrogen_issue(
     context = preparation.context
     residue = context.source.constitution.residue_or_ligand(residue_id)
     assert residue is not None
+    inventory_failure = ""
+    try:
+        preparation.fixed_hydrogen_atom_sites(residue_id)
+    except ValueError as error:
+        inventory_failure = f"; other fixed H inventory could not be selected: {error}"
+
     untyped = any(
         bond.relationship_type is BondRelationshipType.UNKNOWN
         for parent in fixed.unresolved_parent_names
@@ -55,6 +62,6 @@ def unresolved_fixed_hydrogen_issue(
         component_id=residue.component_id,
         message=(
             f"linked polymer H at {', '.join(sorted(fixed.unresolved_parent_names))} "
-            f"left unresolved: {fixed.failure_reason}{guidance}"
+            f"left unresolved: {fixed.failure_reason}{guidance}{inventory_failure}"
         ),
     )

@@ -23,6 +23,8 @@ from protrepair.scope import AtomSetScope
 from protrepair.state import HydrogenApplicabilityState, HydrogenCoverageState
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure import AtomRef, ProteinStructure, ResidueId
+from protrepair.structure.constitution import AtomSite
+from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.structure.topology import (
@@ -453,3 +455,64 @@ def test_cleanup_preserves_h_when_its_template_parent_is_missing() -> None:
         PolymerMicrostateContext(source), build_default_component_library()
     ).fixed_hydrogen_context(SERINE)
     assert fixed is not None and not fixed.unresolved_parent_names
+
+
+def test_no_op_suppression_keeps_independent_fixed_h_failure_reason() -> None:
+    prepared = materialize_hydrogens_core(linked_serine()).structure
+    residue = prepared.constitution.residue_or_ligand(SERINE)
+    assert residue is not None
+    geometry = prepared.residue_geometry(prepared.constitution.residue_index(SERINE))
+    source = prepared.with_updated_residue_facets(
+        replace(residue, atom_sites=(*residue.atom_sites, AtomSite("HB3", "D"))),
+        residue_geometry=ResidueGeometry(
+            {**geometry.atoms_by_name, "HB3": AtomGeometry(Vec3(0.5, 2.0, 1.1))}
+        ),
+        formal_charge_by_atom_name=tuple(
+            (
+                atom.name,
+                prepared.topology.formal_charge(
+                    prepared.constitution.atom_index(AtomRef(SERINE, atom.name))
+                ),
+            )
+            for atom in residue.atom_sites
+        ),
+    )
+    source = read_structure_string(
+        write_structure_string(source, FileFormat.MMCIF), FileFormat.MMCIF
+    )
+    library = build_default_component_library()
+    preparation = PolymerMicrostatePreparation(
+        PolymerMicrostateContext(source), library
+    )
+    with pytest.raises(
+        ValueError, match="source H exceed fixed template inventory at CB"
+    ):
+        preparation.fixed_hydrogen_atom_sites(SERINE)
+    assert not preparation.has_pending_hydrogen_updates(SERINE)
+    outcome = plan_hydrogen_completion_transformers(
+        source,
+        requested_goals=RequestedGoalSet(
+            whole_structure_requested_goals(HydrogenCoverageState.COMPLETE)
+        ),
+        component_library=library,
+    )
+    assert not outcome.transformers
+    result = process_structure(
+        source,
+        ingress=StructureIngressOptions(ligand_policy=LigandPolicy.KEEP),
+        requested_goals=whole_structure_requested_goals(HydrogenCoverageState.COMPLETE),
+    )
+    assert not result.requested_goals_fully_satisfied()
+    assert any(
+        issue.residue_id == SERINE and "OG" in issue.message for issue in result.issues
+    )
+    assert any(
+        issue.residue_id == SERINE
+        and "source H exceed fixed template inventory at CB" in issue.message
+        for issue in result.issues
+    )
+    index = source.constitution.atom_index(AtomRef(SERINE, "HB3"))
+    current = result.structure.constitution.atom_index(AtomRef(SERINE, "HB3"))
+    assert result.structure.geometry.atom_geometry(
+        current
+    ) == source.geometry.atom_geometry(index)
