@@ -14,6 +14,7 @@ from protrepair.io.pdb_records import (
     decode_pdb_integer,
     encode_pdb_integer,
     pdb_atom_identity_matches,
+    pdb_text_field_fits,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import StructureConstitution
@@ -136,7 +137,7 @@ def rdkit_pdb_projection_unavailability(
     for residue in structure.constitution.iter_residues(include_ligands=True):
         residue_id = residue.residue_id
         chain = residue_id.chain_id
-        if len(chain) > 2 or not chain.isascii() or not chain.isprintable():
+        if not pdb_text_field_fits(chain, width=2):
             return RDKitPDBProjectionUnavailable(
                 f"chain ID {chain!r} at {residue_id.display_token()} cannot fit "
                 "Gemmi PDB's two printable ASCII columns"

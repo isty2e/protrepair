@@ -29,6 +29,7 @@ from protrepair.io.pdb_records import (
     encode_pdb_integer,
     pdb_atom_identity,
     pdb_atom_identity_matches,
+    pdb_text_field_fits,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite, ResidueSite
@@ -229,13 +230,13 @@ def _validate_pdb_output(
     for value, atom in enumerate(structure.constitution.atom_slots):
         index = AtomIndex(value)
         geometry = structure.geometry.atom_geometry(index)
-        if not _pdb_field_fits(atom.name, 4):
+        if not pdb_text_field_fits(atom.name, width=4):
             _require_pdb_field(
                 atom.name,
                 4,
                 f"atom name at {structure.constitution.atom_ref_at(index).display_token()}",
             )
-        if not _pdb_field_fits(geometry.altloc or "", 1):
+        if not pdb_text_field_fits(geometry.altloc or "", width=1):
             _require_pdb_field(
                 geometry.altloc or "",
                 1,
@@ -290,7 +291,7 @@ def _require_pdb_field(
     *,
     shared_adapter_limit: bool = False,
 ) -> None:
-    if _pdb_field_fits(value, width):
+    if pdb_text_field_fits(value, width=width):
         return
     remedy = (
         "the coordinate adapter requires a single printable character"
@@ -298,12 +299,6 @@ def _require_pdb_field(
         else "use mmCIF"
     )
     raise StructureSerializationError(f"PDB {label} {value!r} does not fit; {remedy}")
-
-
-def _pdb_field_fits(value: str, width: int) -> bool:
-    return (
-        len(value) <= width and value.isascii() and (not value or value.isprintable())
-    )
 
 
 def _pdb_overflow_field(

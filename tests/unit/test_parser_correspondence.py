@@ -17,9 +17,9 @@ from protrepair import process_structure
 from protrepair.chemistry import build_default_component_library
 from protrepair.diagnostics import parser_readability as diagnostics
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
-from protrepair.errors import ModelInvariantError
+from protrepair.errors import ModelInvariantError, StructureSerializationError
 from protrepair.geometry import Vec3
-from protrepair.io import pdb_projection
+from protrepair.io import pdb_projection, write_structure_string
 from protrepair.io.pdb_projection import (
     pdb_without_conect,
     prepare_rdkit_no_conect_pdb_block_projector,
@@ -559,3 +559,31 @@ def test_gemmi_residue_boundaries_still_reach_native_parsing(number: int) -> Non
         assert probe.parser_problem_witnesses()[0].residue_id == ResidueId("AA", number)
     else:
         assert probe.structure_messages == ("_pdb_parse_failed_before_sanitize",)
+
+
+@pytest.mark.parametrize(
+    ("residue_id", "fits"),
+    [
+        (ResidueId("A", -999), True),
+        (ResidueId("AA", 1223055), True),
+        (ResidueId("A", -1000), False),
+        (ResidueId("A", 1223056), False),
+        (ResidueId("AAA", 1), False),
+        (ResidueId("\u00c5", 1), False),
+        (ResidueId("A\x00", 1), False),
+    ],
+)
+def test_public_writer_and_native_projection_agree_on_identifier_capacity(
+    residue_id: ResidueId, fits: bool
+) -> None:
+    source = _failing_structure((residue_id,))
+    if fits:
+        text = write_structure_string(source, FileFormat.PDB)
+        assert any(row.startswith("ATOM  ") for row in text.splitlines())
+        assert prepare_rdkit_no_conect_pdb_block_projector(source) is not None
+    else:
+        with pytest.raises(
+            StructureSerializationError, match="chain ID|residue number"
+        ):
+            write_structure_string(source, FileFormat.PDB)
+        assert prepare_rdkit_no_conect_pdb_block_projector(source) is None
