@@ -8,6 +8,7 @@ import pytest
 from rdkit import Chem
 from rdkit.Chem import rdForceFieldHelpers
 
+from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.microstate.catalog import (
     PolymerChemicalSite,
     standard_microstate_candidates,
@@ -25,11 +26,11 @@ from protrepair.chemistry.microstate.resolution import (
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import GeometryPlacementError, Vec3
-from protrepair.io import read_structure_string, write_structure_string
+from protrepair.io import read_structure, read_structure_string, write_structure_string
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite
 from protrepair.structure.geometry import AtomGeometry
-from protrepair.structure.labels import AtomRef
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import BondRelationshipType, StructureTopology
@@ -281,6 +282,32 @@ def test_terminal_preparation_uses_coupled_graph(source, kind):
     )
     assert site.free_terminal_assumption
     _assert_realized(source, patch)
+
+
+def test_modified_terminal_placement_preserves_canonical_selenium_identity() -> None:
+    source = read_structure(Path("tests/fixtures/corpus/pdb1j2v.ent"))
+    residue_id = ResidueId("A", 1)
+    context = PolymerMicrostateContext(source)
+    site = context.backbone_site(
+        residue_id,
+        build_default_component_library().require("MSE"),
+        PolymerChemicalSite.BACKBONE_N,
+        assume_free_chain_ends=True,
+    )
+    patch = microstate.place_polymer_microstate_hydrogens(
+        context, residue_id, site, preferences=pras_microstate_preferences(site)
+    )
+    assert len(patch.hydrogens) == 3
+    repaired = _assert_realized(source, patch)
+    selenium = AtomRef(residue_id, "SE")
+    assert (
+        repaired.constitution.atom_site_at(
+            repaired.constitution.atom_index(selenium)
+        ).element
+        == "SE"
+    )
+
+    assert repaired.provenance.ingress is source.provenance.ingress
 
 
 def _with_original_h(source, component, name, element, parent):

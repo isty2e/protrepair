@@ -17,6 +17,7 @@ from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.topology import BondRelationshipType
+from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.completion.hydrogen.core import materialize_hydrogens_core
 from protrepair.transformer.continuous.binding import (
     RecommendedContinuousRelaxationBinding,
@@ -28,6 +29,35 @@ from protrepair.workflow.contracts import LigandPolicy, StructureIngressOptions
 from protrepair.workflow.contracts.request import WorkflowTransformRequests
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
+
+
+def test_1j2v_public_preparation_completes_mse_terminal_hydrogens() -> None:
+    source = read_structure(FIXTURES / "corpus/pdb1j2v.ent")
+    residue_id = ResidueId("A", 1)
+    result = add_hydrogens(source, target_residue_ids=frozenset((residue_id,)))
+    residue = result.structure.constitution.residue_or_ligand(residue_id)
+    assert residue is not None and residue.component_id == "MSE"
+    assert {"H1", "H2", "H3"} <= set(residue.atom_site_names())
+    nitrogen = result.structure.constitution.atom_index(AtomRef(residue_id, "N"))
+    assert result.structure.topology.formal_charge(nitrogen) == 1
+    assert not any(
+        issue.kind is ValidationIssueKind.GEOMETRY_PLACEMENT_SKIPPED
+        for issue in result.issues
+    )
+
+    selenium = AtomRef(residue_id, "SE")
+    assert (
+        result.structure.constitution.atom_site_at(
+            result.structure.constitution.atom_index(selenium)
+        ).element
+        == "SE"
+    )
+    for index, _position in source.geometry.iter_positions():
+        ref = source.constitution.atom_ref_at(index)
+        assert result.structure.geometry.atom_geometry(
+            result.structure.constitution.atom_index(ref)
+        ) == source.geometry.atom_geometry(index)
+    assert result.structure.provenance.ingress is source.provenance.ingress
 
 
 @pytest.mark.parametrize("refine", (False, True))

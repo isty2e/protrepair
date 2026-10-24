@@ -209,7 +209,7 @@ def _coordinate_stencil(
     for atom in sorted(residue.atom_sites, key=lambda entry: entry.name):
         if atom.is_hydrogen():
             continue
-        native = Chem.Atom(atom.element)
+        native = Chem.Atom(atom.element.title())
         if atom.name in selected:
             target = selected[atom.name]
             native.SetFormalCharge(target.charge)
