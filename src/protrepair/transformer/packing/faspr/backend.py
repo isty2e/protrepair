@@ -128,11 +128,13 @@ class FasprPackingBackend:
         """Execute one canonical packing plan through FASPR."""
 
         plan.assert_supported_by(self.capabilities())
+
         # A protected no-op must not hide a malformed sequence or mutation.
         requested_sequence = build_faspr_sequence_override(plan) or "".join(
             FASPR_ALPHABET.sequence_for_residues(plan.polymer_residue_sites())
         )
         components = FASPR_ALPHABET.components_for_sequence(requested_sequence)
+
         mutations = frozenset(
             residue.residue_id
             for residue, component in zip(
@@ -140,19 +142,22 @@ class FasprPackingBackend:
             )
             if residue.component_id != component
         )
+
         selection = FasprPackingSelection.from_plan(plan)
         linked_mutations = mutations & frozenset(selection.linked_residue_ids)
         if linked_mutations:
-            raise PackingBackendExecutionError(
+            raise PackingError(
                 "FASPR mutation would invalidate linked chemistry at "
                 + ", ".join(rid.display_token() for rid in sorted(linked_mutations))
             )
+
         frozen_mutations = mutations & frozenset(plan.fixed_residue_ids())
         if frozen_mutations:
             raise PackingError(
                 "packing target_sequence would mutate frozen residues: "
                 + ", ".join(rid.display_token() for rid in sorted(frozen_mutations))
             )
+
         effective_plan = selection.restricted_plan()
         issues = _linked_sidechain_packing_issues(selection)
         if effective_plan is None:

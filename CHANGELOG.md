@@ -18,6 +18,8 @@
   `packing_preserved_linked_sidechain`; all-protected requests return unchanged
   without running FASPR. Incomplete linked sidechains may still be rebuilt,
   with `packing_rebuilt_linked_sidechain` reporting unconstrained link geometry
+- reject target sequences that mutate linked or explicitly frozen residues with
+  `PackingError` before running FASPR
 - omit selected alternate-location labels from public and calculation PDB atom
   records and their LINK endpoints, so default RDKit and FASPR readers retain
   those atoms. Keep the existing input conformer selection, coordinates,

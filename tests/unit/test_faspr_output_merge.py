@@ -14,6 +14,7 @@ from protrepair.chemistry.microstate.resolution import (
     AppliedMicrostateChoice,
     MicrostateSelectionBasis,
 )
+from protrepair.errors import PackingError
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat, write_structure_string
 from protrepair.io.pdb_projection import pdb_without_conect
@@ -587,7 +588,8 @@ def test_mutation_cannot_silently_discard_linked_sidechain_chemistry(
         component="GLY",
         remove=frozenset({"CB"}),
     )
-    with pytest.raises(PackingBackendExecutionError, match="linked chemistry"):
+    error = PackingError if cross_residue else PackingBackendExecutionError
+    with pytest.raises(error, match="linked chemistry"):
         _pack(
             tmp_path,
             source,

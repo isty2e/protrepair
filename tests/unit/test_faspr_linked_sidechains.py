@@ -389,17 +389,15 @@ def test_sequence_mapping_survives_removing_protected_residues(
     assert len(result.issues) == 2
 
 
-@pytest.mark.parametrize(
-    "sequence,error", (("A", PackingBackendExecutionError), ("X", PackingError))
-)
+@pytest.mark.parametrize("sequence", ("A", "X"))
 def test_protection_does_not_silently_cancel_mutations_or_invalid_sequences(
-    sequence: str, error: type[Exception], monkeypatch: pytest.MonkeyPatch
+    sequence: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def forbidden(self: FasprPackingBackend) -> FasprRuntimeAssets:
         raise AssertionError("invalid request reached native setup")
 
     monkeypatch.setattr(FasprPackingBackend, "runtime_assets", forbidden)
-    with pytest.raises(error):
+    with pytest.raises(PackingError):
         execute_sidechain_packing(
             linked_structure(),
             PackingSpec(
