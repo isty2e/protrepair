@@ -258,7 +258,7 @@ class FixedPolymerHydrogenContext:
         active = self.template
         parents = set(
             active.template_hydrogen_anchor_by_name(
-                active.expected_hydrogen_atom_names()
+                active.expected_polymer_hydrogen_atom_names()
             ).values()
         ).difference(controlled_parent_names, self.unresolved_parent_names)
         if cysteine_sg_explained:
@@ -327,7 +327,7 @@ class FixedPolymerHydrogenContext:
             Selected template names outside unresolved fixed parents.
         """
         template = self.template
-        names = template.expected_hydrogen_atom_names()
+        names = template.expected_polymer_hydrogen_atom_names()
         anchors = template.template_hydrogen_anchor_by_name(names)
         return tuple(
             name

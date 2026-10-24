@@ -20,6 +20,17 @@ heavy-atom set before workflow execution. Invalid SMILES/evidence mappings or
 mismatched overrides raise `ValueError`; they do not silently fall through to
 another chemistry source.
 
+Retained templates include their declared H on atoms named `N` or `OXT`.
+Those names do not make a cofactor part of a polymer backbone. Polymer H
+preparation applies its own backbone and terminal rules; retained preparation
+uses the selected component state and its existing connection checks. This is
+dictionary-backed preparation, not pKa prediction.
+
+Retained standard amino acids are not fully supported: the built-in H rules
+for standard residues are written for polymer context and omit H on backbone
+N and OXT. A component can therefore report complete H coverage while native
+export rejects its remaining open valences.
+
 ## Connectivity And Existing Hydrogens
 
 A source CONECT record can identify two connected atoms without declaring a bond
@@ -65,6 +76,13 @@ component's H inventory. Typed hydrogen bonds and metal coordination are not
 covalent substitutions; preserving them does not certify a coordination site.
 These connection checks inspect relationships already present in canonical
 topology; they do not infer missing external bonds from spatial proximity.
+
+An HET-only peptide without declared entity or linkage evidence can remain
+retained under the [ingress policy](ingress-policy.md#canonical-residue-roles).
+Its template H follows that declared graph; completion does not recover the
+missing peptide links. RDKit readability alone does not establish that those
+links are present. Retained contacts require the ligand-inclusive clash scope;
+the default clash scope excludes them.
 
 For a complete neutral aldehyde scaffold, one deposited carbonyl `C`--polymer
 backbone `N` single link can select an acyl-amide application. The carbonyl H

@@ -727,7 +727,7 @@ class PolymerMicrostateSite:
             return (
                 ("H",) if self.linkage is PeptideLinkage.LINKED else ("H1", "H2", "H3")
             )
-        template_names = self.template.expected_hydrogen_atom_names()
+        template_names = self.template.expected_polymer_hydrogen_atom_names()
         anchors = self.template.template_hydrogen_anchor_by_name(template_names)
         names = [name for name in template_names if anchors.get(name) == parent_name]
         extra = {

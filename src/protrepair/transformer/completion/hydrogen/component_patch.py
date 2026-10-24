@@ -17,7 +17,6 @@ from protrepair.transformer.completion.atom.rigid_frame import (
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 
-BACKBONE_OR_TERMINAL_HEAVY_ATOM_NAMES: frozenset[str] = frozenset({"N", "OXT"})
 MINIMUM_HYDROGEN_ANCHOR_COUNT = 3
 MAX_LOCAL_HYDROGEN_ANCHOR_HOPS = 3
 
@@ -127,7 +126,7 @@ def generate_component_hydrogen_patch(
 def supported_component_hydrogen_atoms(
     idealized_component: IdealizedComponent,
 ) -> tuple[IdealizedComponentAtom, ...]:
-    """Return non-backbone hydrogen atoms in packaged order."""
+    """Return parented component H with ideal coordinates, in packaged order."""
 
     hydrogen_atoms: list[IdealizedComponentAtom] = []
     for atom in idealized_component.atoms:
@@ -136,9 +135,6 @@ def supported_component_hydrogen_atoms(
 
         anchor_atom_name = idealized_component.hydrogen_anchor_atom_name(atom.atom_name)
         if anchor_atom_name is None:
-            continue
-
-        if anchor_atom_name in BACKBONE_OR_TERMINAL_HEAVY_ATOM_NAMES:
             continue
 
         hydrogen_atoms.append(atom)

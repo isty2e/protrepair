@@ -217,8 +217,8 @@ def test_external_span_spec_rejects_noncontiguous_target_scope() -> None:
         )
 
 
-def test_external_span_spec_rejects_hetero_residue_in_donor_chain() -> None:
-    """Chain membership must not conceal a retained non-polymer donor role."""
+def test_external_span_spec_rejects_retained_donor_on_polymer_chain_id() -> None:
+    """A retained component is not a donor merely by sharing a chain identifier."""
 
     donor_structure = build_structure(
         chains=(
@@ -226,16 +226,16 @@ def test_external_span_spec_rejects_hetero_residue_in_donor_chain() -> None:
                 "X",
                 (
                     _build_residue("ALA", "X", 1),
-                    _build_residue("CYS", "X", 2, is_hetero=True),
                     _build_residue("ASP", "X", 3),
                 ),
             ),
         ),
+        ligands=(_build_residue("CYS", "X", 2, is_hetero=True),),
         source_format=FileFormat.PDB,
         source_name="donor",
     )
 
-    with pytest.raises(ValueError, match="canonical polymer residues"):
+    with pytest.raises(ValueError, match="occupy a polymer chain"):
         ExternalSpanReconstructionSpec(
             scope=AbsentResidueSpanScope(
                 preceding_residue_id=ResidueId("A", 1),
@@ -247,25 +247,25 @@ def test_external_span_spec_rejects_hetero_residue_in_donor_chain() -> None:
         )
 
 
-def test_external_span_spec_rejects_hetero_donor_flank() -> None:
-    """An anchored span must use polymer donor context at that boundary."""
+def test_retained_component_does_not_supply_polymer_donor_flank() -> None:
+    """A retained neighbor cannot replace required polymer donor context."""
 
     donor_structure = build_structure(
         chains=(
             chain_payload(
                 "X",
                 (
-                    _build_residue("ALA", "X", 1, is_hetero=True),
                     _build_residue("CYS", "X", 2),
                     _build_residue("ASP", "X", 3),
                 ),
             ),
         ),
+        ligands=(_build_residue("ALA", "X", 1, is_hetero=True),),
         source_format=FileFormat.PDB,
         source_name="donor",
     )
 
-    with pytest.raises(ValueError, match="donor flanks"):
+    with pytest.raises(ValueError, match="requires donor context before"):
         ExternalSpanReconstructionSpec(
             scope=AbsentResidueSpanScope(
                 preceding_residue_id=ResidueId("A", 1),

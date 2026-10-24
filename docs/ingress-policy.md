@@ -120,6 +120,11 @@ The chain/ligand partition and `ResidueSite.is_hetero` are projections of this
 decision. Completion, topology, diagnostics, and ligand handling must not
 reclassify residues independently.
 
+For structures built through the Python API, `StructureConstitution` takes
+membership in `chains` or `ligands` as the role and normalizes `is_hetero`
+accordingly. Supplied member objects are not mutated. This does not classify
+components chemically or infer missing connections.
+
 ### Evidence Precedence
 
 Ingress applies evidence in this order:

@@ -5,10 +5,10 @@ from dataclasses import dataclass
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.library import ComponentLibrary
-from protrepair.chemistry.component.semantics import (
-    IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS,
+from protrepair.chemistry.component.template import (
+    POLYMER_CONTEXT_HYDROGEN_ANCHORS,
+    ResidueTemplate,
 )
-from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.structure.constitution import ResidueSite, StructureConstitution
 from protrepair.structure.slots import ResidueIndex
 from protrepair.structure.topology import (
@@ -197,7 +197,7 @@ def polymer_template_hydrogen_bond_definitions_for_names(
     return template_hydrogen_bond_definitions_for_names(
         template,
         hydrogen_atom_names=hydrogen_atom_names,
-        excluded_anchor_atom_names=IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS,
+        excluded_anchor_atom_names=POLYMER_CONTEXT_HYDROGEN_ANCHORS,
     )
 
 
