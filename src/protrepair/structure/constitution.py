@@ -1,7 +1,7 @@
 """Structure constitution facets for the redesigned ProtRepair package."""
 
 from collections.abc import Collection, Iterable, Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from protrepair.errors import (
     AtomNotFoundError,
@@ -322,7 +322,20 @@ class ChainSite:
 
 @dataclass(frozen=True, slots=True)
 class StructureConstitution:
-    """One structure-level constitution over chains and ligands."""
+    """One structure-level constitution over chains and retained components.
+
+    Parameters
+    ----------
+    chains : tuple[ChainSite, ...]
+        Polymer chains. Their residues receive ``is_hetero=False``.
+    ligands : tuple[ResidueSite, ...]
+        Retained components. Their residues receive ``is_hetero=True``.
+
+    Notes
+    -----
+    Role flags follow membership without mutating supplied member objects.
+    This normalization neither identifies chemical species nor infers links.
+    """
 
     chains: tuple[ChainSite, ...]
     ligands: tuple[ResidueSite, ...]
@@ -352,8 +365,22 @@ class StructureConstitution:
     )
 
     def __post_init__(self) -> None:
-        chains = tuple(self.chains)
-        ligands = tuple(self.ligands)
+        chains = tuple(
+            replace(
+                chain,
+                residues=tuple(
+                    replace(residue, is_hetero=False) if residue.is_hetero else residue
+                    for residue in chain.residues
+                ),
+            )
+            if any(residue.is_hetero for residue in chain.residues)
+            else chain
+            for chain in self.chains
+        )
+        ligands = tuple(
+            residue if residue.is_hetero else replace(residue, is_hetero=True)
+            for residue in self.ligands
+        )
         chain_ids = tuple(chain.chain_id for chain in chains)
 
         if len(chain_ids) != len(set(chain_ids)):

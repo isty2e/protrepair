@@ -12,6 +12,9 @@
 
 ### Changed
 
+- normalize residue `is_hetero` flags from chain/ligand membership when building
+  a constitution, keeping whole and projected observations consistent without
+  mutating supplied residue objects
 - preserve complete sidechains with inter-residue covalent, disulfide,
   coordination or untyped links during FASPR packing. Pack the remaining
   selected residues and report each protected residue with
