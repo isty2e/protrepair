@@ -363,4 +363,6 @@ def test_packing_preserves_mixed_chain_insertion_isotope_and_retained_chemistry(
     assert result.packed_structure.topology == source.topology
     assert result.packed_structure.provenance is source.provenance
     assert result.changed_residue_ids == ()
-    assert result.issues == ()
+    assert [(issue.kind.value, issue.residue_id) for issue in result.issues] == [
+        ("packing_preserved_linked_sidechain", ResidueId("A", 10, "A"))
+    ]

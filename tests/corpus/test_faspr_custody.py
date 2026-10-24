@@ -17,6 +17,7 @@ from protrepair.io.gemmi_writer import write_pdb_structure_string_without_conect
 from protrepair.state import HydrogenCoverageState
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ChainSite, StructureConstitution
+from protrepair.structure.disulfide import disulfide_atom_ref_pairs
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
@@ -49,6 +50,146 @@ def prepared_1aho() -> ProteinStructure:
         for atom in prepared.topology.atom_topologies
     )
     return prepared
+
+
+def test_native_full_packing_preserves_all_four_1aho_disulfide_residues(
+    prepared_1aho: ProteinStructure,
+) -> None:
+    source = prepared_1aho
+    pairs = disulfide_atom_ref_pairs(source)
+    assert len(pairs) == 4
+    protected = frozenset(ref.residue_id for pair in pairs for ref in pair)
+    result = execute_sidechain_packing(source, PackingSpec(backend_name="faspr"))
+    assert result.changed_residue_ids
+    assert not (protected & frozenset(result.changed_residue_ids))
+    assert {
+        issue.residue_id
+        for issue in result.issues
+        if issue.kind is ValidationIssueKind.PACKING_PRESERVED_LINKED_SIDECHAIN
+    } == protected
+    for rid in protected:
+        before = source.constitution.chain(rid.chain_id).residue(rid)
+        after = result.packed_structure.constitution.chain(rid.chain_id).residue(rid)
+        assert after == before
+        for atom in before.atom_sites:
+            ref = AtomRef(rid, atom.name)
+            assert result.packed_structure.geometry.atom_geometry(
+                result.packed_structure.constitution.atom_index(ref)
+            ) == source.geometry.atom_geometry(source.constitution.atom_index(ref))
+    assert disulfide_atom_ref_pairs(result.packed_structure) == pairs
+
+
+@pytest.mark.parametrize("scope", (PackingScope.FULL, PackingScope.LOCAL))
+def test_native_mixed_packing_keeps_disulfide_and_runs_unlinked_target(
+    prepared_1aho: ProteinStructure, scope: PackingScope
+) -> None:
+    target = ResidueId("A", 2)
+    protected = (ResidueId("A", 26), ResidueId("A", 48))
+    result = execute_sidechain_packing(
+        prepared_1aho,
+        PackingSpec(
+            backend_name="faspr", scope=scope, mutable_residue_ids=(target, *protected)
+        ),
+    )
+    assert target in result.changed_residue_ids
+    assert not (set(protected) & set(result.changed_residue_ids))
+    assert [
+        issue.residue_id
+        for issue in result.issues
+        if issue.kind is ValidationIssueKind.PACKING_PRESERVED_LINKED_SIDECHAIN
+    ] == list(protected)
+    for rid in protected:
+        before = prepared_1aho.geometry.residue_geometry(
+            constitution=prepared_1aho.constitution,
+            residue_index=prepared_1aho.constitution.residue_index(rid),
+        )
+        after = result.packed_structure.geometry.residue_geometry(
+            constitution=result.packed_structure.constitution,
+            residue_index=result.packed_structure.constitution.residue_index(rid),
+        )
+        assert after == before
+
+
+@pytest.mark.parametrize(
+    "filename,target",
+    (
+        ("pdb1f4t.ent", ResidueId("A", 317)),
+        ("pdb6nbb.ent", ResidueId("A", 46)),
+        ("pdb2a1d.ent", ResidueId("B", 195)),
+    ),
+)
+def test_actual_metal_and_ligand_links_are_preserved_without_native_setup(
+    filename: str, target: ResidueId, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = read_structure(Path("tests/fixtures/corpus") / filename)
+
+    def forbidden(self: FasprPackingBackend) -> FasprRuntimeAssets:
+        pytest.fail("all-protected request must not resolve native assets")
+
+    monkeypatch.setattr(FasprPackingBackend, "runtime_assets", forbidden)
+    result = execute_sidechain_packing(
+        source,
+        PackingSpec(
+            backend_name="faspr",
+            scope=PackingScope.LOCAL,
+            mutable_residue_ids=(target,),
+        ),
+    )
+    assert result.packed_structure is source
+    assert result.changed_residue_ids == ()
+    assert [(issue.kind, issue.residue_id) for issue in result.issues] == [
+        (ValidationIssueKind.PACKING_PRESERVED_LINKED_SIDECHAIN, target)
+    ]
+
+
+def test_raw_all_protected_1aho_does_not_require_completing_unselected_residues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
+    protected = (ResidueId("A", 26), ResidueId("A", 48))
+
+    def forbidden(self: FasprPackingBackend) -> FasprRuntimeAssets:
+        pytest.fail("all-protected request must not resolve native assets")
+
+    monkeypatch.setattr(FasprPackingBackend, "runtime_assets", forbidden)
+    result = execute_sidechain_packing(
+        source, PackingSpec(backend_name="faspr", mutable_residue_ids=protected)
+    )
+    assert result.packed_structure is source
+    assert tuple(issue.residue_id for issue in result.issues) == protected
+
+
+@pytest.mark.parametrize("reference", (False, True))
+def test_workflow_reports_all_protected_packing_without_native_execution(
+    prepared_1aho: ProteinStructure,
+    monkeypatch: pytest.MonkeyPatch,
+    reference: bool,
+) -> None:
+    protected = (ResidueId("A", 26), ResidueId("A", 48))
+    spec = PackingSpec(
+        backend_name="faspr", scope=PackingScope.LOCAL, mutable_residue_ids=protected
+    )
+    requests = (
+        transform_requests(reference_sidechain_packing=spec)
+        if reference
+        else transform_requests(committed_sidechain_packing=spec)
+    )
+
+    def forbidden(self: FasprPackingBackend) -> FasprRuntimeAssets:
+        pytest.fail("protected workflow packing must not access native assets")
+
+    monkeypatch.setattr(FasprPackingBackend, "runtime_assets", forbidden)
+    result = process_structure(prepared_1aho, transform_requests=requests)
+    assert result.structure.geometry == prepared_1aho.geometry
+    assert (
+        tuple(
+            issue.residue_id
+            for issue in result.issues
+            if issue.kind is ValidationIssueKind.PACKING_PRESERVED_LINKED_SIDECHAIN
+        )
+        == protected
+    )
+    assert not result.relaxation_executions
 
 
 def test_native_packing_accepts_supported_tryptophan_mutation(

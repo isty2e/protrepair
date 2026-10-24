@@ -62,9 +62,29 @@ added, but backbone and polar-site H can remain unresolved with warnings.
 The H-inventory goal excludes unresolved sites, so satisfying that goal does
 not certify mutation chemistry as complete.
 
-For same-component repacking, retaining a disulfide, metal or ligand-link bond
-does not guarantee its geometry is preserved when linked sidechain atoms are
-allowed to move. The linked-mutation guard does not cover ordinary repacking.
+For same-component repacking, FASPR preserves a complete sidechain when one of
+its heavy atoms has an inter-residue covalent, disulfide, coordination or untyped
+link. Both source-declared and inferred links count. Backbone-only links and
+hydrogen bonds do not exclude a sidechain. Completeness means that all expected
+standard heavy atoms are present; protection does not depend on a geometry
+cutoff or certify that the input geometry is good.
+
+Other selected residues are still packed. Each protected residue is reported by
+`packing_preserved_linked_sidechain`, with its residue identifier. This applies
+to full, subset and workflow requests alike. If every remaining target is
+protected, the packing input is returned unchanged without starting FASPR or
+changing its hydrogens. Automatic workflow planning omits these no-work proposals.
+Linked mutations remain errors rather than being silently skipped.
+A target sequence also cannot mutate a residue explicitly frozen by the caller.
+
+An incomplete linked sidechain can still be rebuilt. The original links remain
+in the canonical topology, but FASPR does not constrain their geometry; the
+result reports `packing_rebuilt_linked_sidechain` for that residue. In particular,
+an existing linked atom does not protect the residue if another expected heavy
+atom is missing. Link-aware construction and joint optimization of connected
+sidechains are not supported by this packing path. Preservation also does not
+guarantee clash-free surroundings: other packed sidechains can approach the
+protected atoms.
 
 ## Polymer Hydrogen Merge
 

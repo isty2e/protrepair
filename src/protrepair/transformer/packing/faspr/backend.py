@@ -46,6 +46,10 @@ from protrepair.transformer.packing.faspr.paths import (
     faspr_executable_path,
 )
 from protrepair.transformer.packing.faspr.projection import FasprPDBProjection
+from protrepair.transformer.packing.faspr.selection import (
+    FIXED_BACKBONE_ATOM_NAMES,
+    FasprPackingSelection,
+)
 
 BACKBONE_ATOM_NAMES: frozenset[str] = frozenset({"N", "CA", "C", "O"})
 FASPR_HYDROGEN_PRESERVATION_HEAVY_ATOM_TOLERANCE_ANGSTROM = 0.05
@@ -124,7 +128,47 @@ class FasprPackingBackend:
         """Execute one canonical packing plan through FASPR."""
 
         plan.assert_supported_by(self.capabilities())
-        execution_input = FasprExecutionInput.from_plan(plan)
+
+        # A protected no-op must not hide a malformed sequence or mutation.
+        requested_sequence = build_faspr_sequence_override(plan) or "".join(
+            FASPR_ALPHABET.sequence_for_residues(plan.polymer_residue_sites())
+        )
+        components = FASPR_ALPHABET.components_for_sequence(requested_sequence)
+
+        mutations = frozenset(
+            residue.residue_id
+            for residue, component in zip(
+                plan.polymer_residue_sites(), components, strict=True
+            )
+            if residue.component_id != component
+        )
+
+        selection = FasprPackingSelection.from_plan(plan)
+        linked_mutations = mutations & frozenset(selection.linked_residue_ids)
+        if linked_mutations:
+            raise PackingError(
+                "FASPR mutation would invalidate linked chemistry at "
+                + ", ".join(rid.display_token() for rid in sorted(linked_mutations))
+            )
+
+        frozen_mutations = mutations & frozenset(plan.fixed_residue_ids())
+        if frozen_mutations:
+            raise PackingError(
+                "packing target_sequence would mutate frozen residues: "
+                + ", ".join(rid.display_token() for rid in sorted(frozen_mutations))
+            )
+
+        effective_plan = selection.restricted_plan()
+        issues = _linked_sidechain_packing_issues(selection)
+        if effective_plan is None:
+            return PackingResult(
+                packed_structure=plan.structure,
+                changed_residue_ids=(),
+                issues=issues,
+                backend_name="faspr",
+            )
+
+        execution_input = FasprExecutionInput.from_plan(effective_plan)
         try:
             runtime_assets = self.runtime_assets()
         except (OSError, PackingBackendError) as error:
@@ -138,7 +182,7 @@ class FasprPackingBackend:
             timeout_seconds=self.timeout_seconds,
         )
         changed_residue_ids = plan.changed_residue_ids_after(packed_structure)
-        issues = infer_packing_issues(plan, packed_structure)
+        issues = (*issues, *infer_packing_issues(plan, packed_structure))
         return PackingResult(
             packed_structure=packed_structure,
             changed_residue_ids=changed_residue_ids,
@@ -784,7 +828,7 @@ def _faspr_merged_heavy_bonds(
         )
         altered = any(
             ref.residue_id in mutations
-            and ref.atom_name not in BACKBONE_ATOM_NAMES | {"OXT"}
+            and ref.atom_name not in FIXED_BACKBONE_ATOM_NAMES
             for ref in refs
         )
         if altered:
@@ -1232,6 +1276,42 @@ def _heavy_atom_formal_charge_by_name(
         )
         if atom_name in heavy_atom_names
     )
+
+
+def _linked_sidechain_packing_issues(
+    selection: FasprPackingSelection,
+) -> tuple[ValidationIssue, ...]:
+    """Report excluded movement separately from unconstrained reconstruction."""
+
+    issues: list[ValidationIssue] = []
+    for kind, residue_ids, message in (
+        (
+            ValidationIssueKind.PACKING_PRESERVED_LINKED_SIDECHAIN,
+            selection.protected_residue_ids,
+            (
+                "FASPR preserved this complete linked sidechain instead of repacking "
+                "it; existing link geometry was not optimized"
+            ),
+        ),
+        (
+            ValidationIssueKind.PACKING_REBUILT_LINKED_SIDECHAIN,
+            selection.incomplete_linked_residue_ids,
+            (
+                "FASPR rebuilt this incomplete linked sidechain; canonical links were "
+                "retained, but their geometry was not constrained"
+            ),
+        ),
+    ):
+        for residue_id in residue_ids:
+            issues.append(
+                ValidationIssue.for_residue(
+                    kind=kind,
+                    severity=IssueSeverity.WARNING,
+                    message=message,
+                    residue_id=residue_id,
+                )
+            )
+    return tuple(issues)
 
 
 def infer_packing_issues(

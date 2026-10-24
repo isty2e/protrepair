@@ -454,7 +454,13 @@ def test_ambiguous_disulfide_partners_expand_each_local_packing_domain(
 def test_overlapping_disulfide_expansions_are_one_attemptable_packing_scope(
     prepared_structure, clusters, monkeypatch
 ):
-    overlapping = (_cluster(16, 22), _cluster(22, 26))
+    overlapping = tuple(
+        RDKitProximityBondCluster(
+            residue_ids=(ResidueId("A", 10), *cluster.residue_ids),
+            bonds=(*cluster.bonds, _cluster(10, first).bonds[0]),
+        )
+        for first, cluster in ((16, _cluster(16, 22)), (22, _cluster(22, 26)))
+    )
     cysteines = frozenset(ResidueId("A", n) for n in (16, 22, 26))
     monkeypatch.setattr(
         packing_proposals,
@@ -476,6 +482,7 @@ def test_overlapping_disulfide_expansions_are_one_attemptable_packing_scope(
             backend_name="faspr",
             scope=PackingScope.LOCAL,
             mutable_residue_ids=(
+                ResidueId("A", 10),
                 ResidueId("A", 16),
                 ResidueId("A", 22),
                 ResidueId("A", 26),
@@ -485,3 +492,80 @@ def test_overlapping_disulfide_expansions_are_one_attemptable_packing_scope(
 
     assert _plan(prepared_structure, memory) == (expected,)
     assert _plan(prepared_structure, memory.with_attempted_transformer(expected)) == ()
+
+
+def test_all_protected_automatic_clusters_are_not_proposed(
+    prepared_structure, clusters, monkeypatch
+):
+    protected = (_cluster(26, 48),)
+    monkeypatch.setattr(
+        packing_proposals,
+        "rdkit_no_conect_extra_proximity_bond_clusters",
+        lambda *args, **kwargs: protected,
+    )
+    memory = WorkflowPlannerMemory(
+        relaxation_executions=(_native_return(protected[0].bonds[0].atom_ref_1),)
+    )
+    assert _plan(prepared_structure, memory) == ()
+    assert _plan(prepared_structure, memory) == ()
+
+
+def test_mixed_automatic_scope_retains_protected_partners_and_suppresses_repetition(
+    prepared_structure, clusters, monkeypatch
+):
+    mixed = (_cluster(2, 26),)
+    monkeypatch.setattr(
+        packing_proposals,
+        "rdkit_no_conect_extra_proximity_bond_clusters",
+        lambda *args, **kwargs: mixed,
+    )
+    monkeypatch.setattr(
+        packing_proposals,
+        "ambiguous_disulfide_partner_residue_ids_by_residue",
+        lambda structure: {ResidueId("A", 26): frozenset((ResidueId("A", 48),))},
+    )
+    memory = WorkflowPlannerMemory(
+        relaxation_executions=(_native_return(mixed[0].bonds[0].atom_ref_1),)
+    )
+    actions = _plan(prepared_structure, memory)
+    assert len(actions) == 1
+    action = actions[0]
+    assert isinstance(action, CommittedPackingTransformer)
+    assert action.packing_spec.mutable_residue_ids == (
+        ResidueId("A", 2),
+        ResidueId("A", 26),
+        ResidueId("A", 48),
+    )
+    assert (
+        _plan(
+            prepared_structure,
+            memory.with_attempted_transformer(
+                action, input_structure=prepared_structure
+            ),
+        )
+        == ()
+    )
+
+
+def test_explicit_all_protected_scope_is_attempted_only_once(prepared_structure):
+    spec = PackingSpec(
+        backend_name="faspr",
+        scope=PackingScope.LOCAL,
+        mutable_residue_ids=(ResidueId("A", 26), ResidueId("A", 48)),
+    )
+    requests = WorkflowTransformRequests(committed_sidechain_packing=spec)
+    memory = WorkflowPlannerMemory()
+    actions = _plan(prepared_structure, memory, requests=requests)
+    assert len(actions) == 1
+    action = actions[0]
+    assert isinstance(action, CommittedPackingTransformer)
+    assert (
+        _plan(
+            prepared_structure,
+            memory.with_attempted_transformer(
+                action, input_structure=prepared_structure
+            ),
+            requests=requests,
+        )
+        == ()
+    )
