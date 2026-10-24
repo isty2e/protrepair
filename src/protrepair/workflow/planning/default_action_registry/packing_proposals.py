@@ -10,7 +10,9 @@ from protrepair.diagnostics.parser_topology import (
 from protrepair.scope import AtomSetScope
 from protrepair.state import HydrogenCoverageState
 from protrepair.structure.labels import ResidueId
+from protrepair.transformer.packing.domain import PackingPlan
 from protrepair.transformer.packing.faspr.backend import FASPR_ALPHABET
+from protrepair.transformer.packing.faspr.selection import FasprPackingSelection
 from protrepair.transformer.packing.spec import PackingMode, PackingScope, PackingSpec
 from protrepair.workflow.actions.packing import CommittedPackingTransformer
 from protrepair.workflow.planning.action.domain import WorkflowActionDomain
@@ -110,6 +112,7 @@ def _automatic_committed_packing_specs(
         domain.structure
     )
     packing_specs: list[PackingSpec] = []
+    movable_ids: frozenset[ResidueId] | None = None
     for cluster in clusters:
         if not cluster.bonds:
             continue
@@ -128,14 +131,22 @@ def _automatic_committed_packing_specs(
             ambiguous_partners=ambiguous_partners,
         )
         if residue_ids:
-            packing_specs.append(
-                PackingSpec(
-                    backend_name="faspr",
-                    mode=PackingMode.PACK,
-                    scope=PackingScope.LOCAL,
-                    mutable_residue_ids=residue_ids,
+            if movable_ids is None:
+                selection = FasprPackingSelection.from_plan(
+                    PackingPlan.from_inputs(
+                        domain.structure, PackingSpec(backend_name="faspr")
+                    )
                 )
+                movable_ids = frozenset(selection.movable_residue_ids())
+            if not movable_ids.intersection(residue_ids):
+                continue
+            spec = PackingSpec(
+                backend_name="faspr",
+                mode=PackingMode.PACK,
+                scope=PackingScope.LOCAL,
+                mutable_residue_ids=residue_ids,
             )
+            packing_specs.append(spec)
 
     return tuple(dict.fromkeys(packing_specs))
 

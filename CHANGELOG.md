@@ -12,6 +12,12 @@
 
 ### Changed
 
+- preserve complete sidechains with inter-residue covalent, disulfide,
+  coordination or untyped links during FASPR packing. Pack the remaining
+  selected residues and report each protected residue with
+  `packing_preserved_linked_sidechain`; all-protected requests return unchanged
+  without running FASPR. Incomplete linked sidechains may still be rebuilt,
+  with `packing_rebuilt_linked_sidechain` reporting unconstrained link geometry
 - omit selected alternate-location labels from public and calculation PDB atom
   records and their LINK endpoints, so default RDKit and FASPR readers retain
   those atoms. Keep the existing input conformer selection, coordinates,

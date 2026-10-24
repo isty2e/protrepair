@@ -44,6 +44,8 @@ class ValidationIssueKind(str, Enum):
     UNSUPPORTED_HYDROGENATION = "unsupported_hydrogenation"
     UNRESOLVED_POLYMER_HYDROGEN = "unresolved_polymer_hydrogen"
     PACKING_INVALIDATED_HYDROGENS = "packing_invalidated_hydrogens"
+    PACKING_PRESERVED_LINKED_SIDECHAIN = "packing_preserved_linked_sidechain"
+    PACKING_REBUILT_LINKED_SIDECHAIN = "packing_rebuilt_linked_sidechain"
     RETAINED_NON_POLYMER_FALLBACK_USED = "retained_non_polymer_fallback_used"
     RETAINED_NON_POLYMER_FALLBACK_BLOCKED = "retained_non_polymer_fallback_blocked"
     UNSUPPORTED_COMPONENT = "unsupported_component"
