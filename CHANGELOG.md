@@ -98,6 +98,11 @@
 
 ### Fixed
 
+- use reversible calculation labels for every FASPR request, restoring original
+  chain boundaries and residue identifiers before merging coordinates. This
+  prevents adjacent residues in different chains from being combined and allows
+  packing with long chain names or residue numbers outside PDB's range. Reject
+  unsupported target-sequence codes with `PackingError` before native execution
 - attribute RDKit parser failures, inferred bonds and H/D/T attachment warnings
   to the original canonical atoms, including two-character chains and serial
   gaps from `TER` records. Known-bond checks and repair targets use the same

@@ -1,5 +1,6 @@
 """Canonical chemistry and motion boundaries through the real packing backend."""
 
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,11 +13,14 @@ from tests.support.request_builders import (
 from protrepair.api import process_structure
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.io import read_structure
+from protrepair.io.gemmi_writer import write_pdb_structure_string_without_conect
 from protrepair.state import HydrogenCoverageState
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.constitution import ChainSite, StructureConstitution
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
+from protrepair.structure.topology import StructureTopology
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.packing import (
     PackingPlan,
@@ -30,6 +34,7 @@ from protrepair.transformer.packing.faspr.backend import (
     FasprRuntimeAssets,
     PackingBackendError,
 )
+from protrepair.transformer.packing.faspr.projection import FasprPDBProjection
 
 pytestmark = pytest.mark.corpus
 
@@ -44,6 +49,124 @@ def prepared_1aho() -> ProteinStructure:
         for atom in prepared.topology.atom_topologies
     )
     return prepared
+
+
+def test_native_packing_accepts_supported_tryptophan_mutation(
+    prepared_1aho: ProteinStructure,
+) -> None:
+    target = ResidueId("A", 10)
+    result = execute_sidechain_packing(
+        prepared_1aho,
+        PackingSpec(
+            backend_name="faspr",
+            mutable_residue_ids=(target,),
+            target_sequence="W",
+        ),
+    )
+    assert (
+        result.packed_structure.constitution.chain("A").residue(target).component_id
+        == "TRP"
+    )
+
+
+@pytest.mark.parametrize(
+    ("chain_ids", "numbers", "insertion"),
+    (
+        (("A", "B"), (1, 32), None),
+        (("AA", "AB"), (1, 32), None),
+        (("LONG-CHAIN", "OTHER-LONG"), (-1000, 1223056), "b"),
+    ),
+)
+def test_native_packing_restores_chain_boundaries_and_non_pdb_identifiers(
+    prepared_1aho: ProteinStructure,
+    chain_ids: tuple[str, str],
+    numbers: tuple[int, int],
+    insertion: str | None,
+) -> None:
+    base = prepared_1aho
+    residues = tuple(base.iter_residue_sites())
+    midpoint = len(residues) // 2
+    chains = tuple(
+        ChainSite(
+            chain_id=chain_id,
+            residues=tuple(
+                replace(
+                    residue, residue_id=ResidueId(chain_id, first + offset, insertion)
+                )
+                for offset, residue in enumerate(group)
+            ),
+        )
+        for chain_id, first, group in zip(
+            chain_ids, numbers, (residues[:midpoint], residues[midpoint:]), strict=True
+        )
+    )
+    constitution = StructureConstitution(chains=chains, ligands=())
+    source = ProteinStructure.from_payload(
+        constitution=constitution,
+        geometry=StructureGeometry(
+            constitution=constitution, atom_geometries=base.geometry.atom_geometries
+        ),
+        topology=StructureTopology(
+            constitution=constitution,
+            atom_topologies=base.topology.atom_topologies,
+            bonds=base.topology.bonds,
+        ),
+        provenance=replace(base.provenance, microstate_choices=()),
+    )
+    result = execute_sidechain_packing(
+        source,
+        PackingSpec(
+            backend_name="faspr",
+            frozen_residue_ids=tuple(
+                residue.residue_id for residue in source.iter_residue_sites()
+            ),
+        ),
+    )
+    assert result.packed_structure.constitution == source.constitution
+    assert result.packed_structure.geometry == source.geometry
+    assert result.packed_structure.topology == source.topology
+    assert result.packed_structure.provenance is source.provenance
+    assert result.changed_residue_ids == ()
+    assert result.issues == ()
+
+
+def test_native_calculation_relabeling_preserves_packing_coordinates(
+    tmp_path: Path,
+) -> None:
+    source = read_structure(Path("tests/fixtures/pdb/1aho_faspr_input.pdb"))
+    projection = FasprPDBProjection(source.constitution.chains)
+    inputs = (
+        write_pdb_structure_string_without_conect(source),
+        projection.render(source),
+    )
+    assets = FasprRuntimeAssets.from_executable_path(None)
+    outputs = []
+    for index, text in enumerate(inputs):
+        input_path = tmp_path / f"input-{index}.pdb"
+        output_path = tmp_path / f"output-{index}.pdb"
+        input_path.write_text(text, encoding="utf-8")
+        subprocess.run(
+            [
+                str(assets.executable_path),
+                "-i",
+                str(input_path),
+                "-o",
+                str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+            cwd=assets.executable_path.parent,
+        )
+        outputs.append(
+            tuple(
+                (line[12:20], line[30:54])
+                for line in output_path.read_text(encoding="utf-8").splitlines()
+                if line.startswith("ATOM")
+            )
+        )
+    assert len(outputs[0]) == 504
+    assert outputs[0] == outputs[1]
 
 
 @pytest.mark.parametrize("altloc", ["B", "b"])
