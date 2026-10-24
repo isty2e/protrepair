@@ -111,8 +111,6 @@
 
 ### Fixed
 
-- convert canonical heavy-element symbols to RDKit spelling during polymer H
-  placement, restoring MSE backbone H without changing stored element identities
 - retain dictionary H on retained-component atoms named `N` or `OXT`, restoring
   missing amine H in SAH/SAM, carboxyl hydroxyl H in SAH, and declared N/OXT H
   in retained modified amino acids such as MSE and HYP. Polymer backbone and
