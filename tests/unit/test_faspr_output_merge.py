@@ -2,6 +2,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.support.faspr_output import relabel_faspr_output
 from tests.unit.test_faspr_backend import (
     build_heavy_only_packed_structure,
     build_hydrogenated_test_structure,
@@ -48,9 +49,12 @@ def _pack(
     executable = copy_template_faspr_executable(tmp_path)
     (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
     (tmp_path / "packed-output.pdb").write_text(
-        write_structure_string(native, FileFormat.PDB)
-        if include_native_connections
-        else pdb_without_conect(native),
+        relabel_faspr_output(
+            write_structure_string(native, FileFormat.PDB)
+            if include_native_connections
+            else pdb_without_conect(native),
+            source,
+        ),
         encoding="utf-8",
     )
     plan = PackingPlan.from_inputs(

@@ -17,7 +17,7 @@ from protrepair.diagnostics import (
     ValidationIssue,
     ValidationIssueKind,
 )
-from protrepair.errors import ResidueNotFoundError
+from protrepair.errors import PackingError, ResidueNotFoundError
 from protrepair.geometry import Vec3
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import (
@@ -32,6 +32,24 @@ from protrepair.transformer.packing import (
     PackingScope,
     PackingSpec,
 )
+from protrepair.transformer.packing.alphabet import PackingAlphabet
+
+
+def test_packing_alphabet_resolves_normalized_and_fixed_tokens_in_order() -> None:
+    alphabet = PackingAlphabet({" ala ": "a", "TRP": "W"})
+    assert alphabet.components_for_sequence("aWwA") == ("ALA", "TRP", "TRP", "ALA")
+    assert alphabet.components_for_sequence(iter(("W", "a"))) == ("TRP", "ALA")
+    assert alphabet.components_for_sequence(()) == ()
+    with pytest.raises(PackingError, match="does not support token 'X'"):
+        alphabet.components_for_sequence("AX")
+
+
+def test_packing_alphabet_does_not_guess_between_components_sharing_a_token() -> None:
+    alphabet = PackingAlphabet({"ALA": "A", "CUSTOM": "A", "TRP": "W"})
+    assert alphabet.require_token("ALA") == alphabet.require_token("CUSTOM") == "A"
+    assert alphabet.components_for_sequence("w") == ("TRP",)
+    with pytest.raises(PackingError, match="token 'A' is ambiguous"):
+        alphabet.components_for_sequence("a")
 
 
 def test_packing_spec_normalizes_backend_name_and_residue_lists() -> None:

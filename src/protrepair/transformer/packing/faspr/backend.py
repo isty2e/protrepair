@@ -18,15 +18,7 @@ from protrepair.errors import (
     ResidueNotFoundError,
     StructureNormalizationError,
 )
-from protrepair.io.gemmi_ingress import (
-    MAX_STRUCTURE_INPUT_BYTES,
-    read_structure_string_with_policy,
-)
-from protrepair.io.gemmi_writer import write_pdb_structure_string_without_conect
-from protrepair.io.ingress_policy import (
-    LigandHandling,
-    StructureNormalizationPolicy,
-)
+from protrepair.io.gemmi_ingress import MAX_STRUCTURE_INPUT_BYTES
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import (
     AtomSite,
@@ -36,7 +28,6 @@ from protrepair.structure.constitution import (
 )
 from protrepair.structure.geometry import AtomGeometry, StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
-from protrepair.structure.provenance import FileFormat
 from protrepair.structure.topology import (
     AtomTopology,
     BondProvenance,
@@ -54,6 +45,7 @@ from protrepair.transformer.packing.domain import (
 from protrepair.transformer.packing.faspr.paths import (
     faspr_executable_path,
 )
+from protrepair.transformer.packing.faspr.projection import FasprPDBProjection
 
 BACKBONE_ATOM_NAMES: frozenset[str] = frozenset({"N", "CA", "C", "O"})
 FASPR_HYDROGEN_PRESERVATION_HEAVY_ATOM_TOLERANCE_ANGSTROM = 0.05
@@ -464,11 +456,15 @@ def build_faspr_sequence_override(plan: PackingPlan) -> str | None:
         None if plan.spec.target_sequence is None else tuple(plan.spec.target_sequence)
     )
     if replacement_tokens is not None:
+        if plan.spec.mutable_residue_ids is None and len(replacement_tokens) != len(
+            sequence_override
+        ):
+            raise PackingError(
+                "full-structure target_sequence must match polymer residue count"
+            )
+        FASPR_ALPHABET.components_for_sequence(replacement_tokens)
+
         if plan.spec.mutable_residue_ids is None:
-            if len(replacement_tokens) != len(sequence_override):
-                raise PackingError(
-                    "full-structure target_sequence must match polymer residue count"
-                )
             sequence_override = list(replacement_tokens)
         else:
             replacement_by_residue_id = dict(
@@ -499,13 +495,31 @@ def run_faspr(
 ) -> ProteinStructure:
     """Run FASPR on one prepared structure and return the packed result."""
 
+    sequence = execution_input.sequence_override or "".join(
+        FASPR_ALPHABET.sequence_for_residues(
+            execution_input.plan.polymer_residue_sites()
+        )
+    )
+    expected_components = FASPR_ALPHABET.components_for_sequence(sequence)
+    try:
+        projection = FasprPDBProjection(execution_input.structure.constitution.chains)
+        input_text = projection.render(
+            _polymer_only_structure(execution_input.structure)
+        )
+        projected_input = projection.decode(
+            input_text,
+            expected_components=tuple(
+                residue.component_id
+                for residue in execution_input.plan.polymer_residue_sites()
+            ),
+        )
+    except (ValueError, StructureNormalizationError) as error:
+        raise PackingBackendError(f"FASPR input projection failed: {error}") from error
+
     with TemporaryDirectory(prefix="protrepair-faspr-") as temp_dir_name:
         temp_dir = Path(temp_dir_name)
         input_path = temp_dir / "input.pdb"
         output_path = temp_dir / "output.pdb"
-        input_text = write_pdb_structure_string_without_conect(
-            _polymer_only_structure(execution_input.structure)
-        )
         input_path.write_text(input_text, encoding="utf-8")
 
         command = [str(executable_path), "-i", str(input_path), "-o", str(output_path)]
@@ -547,6 +561,9 @@ def run_faspr(
             error_message = _bounded_output_excerpt(
                 stderr_path,
             ) or _bounded_output_excerpt(stdout_path)
+            error_message = projection.describe_native_error(
+                error_message, max_bytes=MAX_FASPR_CAPTURED_OUTPUT_BYTES
+            )
             raise PackingBackendExecutionError(
                 "FASPR execution failed with "
                 f"exit code {completed.returncode}: {error_message}"
@@ -559,25 +576,16 @@ def run_faspr(
 
         try:
             _assert_faspr_output_size(output_path)
-            packed_core = read_structure_string_with_policy(
+            packed_core = projection.decode(
                 output_path.read_text(encoding="utf-8"),
-                FileFormat.PDB,
-                policy=StructureNormalizationPolicy(
-                    ligand_handling=LigandHandling.REJECT
-                ),
-                source_name=execution_input.structure.provenance.ingress.source_name,
+                expected_components=expected_components,
             )
-        except StructureNormalizationError as error:
+        except (StructureNormalizationError, ValueError) as error:
             raise PackingBackendExecutionError(
-                "FASPR output did not normalize as a polymer-only structure"
+                f"FASPR output did not normalize as a polymer-only structure: {error}"
             ) from error
 
     validate_faspr_output_shape(execution_input.plan, packed_core)
-    projected_input = read_structure_string_with_policy(
-        input_text,
-        FileFormat.PDB,
-        policy=StructureNormalizationPolicy(ligand_handling=LigandHandling.REJECT),
-    )
     try:
         packed_core = _restore_faspr_canonical_state(
             packed_core=packed_core,

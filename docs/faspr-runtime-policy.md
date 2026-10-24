@@ -4,6 +4,9 @@ ProtRepair treats FASPR as a heavy-atom side-chain packing backend. FASPR does
 not own general hydrogen completion, retained-ligand chemistry, or final
 workflow planning.
 
+Target sequences use FASPR's 20 standard amino-acid codes. Unsupported codes,
+including `X` and `B`, raise `PackingError` before FASPR is launched.
+
 ## Coordinate And Chemical Authority
 
 The packing plan decides which sidechains may move. Backbone atoms, OXT,
@@ -33,7 +36,16 @@ full-fidelity policy. Selected altloc labels are blank in that temporary input
 so FASPR does not skip those atoms; canonical labels are preserved in the result.
 Large B factors do not block packing: the merge restores
 canonical scalar metadata rather than adopting the native file's values.
-This does not extend FASPR's native chain-ID or numbering capabilities.
+
+Every request uses temporary calculation labels rather than the original chain
+and residue identifiers. The adapter restores the original identifiers and
+chain partitions before merging coordinates. Long chain names, insertion codes
+and residue numbers outside PDB's range therefore do not prevent packing.
+The calculation namespace holds 692,937 residues; larger requests are rejected
+before temporary files or a subprocess are created. Output with missing,
+duplicate, reordered or foreign residue records is rejected rather than partly
+adopted. Native error locations are translated only when they identify a unique
+source residue; other excerpts are marked as native FASPR output.
 
 Requested component mutations discard the old residue's H, charges and saved
 microstate choices. New sidechain bonds come from the new component template,

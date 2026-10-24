@@ -15,10 +15,12 @@ from tests.support.canonical_builders import (
     chain_payload,
     residue_payload,
 )
+from tests.support.faspr_output import relabel_faspr_output
 
 import protrepair.transformer.packing.faspr.backend as faspr_backend
 import protrepair.transformer.packing.faspr.paths as faspr_paths
 from protrepair.diagnostics import ValidationIssueKind
+from protrepair.errors import PackingError
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, write_structure_string
 from protrepair.structure import ProteinStructure
@@ -42,6 +44,7 @@ from protrepair.transformer.packing import (
     PackingPlan,
     PackingScope,
     PackingSpec,
+    execute_sidechain_packing,
 )
 from protrepair.transformer.packing.faspr.backend import (
     FasprPackingBackend,
@@ -73,7 +76,8 @@ def test_faspr_calculation_transport_preserves_b_factors_outside_public_pdb_capa
     executable_path = copy_template_faspr_executable(tmp_path)
     (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
     (tmp_path / "packed-output.pdb").write_text(
-        write_structure_string(base, FileFormat.PDB), encoding="utf-8"
+        relabel_faspr_output(write_structure_string(base, FileFormat.PDB), structure),
+        encoding="utf-8",
     )
     plan = PackingPlan.from_inputs(
         structure, PackingSpec(backend_name="faspr", scope=PackingScope.FULL)
@@ -252,6 +256,59 @@ def test_faspr_backend_builds_local_sequence_override_with_fake_executable(
     assert result.backend_name == "faspr"
     assert result.changed_residue_ids == ()
     assert result.packed_structure.chain_ids() == ("A",)
+
+
+@pytest.mark.parametrize("token", ("X", "B", "Z", "J", "O", "U", "β"))
+@pytest.mark.parametrize("selection", ("whole", "full_subset", "local_subset"))
+def test_faspr_rejects_unsupported_target_codes_before_runtime_access(
+    token: str, selection: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = build_heavy_only_packed_structure(residue_count=2)
+    subset = selection != "whole"
+    spec = PackingSpec(
+        backend_name="faspr",
+        scope=PackingScope.LOCAL if selection == "local_subset" else PackingScope.FULL,
+        mutable_residue_ids=(ResidueId("A", 2),) if subset else None,
+        target_sequence=token if subset else "A" + token,
+    )
+
+    def unexpected_runtime_access(
+        self: FasprPackingBackend,
+    ) -> faspr_backend.FasprRuntimeAssets:
+        pytest.fail("Invalid sequence must be rejected before runtime asset access")
+
+    monkeypatch.setattr(
+        FasprPackingBackend, "runtime_assets", unexpected_runtime_access
+    )
+    with pytest.raises(PackingError, match="does not support.*" + token.upper()):
+        execute_sidechain_packing(source, spec)
+
+
+@pytest.mark.parametrize("selection", ("whole", "full_subset", "local_subset"))
+def test_faspr_valid_target_codes_keep_fixed_residue_casing(selection: str) -> None:
+    source = build_heavy_only_packed_structure(residue_count=2)
+    subset = selection != "whole"
+    plan = PackingPlan.from_inputs(
+        source,
+        PackingSpec(
+            backend_name="faspr",
+            scope=PackingScope.LOCAL
+            if selection == "local_subset"
+            else PackingScope.FULL,
+            mutable_residue_ids=(ResidueId("A", 2),) if subset else None,
+            target_sequence=" w\n" if subset else "a w\n",
+        ),
+    )
+    sequence = faspr_backend.build_faspr_sequence_override(plan)
+    assert sequence == ("aW" if subset else "AW")
+
+
+def test_faspr_alphabet_round_trips_all_supported_component_codes() -> None:
+    alphabet = faspr_backend.FASPR_ALPHABET
+    components = tuple(alphabet.token_by_component_id)
+    tokens = "".join(alphabet.require_token(component) for component in components)
+    assert alphabet.components_for_sequence(tokens) == components
+    assert alphabet.components_for_sequence(tokens.lower()) == components
 
 
 def test_faspr_backend_launches_relative_executable_path_with_sibling_assets(
@@ -673,11 +730,14 @@ def test_faspr_backend_rejects_motion_of_fixed_residue_heavy_atoms(
     structure = build_hydrogenated_test_structure()
     residue_id = structure.constitution.chain("A").residues[0].residue_id
     output_template_path.write_text(
-        write_structure_string(
-            build_heavy_only_packed_structure(
-                first_residue_atom_positions={"CB": Vec3(9.0, 9.0, 9.0)}
+        relabel_faspr_output(
+            write_structure_string(
+                build_heavy_only_packed_structure(
+                    first_residue_atom_positions={"CB": Vec3(9.0, 9.0, 9.0)}
+                ),
+                FileFormat.PDB,
             ),
-            FileFormat.PDB,
+            structure,
         ),
         encoding="utf-8",
     )
@@ -706,12 +766,15 @@ def test_faspr_backend_preserves_and_drops_hydrogens_per_residue(
     first_residue_id = structure.constitution.chain("A").residues[0].residue_id
     second_residue_id = structure.constitution.chain("A").residues[1].residue_id
     output_template_path.write_text(
-        write_structure_string(
-            build_heavy_only_packed_structure(
-                residue_count=2,
-                atom_positions_by_residue_seq_num={2: {"CB": Vec3(9.0, 9.0, 9.0)}},
+        relabel_faspr_output(
+            write_structure_string(
+                build_heavy_only_packed_structure(
+                    residue_count=2,
+                    atom_positions_by_residue_seq_num={2: {"CB": Vec3(9.0, 9.0, 9.0)}},
+                ),
+                FileFormat.PDB,
             ),
-            FileFormat.PDB,
+            structure,
         ),
         encoding="utf-8",
     )
@@ -751,7 +814,10 @@ def test_faspr_backend_retains_current_charge_when_native_omits_it(
     structure = build_charged_hydrogenated_test_structure()
     residue_id = structure.constitution.chain("A").residues[0].residue_id
     output_template_path.write_text(
-        write_structure_string(build_heavy_only_packed_structure(), FileFormat.PDB),
+        relabel_faspr_output(
+            write_structure_string(build_heavy_only_packed_structure(), FileFormat.PDB),
+            structure,
+        ),
         encoding="utf-8",
     )
     plan = PackingPlan.from_inputs(
@@ -929,7 +995,7 @@ def test_faspr_backend_wraps_unknown_polymer_output_residue_id(
 
     with pytest.raises(
         PackingBackendExecutionError,
-        match="number of polymer residues",
+        match="changed residue identifiers or order",
     ):
         FasprPackingBackend(executable_path=executable_path).pack(plan)
 
@@ -943,26 +1009,31 @@ def test_faspr_backend_rejects_dropped_polymer_output_residue(
     output_template_path = tmp_path / "packed-output.pdb"
     (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
     output_template_path.write_text(
-        write_structure_string(
-            build_structure(
-                chains=(
-                    chain_payload(
-                        "A",
-                        (
-                            build_residue("ALA", "A", 1, ("N", "CA", "C", "O", "CB")),
-                            build_residue(
-                                "LEU",
-                                "A",
-                                2,
-                                ("N", "CA", "C", "O", "CB", "CG"),
+        relabel_faspr_output(
+            write_structure_string(
+                build_structure(
+                    chains=(
+                        chain_payload(
+                            "A",
+                            (
+                                build_residue(
+                                    "ALA", "A", 1, ("N", "CA", "C", "O", "CB")
+                                ),
+                                build_residue(
+                                    "LEU",
+                                    "A",
+                                    2,
+                                    ("N", "CA", "C", "O", "CB", "CG"),
+                                ),
                             ),
                         ),
                     ),
+                    source_format=FileFormat.PDB,
+                    source_name="faspr-dropped-polymer-output",
                 ),
-                source_format=FileFormat.PDB,
-                source_name="faspr-dropped-polymer-output",
+                FileFormat.PDB,
             ),
-            FileFormat.PDB,
+            build_test_structure(),
         ),
         encoding="utf-8",
     )
@@ -987,32 +1058,37 @@ def test_faspr_backend_rejects_reordered_polymer_output_residues(
     output_template_path = tmp_path / "packed-output.pdb"
     (tmp_path / "dun2010bbdep.bin").write_text("stub", encoding="utf-8")
     output_template_path.write_text(
-        write_structure_string(
-            build_structure(
-                chains=(
-                    chain_payload(
-                        "A",
-                        (
-                            build_residue(
-                                "LEU",
-                                "A",
-                                2,
-                                ("N", "CA", "C", "O", "CB", "CG"),
-                            ),
-                            build_residue("ALA", "A", 1, ("N", "CA", "C", "O", "CB")),
-                            build_residue(
-                                "TYR",
-                                "A",
-                                3,
-                                ("N", "CA", "C", "O", "CB", "CG"),
+        relabel_faspr_output(
+            write_structure_string(
+                build_structure(
+                    chains=(
+                        chain_payload(
+                            "A",
+                            (
+                                build_residue(
+                                    "LEU",
+                                    "A",
+                                    2,
+                                    ("N", "CA", "C", "O", "CB", "CG"),
+                                ),
+                                build_residue(
+                                    "ALA", "A", 1, ("N", "CA", "C", "O", "CB")
+                                ),
+                                build_residue(
+                                    "TYR",
+                                    "A",
+                                    3,
+                                    ("N", "CA", "C", "O", "CB", "CG"),
+                                ),
                             ),
                         ),
                     ),
+                    source_format=FileFormat.PDB,
+                    source_name="faspr-reordered-polymer-output",
                 ),
-                source_format=FileFormat.PDB,
-                source_name="faspr-reordered-polymer-output",
+                FileFormat.PDB,
             ),
-            FileFormat.PDB,
+            build_test_structure(),
         ),
         encoding="utf-8",
     )
