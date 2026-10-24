@@ -18,6 +18,8 @@ from protrepair.chemistry.component.semantics import (
 )
 from protrepair.structure.constitution import ResidueSite
 
+POLYMER_CONTEXT_HYDROGEN_ANCHORS: frozenset[str] = frozenset({"N", "OXT"})
+
 
 @dataclass(frozen=True, slots=True)
 class ResidueTemplate:
@@ -142,13 +144,42 @@ class ResidueTemplate:
         return tuple(name for name in self.expected_heavy_atom_names() if name != "OXT")
 
     def expected_hydrogen_atom_names(self) -> tuple[str, ...]:
-        """Return expected hydrogen atoms for hydrogen-completeness workflows."""
+        """Return the H inventory declared by the component semantics.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Declared H names without additional polymer-context exclusions.
+        """
 
         hydrogen_semantics = self.hydrogen_semantics
         if hydrogen_semantics is None:
             return ()
 
         return hydrogen_semantics.expected_hydrogen_atom_names()
+
+    def expected_polymer_hydrogen_atom_names(self) -> tuple[str, ...]:
+        """Project template H not owned by polymer backbone or terminal sites.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Declared H excluding N/OXT parents. Polymer preparation supplies
+            those inventories from selected site chemistry, not this projection.
+
+        Raises
+        ------
+        ValueError
+            Hydrogen programs declare conflicting parent identities.
+        """
+
+        names = self.expected_hydrogen_atom_names()
+        anchors = self.template_hydrogen_anchor_by_name(names)
+        return tuple(
+            name
+            for name in names
+            if anchors.get(name) not in POLYMER_CONTEXT_HYDROGEN_ANCHORS
+        )
 
     def heavy_atom_charge_requirements(self) -> tuple[tuple[str, int], ...]:
         """Return the component's declared heavy-atom charge assignment.

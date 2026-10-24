@@ -213,7 +213,7 @@ def _polymer_expected_hydrogen_atom_names(
                 names = list(
                     fixed_context.hydrogen_atom_names()
                     if fixed_context is not None
-                    else template.expected_hydrogen_atom_names()
+                    else template.expected_polymer_hydrogen_atom_names()
                 )
                 anchors = template.template_hydrogen_anchor_by_name(names)
                 names = [name for name in names if anchors.get(name) not in controlled]
@@ -254,7 +254,7 @@ def _extend_chain_expected_hydrogens(
         expected_hydrogen_atom_names = list(
             fixed_context.hydrogen_atom_names()
             if fixed_context is not None
-            else template.expected_hydrogen_atom_names()
+            else template.expected_polymer_hydrogen_atom_names()
         )
         if (
             residue.component_id == "CYS"

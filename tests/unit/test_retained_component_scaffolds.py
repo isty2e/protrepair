@@ -115,8 +115,8 @@ def component_structure(
     )
 
 
-@pytest.mark.parametrize("component_id,count", (("SAH", 17), ("SAM", 20)))
-def test_complete_retained_oxt_component_receives_legacy_hydrogens(
+@pytest.mark.parametrize("component_id,count", (("SAH", 20), ("SAM", 22)))
+def test_complete_retained_oxt_component_receives_dictionary_hydrogens(
     component_id: str, count: int
 ) -> None:
     source = component_structure(component_id)
@@ -247,11 +247,11 @@ def test_every_bundled_component_accepts_its_full_heavy_inventory(
         ("NAD", ("C7N", "O7N", "N7N"), 25),
         ("NAD", ("N6A",), 25),
         ("NAP", ("C7N", "O7N", "N7N"), 26),
-        ("SAM", ("CE",), 17),
+        ("SAM", ("CE",), 19),
         ("FMN", ("O3P",), 20),
     ),
 )
-def test_partial_charged_and_neutral_components_keep_legacy_h_placement(
+def test_partial_components_place_h_on_available_parents(
     component_id: str, omitted: tuple[str, ...], count: int
 ) -> None:
     source = component_structure(component_id, omitted=omitted)

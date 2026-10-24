@@ -384,7 +384,7 @@ def _fixed_hydrogens(
                 static_names = static_names.difference(
                     name
                     for name, parent in template.template_hydrogen_anchor_by_name(
-                        template.expected_hydrogen_atom_names()
+                        template.expected_polymer_hydrogen_atom_names()
                     ).items()
                     if parent == "ND2"
                 )
@@ -661,7 +661,7 @@ def _secondary_amide_patch(
     names = {
         name
         for name, anchor in binding.template.template_hydrogen_anchor_by_name(
-            binding.template.expected_hydrogen_atom_names()
+            binding.template.expected_polymer_hydrogen_atom_names()
         ).items()
         if anchor == "ND2"
     }

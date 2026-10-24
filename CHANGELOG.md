@@ -14,7 +14,9 @@
 
 - normalize residue `is_hetero` flags from chain/ligand membership when building
   a constitution, keeping whole and projected observations consistent without
-  mutating supplied residue objects
+  mutating supplied residue objects. API-created chain residues marked hetero
+  now participate as polymer residues in packing, Ramachandran analysis and
+  donor validation
 - preserve complete sidechains with inter-residue covalent, disulfide,
   coordination or untyped links during FASPR packing. Pack the remaining
   selected residues and report each protected residue with
@@ -109,6 +111,11 @@
 
 ### Fixed
 
+- retain dictionary H on retained-component atoms named `N` or `OXT`, restoring
+  missing amine H in SAH/SAM, carboxyl hydroxyl H in SAH, and declared N/OXT H
+  in retained modified amino acids such as MSE and HYP. Polymer backbone and
+  terminal H remain selected by polymer chemistry; existing source-charge and
+  linked-component checks still apply
 - use reversible calculation labels for every FASPR request, restoring original
   chain boundaries and residue identifiers before merging coordinates. This
   prevents adjacent residues in different chains from being combined and allows

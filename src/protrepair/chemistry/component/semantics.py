@@ -70,9 +70,6 @@ ROTATABLE_HYDROGEN_ATOM_NAMES: Mapping[
         )
     }
 )
-IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS: frozenset[str] = frozenset(
-    {"N", "OXT"}
-)
 
 
 class IdealGeometryHeavyAtomMode(str, Enum):
@@ -119,15 +116,19 @@ class IdealGeometryHydrogenSemantics:
     )
 
     def expected_hydrogen_atom_names(self) -> tuple[str, ...]:
-        """Return hydrogen atom names owned by this idealized hydrogen source."""
+        """Return dictionary H names with a declared heavy-atom parent.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Parented H in component order, including N/OXT-bound H. Application
+            to polymer or linked chemistry is resolved outside this source.
+        """
 
         expected_hydrogen_atom_names: list[str] = []
         for atom in self.component.hydrogen_atoms():
             anchor_atom_name = self.component.hydrogen_anchor_atom_name(atom.atom_name)
-            if (
-                anchor_atom_name is None
-                or anchor_atom_name in IDEALIZED_BACKBONE_OR_TERMINAL_HYDROGEN_ANCHORS
-            ):
+            if anchor_atom_name is None:
                 continue
 
             expected_hydrogen_atom_names.append(atom.atom_name)

@@ -142,7 +142,7 @@ class PolarContactChemistry:
                 aliases: dict[str, set[str]] = {}
                 numbered_families: dict[tuple[str, str], set[str]] = {}
                 for name, parent in template.template_hydrogen_anchor_by_name(
-                    template.expected_hydrogen_atom_names()
+                    template.expected_polymer_hydrogen_atom_names()
                 ).items():
                     families.setdefault(name.strip("0123456789"), set()).add(parent)
                     aliases.setdefault(name, set()).add(parent)

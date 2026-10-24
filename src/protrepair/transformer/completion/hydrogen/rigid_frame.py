@@ -53,6 +53,11 @@ class RigidFrameHydrogenPlacementTransformer(
             residue=residue,
             patch=patch,
             semantics=self.semantics,
+            selected_hydrogen_names=frozenset(
+                self.site.template.expected_hydrogen_atom_names()
+                if residue.is_hetero
+                else self.site.template.expected_polymer_hydrogen_atom_names()
+            ),
         )
         if patch is None:
             return context.source_snapshot
