@@ -19,6 +19,7 @@ from protrepair.diagnostics import ClashPolicy, has_clashes_in_residue_projectio
 from protrepair.errors import RefinementError
 from protrepair.scope import AtomSetScope
 from protrepair.state import (
+    HydrogenCoverageState,
     RetainedNonPolymerChemistryReadinessFact,
     StereochemistryState,
     StructureProjectionStateFacts,
@@ -103,7 +104,7 @@ class ContinuousRelaxationReadinessPolicy:
                 "any force field can be bound"
             )
 
-        if facts.hydrogen_coverage_fact.value.needs_hydrogenation():
+        if facts.hydrogen_coverage_fact.value is not HydrogenCoverageState.COMPLETE:
             return ContinuousRelaxationReadinessAssessment(
                 "continuous relaxation requires hydrogens to be fully realized "
                 "before any force field can be bound"
@@ -131,9 +132,9 @@ class ContinuousRelaxationReadinessPolicy:
         if not chemistry_facts.component_support_state.is_fully_supported():
             retained_failures = tuple(
                 f"{fact.residue_id.display_token()} {fact.component_id}: "
-                f"{fact.chemistry_failure_reason}"
+                f"{fact.chemistry_failure.detail}"
                 for fact in chemistry_facts.retained_non_polymer_facts
-                if fact.chemistry_failure_reason
+                if fact.chemistry_failure is not None
             )
             return ContinuousRelaxationReadinessAssessment(
                 "continuous relaxation requires fully supported components before "
@@ -156,7 +157,10 @@ class ContinuousRelaxationReadinessPolicy:
                 "any force field can be bound"
             )
 
-        if chemistry_facts.hydrogen_coverage_state.needs_hydrogenation():
+        if (
+            chemistry_facts.hydrogen_coverage_state
+            is not HydrogenCoverageState.COMPLETE
+        ):
             return ContinuousRelaxationReadinessAssessment(
                 "continuous relaxation requires hydrogens to be fully realized "
                 "before any force field can be bound"
@@ -254,9 +258,28 @@ class ContinuousRelaxationReadinessPolicy:
         Returns
         -------
         str or None
-            The first graph or H-preparation blocker, otherwise None. Unresolved
-            chemistry support is assessed separately before this query.
+            The first chemistry, graph or H-preparation blocker, otherwise None.
         """
+
+        unresolved = tuple(
+            fact
+            for fact in retained_non_polymer_facts
+            if not fact.is_supported() or fact.hydrogen_coverage_state is None
+        )
+        if unresolved:
+            return (
+                "continuous relaxation requires admitted retained non-polymer "
+                "chemistry before any force field can be bound: "
+                + "; ".join(
+                    f"{fact.residue_id.display_token()} {fact.component_id}: "
+                    + (
+                        fact.chemistry_failure.detail
+                        if fact.chemistry_failure is not None
+                        else "H coverage cannot be verified"
+                    )
+                    for fact in unresolved
+                )
+            )
 
         if any(
             fact.is_supported()
@@ -270,7 +293,9 @@ class ContinuousRelaxationReadinessPolicy:
             )
 
         if any(
-            retained_fact.requires_hydrogen_completion()
+            retained_fact.hydrogen_applicability_state.is_applicable()
+            and retained_fact.hydrogen_coverage_state
+            is not HydrogenCoverageState.COMPLETE
             for retained_fact in retained_non_polymer_facts
         ):
             return (

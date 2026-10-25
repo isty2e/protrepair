@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
 from protrepair.scope import (
     ResidueBoundaryScope,
     ResidueSetScope,
@@ -196,6 +199,9 @@ def already_satisfied_requested_goals(
     requested_goals: tuple[WorkflowGoal, ...],
     component_library: ComponentLibrary | None = None,
     chemistry_observation: StructureChemistryObservation | None = None,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence, ...
+    ] = (),
 ) -> tuple[WorkflowGoal, ...]:
     """Return requested goals satisfied by the current structure.
 
@@ -208,7 +214,9 @@ def already_satisfied_requested_goals(
     component_library : ComponentLibrary or None
         Active definitions, or defaults.
     chemistry_observation : StructureChemistryObservation or None
-        Shared observation with the same carrier/library and default evidence policy.
+        Shared observation with the same carrier, library and evidence.
+    retained_non_polymer_chemistry_evidence : tuple
+        Explicit chemistry used by this goal observation.
 
     Returns
     -------
@@ -223,10 +231,16 @@ def already_satisfied_requested_goals(
     observation = chemistry_observation
     if observation is None:
         observation = StructureChemistryObservation(
-            structure, component_library=component_library
+            structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
     else:
-        observation.require_context(structure, component_library=component_library)
+        observation.require_context(
+            structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
 
     snapshot: ProteinStructureSnapshot | None = None
     boundary_facts: StructureBoundaryStateFacts | None = None
@@ -307,6 +321,18 @@ def observed_requested_goal_value(
             snapshot,
             boundary_facts,
         )
+
+    if isinstance(
+        value, HydrogenCoverageState
+    ) and OBSERVED_ATOM_SCOPE_LOWERING.supports(scope):
+        if snapshot is None:
+            snapshot = ProteinStructureSnapshot.from_structure(structure)
+        atom_scope = OBSERVED_ATOM_SCOPE_LOWERING.lower(scope, carrier=snapshot)
+        scoped_chemistry = observation.projected_facts(
+            tuple(dict.fromkeys(ref.residue_id for ref in atom_scope.atom_refs))
+        )[1]
+        if _whole_structure_hydrogen_goal_observed_state(scoped_chemistry) is None:
+            return None, snapshot, boundary_facts
 
     observed_state, active_snapshot = _lowered_scope_observed_state_value(
         structure,
@@ -467,6 +493,7 @@ def _whole_structure_hydrogen_goal_observed_state(
         return None
     if any(
         not retained_fact.is_supported()
+        or retained_fact.hydrogen_coverage_state is None
         for retained_fact in chemistry_readiness_facts.retained_non_polymer_facts
     ):
         return None
@@ -486,6 +513,7 @@ def _whole_structure_hydrogen_goal_observed_state(
         if (
             retained_fact.hydrogen_applicability_state
             is not HydrogenApplicabilityState.NOT_APPLICABLE
+            and retained_fact.hydrogen_coverage_state is not None
         )
     )
     if not applicable_coverage_states:

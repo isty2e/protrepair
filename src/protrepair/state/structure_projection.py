@@ -94,9 +94,23 @@ def derive_hydrogen_applicability_state(
 
 def derive_hydrogen_coverage_state(
     residue_facts: tuple[ResidueProjectionStateFacts, ...],
-) -> HydrogenCoverageState:
-    """Derive hydrogen coverage over one coarse residue projection."""
+) -> HydrogenCoverageState | None:
+    """Derive hydrogen coverage over one coarse residue projection.
 
+    Parameters
+    ----------
+    residue_facts : tuple[ResidueProjectionStateFacts, ...]
+        Residues included in this H-coverage observation.
+
+    Returns
+    -------
+    HydrogenCoverageState or None
+        Comparable inventory coverage, or None if any included inventory cannot
+        be determined. An indeterminate contribution is not an empty inventory.
+    """
+
+    if any(fact.hydrogen_coverage_fact.value is None for fact in residue_facts):
+        return None
     applicable_residue_facts = tuple(
         residue_fact
         for residue_fact in residue_facts
@@ -168,7 +182,7 @@ class StructureProjectionStateFacts:
     ]
     hydrogen_coverage_fact: CarrierScopedState[
         ProteinStructure,
-        HydrogenCoverageState,
+        HydrogenCoverageState | None,
     ]
     stereochemistry_fact: CarrierScopedState[
         ProteinStructure,
@@ -475,7 +489,7 @@ class ProteinStructureObservation:
     backbone_heavy_atom_completeness_state: BackboneHeavyAtomCompletenessState
     sidechain_heavy_atom_completeness_state: SidechainHeavyAtomCompletenessState
     hydrogen_applicability_state: HydrogenApplicabilityState
-    hydrogen_coverage_state: HydrogenCoverageState
+    hydrogen_coverage_state: HydrogenCoverageState | None
     stereochemistry_state: StereochemistryState
     terminal_boundary_observation: TerminalBoundaryObservation = field(
         default_factory=TerminalBoundaryObservation.empty

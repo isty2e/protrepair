@@ -62,7 +62,7 @@ from protrepair.workflow.contracts.request import (
     WorkflowTransformRequests,
     requested_process_goal,
 )
-from protrepair.workflow.engine.polymer_hydrogen import project_polymer_hydrogen_issues
+from protrepair.workflow.engine.hydrogen import project_hydrogen_issues
 from protrepair.workflow.engine.reporting import (
     evaluate_requested_goal_report,
     evaluate_workflow_branch_quality_score,
@@ -433,7 +433,10 @@ def test_local_refinement_readiness_rejects_unresolved_fixed_parent() -> None:
     )
     assessment = ContinuousRelaxationReadinessPolicy().assess_atom_scope_facts(facts)
     assert not assessment.is_ready()
-    assert facts.continuous_region_readiness_facts.chemistry_readiness_facts.hydrogen_coverage_state.needs_hydrogenation()
+    assert (
+        facts.continuous_region_readiness_facts.chemistry_readiness_facts.hydrogen_coverage_state
+        in (HydrogenCoverageState.NONE, HydrogenCoverageState.PARTIAL)
+    )
 
 
 def test_explicit_local_prerequisite_reports_current_unresolved_h() -> None:
@@ -548,7 +551,7 @@ def test_current_h_projection_drops_stale_warnings_not_unrelated_history(
     result = TransformationResult(
         source, repairs=(), issues=(stale, unrelated, stale, unrelated)
     )
-    assert project_polymer_hydrogen_issues(
+    assert project_hydrogen_issues(
         result,
         requested_goal_report=report,
         component_library=library,

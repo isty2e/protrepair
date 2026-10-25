@@ -450,6 +450,27 @@ class StructureChemistryObservation:
     ) -> ResidueChemistryReadinessFacts:
         """Derive chemistry-readiness singleton residue facts from one residue."""
 
+        if (
+            residue.is_hetero
+            and self.hydrogen_expectation_model.resolution_for_retained_non_polymer(
+                residue.residue_id
+            ).reference_requires_hydrogens
+            is not None
+        ):
+            retained = self._retained_readiness(residue)
+            return ResidueChemistryReadinessFacts(
+                residue_id=retained.residue_id,
+                component_support_state=retained.component_support_state,
+                heavy_atom_topology_availability_state=(
+                    retained.heavy_atom_topology_availability_state
+                ),
+                hydrogen_topology_availability_state=(
+                    retained.hydrogen_topology_availability_state
+                ),
+                hydrogen_applicability_state=retained.hydrogen_applicability_state,
+                hydrogen_coverage_state=retained.hydrogen_coverage_state,
+            )
+
         support_state = component_support_state(
             (residue,),
             component_library=self.component_library,
@@ -562,7 +583,7 @@ class StructureChemistryObservation:
                 expected_hydrogen_atom_names_by_residue
             ),
         )
-        h_coverage_state = hydrogen_coverage_state(
+        h_coverage_state: HydrogenCoverageState | None = hydrogen_coverage_state(
             self.context_structure,
             residues=(residue,),
             component_library=self.component_library,
@@ -570,6 +591,20 @@ class StructureChemistryObservation:
                 expected_hydrogen_atom_names_by_residue
             ),
         )
+        reference_need = hydrogen_expectation_resolution.reference_requires_hydrogens
+        if reference_need is not None:
+            h_applicability_state = (
+                HydrogenApplicabilityState.APPLICABLE
+                if reference_need
+                else HydrogenApplicabilityState.NOT_APPLICABLE
+            )
+            h_coverage_state = (
+                None
+                if any(atom.is_hydrogen() for atom in residue.atom_sites)
+                else HydrogenCoverageState.NONE
+                if reference_need
+                else HydrogenCoverageState.COMPLETE
+            )
         hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
         if (
             hydrogen_expectation_resolution.source
@@ -743,7 +778,10 @@ class StructureChemistryObservation:
             hydrogen_topology_availability_state=(hydrogen_topology_availability_state),
             hydrogen_applicability_state=h_applicability_state,
             hydrogen_coverage_state=h_coverage_state,
-            chemistry_failure_reason=hydrogen_expectation_resolution.failure_reason,
+            hydrogen_generation_supported=(
+                hydrogen_expectation_resolution.can_generate_hydrogens()
+            ),
+            chemistry_failure=hydrogen_expectation_resolution.failure,
         )
 
     def residue_completion_facts(

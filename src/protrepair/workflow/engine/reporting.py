@@ -1,6 +1,9 @@
 """Workflow reporting evaluators over terminal structures and planner context."""
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
 from protrepair.diagnostics.geometry import (
     detect_heavy_geometry,
     severe_intrinsic_geometry_residues,
@@ -12,7 +15,8 @@ from protrepair.diagnostics.parser_readability import (
 from protrepair.diagnostics.parser_topology import (
     ambiguous_disulfide_parser_witness_blockers,
 )
-from protrepair.scope import ResidueSetScope, Scope
+from protrepair.scope import ResidueSetScope, Scope, WholeStructureScope
+from protrepair.scope.observed_atom_scope_lowering import OBSERVED_ATOM_SCOPE_LOWERING
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
     ClashPresenceState,
@@ -53,7 +57,7 @@ from protrepair.workflow.contracts.result import (
     WorkflowPhaseReport,
     WorkflowPhaseStatus,
 )
-from protrepair.workflow.engine.polymer_hydrogen import project_polymer_hydrogen_issues
+from protrepair.workflow.engine.hydrogen import project_hydrogen_issues
 from protrepair.workflow.planning.assessment.blockers import WorkflowBlocker
 from protrepair.workflow.planning.assessment.goal_support import (
     observed_requested_goal_value,
@@ -224,6 +228,9 @@ def evaluate_requested_goal_report(
     ] = (),
     already_satisfied_requested_goals: tuple[WorkflowGoal, ...] = (),
     chemistry_observation: StructureChemistryObservation | None = None,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence, ...
+    ] = (),
 ) -> RequestedGoalReport:
     """Evaluate requested-goal outcomes against one final structure.
 
@@ -242,7 +249,9 @@ def evaluate_requested_goal_report(
     already_satisfied_requested_goals : tuple[WorkflowGoal, ...]
         Initially satisfied goals, still checked against the final state.
     chemistry_observation : StructureChemistryObservation or None
-        Shared observation with matching snapshot, library and default evidence policy.
+        Shared observation with matching snapshot, library and evidence.
+    retained_non_polymer_chemistry_evidence : tuple
+        Explicit chemistry used for both goal observation and generation.
 
     Returns
     -------
@@ -258,10 +267,16 @@ def evaluate_requested_goal_report(
     observation = chemistry_observation
     if observation is None:
         observation = StructureChemistryObservation(
-            structure, component_library=component_library
+            structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
     else:
-        observation.require_context(structure, component_library=component_library)
+        observation.require_context(
+            structure,
+            component_library=component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+        )
 
     unsupported_goal_set = set(unsupported_requested_goals)
     blockers_by_goal = {
@@ -313,6 +328,43 @@ def evaluate_requested_goal_report(
             )
             continue
 
+        blocking_scopes: tuple[Scope, ...] = ()
+        details = None
+        if not satisfied and isinstance(goal.value, HydrogenCoverageState):
+            if isinstance(goal.scope, WholeStructureScope):
+                hydrogen_facts = observation.whole_structure_facts()[1]
+            elif OBSERVED_ATOM_SCOPE_LOWERING.supports(goal.scope):
+                if snapshot is None:
+                    snapshot = ProteinStructureSnapshot.from_structure(structure)
+                atom_scope = OBSERVED_ATOM_SCOPE_LOWERING.lower(
+                    goal.scope, carrier=snapshot
+                )
+                hydrogen_facts = observation.projected_facts(
+                    tuple(dict.fromkeys(ref.residue_id for ref in atom_scope.atom_refs))
+                )[1]
+            else:
+                hydrogen_facts = None
+            failures = (
+                ()
+                if hydrogen_facts is None
+                else tuple(
+                    fact
+                    for fact in hydrogen_facts.retained_non_polymer_facts
+                    if fact.chemistry_failure is not None
+                )
+            )
+            blocking_scopes = tuple(
+                ResidueSetScope((fact.residue_id,)) for fact in failures
+            )
+            details = (
+                "; ".join(
+                    f"{fact.residue_id.display_token()} {fact.component_id}: "
+                    f"{fact.chemistry_failure.detail}"
+                    for fact in failures
+                    if fact.chemistry_failure is not None
+                )
+                or None
+            )
         outcomes.append(
             RequestedGoalOutcome(
                 requested_goal=goal,
@@ -322,6 +374,8 @@ def evaluate_requested_goal_report(
                     else RequestedGoalStatus.UNMET
                 ),
                 observed_state=observed_state,
+                blocking_scopes=blocking_scopes,
+                details=details,
             )
         )
 
@@ -369,6 +423,9 @@ def evaluate_workflow_branch_quality_score(
     search_depth: int = 0,
     chemistry_observation: StructureChemistryObservation | None = None,
     repair_refinement: RepairRefinementSpec | None = None,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence, ...
+    ] = (),
 ) -> WorkflowBranchQualityScore:
     """Return the canonical branch score projection for one workflow result.
 
@@ -385,9 +442,11 @@ def evaluate_workflow_branch_quality_score(
     search_depth : int
         Branch depth used by the preference policy.
     chemistry_observation : StructureChemistryObservation or None
-        Shared observation with matching snapshot, library and default evidence policy.
+        Shared observation with matching snapshot, library and explicit evidence.
     repair_refinement : RepairRefinementSpec or None
         Local request whose included region requires current H diagnostics.
+    retained_non_polymer_chemistry_evidence : tuple
+        Explicit chemistry shared by observation and generation.
 
     Returns
     -------
@@ -408,11 +467,15 @@ def evaluate_workflow_branch_quality_score(
     observation = chemistry_observation
     if observation is None:
         observation = StructureChemistryObservation(
-            result.structure, component_library=active_component_library
+            result.structure,
+            component_library=active_component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
     else:
         observation.require_context(
-            result.structure, component_library=active_component_library
+            result.structure,
+            component_library=active_component_library,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         )
     _, chemistry_readiness_facts = observation.whole_structure_facts()
     # Eligibility searches prospective corrections but is not a score axis.
@@ -443,12 +506,13 @@ def evaluate_workflow_branch_quality_score(
     severe_geometry_residue_count = len(
         severe_intrinsic_geometry_residues(geometry_report)
     )
-    issues = project_polymer_hydrogen_issues(
+    issues = project_hydrogen_issues(
         result,
         requested_goal_report=requested_goal_report,
         component_library=active_component_library,
         repair_refinement=repair_refinement,
         preparation=observation.hydrogen_expectation_model.polymer_preparation,
+        chemistry_observation=observation,
     )
     return WorkflowBranchQualityScore.from_requested_goal_report(
         requested_goal_report,

@@ -5,6 +5,9 @@ from dataclasses import replace
 from protrepair.analysis.kinds import AnalysisKind
 from protrepair.analysis.runtime import build_analysis_bundle
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.retained_non_polymer.evidence import (
+    RetainedNonPolymerChemistryEvidence,
+)
 from protrepair.diagnostics.events import EventScope, ValidationIssue
 from protrepair.diagnostics.geometry import detect_heavy_geometry
 from protrepair.diagnostics.kinds import (
@@ -22,6 +25,7 @@ from protrepair.diagnostics.source_coordination import (
     diagnose_source_coordination_omissions,
 )
 from protrepair.io.pdb_projection import prepare_rdkit_no_conect_pdb_block_projector
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.structure_topology import (
     DisulfideEndpointMultiplicityContradiction,
     DisulfideTopologyConflict,
@@ -36,7 +40,7 @@ from protrepair.workflow.contracts.result import (
     ProcessResult,
     WorkflowBranchReport,
 )
-from protrepair.workflow.engine.polymer_hydrogen import project_polymer_hydrogen_issues
+from protrepair.workflow.engine.hydrogen import project_hydrogen_issues
 from protrepair.workflow.engine.runtime import WorkflowBranch
 
 
@@ -49,6 +53,9 @@ def finalize_workflow_result(
     stop_reason: SpeculativeStopReason = SpeculativeStopReason.NO_PROPOSALS_AVAILABLE,
     preliminary_issues: tuple[ValidationIssue, ...] = (),
     repair_refinement: RepairRefinementSpec | None = None,
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence, ...
+    ] = (),
 ) -> ProcessResult:
     """Select the preferred assessed branch and attach final diagnostics.
 
@@ -69,6 +76,8 @@ def finalize_workflow_result(
     repair_refinement : RepairRefinementSpec or None
         Active local request whose included region requires H preparation,
         even without an explicit H-completion goal.
+    retained_non_polymer_chemistry_evidence : tuple
+        Explicit chemistry used for final current-state diagnostics.
 
     Returns
     -------
@@ -128,11 +137,16 @@ def finalize_workflow_result(
         result = result.with_appended_issues(preliminary_issues)
     result = replace(
         result,
-        issues=project_polymer_hydrogen_issues(
+        issues=project_hydrogen_issues(
             result,
             requested_goal_report=result.requested_goal_report,
             component_library=component_library,
             repair_refinement=repair_refinement,
+            chemistry_observation=StructureChemistryObservation(
+                result.structure,
+                component_library=component_library,
+                retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
+            ),
         ),
     )
     return _attach_requested_analyses(

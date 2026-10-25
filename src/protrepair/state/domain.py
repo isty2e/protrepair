@@ -325,7 +325,7 @@ class AtomScopeObservation:
     backbone_heavy_atom_completeness_state: BackboneHeavyAtomCompletenessState
     sidechain_heavy_atom_completeness_state: SidechainHeavyAtomCompletenessState
     hydrogen_applicability_state: HydrogenApplicabilityState
-    hydrogen_coverage_state: HydrogenCoverageState
+    hydrogen_coverage_state: HydrogenCoverageState | None
     clash_state: ClashState
     topology_availability: TopologyAvailabilityObservation
     hydrogen_attachment_resolution: HydrogenAttachmentResolutionObservation

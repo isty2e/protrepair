@@ -12,7 +12,8 @@ ProtRepair resolves retained-ligand chemistry in this order:
 1. explicit chemistry evidence supplied at ingress
 2. an active component template that supports the requested preparation
 3. a registered coordination family, when its scaffold and site are supported
-4. RDKit fallback inference when fallback is allowed
+4. RDKit fallback inference for components without a full active chemical
+   reference, when fallback is allowed
 
 Existing hydrogen names are preferred when they are compatible with the
 resolved chemistry. Explicit overrides are validated against the retained
@@ -30,6 +31,42 @@ Retained standard amino acids are not fully supported: the built-in H rules
 for standard residues are written for polymer context and omit H on backbone
 N and OXT. A component can therefore report complete H coverage while native
 export rejects its remaining open valences.
+
+### Known References Without Preparation
+
+A full component reference is chemical knowledge, not permission to infer a
+replacement graph or a promise that H coordinates can be generated. If the
+active reference has no admitted preparation, ProtRepair preserves the residue
+and blocks coordinate/proximity inference for H completion and H expectations.
+This restriction applies even when fallback is enabled. Compatible explicit
+chemistry evidence and caller-supplied H-capable templates remain available.
+
+H need comes from the active reference, not from whether inference succeeds.
+For a reference declaring H, an input without H has coverage `NONE`. If H/D/T
+are already present but no validation path is admitted, coverage is `None`
+(indeterminate), not `COMPLETE` or an inferred `PARTIAL`. Original H and
+coordinates are retained. Even a source inventory matching the reference is
+not yet certified: parent counts alone cannot validate bonds, charges or stereo.
+Indeterminate H coverage is not itself a chemistry contradiction. The separate
+source-charge and bond diagnostic still compares against the literal template.
+It can flag an alternative protonation state, including a zwitterion, as well as
+a real charge conflict. State-aware validation of those differences is not
+supported by this safeguard.
+
+Requested H completion reports one current `unresolved_retained_hydrogen`
+warning per affected residue, including when no transformer runs. Whole-structure
+H goal outcomes include blocking residue scopes and the reason; repeated
+prerequisites do not increase this diagnostic's branch-score burden. Unverified
+chemistry cannot admit local refinement. H-generation support and coverage
+verification are separate capabilities.
+
+This reduces automatic preparation relative to 0.2.0, including some components
+whose inferred body chemistry happened to match the reference. In 3CF, for
+example, proximity inference could add four H to an already complete ten-H
+input by missing its nitrile bond. That input now stays unchanged with an
+explained unmet goal. Read-only validation of these reference states and wider
+dictionary-graph preparation remain unsupported; they require separate
+admission rather than a geometric fallback.
 
 ## Connectivity And Existing Hydrogens
 
@@ -463,8 +500,10 @@ potential.
 
 ## RDKit Fallback
 
-RDKit fallback is enabled by default for retained components without usable
-explicit or bundled chemistry. A successful fallback emits the structured
+RDKit fallback is enabled by default for retained components without explicit
+chemistry or a full active component reference. A known reference without an
+admitted preparation is not eligible for this fallback. A successful fallback
+emits the structured
 warning `RETAINED_NON_POLYMER_FALLBACK_USED` and records the RDKit backend
 version in the resolved chemistry facts.
 
@@ -491,10 +530,9 @@ general heavy-atom completion mechanism for arbitrary nonstandard components.
 Single-atom metals and ions are retained as not-applicable chemistry rather
 than passed through organic-molecule hydrogenation.
 
-Template H coverage still has a separate limitation: hydrogens anchored to atoms
-named `N` or `OXT` share polymer-only exclusions. This leaves SAH/SAM amine H and
-SAH HXT unplaced even on complete heavy scaffolds. Full component-specific H
-coverage needs those exclusions separated from retained-component chemistry.
+Built-in standard amino-acid H rules still omit free N/OXT chemistry, as
+described above. A dictionary entry alone does not extend those rules or select
+a protonation state for an unsupported component.
 
 ## Native RDKit Handoff
 

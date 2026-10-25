@@ -12,6 +12,7 @@ from protrepair.chemistry.microstate.preparation import (
 from protrepair.scope import ResidueSetScope
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
+    RetainedNonPolymerChemistryFailure,
 )
 from protrepair.state.scoped import CarrierScopedState
 from protrepair.state.structure_axes import (
@@ -52,7 +53,7 @@ class ResidueProjectionStateFacts:
     ]
     hydrogen_coverage_fact: CarrierScopedState[
         ProteinStructure,
-        HydrogenCoverageState,
+        HydrogenCoverageState | None,
     ]
     stereochemistry_fact: CarrierScopedState[
         ProteinStructure,
@@ -171,7 +172,7 @@ class ResidueChemistryReadinessFacts:
     heavy_atom_topology_availability_state: TopologyAvailabilityState
     hydrogen_topology_availability_state: TopologyAvailabilityState
     hydrogen_applicability_state: HydrogenApplicabilityState
-    hydrogen_coverage_state: HydrogenCoverageState
+    hydrogen_coverage_state: HydrogenCoverageState | None
 
     polymer_microstate_targets: tuple[PolymerSitePreparation, ...] = ()
 
@@ -208,12 +209,27 @@ class ResidueChemistryReadinessFacts:
     def needs_hydrogenation(self) -> bool:
         """Return whether hydrogen completion may still add missing hydrogens."""
 
-        return self.hydrogen_coverage_state.needs_hydrogenation()
+        return (
+            self.hydrogen_coverage_state is not None
+            and self.hydrogen_coverage_state.needs_hydrogenation()
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class RetainedNonPolymerChemistryReadinessFact:
-    """Chemistry-readiness truth for one retained non-polymer component."""
+    """Chemistry-readiness truth for one retained non-polymer component.
+
+    Attributes
+    ----------
+    hydrogen_coverage_state : HydrogenCoverageState or None
+        Coverage under admitted chemistry, or None when it cannot be determined.
+        Indeterminate coverage neither certifies completion nor requests generation.
+    hydrogen_generation_supported : bool
+        Whether the selected chemistry admits generating missing H, independently
+        of coverage. Native placement can still fail.
+    chemistry_failure : RetainedNonPolymerChemistryFailure or None
+        Typed reason for unavailable or rejected chemistry.
+    """
 
     residue_id: ResidueId
     component_id: str
@@ -223,8 +239,9 @@ class RetainedNonPolymerChemistryReadinessFact:
     heavy_atom_topology_availability_state: TopologyAvailabilityState
     hydrogen_topology_availability_state: TopologyAvailabilityState
     hydrogen_applicability_state: HydrogenApplicabilityState
-    hydrogen_coverage_state: HydrogenCoverageState
-    chemistry_failure_reason: str = ""
+    hydrogen_coverage_state: HydrogenCoverageState | None
+    hydrogen_generation_supported: bool
+    chemistry_failure: RetainedNonPolymerChemistryFailure | None = None
 
     def is_supported(self) -> bool:
         """Return whether canonical chemistry support is available."""
@@ -232,9 +249,12 @@ class RetainedNonPolymerChemistryReadinessFact:
         return self.component_support_state.is_fully_supported()
 
     def needs_hydrogenation(self) -> bool:
-        """Return whether hydrogen completion may still add missing hydrogens."""
+        """Return whether the observed coverage establishes missing H."""
 
-        return self.hydrogen_coverage_state.needs_hydrogenation()
+        return (
+            self.hydrogen_coverage_state is not None
+            and self.hydrogen_coverage_state.needs_hydrogenation()
+        )
 
     def depends_on_rdkit_fallback_support(self) -> bool:
         """Return whether this retained component uses RDKit fallback support."""
@@ -247,10 +267,11 @@ class RetainedNonPolymerChemistryReadinessFact:
         )
 
     def requires_hydrogen_completion(self) -> bool:
-        """Return whether retained non-polymer hydrogen completion is required."""
+        """Return whether admitted generation can address known missing H."""
 
         return (
             self.is_supported()
+            and self.hydrogen_generation_supported
             and self.hydrogen_applicability_state
             is HydrogenApplicabilityState.APPLICABLE
             and self.needs_hydrogenation()
@@ -267,7 +288,7 @@ class RetainedNonPolymerChemistryReadinessFact:
         """
         return (
             self.is_supported()
-            and not self.needs_hydrogenation()
+            and self.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
             and (
                 self.heavy_atom_topology_availability_state.is_unavailable()
                 or self.hydrogen_topology_availability_state.is_unavailable()
@@ -317,7 +338,7 @@ class ResidueCompletionStateFacts:
         return self.chemistry_readiness_facts.hydrogen_applicability_state
 
     @property
-    def hydrogen_coverage_state(self) -> HydrogenCoverageState:
+    def hydrogen_coverage_state(self) -> HydrogenCoverageState | None:
         """Return hydrogen coverage over this residue."""
 
         return self.chemistry_readiness_facts.hydrogen_coverage_state

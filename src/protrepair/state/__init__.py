@@ -12,6 +12,8 @@ from protrepair.state.domain import (
 )
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
+    RetainedNonPolymerChemistryFailure,
+    RetainedNonPolymerChemistryFailureKind,
 )
 from protrepair.state.scoped import CarrierScopedState, ScopedState
 from protrepair.state.structure_axes import (
@@ -100,6 +102,8 @@ __all__ = [
     "ResidueProjectionStateFacts",
     "ResidueTopologyAvailabilityFact",
     "RetainedNonPolymerChemistryEvidenceSource",
+    "RetainedNonPolymerChemistryFailure",
+    "RetainedNonPolymerChemistryFailureKind",
     "RetainedNonPolymerChemistryReadinessFact",
     "ScopedState",
     "SelectedAtomScopeFacts",

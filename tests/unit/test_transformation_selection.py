@@ -247,7 +247,7 @@ def _manual_selection_state_facts(
                 hydrogen_applicability_state=(
                     structure_facts.hydrogen_applicability_fact.value
                 ),
-                hydrogen_coverage_state=structure_facts.hydrogen_coverage_fact.value,
+                hydrogen_coverage_state=hydrogen_coverage_state,
             ),
         ),
     )

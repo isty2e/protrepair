@@ -54,12 +54,18 @@ from protrepair.diagnostics.kinds import (
     RepairEventKind,
     ValidationIssueKind,
 )
+from protrepair.diagnostics.retained_hydrogen import unresolved_retained_hydrogen_issue
 from protrepair.errors import (
     BondOrderConstraintError,
     CoordinationEvidenceConflictError,
     UnsupportedCoordinationChemistryError,
 )
 from protrepair.geometry import GeometryPlacementError, Vec3
+from protrepair.state.retained_non_polymer_chemistry import (
+    RetainedNonPolymerChemistryFailure,
+    RetainedNonPolymerChemistryFailureKind,
+    RetainedNonPolymerChemistryResolution,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
@@ -339,6 +345,23 @@ def _execute_retained_non_polymer_hydrogen_stage(
                         structure, ligand, component_library
                     )
                 except (ValueError, RuntimeError) as error:
+                    guarded = (
+                        RetainedNonPolymerChemistryResolution.from_unprepared_reference(
+                            template
+                        )
+                    )
+                    if guarded is not None:
+                        issues.append(
+                            unresolved_retained_hydrogen_issue(
+                                ligand.residue_id,
+                                ligand.component_id,
+                                RetainedNonPolymerChemistryFailure(
+                                    RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
+                                    str(error),
+                                ),
+                            )
+                        )
+                        continue
                     issues.append(
                         ValidationIssue.for_residue(
                             kind=ValidationIssueKind.UNSUPPORTED_HYDROGENATION,
@@ -355,6 +378,19 @@ def _execute_retained_non_polymer_hydrogen_stage(
                     continue
                 if coordination_preparation is not None:
                     evidence = coordination_preparation.hydrogenation_template
+            if evidence is None and not RetainedAtomicSite(ligand).is_monatomic_ion():
+                guarded = (
+                    RetainedNonPolymerChemistryResolution.from_unprepared_reference(
+                        template
+                    )
+                )
+                if guarded is not None and guarded.failure is not None:
+                    issues.append(
+                        unresolved_retained_hydrogen_issue(
+                            ligand.residue_id, ligand.component_id, guarded.failure
+                        )
+                    )
+                    continue
             try:
                 if evidence is not None:
                     evidence_external_bonds = (
@@ -1116,6 +1152,20 @@ def _hydrogenate_retained_non_polymer_payload(
                     else template_binding.external_bonds,
                 ),
             )
+
+    guarded = RetainedNonPolymerChemistryResolution.from_unprepared_reference(
+        component_library.get(payload.component_id)
+    )
+    if guarded is not None and guarded.failure is not None:
+        return _RetainedNonPolymerHydrogenPayloadResult(
+            payload=None,
+            repairs=(),
+            issues=(
+                unresolved_retained_hydrogen_issue(
+                    payload.residue_id, payload.component_id, guarded.failure
+                ),
+            ),
+        )
 
     if not allow_retained_non_polymer_rdkit_fallback:
         return _RetainedNonPolymerHydrogenPayloadResult(

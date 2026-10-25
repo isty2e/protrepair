@@ -74,7 +74,39 @@ side-chain packing.
 
 Default construction requests no optional packing, refinement, external span,
 or histidine operation. RDKit fallback remains enabled for retained components
-whose chemistry cannot otherwise be resolved.
+without a full active chemical reference. It cannot force geometric inference
+for a known reference without admitted preparation.
+
+## Retained H Facts
+
+`RetainedNonPolymerChemistryReadinessFact`, exported from `protrepair.state`,
+separates observed coverage from generation capability:
+
+- `hydrogen_coverage_state` is `HydrogenCoverageState | None`. `None` means
+  coverage cannot be established under the admitted interpretation; it does
+  not mean no H are present or that H generation is required. Residue-level
+  facts and projections evaluating that inventory propagate the same nullable
+  coverage rather than treating an empty expectation as completion.
+- `hydrogen_generation_supported` reports whether the selected chemistry
+  admits generation, independently of the observed coverage.
+- `chemistry_failure` is an optional `RetainedNonPolymerChemistryFailure`
+  with a `RetainedNonPolymerChemistryFailureKind` and readable `detail`.
+  This typed field is new since 0.2.0.
+
+The `hydrogen_coverage_state` fields on `ProteinStructureObservation`,
+`AtomScopeObservation` and `ResidueChemistryReadinessFacts` also allow `None`.
+Check for `None` before reading `.value`. The polymer-only aggregate
+`StructureChemistryReadinessFacts.hydrogen_coverage_state` remains non-nullable;
+retained-component facts are evaluated separately.
+
+An indeterminate whole-structure H goal uses `RequestedGoalOutcome`:
+`observed_state=None`, unmet status, blocking residue scopes and explanatory
+`details`. The requested `HydrogenCoverageState` enum still has only
+`NONE`, `PARTIAL` and `COMPLETE`; indeterminate coverage is not a target.
+
+The default workflow capability registry does not currently admit residue- or
+atom-scoped H goals containing retained ligands, even for an admitted component.
+Such requests report `UNSUPPORTED`; use a whole-structure H goal instead.
 
 ## Process Result
 

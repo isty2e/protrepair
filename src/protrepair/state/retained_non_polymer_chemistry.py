@@ -64,6 +64,32 @@ class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
         return self is not RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
 
 
+class RetainedNonPolymerChemistryFailureKind(str, Enum):
+    """Why an admitted retained-chemistry interpretation is unavailable."""
+
+    NO_ADMITTED_PREPARATION = "no_admitted_preparation"
+    CONTEXT_UNRESOLVED = "context_unresolved"
+    EVIDENCE_REJECTED = "evidence_rejected"
+    FALLBACK_DISABLED = "fallback_disabled"
+    INFERENCE_FAILED = "inference_failed"
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedNonPolymerChemistryFailure:
+    """Typed cause and human-readable detail for unresolved retained chemistry.
+
+    Parameters
+    ----------
+    kind : RetainedNonPolymerChemistryFailureKind
+        Machine-readable failure category.
+    detail : str
+        Explanation of the unavailable or rejected interpretation.
+    """
+
+    kind: RetainedNonPolymerChemistryFailureKind
+    detail: str
+
+
 @dataclass(frozen=True, slots=True)
 class RetainedNonPolymerChemistryResolution:
     """Selected chemistry facts bound to one retained residue and its context."""
@@ -78,10 +104,62 @@ class RetainedNonPolymerChemistryResolution:
     external_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     context_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     coordination_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
-    failure_reason: str = ""
+    failure: RetainedNonPolymerChemistryFailure | None = None
+    reference_requires_hydrogens: bool | None = None
     rdkit_backend_version: str | None = None
     hydrogen_name_projection_candidate_count: int = 0
     hydrogen_name_projection_candidate_limit: int = 0
+
+    @property
+    def failure_reason(self) -> str:
+        """Return the readable detail of the typed failure, if any."""
+
+        return "" if self.failure is None else self.failure.detail
+
+    @classmethod
+    def from_unprepared_reference(
+        cls, template: ResidueTemplate | None
+    ) -> "RetainedNonPolymerChemistryResolution | None":
+        """Refuse inference when the active reference lacks H preparation.
+
+        Parameters
+        ----------
+        template : ResidueTemplate or None
+            Active component definition, including caller-supplied replacements.
+
+        Returns
+        -------
+        RetainedNonPolymerChemistryResolution or None
+            Unresolved reference-backed requirement, or None when this guard
+            does not apply. A reference is not itself a preparation capability.
+        """
+        if template is None or not template.has_unprepared_hydrogen_reference():
+            return None
+        reference = template.reference_component
+        if reference is None:
+            return None
+        return cls(
+            source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
+            reference_requires_hydrogens=bool(reference.hydrogen_atoms()),
+            failure=RetainedNonPolymerChemistryFailure(
+                RetainedNonPolymerChemistryFailureKind.NO_ADMITTED_PREPARATION,
+                "the active component reference has no admitted preparation; "
+                "geometry-based chemistry inference is blocked; provide compatible "
+                "explicit chemistry or a hydrogen-capable template",
+            ),
+        )
+
+    def can_generate_hydrogens(self) -> bool:
+        """Return whether the selected chemistry admits H generation.
+
+        Returns
+        -------
+        bool
+            A resolved generation source exists. This does not promise that
+            native coordinate placement will succeed.
+        """
+
+        return self.source.is_resolved()
 
     def has_expected_heavy_scaffold(self, residue: ResidueSite) -> bool:
         """Check the selected product inventory instead of its isolated precursor.
@@ -348,10 +426,14 @@ class RetainedNonPolymerChemistryResolution:
             and len(self.expected_heavy_atom_names) != len(self.heavy_atom_elements)
         ):
             raise ValueError("resolved heavy atom names and elements must align")
-        if resolved and self.failure_reason:
+        if resolved and self.failure is not None:
             raise ValueError(
                 "resolved retained non-polymer chemistry must not carry a failure "
                 "reason"
+            )
+        if resolved and self.reference_requires_hydrogens is not None:
+            raise ValueError(
+                "unprepared reference requirements cannot accompany resolved chemistry"
             )
         if (
             self.source is RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
@@ -450,6 +532,16 @@ def resolve_retained_non_polymer_chemistry(
         evidence=evidence,
         allow_rdkit_fallback=allow_rdkit_fallback,
     )
+    if not resolution.source.is_resolved():
+        reference = RetainedNonPolymerChemistryResolution.from_unprepared_reference(
+            component_library.get(residue.component_id)
+        )
+        if reference is not None:
+            resolution = replace(
+                resolution,
+                reference_requires_hydrogens=reference.reference_requires_hydrogens,
+                failure=resolution.failure or reference.failure,
+            )
     active_disulfide_residue_ids = (
         disulfide_bonded_cysteine_residue_ids(structure)
         if disulfide_residue_ids is None
@@ -485,7 +577,10 @@ def _resolve_retained_non_polymer_chemistry_source(
         except (RuntimeError, ValueError) as error:
             return RetainedNonPolymerChemistryResolution(
                 source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
-                failure_reason=str(error),
+                failure=RetainedNonPolymerChemistryFailure(
+                    RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
+                    str(error),
+                ),
             )
         if preparation is not None:
             evidence = preparation.hydrogenation_template
@@ -531,7 +626,10 @@ def _resolve_retained_non_polymer_chemistry_source(
         except (RuntimeError, ValueError) as error:
             return RetainedNonPolymerChemistryResolution(
                 source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
-                failure_reason=str(error),
+                failure=RetainedNonPolymerChemistryFailure(
+                    RetainedNonPolymerChemistryFailureKind.EVIDENCE_REJECTED,
+                    str(error),
+                ),
             )
         return RetainedNonPolymerChemistryResolution(
             source=(
@@ -561,7 +659,10 @@ def _resolve_retained_non_polymer_chemistry_source(
         except ValueError as error:
             return RetainedNonPolymerChemistryResolution(
                 source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
-                failure_reason=str(error),
+                failure=RetainedNonPolymerChemistryFailure(
+                    RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
+                    str(error),
+                ),
             )
         template = binding.template
         expected_heavy_names = template.expected_heavy_atom_names()
@@ -621,13 +722,23 @@ def _resolve_retained_non_polymer_chemistry_source(
     except ValueError as error:
         return RetainedNonPolymerChemistryResolution(
             source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
-            failure_reason=str(error),
+            failure=RetainedNonPolymerChemistryFailure(
+                RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
+                str(error),
+            ),
         )
+
+    guarded = RetainedNonPolymerChemistryResolution.from_unprepared_reference(template)
+    if guarded is not None:
+        return guarded
 
     if not allow_rdkit_fallback:
         return RetainedNonPolymerChemistryResolution(
             source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
-            failure_reason="RDKit fallback is disabled",
+            failure=RetainedNonPolymerChemistryFailure(
+                RetainedNonPolymerChemistryFailureKind.FALLBACK_DISABLED,
+                "RDKit fallback is disabled",
+            ),
         )
 
     try:
@@ -657,7 +768,10 @@ def _resolve_retained_non_polymer_chemistry_source(
     except (RuntimeError, ValueError) as error:
         return RetainedNonPolymerChemistryResolution(
             source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
-            failure_reason=str(error),
+            failure=RetainedNonPolymerChemistryFailure(
+                RetainedNonPolymerChemistryFailureKind.INFERENCE_FAILED,
+                str(error),
+            ),
         )
 
     return RetainedNonPolymerChemistryResolution(

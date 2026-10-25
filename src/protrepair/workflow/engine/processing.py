@@ -121,6 +121,7 @@ def process_canonical_structure(
         requested_analyses=normalized_analyses,
         preliminary_issues=packing_reference_issues,
         repair_refinement=active_transform_requests.repair_refinement,
+        retained_non_polymer_chemistry_evidence=validated_retained_non_polymer_chemistry_evidence,
     )
 
 

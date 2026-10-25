@@ -92,6 +92,7 @@ def retained_non_polymer_record_to_template(
         preferred_atom_order=heavy_atom_names,
         heavy_atom_semantics=None,
         hydrogen_semantics=hydrogen_semantics,
+        reference_component=idealized_component,
     )
 
 

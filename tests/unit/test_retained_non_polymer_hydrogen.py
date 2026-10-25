@@ -51,6 +51,7 @@ from protrepair.io.gemmi_writer import pdb_atom_serial_by_atom_ref
 from protrepair.io.ingress_policy import LigandHandling, StructureNormalizationPolicy
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state import (
+    HydrogenCoverageState,
     RetainedNonPolymerChemistryReadinessFact,
     TopologyAvailabilityState,
     derive_structure_coverage_and_chemistry_readiness_facts,
@@ -123,9 +124,10 @@ def test_template_backed_linked_glycan_hydrogenation_skips_absent_anchor_only() 
         result.structure,
         component_library=component_library,
     )
-    assert {fact.hydrogen_coverage_state.value for fact in after_facts.values()} == {
-        "complete"
-    }
+    assert all(
+        fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
+        for fact in after_facts.values()
+    )
     assert not any(fact.requires_hydrogen_completion() for fact in after_facts.values())
 
 
@@ -145,7 +147,7 @@ def test_linked_glycans_use_contextual_chemistry_without_source_mutation() -> No
     )
     assert all(
         fact.hydrogen_expectation_source.value == "template"
-        and not fact.chemistry_failure_reason
+        and fact.chemistry_failure is None
         and fact.requires_hydrogen_completion()
         for fact in before_facts.values()
     )
@@ -175,7 +177,7 @@ def test_linked_glycans_use_contextual_chemistry_without_source_mutation() -> No
         component_ids=frozenset({"NAG", "BMA", "FUL"}),
     )
     assert all(
-        fact.hydrogen_coverage_state.value == "complete"
+        fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
         and fact.heavy_atom_topology_availability_state
         is TopologyAvailabilityState.PRESENT
         and fact.hydrogen_topology_availability_state
@@ -1734,7 +1736,10 @@ def test_retained_non_polymer_fallback_projects_existing_h_names_by_geometry() -
         component_library=component_library,
         component_ids=frozenset({"UNK"}),
     )
-    assert after_facts[residue_id].hydrogen_coverage_state.value == "complete"
+    assert (
+        after_facts[residue_id].hydrogen_coverage_state
+        is HydrogenCoverageState.COMPLETE
+    )
     assert not after_facts[residue_id].requires_hydrogen_completion()
 
 

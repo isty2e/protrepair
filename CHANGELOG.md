@@ -4,6 +4,8 @@
 
 ### Added
 
+- expose H-generation support and typed `chemistry_failure` details on retained
+  chemistry-readiness facts
 - report assessed terminal and frontier candidates, the search stop reason and
   observed native FF returns on workflow results
 - retain actual native FF settings, source motion scope, return status and
@@ -12,6 +14,19 @@
 
 ### Changed
 
+- block geometry-based H inference for retained bundled components whose active
+  reference has no admitted preparation, even with fallback enabled. Preserve
+  source atoms and report one current `unresolved_retained_hydrogen` warning
+  per requested residue, with blocking scopes and reasons on unmet
+  whole-structure H goals. Local refinement is refused when its included region
+  contains such unresolved chemistry.
+  This reduces automatic H preparation relative to 0.2.0; compatible explicit
+  chemistry and H-capable custom templates remain supported
+- allow `hydrogen_coverage_state` to be `None` in `ProteinStructureObservation`,
+  `AtomScopeObservation`, `ResidueChemistryReadinessFacts` and
+  `RetainedNonPolymerChemistryReadinessFact` when an H inventory cannot be
+  verified, instead of manufacturing complete or partial coverage. Check for
+  `None` before reading the enum's `.value`
 - normalize residue `is_hetero` flags from chain/ligand membership when building
   a constitution, keeping whole and projected observations consistent without
   mutating supplied residue objects. API-created chain residues marked hetero
@@ -111,6 +126,10 @@
 
 ### Fixed
 
+- avoid replacing known component bonds with proximity-inferred chemistry during
+  retained H completion, which could add four extra H to a correctly hydrogenated
+  3CF nitrile while reporting completion; known-reference H need no longer
+  disappears when inference is unavailable
 - retain dictionary H on retained-component atoms named `N` or `OXT`, restoring
   missing amine H in SAH/SAM, carboxyl hydroxyl H in SAH, and declared N/OXT H
   in retained modified amino acids such as MSE and HYP. Polymer backbone and
