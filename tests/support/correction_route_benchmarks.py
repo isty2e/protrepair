@@ -155,7 +155,7 @@ class SerializedStructurePlanningSignature(TypedDict):
     backbone_heavy_atom_completeness_state: str
     sidechain_heavy_atom_completeness_state: str
     hydrogen_applicability_state: str
-    hydrogen_coverage_state: str
+    hydrogen_coverage_state: str | None
 
 
 class SerializedWorkflowRouteBenchmarkStage(TypedDict):
@@ -497,8 +497,9 @@ def _hydrogen_gap_cleared(
         component_library=component_library,
     )
     return (
-        before_facts.hydrogen_coverage_fact.value.needs_hydrogenation()
-        and not after_facts.hydrogen_coverage_fact.value.needs_hydrogenation()
+        before_facts.hydrogen_coverage_fact.value is not None
+        and before_facts.hydrogen_coverage_fact.value.needs_hydrogenation()
+        and after_facts.hydrogen_coverage_fact.value is HydrogenCoverageState.COMPLETE
     )
 
 
@@ -536,7 +537,11 @@ def _structure_planning_signature_dict(
             signature.sidechain_heavy_atom_completeness_state.value
         ),
         "hydrogen_applicability_state": (signature.hydrogen_applicability_state.value),
-        "hydrogen_coverage_state": signature.hydrogen_coverage_state.value,
+        "hydrogen_coverage_state": (
+            None
+            if signature.hydrogen_coverage_state is None
+            else signature.hydrogen_coverage_state.value
+        ),
     }
 
 

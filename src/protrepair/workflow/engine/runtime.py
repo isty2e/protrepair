@@ -174,6 +174,9 @@ class WorkflowBranchEvaluator:
     planning_context: WorkflowPlanningContext
     already_satisfied_requested_goals: tuple[WorkflowGoal, ...]
     repair_refinement: RepairRefinementSpec | None = None
+    retained_non_polymer_chemistry_evidence: tuple[
+        RetainedNonPolymerChemistryEvidence, ...
+    ] = ()
     _evaluations_by_result_depth: dict[
         tuple[int, int],
         tuple[TransformationResult, WorkflowBranchEvaluation],
@@ -189,7 +192,9 @@ class WorkflowBranchEvaluator:
             return cached_entry[1]
 
         observation = StructureChemistryObservation(
-            state.result.structure, component_library=self.component_library
+            state.result.structure,
+            component_library=self.component_library,
+            retained_non_polymer_chemistry_evidence=self.retained_non_polymer_chemistry_evidence,
         )
         requested_goal_report = evaluate_requested_goal_report(
             state.result.structure,
@@ -197,6 +202,7 @@ class WorkflowBranchEvaluator:
             component_library=self.component_library,
             already_satisfied_requested_goals=(self.already_satisfied_requested_goals),
             chemistry_observation=observation,
+            retained_non_polymer_chemistry_evidence=self.retained_non_polymer_chemistry_evidence,
         )
         evaluation = self._evaluation_for_report(
             state.result,
@@ -253,6 +259,7 @@ class WorkflowBranchEvaluator:
                 search_depth=search_depth,
                 chemistry_observation=chemistry_observation,
                 repair_refinement=self.repair_refinement,
+                retained_non_polymer_chemistry_evidence=self.retained_non_polymer_chemistry_evidence,
             ),
         )
 
@@ -292,7 +299,9 @@ class WorkflowBranchEvaluator:
             )
         else:
             observation = StructureChemistryObservation(
-                result.structure, component_library=self.component_library
+                result.structure,
+                component_library=self.component_library,
+                retained_non_polymer_chemistry_evidence=self.retained_non_polymer_chemistry_evidence,
             )
             requested_goal_report = evaluate_requested_goal_report(
                 result.structure,
@@ -304,6 +313,7 @@ class WorkflowBranchEvaluator:
                     self.already_satisfied_requested_goals
                 ),
                 chemistry_observation=observation,
+                retained_non_polymer_chemistry_evidence=self.retained_non_polymer_chemistry_evidence,
             )
             evaluation = self._evaluation_for_report(
                 result,
@@ -406,6 +416,7 @@ def execute_iterative_workflow(
                     planning_outcome.already_satisfied_requested_goals
                 ),
                 repair_refinement=transform_requests.repair_refinement,
+                retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
             )
         if planning_outcome.is_terminal():
             terminal_result = runtime_state.result.with_appended_issues(

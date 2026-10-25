@@ -220,6 +220,7 @@ class NonstandardComponentRecord:
             preferred_atom_order=heavy_atom_names,
             heavy_atom_semantics=heavy_atom_semantics,
             hydrogen_semantics=hydrogen_semantics,
+            reference_component=idealized_component,
         )
 
     def to_idealized_component(self) -> IdealizedComponent:

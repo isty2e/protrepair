@@ -457,7 +457,7 @@ def test_original_heavy_identity_cannot_be_hidden_by_current_scaffold(
         fact.heavy_topology_source
         is RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
     )
-    assert fact.chemistry_failure_reason
+    assert fact.chemistry_failure is not None
 
     for transform in (
         add_retained_non_polymer_hydrogens,

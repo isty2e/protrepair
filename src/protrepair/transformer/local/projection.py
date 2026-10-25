@@ -11,9 +11,10 @@ from protrepair.transformer.local.models import LocalScopeSpec
 
 @dataclass(frozen=True, slots=True)
 class LocalContinuousExecutionResidueProjection:
-    """Actual included polymer residues for one local continuous execution scope."""
+    """Included polymer and retained identities for a local execution scope."""
 
     included_polymer_residue_ids: tuple[ResidueId, ...]
+    included_retained_residue_ids: tuple[ResidueId, ...] = ()
 
     @classmethod
     def from_scope_spec(
@@ -24,7 +25,7 @@ class LocalContinuousExecutionResidueProjection:
         context_radius_angstrom: float,
         component_library: ComponentLibrary | None = None,
     ) -> "LocalContinuousExecutionResidueProjection":
-        """Project one local scope request onto its actual included polymer region."""
+        """Project a local scope onto its included polymer and retained residues."""
 
         active_component_library = (
             build_default_component_library()
@@ -41,13 +42,20 @@ class LocalContinuousExecutionResidueProjection:
             context_radius_angstrom=context_radius_angstrom,
         )
         ordered_polymer_residue_ids: list[ResidueId] = []
+        retained_residue_ids: list[ResidueId] = []
         seen_residue_ids: set[ResidueId] = set()
         for residue_index in continuous_region.included_residue_indices:
             residue_site = continuous_region.residue_site(residue_index)
-            if residue_site.is_hetero or residue_site.residue_id in seen_residue_ids:
+            if residue_site.residue_id in seen_residue_ids:
                 continue
 
-            ordered_polymer_residue_ids.append(residue_site.residue_id)
+            if residue_site.is_hetero:
+                retained_residue_ids.append(residue_site.residue_id)
+            else:
+                ordered_polymer_residue_ids.append(residue_site.residue_id)
             seen_residue_ids.add(residue_site.residue_id)
 
-        return cls(included_polymer_residue_ids=tuple(ordered_polymer_residue_ids))
+        return cls(
+            included_polymer_residue_ids=tuple(ordered_polymer_residue_ids),
+            included_retained_residue_ids=tuple(retained_residue_ids),
+        )

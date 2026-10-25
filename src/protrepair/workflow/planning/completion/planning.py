@@ -147,6 +147,7 @@ def _workflow_completion_partition_kind(
         return WorkflowCompletionPartitionKind.UNSUPPORTED_STOP
     if (
         requests_hydrogen_population
+        and residue_facts.hydrogen_coverage_fact.value is not None
         and residue_facts.hydrogen_coverage_fact.value.needs_hydrogenation()
         and (
             residue_facts.backbone_heavy_atom_completeness_fact.value.requires_completion()
@@ -158,6 +159,7 @@ def _workflow_completion_partition_kind(
         return WorkflowCompletionPartitionKind.HEAVY_THEN_HYDROGEN
     if (
         requests_hydrogen_population
+        and residue_facts.hydrogen_coverage_fact.value is not None
         and residue_facts.hydrogen_coverage_fact.value.needs_hydrogenation()
     ):
         return WorkflowCompletionPartitionKind.HYDROGEN_ONLY

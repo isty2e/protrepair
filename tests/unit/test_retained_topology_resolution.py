@@ -650,10 +650,12 @@ def test_external_relationship_is_preserved_without_becoming_a_local_h_anchor(
         BondRelationshipType.DISULFIDE,
     }
     if covalent_attachment:
-        assert "external" in fact.chemistry_failure_reason
+        assert fact.chemistry_failure is not None
+        assert "external" in fact.chemistry_failure.detail
         assert not fact.requires_topology_resolution()
     elif relationship is BondRelationshipType.METAL_COORDINATION:
-        assert "coordination" in fact.chemistry_failure_reason
+        assert fact.chemistry_failure is not None
+        assert "coordination" in fact.chemistry_failure.detail
         assert not fact.requires_topology_resolution()
     else:
         assert fact.requires_topology_resolution() is not resolved_local

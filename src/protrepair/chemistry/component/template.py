@@ -10,6 +10,7 @@ from protrepair.chemistry.component.graph import (
     ForceFieldAtomParams,
     TetrahedralCenterSemantics,
 )
+from protrepair.chemistry.component.idealized import IdealizedComponent
 from protrepair.chemistry.component.semantics import (
     HeavyAtomSemantics,
     HydrogenSemantics,
@@ -23,7 +24,11 @@ POLYMER_CONTEXT_HYDROGEN_ANCHORS: frozenset[str] = frozenset({"N", "OXT"})
 
 @dataclass(frozen=True, slots=True)
 class ResidueTemplate:
-    """Residue template combining chemistry graph and completion semantics."""
+    """Residue template combining chemistry graph and completion semantics.
+
+    The full reference can remain available without an H-placement program;
+    storing it does not admit generation or validate the current source state.
+    """
 
     definition: ChemicalComponentDefinition
     lineage_parent_component_id: str | None = None
@@ -36,6 +41,7 @@ class ResidueTemplate:
         HeavyAtomSemantics | IdealGeometryHeavyAtomSemantics | None
     ) = None
     hydrogen_semantics: HydrogenSemantics | IdealGeometryHydrogenSemantics | None = None
+    reference_component: IdealizedComponent | None = None
     tetrahedral_centers: tuple[TetrahedralCenterSemantics, ...] = ()
     _polymer_hydrogen_parent_aliases: Mapping[str, str] | None = field(
         default=None, init=False, compare=False, hash=False, repr=False
@@ -82,6 +88,16 @@ class ResidueTemplate:
             "tetrahedral_centers",
             tuple(self.tetrahedral_centers),
         )
+
+    def has_unprepared_hydrogen_reference(self) -> bool:
+        """Distinguish known reference chemistry from admitted H generation.
+
+        Returns
+        -------
+        bool
+            A full component reference exists without a usable H program.
+        """
+        return self.reference_component is not None and not self.can_add_hydrogens()
 
     def ordered_atom_names(self) -> tuple[str, ...]:
         """Return the preferred atom order for serialization or comparison."""

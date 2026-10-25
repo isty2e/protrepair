@@ -752,13 +752,8 @@ def plan_workflow_actions(
             structure,
             requested_goals=tuple(requested_goals),
             component_library=active_component_library,
-            # Goal reporting currently observes without explicit retained evidence.
-            # Share only when its interpretation matches the planning observation.
-            chemistry_observation=(
-                None
-                if retained_non_polymer_chemistry_evidence
-                else chemistry_observation
-            ),
+            chemistry_observation=chemistry_observation,
+            retained_non_polymer_chemistry_evidence=retained_non_polymer_chemistry_evidence,
         ),
         state_deficit=state_deficit,
     )

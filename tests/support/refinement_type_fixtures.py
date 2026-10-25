@@ -262,7 +262,7 @@ def ready_atom_scope_facts(
                 hydrogen_applicability_state=(
                     structure_facts.hydrogen_applicability_fact.value
                 ),
-                hydrogen_coverage_state=structure_facts.hydrogen_coverage_fact.value,
+                hydrogen_coverage_state=hydrogen_coverage_state,
             ),
         ),
     )

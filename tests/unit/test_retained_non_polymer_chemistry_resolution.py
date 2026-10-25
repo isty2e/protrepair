@@ -5,6 +5,8 @@ import pytest
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
+    RetainedNonPolymerChemistryFailure,
+    RetainedNonPolymerChemistryFailureKind,
     RetainedNonPolymerChemistryResolution,
 )
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -26,7 +28,10 @@ def test_resolved_retained_chemistry_cannot_carry_failure_reason() -> None:
     with pytest.raises(ValueError, match="failure reason"):
         RetainedNonPolymerChemistryResolution(
             source=RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE,
-            failure_reason="bad smiles",
+            failure=RetainedNonPolymerChemistryFailure(
+                RetainedNonPolymerChemistryFailureKind.EVIDENCE_REJECTED,
+                "bad smiles",
+            ),
         )
 
 

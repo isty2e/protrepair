@@ -43,6 +43,7 @@ class ValidationIssueKind(str, Enum):
     UNSUPPORTED_TEMPLATE_REPAIR = "unsupported_template_repair"
     UNSUPPORTED_HYDROGENATION = "unsupported_hydrogenation"
     UNRESOLVED_POLYMER_HYDROGEN = "unresolved_polymer_hydrogen"
+    UNRESOLVED_RETAINED_HYDROGEN = "unresolved_retained_hydrogen"
     PACKING_INVALIDATED_HYDROGENS = "packing_invalidated_hydrogens"
     PACKING_PRESERVED_LINKED_SIDECHAIN = "packing_preserved_linked_sidechain"
     PACKING_REBUILT_LINKED_SIDECHAIN = "packing_rebuilt_linked_sidechain"
