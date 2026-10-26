@@ -37,6 +37,13 @@ Explicit chemistry and caller-supplied templates keep their existing precedence.
 SAH, SAM and other cofactors do not enter this path merely because their atom
 names or a substructure resemble an amino acid.
 
+A missing connection record alone does not establish a free terminus. If a
+current N or C lies within the existing 1.8 angstrom peptide C-N maximum of
+another residue's named heavy C or N, respectively, that terminal site remains
+unresolved. This withdraws an isolation assumption without adding a bond or
+changing membership. Other admitted sites may still be prepared; current
+coordinates are reassessed after geometry changes.
+
 Without conflicting source evidence, the shared preparation convention selects
 protonated free N and deprotonated free carboxyl termini, charged ARG/LYS,
 deprotonated ASP/GLU, and the existing neutral-HIS environmental preference.

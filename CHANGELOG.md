@@ -24,10 +24,11 @@
   polymer residues. Source H, declared charges and explicit chemistry retain
   precedence; cofactors keep their component-specific chemistry. Missing or
   unexplained sites remain indeterminate, while independent admitted sites can
-  be prepared without certifying whole-residue or refinement readiness. In the
-  incomplete retained CYS of 3ENJ, this preserves source H, assigns the observed
-  three-H N a +1 charge and adds the supported alpha H; it does not invent the
-  missing carboxyl scaffold
+  be prepared without certifying whole-residue or refinement readiness. A nearby
+  peptide-like C-N pair withdraws the free-terminal assumption without inferring
+  a bond. In the incomplete retained CYS of 3ENJ, this preserves source H,
+  assigns the observed three-H N a +1 charge and adds the supported alpha H;
+  it does not invent the missing carboxyl scaffold
 - block geometry-based H inference for retained bundled components whose active
   reference has no admitted preparation, even with fallback enabled. Preserve
   source atoms and report one current `unresolved_retained_hydrogen` warning
@@ -140,6 +141,9 @@
 
 ### Fixed
 
+- preserve source terminal H on retained standard amino acids instead of
+  silently deleting them and reporting complete H coverage with open valences;
+  fully hydrogenated alanine inputs could lose three H in 0.2.0
 - avoid replacing known component bonds with proximity-inferred chemistry during
   retained H completion, which could add four extra H to a correctly hydrogenated
   3CF nitrile while reporting completion; known-reference H need no longer

@@ -1,7 +1,9 @@
 """Bind retained amino-acid occurrences to the shared site catalogs."""
 
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from itertools import product
+from math import floor, isfinite
 
 from protrepair.chemistry.component.defaults import build_default_component_library
 from protrepair.chemistry.component.graph import BondDefinition
@@ -20,7 +22,9 @@ from protrepair.chemistry.microstate.resolution import MicrostateConstraints
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
+from protrepair.geometry import Vec3
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.peptide import PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
 from protrepair.structure.topology import BondRelationshipType, TopologyBond
 
 
@@ -37,6 +41,55 @@ class RetainedAminoAcidContext(AminoAcidMicrostateContext):
     _compatible_scaffolds: dict[ResidueId, ResidueTemplate] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
+    _peptide_endpoint_cells: dict[tuple[int, int, int], tuple[AtomRef, ...]] | None = (
+        field(default=None, init=False, repr=False, compare=False)
+    )
+
+    def _has_peptide_proximity(self, endpoint: AtomRef) -> bool:
+        index = self.source.constitution.resolve_atom_index(endpoint)
+        if index is None:
+            return False
+        if self.source.constitution.atom_site_at(index).element != endpoint.atom_name:
+            return False
+        position = self.source.geometry.position(index)
+        if not all(isfinite(value) for value in position):
+            return True
+        cells = self._peptide_endpoint_cells
+        if cells is None:
+            indexed = defaultdict(list)
+            for other_index, other_position in self.source.geometry.iter_positions():
+                atom = self.source.constitution.atom_site_at(other_index)
+                if (
+                    atom.name not in {"C", "N"}
+                    or atom.element != atom.name
+                    or not all(isfinite(value) for value in other_position)
+                ):
+                    continue
+                indexed[_peptide_endpoint_cell(other_position)].append(
+                    self.source.constitution.atom_ref_at(other_index)
+                )
+            cells = {key: tuple(refs) for key, refs in indexed.items()}
+            object.__setattr__(self, "_peptide_endpoint_cells", cells)
+
+        center = _peptide_endpoint_cell(position)
+        opposite = "C" if endpoint.atom_name == "N" else "N"
+        for offset in product((-1, 0, 1), repeat=3):
+            key = (center[0] + offset[0], center[1] + offset[1], center[2] + offset[2])
+            for other in cells.get(key, ()):
+                if (
+                    other.residue_id == endpoint.residue_id
+                    or other.atom_name != opposite
+                ):
+                    continue
+                other_position = self.source.geometry.position(
+                    self.source.constitution.atom_index(other)
+                )
+                if (
+                    position.distance_to(other_position)
+                    <= PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
+                ):
+                    return True
+        return False
 
     def site_requirements(
         self, residue_id: ResidueId, site: PolymerMicrostateSite
@@ -386,6 +439,13 @@ class RetainedAminoAcidContext(AminoAcidMicrostateContext):
                         )
                         for bond in observation.bonds_for_atom(ref)
                     )
+            if not unexplained:
+                unexplained = self._has_peptide_proximity(
+                    AtomRef(
+                        residue_id,
+                        "N" if kind is PolymerChemicalSite.BACKBONE_N else "C",
+                    )
+                )
             sites.append(
                 PolymerMicrostateSite(
                     template,
@@ -395,3 +455,11 @@ class RetainedAminoAcidContext(AminoAcidMicrostateContext):
                 )
             )
         return tuple(sites)
+
+
+def _peptide_endpoint_cell(position: Vec3) -> tuple[int, int, int]:
+    return (
+        floor(position.x / PEPTIDE_CN_DISTANCE_MAX_ANGSTROM),
+        floor(position.y / PEPTIDE_CN_DISTANCE_MAX_ANGSTROM),
+        floor(position.z / PEPTIDE_CN_DISTANCE_MAX_ANGSTROM),
+    )

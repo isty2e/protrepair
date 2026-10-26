@@ -503,9 +503,7 @@ class AminoAcidPreparation:
                 )
             if entries:
                 targets[residue.residue_id] = tuple(entries)
-                coordinate_dependent_retained |= (
-                    template.reference_component is not None
-                )
+                coordinate_dependent_retained = True
         if pending:
             raise ValueError("microstate request targets an absent polymer site")
         unresolved_histidines = tuple(

@@ -16,6 +16,7 @@ from tests.support.retained_reference_fixtures import reference_structure
 
 from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
+from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics.kinds import ValidationIssueKind
@@ -32,6 +33,7 @@ from protrepair.structure import AtomRef, ProteinStructure, ResidueId
 from protrepair.structure.constitution import AtomSite
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.observation import StructureObservation
+from protrepair.structure.peptide import PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.topology import (
     BondProvenance,
@@ -664,3 +666,163 @@ def test_body_placement_failure_does_not_discard_valid_terminal_sites(protein):
         )
         == 1
     )
+
+
+def _amino_acid_with_neighbor(protein, endpoint, distance, *, polymer_neighbor):
+    source = _free_amino_acid(protein, "ALA")
+    residue = source.constitution.ligands[0]
+    geometry = source.residue_geometry(source.constitution.residue_index(LIGAND))
+    origin = geometry.position(endpoint)
+    target = residue_payload(
+        component_id="ALA",
+        residue_id=LIGAND,
+        atoms=tuple(
+            atom_payload(
+                atom.name,
+                atom.element,
+                geometry.position(atom.name).with_offset(
+                    -origin.x, -origin.y, -origin.z
+                ),
+            )
+            for atom in residue.atom_sites
+        ),
+    )
+    opposite = "C" if endpoint == "N" else "N"
+    neighbor = residue_payload(
+        component_id="GLY",
+        residue_id=ResidueId("P", 7),
+        atoms=(atom_payload(opposite, opposite, Vec3(distance, 0.0, 0.0)),),
+    )
+    return build_bonded_structure(
+        chains=(chain_payload("P", (neighbor,)),) if polymer_neighbor else (),
+        ligands=(target,) if polymer_neighbor else (target, neighbor),
+        source_format=FileFormat.MMCIF,
+    )
+
+
+@pytest.mark.parametrize("endpoint", ("N", "C"))
+@pytest.mark.parametrize("polymer_neighbor", (False, True))
+@pytest.mark.parametrize(
+    "distance",
+    (0.0, PEPTIDE_CN_DISTANCE_MAX_ANGSTROM, PEPTIDE_CN_DISTANCE_MAX_ANGSTROM + 0.1),
+)
+def test_unrecorded_peptide_neighbor_withdraws_only_free_terminal_assumption(
+    protein, endpoint, polymer_neighbor, distance
+):
+    source = _amino_acid_with_neighbor(
+        protein, endpoint, distance, polymer_neighbor=polymer_neighbor
+    )
+    expected_unknown = distance <= PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
+    preparation = AminoAcidPreparation(
+        PolymerMicrostateContext(source), build_default_component_library()
+    )
+    kind = (
+        PolymerChemicalSite.BACKBONE_N
+        if endpoint == "N"
+        else PolymerChemicalSite.BACKBONE_C
+    )
+    target = next(t for t in preparation.targets_for(LIGAND) if t.site.kind is kind)
+    assert target.site.linkage is (
+        PeptideLinkage.UNKNOWN if expected_unknown else PeptideLinkage.FREE
+    )
+    result = add_retained_non_polymer_hydrogens(
+        source, target_residue_ids=frozenset((LIGAND,))
+    )
+    fact = (
+        StructureChemistryObservation(result.structure)
+        .whole_structure_facts()[1]
+        .retained_non_polymer_facts[0]
+    )
+    assert (fact.hydrogen_coverage_state is None) is expected_unknown
+    if not expected_unknown:
+        assert fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
+    else:
+        parents = result.structure.topology.residue_hydrogen_anchor_by_name(
+            constitution=result.structure.constitution,
+            residue_index=result.structure.constitution.residue_index(LIGAND),
+        )
+        assert "CA" in parents.values()
+        assert Counter(parents.values())["N"] == (0 if endpoint == "N" else 3)
+        assert any(
+            issue.kind is ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN
+            and issue.residue_id == LIGAND
+            for issue in result.issues
+        )
+        charge_name = "N" if endpoint == "N" else "OXT"
+        assert (
+            result.structure.topology.formal_charge(
+                result.structure.constitution.atom_index(AtomRef(LIGAND, charge_name))
+            )
+            is None
+        )
+    for bond in result.structure.topology.bonds:
+        refs = tuple(
+            result.structure.constitution.atom_ref_at(i) for i in bond.endpoint_pair()
+        )
+        assert refs[0].residue_id == refs[1].residue_id
+    for original in source.constitution.ligands:
+        for atom in original.atom_sites:
+            ref = AtomRef(original.residue_id, atom.name)
+            assert result.structure.geometry.atom_geometry(
+                result.structure.constitution.atom_index(ref)
+            ) == source.geometry.atom_geometry(source.constitution.atom_index(ref))
+
+
+def test_unrecorded_peptide_neighbor_requires_geometry_rebinding(protein):
+    source = _amino_acid_with_neighbor(protein, "N", 1.3, polymer_neighbor=False)
+    preparation = AminoAcidPreparation(
+        PolymerMicrostateContext(source), build_default_component_library()
+    )
+    index = source.constitution.residue_index(ResidueId("P", 7))
+    geometry = source.residue_geometry(index)
+    moved = source.with_updated_residue_facets_batch(
+        (
+            (
+                source.constitution.residue_site_at(index),
+                geometry.with_atom_geometry("C", AtomGeometry(Vec3(10.0, 0.0, 0.0))),
+                (),
+            ),
+        )
+    )
+    assert not preparation.matches_chemistry(moved)
+    rebound = preparation.for_inputs(moved, preparation.component_library)
+    target = next(
+        t
+        for t in rebound.targets_for(LIGAND)
+        if t.site.kind is PolymerChemicalSite.BACKBONE_N
+    )
+    assert target.site.linkage is PeptideLinkage.FREE
+
+
+@pytest.mark.parametrize("endpoint", ("N", "C"))
+@pytest.mark.parametrize("wrong_target", (False, True))
+def test_peptide_proximity_does_not_reinterpret_nonmatching_elements(
+    protein, endpoint, wrong_target
+):
+    source = _amino_acid_with_neighbor(protein, endpoint, 1.3, polymer_neighbor=False)
+    residue_id = LIGAND if wrong_target else ResidueId("P", 7)
+    atom_name = endpoint if wrong_target else ("C" if endpoint == "N" else "N")
+    index = source.constitution.residue_index(residue_id)
+    residue = source.constitution.residue_site_at(index)
+    source = source.with_updated_residue_facets_batch(
+        (
+            (
+                residue.with_atom_site(
+                    replace(residue.atom_site(atom_name), element="O")
+                ),
+                source.residue_geometry(index),
+                (),
+            ),
+        )
+    )
+    preparation = AminoAcidPreparation(
+        PolymerMicrostateContext(source), build_default_component_library()
+    )
+    kind = (
+        PolymerChemicalSite.BACKBONE_N
+        if endpoint == "N"
+        else PolymerChemicalSite.BACKBONE_C
+    )
+    target = next(t for t in preparation.targets_for(LIGAND) if t.site.kind is kind)
+    assert target.site.linkage is PeptideLinkage.FREE
+    assert (target.resolution.graph is None) is wrong_target
