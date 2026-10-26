@@ -4,7 +4,9 @@ from collections import Counter, defaultdict
 from dataclasses import InitVar, dataclass, field, replace
 from math import isfinite
 
-from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.context import (
+    AminoAcidMicrostateContext,
+)
 from protrepair.chemistry.microstate.graph import MicrostateGraph
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
@@ -68,7 +70,7 @@ class MicrostateHydrogenPlacement:
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class PolymerMicrostatePatch:
+class AminoAcidMicrostatePatch:
     """Bind a complete site update to the immutable structure used to resolve it.
 
     Parameters
@@ -76,7 +78,7 @@ class PolymerMicrostatePatch:
     source : ProteinStructure
         Exact source snapshot; a batch cannot apply this decision to a new one.
     residue_id : ResidueId
-        Polymer residue containing the site.
+        Amino-acid occurrence containing the site; admission belongs to context.
     site : PolymerMicrostateSite
         Standard chemistry and caller-established linkage, not a chain-position
         guess. Actual current boundary bonds are checked during application.
@@ -93,7 +95,7 @@ class PolymerMicrostatePatch:
         A new override supersedes it. Omission does not inherit authority.
     preferences : tuple[MicrostateConstraints, ...]
         Ordered, source-compatible preparation preferences.
-    context : PolymerMicrostateContext or None
+    context : AminoAcidMicrostateContext or None
         Optional existing index for the exact source snapshot. Omission builds
         a fresh index; supplying it never bypasses current physical validation.
 
@@ -102,7 +104,7 @@ class PolymerMicrostatePatch:
     ResidueNotFoundError
         The residue identity is absent from the source snapshot.
     ValueError
-        The residue is not polymer, chemistry is unresolved, placements disagree
+        Chemistry is unresolved, placements disagree
         with the graph, source H identities are unnecessarily replaced, or
         a supplied context belongs to a different snapshot.
     """
@@ -115,7 +117,7 @@ class PolymerMicrostatePatch:
     override: InitVar[MicrostateConstraints | None] = None
     applied_choice: InitVar[AppliedMicrostateChoice | None] = None
     preferences: InitVar[tuple[MicrostateConstraints, ...]] = ()
-    context: InitVar[PolymerMicrostateContext | None] = None
+    context: InitVar[AminoAcidMicrostateContext | None] = None
     resolution: MicrostateResolution = field(init=False)
 
     def __post_init__(
@@ -123,17 +125,12 @@ class PolymerMicrostatePatch:
         override: MicrostateConstraints | None,
         applied_choice: AppliedMicrostateChoice | None,
         preferences: tuple[MicrostateConstraints, ...],
-        context: PolymerMicrostateContext | None,
+        context: AminoAcidMicrostateContext | None,
     ) -> None:
         index = self.source.constitution.residue_index(self.residue_id)
-        if index.value >= (
-            len(self.source.constitution.residue_slots)
-            - len(self.source.constitution.ligands)
-        ):
-            raise ValueError("polymer microstate patches require a polymer residue")
         residue = self.source.constitution.residue_site_at(index)
         if context is None:
-            context = PolymerMicrostateContext(self.source)
+            context = AminoAcidMicrostateContext(self.source)
         elif context.source is not self.source:
             raise ValueError(
                 "microstate patch context requires the exact source snapshot"
@@ -144,7 +141,7 @@ class PolymerMicrostatePatch:
             override=override,
             applied_choice=applied_choice,
             preferences=preferences,
-            requirements=context.coordination_requirements(self.residue_id, self.site),
+            requirements=context.site_requirements(self.residue_id, self.site),
         )
         graph = resolution.graph
         if graph is None:
@@ -276,9 +273,61 @@ class PolymerMicrostatePatch:
         return ResidueFacetPayload(residue, geometry, tuple(charges.items()))
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class PolymerMicrostatePatch(AminoAcidMicrostatePatch):
+    """Admit atomic site patches only for canonical polymer residues."""
+
+    def __post_init__(
+        self,
+        override: MicrostateConstraints | None,
+        applied_choice: AppliedMicrostateChoice | None,
+        preferences: tuple[MicrostateConstraints, ...],
+        context: AminoAcidMicrostateContext | None,
+    ) -> None:
+        constitution = self.source.constitution
+        index = constitution.residue_index(self.residue_id)
+        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+            raise ValueError("polymer microstate patches require a polymer residue")
+        AminoAcidMicrostatePatch.__post_init__(
+            self, override, applied_choice, preferences, context
+        )
+
+
 def apply_polymer_microstate_patches(
+    structure: ProteinStructure, patches: tuple[PolymerMicrostatePatch, ...]
+) -> ProteinStructure:
+    """Apply complete site patches only to canonical polymer occurrences.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Exact source snapshot shared by all patches.
+    patches : tuple[PolymerMicrostatePatch, ...]
+        Disjoint site decisions bound to polymer residues.
+
+    Returns
+    -------
+    ProteinStructure
+        Atomically updated H identities, geometry, charges and bonds.
+
+    Raises
+    ------
+    ValueError
+        A patch is retained, stale, overlapping or physically incompatible.
+    """
+    constitution = structure.constitution
+    polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
+    if any(
+        constitution.residue_index(patch.residue_id).value >= polymer_count
+        for patch in patches
+    ):
+        raise ValueError("polymer microstate patches require a polymer residue")
+    return apply_amino_acid_microstate_patches(structure, patches)
+
+
+def apply_amino_acid_microstate_patches(
     structure: ProteinStructure,
-    patches: tuple[PolymerMicrostatePatch, ...],
+    patches: tuple[AminoAcidMicrostatePatch, ...],
 ) -> ProteinStructure:
     """Commit disjoint resolved sites without exposing a partly changed graph.
 
@@ -286,7 +335,7 @@ def apply_polymer_microstate_patches(
     ----------
     structure : ProteinStructure
         Exact source snapshot shared by every patch.
-    patches : tuple[PolymerMicrostatePatch, ...]
+    patches : tuple[AminoAcidMicrostatePatch, ...]
         Complete site decisions and H placements; multiple sites may share a residue.
 
     Returns
@@ -305,7 +354,7 @@ def apply_polymer_microstate_patches(
     """
     if not patches:
         return structure
-    context = PolymerMicrostateContext(structure)
+    context = AminoAcidMicrostateContext(structure)
 
     touched: set[AtomRef] = set()
     payloads: dict[ResidueId, ResidueFacetPayload] = {}

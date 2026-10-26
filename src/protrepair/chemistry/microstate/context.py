@@ -1,4 +1,4 @@
-"""Read current polymer chemistry without confusing selection with realization."""
+"""Read amino-acid chemistry without confusing selection with realization."""
 
 from collections import Counter, defaultdict
 from collections.abc import Mapping
@@ -33,7 +33,7 @@ from protrepair.structure.topology import (
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class PolymerMicrostateContext:
+class AminoAcidMicrostateContext:
     """Bind source evidence, applied choices and current bonds to one snapshot.
 
     Parameters
@@ -158,11 +158,6 @@ class PolymerMicrostateContext:
             raise TypeError("retaining an applied microstate choice requires a bool")
         constitution = self.source.constitution
         index = constitution.residue_index(residue_id)
-        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
-            return MicrostateResolution(
-                MicrostateResolutionStatus.UNSUPPORTED,
-                details=("polymer microstates require a polymer residue",),
-            )
         residue = constitution.residue_site_at(index)
         catalog = site.candidates()
         names = (
@@ -185,7 +180,7 @@ class PolymerMicrostateContext:
                 details=("multiple applied choices overlap the current site",),
             )
         try:
-            requirements = self.coordination_requirements(residue_id, site)
+            requirements = self.site_requirements(residue_id, site)
         except ValueError as error:
             return MicrostateResolution(
                 MicrostateResolutionStatus.UNSUPPORTED, details=(str(error),)
@@ -198,6 +193,30 @@ class PolymerMicrostateContext:
             preferences=preferences,
             requirements=requirements,
         )
+
+    def site_requirements(
+        self, residue_id: ResidueId, site: PolymerMicrostateSite
+    ) -> MicrostateConstraints:
+        """Bind physical requirements without original-evidence authority.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Present occurrence in the context snapshot.
+        site : PolymerMicrostateSite
+            Coupled site with caller-established linkage.
+
+        Returns
+        -------
+        MicrostateConstraints
+            Required current physical relationships, separate from preferences.
+
+        Raises
+        ------
+        ValueError
+            Current or original coordination cannot be admitted.
+        """
+        return self.coordination_requirements(residue_id, site)
 
     def coordination_requirements(
         self, residue_id: ResidueId, site: PolymerMicrostateSite
@@ -1013,4 +1032,67 @@ class PolymerMicrostateContext:
             )
             if index is not None
             else ()
+        )
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class PolymerMicrostateContext(AminoAcidMicrostateContext):
+    """Restrict amino-acid decisions to canonical polymer membership.
+
+    Parameters
+    ----------
+    source : ProteinStructure
+        Immutable snapshot containing the queried polymer residues.
+    """
+
+    def resolve(
+        self,
+        residue_id: ResidueId,
+        site: PolymerMicrostateSite,
+        *,
+        override: MicrostateConstraints | None = None,
+        preferences: tuple[MicrostateConstraints, ...] = (),
+        retain_applied_choice: bool = True,
+    ) -> MicrostateResolution:
+        """Resolve a polymer site without admitting retained slots.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Polymer occurrence in the context snapshot.
+        site : PolymerMicrostateSite
+            Coupled site with caller-established linkage.
+        override : MicrostateConstraints or None
+            Explicit replacement authority.
+        preferences : tuple[MicrostateConstraints, ...]
+            Ordered source-compatible preparation preferences.
+        retain_applied_choice : bool
+            Retain compatible prior selections at their original authority.
+
+        Returns
+        -------
+        MicrostateResolution
+            Desired chemistry, or unsupported for retained occurrences.
+
+        Raises
+        ------
+        ResidueNotFoundError
+            The occurrence is absent from the snapshot.
+        ValueError
+            An applicable explicit request is empty.
+        """
+        constitution = self.source.constitution
+        index = constitution.residue_index(residue_id)
+        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+            return MicrostateResolution(
+                MicrostateResolutionStatus.UNSUPPORTED,
+                details=("polymer microstates require a polymer residue",),
+            )
+        return AminoAcidMicrostateContext.resolve(
+            self,
+            residue_id,
+            site,
+            override=override,
+            preferences=preferences,
+            retain_applied_choice=retain_applied_choice,
         )

@@ -13,7 +13,10 @@ from protrepair.chemistry.microstate.catalog import (
     PolymerChemicalSite,
     standard_microstate_candidates,
 )
-from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.context import (
+    AminoAcidMicrostateContext,
+    PolymerMicrostateContext,
+)
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import (
     PolymerMicrostatePreparation,
@@ -46,6 +49,7 @@ from protrepair.transformer.completion.terminal.augmentation import (
 )
 from protrepair.transformer.polymer_microstate import (
     PolymerMicrostatePatch,
+    apply_amino_acid_microstate_patches,
     apply_polymer_microstate_patches,
 )
 
@@ -88,6 +92,23 @@ def _place(
         site,
         preferences=pras_microstate_preferences(site),
         **kwargs,
+    )
+
+
+@pytest.mark.parametrize("component", ("ASP", "GLU", "HIS", "LYS", "ARG"))
+def test_shared_site_placement_preserves_polymer_results(source, component):
+    residue_id, site = _site(source, component)
+    shared = microstate.place_amino_acid_microstate_hydrogens(
+        AminoAcidMicrostateContext(source),
+        residue_id,
+        site,
+        preferences=pras_microstate_preferences(site),
+    )
+    polymer = _place(source, component)
+    assert shared.resolution == polymer.resolution
+    assert shared.hydrogens == polymer.hydrogens
+    assert apply_amino_acid_microstate_patches(source, (shared,)) == (
+        apply_polymer_microstate_patches(source, (polymer,))
     )
 
 
