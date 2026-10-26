@@ -89,9 +89,25 @@ separates observed coverage from generation capability:
   coverage rather than treating an empty expectation as completion.
 - `hydrogen_generation_supported` reports whether the selected chemistry
   admits generation, independently of the observed coverage.
+- `reference_hydrogens_verified` reports whether read-only reference comparison
+  established the observed coverage. It can be true for partial coverage and
+  does not expose the internal reference graph or parent correspondence.
+- `supports_hydrogen_verification()` accepts admitted preparation or a comparable
+  read-only inventory. It does not imply `is_supported()` or H generation.
+- `has_complete_reference_hydrogens()` identifies complete reference-verified H
+  without implying generation, topology or refinement support.
 - `chemistry_failure` is an optional `RetainedNonPolymerChemistryFailure`
   with a `RetainedNonPolymerChemistryFailureKind` and readable `detail`.
   This typed field is new since 0.2.0.
+
+A verified reference inventory can satisfy a whole-structure H goal even when
+preparation remains unsupported. `chemistry_failure` may still explain why
+missing H cannot be generated; it is not a blocker for already complete verified
+H. Reference-backed parent correspondence can accept different H names without
+changing source identities or coordinates. No topology is published, and local
+refinement remains refused without its existing preparation/realization support. See
+[reference validation](retained-ligand-policy.md#known-references-without-preparation)
+for naming, source-state and stereo limits.
 
 The `hydrogen_coverage_state` fields on `ProteinStructureObservation`,
 `AtomScopeObservation` and `ResidueChemistryReadinessFacts` also allow `None`.

@@ -113,10 +113,11 @@ separate state axes applied to the same whole structure.
 
 Retained ligands are kept in the example above. Use
 `LigandPolicy.REJECT` when ligand-bearing input should fail at ingress instead.
-Known components use admitted bundled preparation; a bundled component without
-that support stays unchanged with an unresolved-H warning, rather than having
-its chemistry inferred from coordinates. Unknown retained ligands can use the
-default RDKit fallback. You can require templates or explicit chemistry
+Known components use admitted bundled preparation. Without that support, an
+isolated component's existing H can be checked against its reference without
+changing atoms or topology. Missing or unverifiable H remain unresolved rather
+than having chemistry inferred from coordinates. Unknown retained ligands can
+use the default RDKit fallback. You can require templates or explicit chemistry
 evidence by setting
 `WorkflowTransformRequests(allow_retained_non_polymer_rdkit_fallback=False)`.
 See the [retained-ligand policy](docs/retained-ligand-policy.md) for fallback,

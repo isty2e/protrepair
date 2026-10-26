@@ -492,7 +492,7 @@ def _whole_structure_hydrogen_goal_observed_state(
     if not chemistry_readiness_facts.component_support_state.is_fully_supported():
         return None
     if any(
-        not retained_fact.is_supported()
+        not retained_fact.supports_hydrogen_verification()
         or retained_fact.hydrogen_coverage_state is None
         for retained_fact in chemistry_readiness_facts.retained_non_polymer_facts
     ):

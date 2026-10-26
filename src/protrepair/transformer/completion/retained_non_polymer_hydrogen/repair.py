@@ -37,6 +37,9 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
     evidence_by_residue_id,
 )
+from protrepair.chemistry.retained_non_polymer.hydrogen_correspondence import (
+    source_hydrogen_bond_length_is_compatible,
+)
 from protrepair.chemistry.retained_non_polymer.template_binding import (
     RetainedTemplateBinding,
 )
@@ -113,7 +116,6 @@ _RDKIT_FALLBACK_VISIBILITY_DETAILS = (
     "retained non-polymer hydrogens inferred via RDKit coordinate/proximity fallback"
 )
 _SOURCE_HYDROGEN_RECONCILIATION_CANDIDATE_LIMIT = 4096
-_SOURCE_HYDROGEN_ANCHOR_DISTANCE_TOLERANCE_ANGSTROM = 0.35
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,16 +382,17 @@ def _execute_retained_non_polymer_hydrogen_stage(
                     evidence = coordination_preparation.hydrogenation_template
             if evidence is None and not RetainedAtomicSite(ligand).is_monatomic_ion():
                 guarded = (
-                    RetainedNonPolymerChemistryResolution.from_unprepared_reference(
-                        template
+                    RetainedNonPolymerChemistryResolution.observe_unprepared_reference(
+                        template, structure, ligand
                     )
                 )
                 if guarded is not None and guarded.failure is not None:
-                    issues.append(
-                        unresolved_retained_hydrogen_issue(
-                            ligand.residue_id, ligand.component_id, guarded.failure
+                    if not guarded.has_complete_reference_hydrogens():
+                        issues.append(
+                            unresolved_retained_hydrogen_issue(
+                                ligand.residue_id, ligand.component_id, guarded.failure
+                            )
                         )
-                    )
                     continue
             try:
                 if evidence is not None:
@@ -1609,9 +1612,8 @@ def _source_hydrogen_anchor_distance_is_compatible(
     generated_anchor_distance = hydrogenated_payload.position(
         generated_name
     ).distance_to(hydrogenated_payload.position(generated_anchor))
-    return (
-        abs(source_anchor_distance - generated_anchor_distance)
-        <= _SOURCE_HYDROGEN_ANCHOR_DISTANCE_TOLERANCE_ANGSTROM
+    return source_hydrogen_bond_length_is_compatible(
+        source_anchor_distance, generated_anchor_distance
     )
 
 

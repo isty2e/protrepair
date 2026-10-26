@@ -228,7 +228,11 @@ class RetainedNonPolymerChemistryReadinessFact:
         Whether the selected chemistry admits generating missing H, independently
         of coverage. Native placement can still fail.
     chemistry_failure : RetainedNonPolymerChemistryFailure or None
-        Typed reason for unavailable or rejected chemistry.
+        Typed reason for unavailable preparation or rejected chemistry. A complete
+        read-only inventory need not be blocked by unavailable generation.
+    reference_hydrogens_verified : bool
+        Whether coverage was established by read-only reference comparison,
+        without preparation or topology rights. Coverage can still be partial.
     """
 
     residue_id: ResidueId
@@ -242,6 +246,30 @@ class RetainedNonPolymerChemistryReadinessFact:
     hydrogen_coverage_state: HydrogenCoverageState | None
     hydrogen_generation_supported: bool
     chemistry_failure: RetainedNonPolymerChemistryFailure | None = None
+    reference_hydrogens_verified: bool = False
+
+    def supports_hydrogen_verification(self) -> bool:
+        """Return whether admitted chemistry or a reference can verify H.
+
+        Returns
+        -------
+        bool
+            Verification support, independent of generation or FF readiness.
+        """
+        return self.is_supported() or self.reference_hydrogens_verified
+
+    def has_complete_reference_hydrogens(self) -> bool:
+        """Return whether read-only reference comparison established complete H.
+
+        Returns
+        -------
+        bool
+            Reference-verified completion, without generation or topology rights.
+        """
+        return (
+            self.reference_hydrogens_verified
+            and self.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
+        )
 
     def is_supported(self) -> bool:
         """Return whether canonical chemistry support is available."""

@@ -147,6 +147,7 @@ def project_hydrogen_issues(
             )
         )[1].retained_non_polymer_facts
         if fact.chemistry_failure is not None
+        and not fact.has_complete_reference_hydrogens()
         and observation.hydrogen_expectation_model.resolution_for_retained_non_polymer(
             fact.residue_id
         ).reference_requires_hydrogens

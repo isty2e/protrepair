@@ -42,11 +42,48 @@ This restriction applies even when fallback is enabled. Compatible explicit
 chemistry evidence and caller-supplied H-capable templates remain available.
 
 H need comes from the active reference, not from whether inference succeeds.
-For a reference declaring H, an input without H has coverage `NONE`. If H/D/T
-are already present but no validation path is admitted, coverage is `None`
-(indeterminate), not `COMPLETE` or an inferred `PARTIAL`. Original H and
-coordinates are retained. Even a source inventory matching the reference is
-not yet certified: parent counts alone cannot validate bonds, charges or stereo.
+An isolated component can be checked against that reference without adding
+H to the structure or publishing chemistry. Validation requires a complete named
+heavy scaffold, matching elements, compatibility with known source/current
+charges and connectivity, a supported reference graph, and compatible declared
+pose stereo. Original external links
+and excluded coordination cannot be hidden by removing their current endpoints.
+
+Every H/D/T must have an interpreted local heavy parent. Source connectivity
+takes precedence; a connectivity-only CONECT constrains the parent but does not
+declare a chemical order. Without a connection, a reference H name can identify
+its parent if that parent is among the nearest heavy atoms of the same residue,
+with finite comparison distances. Exact distance ties including the named
+parent are allowed.
+
+Different or exchanged H names need not block an otherwise compatible input.
+When naming cannot establish a parent, ProtRepair can interpret a unique nearest
+local heavy atom using temporary H prepared from the same reference graph on
+fixed current heavy coordinates. The source H-parent length must agree with a
+prepared H length under the retained source-H compatibility tolerance (0.35 A
+length deviation). This is not a radius-sum distance limit or heavy-graph
+inference. Ambiguous parents and incompatible lengths remain indeterminate;
+parents are never chosen merely to fill the reference's H counts. H/D/T identity
+comes from the atom element, not a guessed name prefix. Source atoms, names,
+coordinates and bonds are unchanged; geometric correspondence does not assert
+an original connection.
+
+There is no global H-parent distance bound: an already accepted name- or
+connection-based parent is not subjected to the prepared-length check. A remote
+H whose reference-name parent remains nearest can still pass naming validation.
+An absolute distance bound is deferred until actual source-input distributions
+support a generally applicable rule; this is not H-geometry validation. Per-parent
+multiplicities determine `NONE`, `PARTIAL` or `COMPLETE` only after these checks.
+Missing heavy atoms, ambiguous parents, unsupported references or different
+source states leave coverage indeterminate (`None`) when H are present. A
+reference declaring H still establishes `NONE` when no H are present. If that
+H-free input cannot be validated, its diagnostic retains the unavailable
+preparation reason; completing heavy atoms alone does not enable H generation.
+
+Original atoms, coordinates and topology remain unchanged. This check does not
+select another protonation state, repair H geometry or certify FF readiness.
+Declared stereo uses the existing pose policy: unassigned geometry is not
+opposite stereo, and the check is not an independent H-orientation test.
 Indeterminate H coverage is not itself a chemistry contradiction. The separate
 source-charge and bond diagnostic still compares against the literal template.
 It can flag an alternative protonation state, including a zwitterion, as well as
@@ -54,19 +91,20 @@ a real charge conflict. State-aware validation of those differences is not
 supported by this safeguard.
 
 Requested H completion reports one current `unresolved_retained_hydrogen`
-warning per affected residue, including when no transformer runs. Whole-structure
+warning per incomplete or unverifiable residue, including when no transformer
+runs. Verified complete inventories need no H-preparation warning. Whole-structure
 H goal outcomes include blocking residue scopes and the reason; repeated
-prerequisites do not increase this diagnostic's branch-score burden. Unverified
-chemistry cannot admit local refinement. H-generation support and coverage
-verification are separate capabilities.
+prerequisites do not increase this diagnostic's branch-score burden. Read-only
+verification does not admit H generation, topology repair or local refinement;
+these require their existing preparation and realization support.
 
 This reduces automatic preparation relative to 0.2.0, including some components
 whose inferred body chemistry happened to match the reference. In 3CF, for
 example, proximity inference could add four H to an already complete ten-H
-input by missing its nitrile bond. That input now stays unchanged with an
-explained unmet goal. Read-only validation of these reference states and wider
-dictionary-graph preparation remain unsupported; they require separate
-admission rather than a geometric fallback.
+input by missing its nitrile bond. A compatible complete input can now satisfy
+the H goal unchanged; missing H remain ungenerated with an explained unmet goal.
+Wider dictionary-graph preparation and alternative-state selection remain
+unsupported rather than delegated to a geometric fallback.
 
 ## Connectivity And Existing Hydrogens
 

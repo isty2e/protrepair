@@ -4,8 +4,13 @@
 
 ### Added
 
-- expose H-generation support and typed `chemistry_failure` details on retained
-  chemistry-readiness facts
+- expose H-generation support, read-only `reference_hydrogens_verified` and typed
+  `chemistry_failure` details on retained chemistry-readiness facts. Isolated
+  reference-compatible existing H can satisfy a whole-structure H goal without
+  admitted H preparation. Different H names can use unambiguous, reference-backed
+  geometric correspondence without moving or renaming source atoms. Naming
+  checks have no absolute distance bound; validation does not publish topology
+  or admit local refinement
 - report assessed terminal and frontier candidates, the search stop reason and
   observed native FF returns on workflow results
 - retain actual native FF settings, source motion scope, return status and
@@ -17,9 +22,9 @@
 - block geometry-based H inference for retained bundled components whose active
   reference has no admitted preparation, even with fallback enabled. Preserve
   source atoms and report one current `unresolved_retained_hydrogen` warning
-  per requested residue, with blocking scopes and reasons on unmet
-  whole-structure H goals. Local refinement is refused when its included region
-  contains such unresolved chemistry.
+  per incomplete or unverifiable requested residue, with blocking scopes and
+  reasons on unmet whole-structure H goals. Local refinement is refused when its
+  included region contains such unresolved chemistry.
   This reduces automatic H preparation relative to 0.2.0; compatible explicit
   chemistry and H-capable custom templates remain supported
 - allow `hydrogen_coverage_state` to be `None` in `ProteinStructureObservation`,

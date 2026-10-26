@@ -592,6 +592,9 @@ class StructureChemistryObservation:
             ),
         )
         reference_need = hydrogen_expectation_resolution.reference_requires_hydrogens
+        reference_inventory = (
+            hydrogen_expectation_resolution.reference_hydrogen_inventory
+        )
         if reference_need is not None:
             h_applicability_state = (
                 HydrogenApplicabilityState.APPLICABLE
@@ -605,6 +608,8 @@ class StructureChemistryObservation:
                 if reference_need
                 else HydrogenCoverageState.COMPLETE
             )
+            if reference_inventory is not None:
+                h_coverage_state = reference_inventory.coverage_state()
         hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
         if (
             hydrogen_expectation_resolution.source
@@ -782,6 +787,7 @@ class StructureChemistryObservation:
                 hydrogen_expectation_resolution.can_generate_hydrogens()
             ),
             chemistry_failure=hydrogen_expectation_resolution.failure,
+            reference_hydrogens_verified=reference_inventory is not None,
         )
 
     def residue_completion_facts(

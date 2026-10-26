@@ -351,6 +351,7 @@ def evaluate_requested_goal_report(
                     fact
                     for fact in hydrogen_facts.retained_non_polymer_facts
                     if fact.chemistry_failure is not None
+                    and not fact.has_complete_reference_hydrogens()
                 )
             )
             blocking_scopes = tuple(

@@ -16,7 +16,7 @@ from protrepair.chemistry.inference.rdkit_graph import (
     NativeBondProjection,
     has_declared_stereochemistry,
     native_bond_projection_from_molecule,
-    require_compatible_pose_stereochemistry,
+    require_compatible_named_pose_stereochemistry,
 )
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
@@ -75,35 +75,12 @@ def require_retained_non_polymer_evidence_stereochemistry(
     names = _evidence_heavy_atom_names_by_index(
         template, heavy_atom_names=evidence.heavy_atom_names
     )
-    assert Chem is not None
-    hydrogens_by_parent: dict[str, list[str]] = {}
-    for hydrogen, parent in hydrogen_attachments:
-        hydrogens_by_parent.setdefault(parent, []).append(hydrogen)
-    complete_parents = tuple(
-        index
-        for index, name in names.items()
-        if name in hydrogens_by_parent
-        and len(hydrogens_by_parent[name])
-        == template.GetAtomWithIdx(index).GetTotalNumHs()
+    require_compatible_named_pose_stereochemistry(
+        template,
+        tuple(names[index] for index in range(template.GetNumAtoms())),
+        geometry,
+        hydrogen_attachments=hydrogen_attachments,
     )
-    if complete_parents:
-        template = Chem.AddHs(template, onlyOnAtoms=complete_parents)
-        for atom in template.GetAtoms():
-            if atom.GetIdx() not in names:
-                parent = names[atom.GetNeighbors()[0].GetIdx()]
-                names[atom.GetIdx()] = hydrogens_by_parent[parent].pop(0)
-    conformer = Chem.Conformer(template.GetNumAtoms())
-    conformer.Set3D(True)
-    for index, name in names.items():
-        if not geometry.has_atom(name):
-            raise ValueError(
-                "retained non-polymer evidence mapping has no coordinate "
-                f"for atom {name}"
-            )
-        conformer.SetAtomPosition(index, tuple(geometry.position(name)))
-    template.RemoveAllConformers()
-    template.AddConformer(conformer, assignId=True)
-    require_compatible_pose_stereochemistry(template)
 
 
 def retained_non_polymer_evidence_external_bonds(

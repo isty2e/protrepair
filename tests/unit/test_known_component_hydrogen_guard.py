@@ -10,6 +10,7 @@ from tests.support.canonical_builders import (
     residue_payload,
 )
 from tests.support.request_builders import whole_structure_requested_goals
+from tests.support.retained_reference_fixtures import LIGAND, reference_structure
 
 from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
@@ -38,7 +39,7 @@ from protrepair.state.structure_projection import (
     ProteinStructureObservation,
     StructureProjectionStateFacts,
 )
-from protrepair.structure import AtomRef, ProteinStructure, ResidueId
+from protrepair.structure import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
     add_retained_non_polymer_hydrogens,
@@ -74,40 +75,6 @@ from protrepair.workflow.engine.reporting import (
     evaluate_workflow_branch_quality_score,
 )
 
-LIGAND = ResidueId("L", 600)
-
-
-def reference_structure(
-    component_id: str, *, with_h: bool, isotope: str = "H"
-) -> ProteinStructure:
-    record = build_bundled_nonstandard_registry().get(component_id)
-    assert record is not None
-    atoms = []
-    for atom in record.atoms:
-        if atom.is_hydrogen() and not with_h:
-            continue
-        assert atom.ideal_position is not None
-        atoms.append(
-            atom_payload(
-                atom.atom_name,
-                isotope if atom.is_hydrogen() else atom.element,
-                Vec3(*atom.ideal_position),
-                formal_charge=atom.formal_charge,
-                b_factor=23.0,
-            )
-        )
-    return build_bonded_structure(
-        chains=(),
-        ligands=(
-            residue_payload(
-                component_id=component_id,
-                residue_id=LIGAND,
-                atoms=tuple(atoms),
-            ),
-        ),
-        source_format=FileFormat.MMCIF,
-    )
-
 
 @pytest.mark.parametrize("component_id", ("3CF", "NLE", "02L"))
 @pytest.mark.parametrize("with_h", (False, True))
@@ -121,10 +88,11 @@ def test_known_unprepared_component_is_unchanged_and_not_inferred(
     )
     assert result.structure == source
     assert not result.repairs
-    assert len(result.issues) == 1
-    assert result.issues[0].kind is ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN
-    assert "admitted preparation" in result.issues[0].message
-    assert "disabled" not in result.issues[0].message
+    assert len(result.issues) == (0 if with_h else 1)
+    if not with_h:
+        assert result.issues[0].kind is ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN
+        assert "admitted preparation" in result.issues[0].message
+        assert "disabled" not in result.issues[0].message
 
     observation = StructureChemistryObservation(
         source,
@@ -133,7 +101,7 @@ def test_known_unprepared_component_is_unchanged_and_not_inferred(
     fact = observation.whole_structure_facts()[1].retained_non_polymer_facts[0]
     assert fact.hydrogen_applicability_state is HydrogenApplicabilityState.APPLICABLE
     if with_h:
-        assert fact.hydrogen_coverage_state is None
+        assert fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
     else:
         assert fact.hydrogen_coverage_state is HydrogenCoverageState.NONE
     assert not fact.requires_hydrogen_completion()
@@ -168,7 +136,9 @@ def test_known_unprepared_component_is_unchanged_and_not_inferred(
         source, build_default_component_library()
     )
     assert topology.structure == source
-    assert topology.issues[0].kind is result.issues[0].kind
+    assert len(topology.issues) == len(result.issues)
+    if topology.issues:
+        assert topology.issues[0].kind is result.issues[0].kind
 
 
 @pytest.mark.parametrize("component_id", ("3CF", "NLE", "02L"))
@@ -183,22 +153,27 @@ def test_public_goal_explains_unprepared_known_chemistry(
         requested_goals=whole_structure_requested_goals(HydrogenCoverageState.COMPLETE),
     )
     assert result.structure == source
-    assert not result.requested_goals_fully_satisfied()
+    assert result.requested_goals_fully_satisfied() is with_h
     assert result.requested_goal_report is not None
     outcome = next(
         outcome
         for outcome in result.requested_goal_report.outcomes
         if isinstance(outcome.requested_goal.value, HydrogenCoverageState)
     )
-    assert outcome.observed_state is None
-    assert outcome.blocking_scopes
-    assert outcome.details is not None and "admitted preparation" in outcome.details
+    assert outcome.observed_state is (
+        HydrogenCoverageState.COMPLETE if with_h else HydrogenCoverageState.NONE
+    )
+    assert bool(outcome.blocking_scopes) is not with_h
+    if not with_h:
+        assert outcome.details is not None and "admitted preparation" in outcome.details
     issues = [
         issue
         for issue in result.issues
         if issue.kind is ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN
     ]
-    assert len(issues) == 1 and issues[0].residue_id == LIGAND
+    assert len(issues) == (0 if with_h else 1)
+    if issues:
+        assert issues[0].residue_id == LIGAND
 
 
 def test_public_file_h_preparation_never_infers_unprepared_reference(
@@ -358,6 +333,8 @@ def test_indeterminate_coverage_cannot_admit_topology_or_refinement() -> None:
         hydrogen_generation_supported=True,
         heavy_atom_topology_availability_state=TopologyAvailabilityState.PRESENT,
         hydrogen_topology_availability_state=TopologyAvailabilityState.PRESENT,
+        hydrogen_coverage_state=None,
+        reference_hydrogens_verified=False,
     )
     assert not fact.requires_hydrogen_completion()
     assert not fact.requires_topology_resolution()
@@ -385,7 +362,7 @@ def test_partial_scaffold_keeps_reference_need_without_generating_atoms() -> Non
 
 
 @pytest.mark.parametrize("isotope", ("D", "T"))
-def test_source_isotopes_remain_indeterminate_and_unchanged(isotope: str) -> None:
+def test_source_isotopes_are_verified_without_modification(isotope: str) -> None:
     source = reference_structure("NLE", with_h=True, isotope=isotope)
     result = add_retained_non_polymer_hydrogens(source)
     assert result.structure == source
@@ -394,10 +371,10 @@ def test_source_isotopes_remain_indeterminate_and_unchanged(isotope: str) -> Non
         .whole_structure_facts()[1]
         .retained_non_polymer_facts[0]
     )
-    assert fact.hydrogen_coverage_state is None
+    assert fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
 
 
-def test_scoped_h_goal_retains_indeterminate_reference_and_reason() -> None:
+def test_scoped_h_evaluator_can_observe_verified_reference_inventory() -> None:
     source = reference_structure("3CF", with_h=True)
     report = evaluate_requested_goal_report(
         source,
@@ -410,9 +387,9 @@ def test_scoped_h_goal_retains_indeterminate_reference_and_reason() -> None:
         component_library=build_default_component_library(),
     )
     outcome = report.outcomes[0]
-    assert outcome.observed_state is None and not outcome.is_satisfied()
-    assert outcome.blocking_scopes == (ResidueSetScope((LIGAND,)),)
-    assert outcome.details is not None and "admitted preparation" in outcome.details
+    assert outcome.observed_state is HydrogenCoverageState.COMPLETE
+    assert outcome.is_satisfied()
+    assert not outcome.blocking_scopes
 
 
 def test_full_reference_inventory_survives_all_nonstandard_template_projections() -> (
@@ -437,10 +414,12 @@ def test_full_reference_inventory_survives_all_nonstandard_template_projections(
             assert not resolution.heavy_bond_definitions
 
 
+@pytest.mark.parametrize("with_h", (False, True))
 def test_local_prerequisites_refuse_guarded_component_without_ff(
     monkeypatch: pytest.MonkeyPatch,
+    with_h: bool,
 ) -> None:
-    source = reference_structure("NLE", with_h=False)
+    source = reference_structure("NLE", with_h=with_h)
     ff = Mock(
         side_effect=AssertionError("unverified chemistry must not bind a force field")
     )
@@ -480,13 +459,10 @@ def test_local_prerequisites_refuse_guarded_component_without_ff(
         ),
     )
     assert public.structure == source
-    assert (
-        sum(
-            issue.kind is ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN
-            for issue in public.issues
-        )
-        == 1
-    )
+    assert sum(
+        issue.kind is ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN
+        for issue in public.issues
+    ) == (0 if with_h else 1)
     assert not public.relaxation_executions
     ff.assert_not_called()
 
