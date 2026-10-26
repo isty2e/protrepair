@@ -12,7 +12,6 @@ except ImportError:  # pragma: no cover - tested through the unavailable boundar
 from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
 from protrepair.chemistry.microstate.context import (
     AminoAcidMicrostateContext,
-    PolymerMicrostateContext,
 )
 from protrepair.chemistry.microstate.graph import MicrostateGraph
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
@@ -36,7 +35,7 @@ if TYPE_CHECKING:
 
 
 def place_polymer_microstate_hydrogens(
-    context: PolymerMicrostateContext,
+    context: AminoAcidMicrostateContext,
     residue_id: ResidueId,
     site: PolymerMicrostateSite,
     *,
@@ -49,7 +48,7 @@ def place_polymer_microstate_hydrogens(
 
     Parameters
     ----------
-    context : PolymerMicrostateContext
+    context : AminoAcidMicrostateContext
         Immutable snapshot, original observations and applied chemical choices.
     residue_id : ResidueId
         Polymer residue to prepare.
@@ -92,6 +91,10 @@ def place_polymer_microstate_hydrogens(
     peptide partner supplies the carbonyl needed for planar amide N placement.
     No minimization, pKa prediction or clash-free pose is promised here.
     """
+    constitution = context.source.constitution
+    index = constitution.residue_index(residue_id)
+    if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+        raise ValueError("polymer microstate placement requires a polymer residue")
     placements, applied, repositioned = _place_site_hydrogens(
         context,
         residue_id,

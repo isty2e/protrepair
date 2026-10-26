@@ -11,8 +11,8 @@ from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import (
-    PolymerMicrostatePreparation,
-    PolymerSitePreparation,
+    AminoAcidPreparation,
+    AminoAcidSitePreparation,
 )
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.chemistry.polar_contacts import PolarContactChemistry
@@ -85,7 +85,7 @@ def materialize_hydrogens_core(
     target_residue_ids: frozenset[ResidueId] | None = None,
     histidine_protonation: HistidineProtonationRequest = _NO_NEW_HISTIDINE_REQUEST,
     rebuild_existing: bool = False,
-    preparation: PolymerMicrostatePreparation | None = None,
+    preparation: AminoAcidPreparation | None = None,
 ) -> TransformationResult:
     """Place fixed-template H and atomically realize resolved polymer sites.
 
@@ -106,7 +106,7 @@ def materialize_hydrogens_core(
     rebuild_existing : bool
         Regenerate H coordinates while preserving identities and scalars.
         Moved pre-repair anchors also trigger residue-local rebuilding.
-    preparation : PolymerMicrostatePreparation or None
+    preparation : AminoAcidPreparation or None
         Optional seed. Each stage rebinds it after any snapshot, library or
         request change; a count-compatible older snapshot is not reused.
 
@@ -196,7 +196,7 @@ def materialize_hydrogens_core(
     for carbonyls in (True, False):
         requests = histidine_microstate_requests(result.structure, request)
         prepared = (
-            PolymerMicrostatePreparation(
+            AminoAcidPreparation(
                 PolymerMicrostateContext(result.structure), library, requests=requests
             )
             if prepared is None
@@ -296,7 +296,7 @@ def materialize_hydrogens_core(
 def _fixed_hydrogens(
     structure: ProteinStructure,
     library: ComponentLibrary,
-    prepared: PolymerMicrostatePreparation,
+    prepared: AminoAcidPreparation,
     *,
     targets: frozenset[ResidueId],
     rebuilding: frozenset[ResidueId],
@@ -688,7 +688,7 @@ def _heavy_anchors_changed(
     )
 
 
-def _site_failure(target: PolymerSitePreparation, reason: str) -> ValidationIssue:
+def _site_failure(target: AminoAcidSitePreparation, reason: str) -> ValidationIssue:
     return ValidationIssue.for_residue(
         kind=(
             ValidationIssueKind.CHEMISTRY_CONTRADICTION

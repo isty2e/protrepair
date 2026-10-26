@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.scope import ResidueSetScope
 from protrepair.state import (
     StructureChemistryReadinessFacts,
@@ -160,7 +160,7 @@ def plan_hydrogen_completion_transformers(
     coverage_facts: StructureCoverageFacts | None = None,
     chemistry_readiness_facts: StructureChemistryReadinessFacts | None = None,
     histidine_protonation: HistidineProtonationRequest | None = None,
-    observed_preparation: PolymerMicrostatePreparation | None = None,
+    observed_preparation: AminoAcidPreparation | None = None,
 ) -> CompletionTransformerPlanningOutcome:
     """Propose H or coupled-chemistry completion from current state.
 
@@ -180,7 +180,7 @@ def plan_hydrogen_completion_transformers(
         Current-snapshot chemistry facts, or None to derive them.
     histidine_protonation : HistidineProtonationRequest or None
         New HIS selection. None retains applicable prior choices.
-    observed_preparation : PolymerMicrostatePreparation or None
+    observed_preparation : AminoAcidPreparation or None
         Reusable seed, rebound to the exact snapshot, library and full requests.
         None derives targets independently after the eligibility check.
 
@@ -228,7 +228,7 @@ def plan_hydrogen_completion_transformers(
     request = normalize_histidine_protonation_request(histidine_protonation)
     requests = histidine_microstate_requests(structure, request)
     preparation = (
-        PolymerMicrostatePreparation(
+        AminoAcidPreparation(
             PolymerMicrostateContext(structure), component_library, requests=requests
         )
         if observed_preparation is None

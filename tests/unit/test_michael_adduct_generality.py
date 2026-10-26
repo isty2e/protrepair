@@ -39,7 +39,7 @@ from protrepair.chemistry.component.semantics import IdealGeometryHydrogenSemant
 from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.inference import idealized_stereochemistry
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.restraint import structure as restraint_module
 from protrepair.chemistry.restraint.library import RestraintLibrary
 from protrepair.chemistry.restraint.structure import StructureRestraints
@@ -248,9 +248,7 @@ def test_independent_precursors_publish_coupled_product_and_repeat(smiles, rever
         sum(a.is_hydrogen() for a in product.atom_sites)
         == len(library.require("XMA").expected_hydrogen_atom_names()) + 1
     )
-    prep = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(result.structure), library
-    )
+    prep = AminoAcidPreparation(PolymerMicrostateContext(result.structure), library)
     assert {parent for _, parent in prep.fixed_hydrogen_atom_sites(CYSTEINE)} == {
         "CA",
         "CB",
@@ -774,9 +772,7 @@ def test_product_pose_change_invalidates_polymer_selection():
     realized = add_retained_non_polymer_hydrogens(source, library)
     assert not realized.issues
     structure = realized.structure
-    preparation = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(structure), library
-    )
+    preparation = AminoAcidPreparation(PolymerMicrostateContext(structure), library)
     context = preparation.fixed_hydrogen_context(CYSTEINE)
     assert context is not None and not context.unresolved_parent_names
     payload = residue_payload(structure, LIGAND)
@@ -788,7 +784,7 @@ def test_product_pose_change_invalidates_polymer_selection():
     )
     changed = structure.with_updated_residue_geometries(((LIGAND, reflected),))
     assert not preparation.matches_chemistry(changed)
-    rebound = PolymerMicrostatePreparation(PolymerMicrostateContext(changed), library)
+    rebound = AminoAcidPreparation(PolymerMicrostateContext(changed), library)
     context = rebound.fixed_hydrogen_context(CYSTEINE)
     assert context is not None and context.unresolved_parent_names == {"SG"}
     rejected = add_retained_non_polymer_hydrogens(changed, library)

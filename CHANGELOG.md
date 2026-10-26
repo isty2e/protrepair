@@ -19,6 +19,15 @@
 
 ### Changed
 
+- prepare retained standard amino acids and the supported CSO/HYP/MSE/PTR/SEP/TPO
+  components with the same free-terminal and standard side-chain policy as
+  polymer residues. Source H, declared charges and explicit chemistry retain
+  precedence; cofactors keep their component-specific chemistry. Missing or
+  unexplained sites remain indeterminate, while independent admitted sites can
+  be prepared without certifying whole-residue or refinement readiness. In the
+  incomplete retained CYS of 3ENJ, this preserves source H, assigns the observed
+  three-H N a +1 charge and adds the supported alpha H; it does not invent the
+  missing carboxyl scaffold
 - block geometry-based H inference for retained bundled components whose active
   reference has no admitted preparation, even with fallback enabled. Preserve
   source atoms and report one current `unresolved_retained_hydrogen` warning

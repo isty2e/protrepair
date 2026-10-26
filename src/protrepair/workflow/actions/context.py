@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 
 from protrepair.chemistry import ComponentLibrary
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
@@ -35,7 +35,7 @@ class TransformerExecutionContext:
         Whether retained-component preparation may infer chemistry.
     retained_non_polymer_chemistry_evidence : tuple
         RetainedNonPolymerChemistryEvidence values for explicit interpretation.
-    polymer_preparation : PolymerMicrostatePreparation or None
+    polymer_preparation : AminoAcidPreparation or None
         Optional non-semantic seed. Consumers rebind it to their exact current
         snapshot, library and requests; it is not proposal-time authority.
     """
@@ -52,6 +52,6 @@ class TransformerExecutionContext:
         RetainedNonPolymerChemistryEvidence,
         ...,
     ] = ()
-    polymer_preparation: PolymerMicrostatePreparation | None = field(
+    polymer_preparation: AminoAcidPreparation | None = field(
         default=None, compare=False, repr=False
     )

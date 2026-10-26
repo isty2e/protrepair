@@ -15,7 +15,7 @@ from protrepair.chemistry import ComponentLibrary, build_default_component_libra
 from protrepair.chemistry.component.semantics import IdealGeometryHydrogenSemantics
 from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.microstate.resolution import (
     MicrostateConstraints,
     MicrostateResolutionStatus,
@@ -175,7 +175,7 @@ def _charged(source, charge):
 
 
 def _target(source, *, library=None, requests=None, residue_id=CYS):
-    prepared = PolymerMicrostatePreparation(
+    prepared = AminoAcidPreparation(
         PolymerMicrostateContext(source),
         build_default_component_library() if library is None else library,
         requests=requests,
@@ -525,7 +525,7 @@ def test_other_sulfur_relationships_do_not_enter_isolated_thiolate_preparation(
         for bond in heme_source.topology.bonds
     )
     source = _with_bonds(heme_source, bonds)
-    prepared = PolymerMicrostatePreparation(
+    prepared = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_default_component_library()
     )
     assert not any(

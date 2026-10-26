@@ -407,7 +407,7 @@ def test_full_reference_inventory_survives_all_nonstandard_template_projections(
             assert resolution is None
         else:
             assert resolution is not None
-            assert resolution.reference_requires_hydrogens is any(
+            assert resolution.unresolved_hydrogen_requirement is any(
                 atom.is_hydrogen() for atom in record.atoms
             )
             assert not resolution.expected_hydrogen_atom_names

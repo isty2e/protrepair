@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field, replace
 
 from protrepair.chemistry import ComponentLibrary
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
@@ -128,7 +128,7 @@ class WorkflowPlanningSession:
 
     def observed_polymer_preparation(
         self, state: WorkflowRuntimeState
-    ) -> PolymerMicrostatePreparation:
+    ) -> AminoAcidPreparation:
         """Supply execution with the observation retained by this exact plan.
 
         Parameters
@@ -138,7 +138,7 @@ class WorkflowPlanningSession:
 
         Returns
         -------
-        PolymerMicrostatePreparation
+        AminoAcidPreparation
             Exact-current seed without new transformation requests. Plan and
             observation are evicted together when their state leaves the frontier.
         """

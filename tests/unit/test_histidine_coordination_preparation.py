@@ -16,7 +16,7 @@ from protrepair.chemistry.microstate.catalog import (
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import (
-    PolymerMicrostatePreparation,
+    AminoAcidPreparation,
     pras_microstate_preferences,
 )
 from protrepair.chemistry.microstate.resolution import (
@@ -236,7 +236,7 @@ def test_actual_placement_publishes_realized_graph_preserving_typed_partner(
     assert original is not None
     assert preserved.source_metadata == original.source_metadata
     assert preserved.provenance is BondProvenance.SOURCE_EXPLICIT
-    target = PolymerMicrostatePreparation(
+    target = AminoAcidPreparation(
         PolymerMicrostateContext(prepared), build_default_component_library()
     ).targets_for(HIS)[0]
     assert target.is_realized()
@@ -824,7 +824,7 @@ def test_original_histidine_partner_survives_current_rebinding(
         assert resolution.status is MicrostateResolutionStatus.UNSUPPORTED
         target = next(
             target
-            for target in PolymerMicrostatePreparation(
+            for target in AminoAcidPreparation(
                 context, build_default_component_library()
             ).targets_for(HIS)
             if target.site.kind is PolymerChemicalSite.SIDECHAIN

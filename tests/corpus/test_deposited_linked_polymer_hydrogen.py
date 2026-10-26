@@ -9,7 +9,7 @@ from tests.support.request_builders import whole_structure_requested_goals
 from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.io import read_structure, read_structure_string, write_structure_string
 from protrepair.state import HydrogenCoverageState
@@ -165,7 +165,7 @@ def test_deposited_link_leaves_only_substituted_h_inventory_unresolved(
 
 def test_2a1d_substituted_serines_share_the_same_graph_rule() -> None:
     source = read_structure(FIXTURES / "corpus/pdb2a1d.ent")
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_default_component_library()
     )
     residue_ids = tuple(
@@ -199,7 +199,7 @@ def test_unlinked_modified_backbone_is_not_reclassified(
     residue = next(
         r for r in source.constitution.iter_residues() if r.component_id == component
     )
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_default_component_library()
     )
     fixed = preparation.fixed_hydrogen_context(residue.residue_id)

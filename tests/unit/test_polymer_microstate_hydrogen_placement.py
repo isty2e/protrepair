@@ -19,7 +19,7 @@ from protrepair.chemistry.microstate.context import (
 )
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import (
-    PolymerMicrostatePreparation,
+    AminoAcidPreparation,
     pras_microstate_preferences,
 )
 from protrepair.chemistry.microstate.resolution import (
@@ -121,7 +121,7 @@ def test_preparation_distinguishes_saved_choice_from_changed_ratio(source):
     charged = _assert_realized(source, cation)
     library = build_standard_component_library()
 
-    unchanged = PolymerMicrostatePreparation(
+    unchanged = AminoAcidPreparation(
         PolymerMicrostateContext(charged),
         library,
         requests=histidine_microstate_requests(
@@ -132,7 +132,7 @@ def test_preparation_distinguishes_saved_choice_from_changed_ratio(source):
     assert unchanged.resolution.graph is not None
     assert unchanged.resolution.graph.protonation_key()[0] == 1
 
-    reset = PolymerMicrostatePreparation(
+    reset = AminoAcidPreparation(
         PolymerMicrostateContext(charged),
         library,
         requests=histidine_microstate_requests(
@@ -156,7 +156,7 @@ def test_preparation_distinguishes_saved_choice_from_changed_ratio(source):
         for entry in neutral.provenance.microstate_choices
     )
     assert (
-        PolymerMicrostatePreparation(PolymerMicrostateContext(neutral), library)
+        AminoAcidPreparation(PolymerMicrostateContext(neutral), library)
         .targets_for(cation.residue_id)[0]
         .is_realized()
     )
@@ -168,7 +168,7 @@ def test_preparation_retains_unresolved_site_instead_of_empty_success(source):
         for r in source.constitution.chains[0].residues
         if r.component_id == "LYS" and not r.has_atom_site("NZ")
     )
-    targets = PolymerMicrostatePreparation(
+    targets = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_standard_component_library()
     ).targets_for(missing.residue_id)
     sidechain = targets[0]
@@ -184,7 +184,7 @@ def test_preparation_rejects_unmatched_request(source):
         r for r in source.constitution.chains[0].residues if r.component_id == "ALA"
     )
     with pytest.raises(ValueError, match="absent polymer site"):
-        PolymerMicrostatePreparation(
+        AminoAcidPreparation(
             PolymerMicrostateContext(source),
             build_standard_component_library(),
             requests={(first.residue_id, PolymerChemicalSite.SIDECHAIN): None},

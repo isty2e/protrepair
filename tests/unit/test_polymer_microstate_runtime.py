@@ -8,7 +8,7 @@ from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.io import read_structure_string, write_structure_string
 from protrepair.scope import WholeStructureScope
 from protrepair.state import HydrogenCoverageState
@@ -56,7 +56,7 @@ def prepared(source):
 
 
 def _targets(structure):
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(structure), build_default_component_library()
     )
     return tuple(

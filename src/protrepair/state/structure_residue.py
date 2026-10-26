@@ -7,7 +7,7 @@ from protrepair.chemistry import (
     ComponentLibrary,
 )
 from protrepair.chemistry.microstate.preparation import (
-    PolymerSitePreparation,
+    AminoAcidSitePreparation,
 )
 from protrepair.scope import ResidueSetScope
 from protrepair.state.retained_non_polymer_chemistry import (
@@ -174,7 +174,7 @@ class ResidueChemistryReadinessFacts:
     hydrogen_applicability_state: HydrogenApplicabilityState
     hydrogen_coverage_state: HydrogenCoverageState | None
 
-    polymer_microstate_targets: tuple[PolymerSitePreparation, ...] = ()
+    polymer_microstate_targets: tuple[AminoAcidSitePreparation, ...] = ()
 
     def requires_microstate_realization(self) -> bool:
         """Return whether a selected graph differs from current chemistry.
@@ -225,14 +225,18 @@ class RetainedNonPolymerChemistryReadinessFact:
         Coverage under admitted chemistry, or None when it cannot be determined.
         Indeterminate coverage neither certifies completion nor requests generation.
     hydrogen_generation_supported : bool
-        Whether the selected chemistry admits generating missing H, independently
-        of coverage. Native placement can still fail.
+        Whether the whole selected chemistry admits generating missing H,
+        independently of coverage. Native placement can still fail. Independent
+        site updates may remain executable without whole preparation support.
     chemistry_failure : RetainedNonPolymerChemistryFailure or None
         Typed reason for unavailable preparation or rejected chemistry. A complete
         read-only inventory need not be blocked by unavailable generation.
     reference_hydrogens_verified : bool
         Whether coverage was established by read-only reference comparison,
         without preparation or topology rights. Coverage can still be partial.
+    hydrogen_updates_pending : bool
+        Concrete admitted site updates remain in this snapshot, even when
+        another required site leaves whole-residue coverage indeterminate.
     """
 
     residue_id: ResidueId
@@ -247,6 +251,7 @@ class RetainedNonPolymerChemistryReadinessFact:
     hydrogen_generation_supported: bool
     chemistry_failure: RetainedNonPolymerChemistryFailure | None = None
     reference_hydrogens_verified: bool = False
+    hydrogen_updates_pending: bool = False
 
     def supports_hydrogen_verification(self) -> bool:
         """Return whether admitted chemistry or a reference can verify H.
@@ -297,7 +302,7 @@ class RetainedNonPolymerChemistryReadinessFact:
     def requires_hydrogen_completion(self) -> bool:
         """Return whether admitted generation can address known missing H."""
 
-        return (
+        return self.hydrogen_updates_pending or (
             self.is_supported()
             and self.hydrogen_generation_supported
             and self.hydrogen_applicability_state

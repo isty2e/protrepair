@@ -6,7 +6,7 @@ from types import MappingProxyType
 
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
     evidence_by_residue_id,
@@ -40,7 +40,7 @@ class StructureHydrogenExpectationModel:
     """
 
     expected_hydrogen_atom_names_by_residue: Mapping[ResidueId, tuple[str, ...]]
-    polymer_preparation: PolymerMicrostatePreparation
+    polymer_preparation: AminoAcidPreparation
     retained_non_polymer_resolution_by_residue_id: Mapping[
         ResidueId,
         RetainedNonPolymerChemistryResolution,
@@ -60,8 +60,10 @@ class StructureHydrogenExpectationModel:
     ) -> None:
         evidence_map = evidence_by_residue_id(retained_non_polymer_chemistry_evidence)
         disulfides = disulfide_bonded_cysteine_residue_ids(structure)
-        preparation = PolymerMicrostatePreparation(
-            PolymerMicrostateContext(structure), component_library
+        preparation = AminoAcidPreparation(
+            PolymerMicrostateContext(structure),
+            component_library,
+            excluded_retained_residue_ids=frozenset(evidence_map),
         )
         names = _polymer_expected_hydrogen_atom_names(
             structure,
@@ -78,10 +80,18 @@ class StructureHydrogenExpectationModel:
                 evidence=evidence_map.get(ligand.residue_id),
                 allow_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
                 disulfide_residue_ids=disulfides,
+                amino_acid_preparation=preparation,
             )
             resolutions[ligand.residue_id] = resolution
             if resolution.expected_hydrogen_atom_names:
                 names[ligand.residue_id] = resolution.expected_hydrogen_atom_names
+            elif preparation.targets_for(ligand.residue_id):
+                names[ligand.residue_id] = tuple(
+                    atom.name
+                    for atom, _ in preparation.known_hydrogen_atom_sites(
+                        ligand.residue_id
+                    )
+                )
 
         object.__setattr__(self, "polymer_preparation", preparation)
         object.__setattr__(
@@ -176,7 +186,7 @@ def _polymer_expected_hydrogen_atom_names(
     *,
     component_library: ComponentLibrary,
     disulfide_bonded_residue_ids: frozenset[ResidueId],
-    preparation: PolymerMicrostatePreparation,
+    preparation: AminoAcidPreparation,
 ) -> dict[ResidueId, tuple[str, ...]]:
     """Return chain-aware expected hydrogens for polymer residues."""
 
@@ -236,7 +246,7 @@ def _extend_chain_expected_hydrogens(
     *,
     component_library: ComponentLibrary,
     disulfide_bonded_residue_ids: frozenset[ResidueId],
-    preparation: PolymerMicrostatePreparation,
+    preparation: AminoAcidPreparation,
     expected_hydrogen_atom_names_by_residue: dict[ResidueId, list[str]],
 ) -> None:
     """Accumulate chain-aware expected hydrogens onto one residue map."""

@@ -35,6 +35,8 @@ from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
     preferred_retained_non_polymer_expected_hydrogen_atom_names,
 )
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.coordination import (
     coordinated_component_preparation,
 )
@@ -67,6 +69,7 @@ class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
     EXTERNAL_OVERRIDE = "external_override"
     COORDINATION_PREPARATION = "coordination_preparation"
     ATOMIC_INVENTORY = "atomic_inventory"
+    AMINO_ACID_PREPARATION = "amino_acid_preparation"
     RDKIT_FALLBACK = "rdkit_fallback"
     UNRESOLVED = "unresolved"
 
@@ -202,8 +205,9 @@ class RetainedNonPolymerChemistryResolution:
     context_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     coordination_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     failure: RetainedNonPolymerChemistryFailure | None = None
-    reference_requires_hydrogens: bool | None = None
+    unresolved_hydrogen_requirement: bool | None = None
     reference_hydrogen_inventory: RetainedReferenceHydrogenInventory | None = None
+    hydrogen_updates_pending: bool = False
     rdkit_backend_version: str | None = None
     hydrogen_name_projection_candidate_count: int = 0
     hydrogen_name_projection_candidate_limit: int = 0
@@ -238,7 +242,7 @@ class RetainedNonPolymerChemistryResolution:
             return None
         return cls(
             source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
-            reference_requires_hydrogens=bool(reference.hydrogen_atoms()),
+            unresolved_hydrogen_requirement=bool(reference.hydrogen_atoms()),
             failure=RetainedNonPolymerChemistryFailure(
                 RetainedNonPolymerChemistryFailureKind.NO_ADMITTED_PREPARATION,
                 "the active component reference has no admitted preparation; "
@@ -533,8 +537,8 @@ class RetainedNonPolymerChemistryResolution:
         inventory = self.reference_hydrogen_inventory
         if inventory is not None and (
             resolved
-            or self.reference_requires_hydrogens is None
-            or self.reference_requires_hydrogens
+            or self.unresolved_hydrogen_requirement is None
+            or self.unresolved_hydrogen_requirement
             != bool(inventory.reference.hydrogen_atoms())
         ):
             raise ValueError("reference inventory must not grant preparation authority")
@@ -587,7 +591,7 @@ class RetainedNonPolymerChemistryResolution:
                 "resolved retained non-polymer chemistry must not carry a failure "
                 "reason"
             )
-        if resolved and self.reference_requires_hydrogens is not None:
+        if resolved and self.unresolved_hydrogen_requirement is not None:
             raise ValueError(
                 "unprepared reference requirements cannot accompany resolved chemistry"
             )
@@ -678,9 +682,17 @@ def resolve_retained_non_polymer_chemistry(
     evidence: RetainedNonPolymerChemistryEvidence | None = None,
     allow_rdkit_fallback: bool = True,
     disulfide_residue_ids: frozenset[ResidueId] | None = None,
+    amino_acid_preparation: AminoAcidPreparation | None = None,
 ) -> RetainedNonPolymerChemistryResolution:
     """Resolve selected chemistry against source and current connected context."""
 
+    prepared = (
+        AminoAcidPreparation(PolymerMicrostateContext(structure), component_library)
+        if amino_acid_preparation is None
+        else amino_acid_preparation
+    )
+    if evidence is None and prepared.targets_for(residue.residue_id):
+        return _amino_acid_chemistry_resolution(structure, residue, prepared)
     resolution = _resolve_retained_non_polymer_chemistry_source(
         structure,
         residue,
@@ -695,7 +707,7 @@ def resolve_retained_non_polymer_chemistry(
         if reference is not None:
             resolution = replace(
                 resolution,
-                reference_requires_hydrogens=reference.reference_requires_hydrogens,
+                unresolved_hydrogen_requirement=reference.unresolved_hydrogen_requirement,
                 failure=resolution.failure or reference.failure,
             )
     active_disulfide_residue_ids = (
@@ -707,6 +719,96 @@ def resolve_retained_non_polymer_chemistry(
         return resolution
 
     return resolution.without_hydrogens_anchored_to(("SG",))
+
+
+def _amino_acid_chemistry_resolution(
+    structure: ProteinStructure,
+    residue: ResidueSite,
+    preparation: AminoAcidPreparation,
+) -> RetainedNonPolymerChemistryResolution:
+    targets = preparation.targets_for(residue.residue_id)
+    template = targets[0].site.template
+    pending = preparation.has_pending_hydrogen_updates(residue.residue_id)
+    failures = [
+        "; ".join(target.resolution.details)
+        for target in targets
+        if target.resolution.graph is None
+    ]
+    missing_heavy = {*template.expected_polymer_heavy_atom_names(), "OXT"} - set(
+        residue.atom_site_names()
+    )
+    if missing_heavy:
+        failures.append(f"missing heavy atoms: {', '.join(sorted(missing_heavy))}")
+    fixed_context = preparation.fixed_hydrogen_context(residue.residue_id)
+    if fixed_context is not None and fixed_context.unresolved_parent_names:
+        failures.append(fixed_context.failure_reason)
+    identities = []
+    bonds = {
+        tuple(sorted((bond.atom_name_1, bond.atom_name_2))): bond
+        for bond in template_heavy_bond_definitions_for_present_atoms(
+            residue, template=template
+        )
+    }
+    controlled = {
+        name for target in targets for name in target.controlled_parent_names()
+    }
+    charges = {
+        name: charge
+        for name, charge in template.heavy_atom_charge_requirements()
+        if name not in controlled
+    }
+    try:
+        identities.extend(preparation.fixed_hydrogen_atom_sites(residue.residue_id))
+        for target in targets:
+            if target.resolution.graph is None:
+                continue
+            identities.extend(target.hydrogen_atom_sites())
+            for bond in target.resolution.graph.bonds:
+                bonds[tuple(sorted((bond.atom_name_1, bond.atom_name_2)))] = bond
+            charges.update(
+                (atom.name, atom.charge) for atom in target.resolution.graph.atoms
+            )
+    except (ValueError, RuntimeError) as error:
+        failures.append(str(error))
+    if failures:
+        return RetainedNonPolymerChemistryResolution(
+            source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
+            unresolved_hydrogen_requirement=True,
+            hydrogen_updates_pending=pending,
+            failure=RetainedNonPolymerChemistryFailure(
+                RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
+                "; ".join(dict.fromkeys(failures)),
+            ),
+        )
+    heavy_names = tuple(
+        dict.fromkeys((*template.expected_polymer_heavy_atom_names(), "OXT"))
+    )
+    elements = {
+        atom.atom_name: atom.element
+        for atom in (
+            ()
+            if template.reference_component is None
+            else template.reference_component.heavy_atoms()
+        )
+    }
+    external_bonds = ()
+    if residue.component_id == "CYS":
+        covalent_context = RetainedCovalentContext(structure, residue.residue_id)
+        if covalent_context.attachments:
+            external_bonds = (covalent_context.require_neutral_disulfide_pair(),)
+    return RetainedNonPolymerChemistryResolution(
+        source=RetainedNonPolymerChemistryEvidenceSource.AMINO_ACID_PREPARATION,
+        expected_hydrogen_atom_names=tuple(atom.name for atom, _ in identities),
+        expected_heavy_atom_names=heavy_names,
+        heavy_atom_elements=tuple(elements.get(name, name[0]) for name in heavy_names),
+        heavy_bond_definitions=tuple(bonds.values()),
+        hydrogen_bond_definitions=tuple(
+            BondDefinition(parent, atom.name, order=1) for atom, parent in identities
+        ),
+        formal_charge_requirements=tuple(charges.items()),
+        external_bonds=external_bonds,
+        hydrogen_updates_pending=pending,
+    )
 
 
 def _resolve_retained_non_polymer_chemistry_source(

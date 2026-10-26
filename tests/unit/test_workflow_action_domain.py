@@ -20,7 +20,7 @@ from tests.support.retained_non_polymer_components import (
 )
 
 from protrepair.chemistry import build_default_component_library
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure
 from protrepair.scope import (
@@ -555,9 +555,9 @@ def test_local_hydrogen_activation_does_not_select_other_residues_or_termini():
 
 def test_single_planning_pass_derives_observed_polymer_targets_once():
     source = read_structure(Path("tests/fixtures/pdb/1aho.pdb"))
-    initialize = PolymerMicrostatePreparation.__init__
+    initialize = AminoAcidPreparation.__init__
     with patch.object(
-        PolymerMicrostatePreparation, "__init__", autospec=True, side_effect=initialize
+        AminoAcidPreparation, "__init__", autospec=True, side_effect=initialize
     ) as constructor:
         outcome = plan_workflow_actions(
             source,
@@ -578,7 +578,7 @@ def test_single_planning_pass_derives_observed_polymer_targets_once():
 def test_inactive_hydrogen_plan_never_acquires_preparation():
     domain = _workflow_action_domain(_heavy_complete_structure())
     with patch.object(
-        PolymerMicrostatePreparation,
+        AminoAcidPreparation,
         "__init__",
         side_effect=AssertionError("inactive preparation"),
     ):
@@ -639,9 +639,9 @@ def test_domain_rebinds_old_count_preparation_only_once(terminal_first):
             current
         ),
     )
-    initialize = PolymerMicrostatePreparation.__init__
+    initialize = AminoAcidPreparation.__init__
     with patch.object(
-        PolymerMicrostatePreparation, "__init__", autospec=True, side_effect=initialize
+        AminoAcidPreparation, "__init__", autospec=True, side_effect=initialize
     ) as constructor:
         if terminal_first:
             terminal_augmentation_proposals(domain)

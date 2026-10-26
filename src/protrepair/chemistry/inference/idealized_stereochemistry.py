@@ -79,6 +79,7 @@ def require_compatible_component_pose(
     *,
     hydrogen_attachments: tuple[tuple[str, str], ...],
     bond_order_constraints: dict[tuple[str, str], int],
+    allow_partial: bool = False,
 ) -> None:
     """Validate a named pose and declared orders without inferring chemistry.
 
@@ -92,6 +93,9 @@ def require_compatible_component_pose(
         Interpreted current H names and their reference parents.
     bond_order_constraints : dict[tuple[str, str], int]
         Known source/current heavy orders; unknown orders are omitted.
+    allow_partial : bool
+        Project absent heavy atoms out of the pose comparison. Stereo with an
+        incomplete local neighborhood is unverified, never reconstructed.
 
     Raises
     ------
@@ -110,11 +114,37 @@ def require_compatible_component_pose(
         bond_order_constraints=bond_order_constraints,
     )
     heavy = _component_heavy_pose_molecule(component, molecule)
+    names = component.heavy_atom_names()
+    if allow_partial:
+        missing = {i for i, name in enumerate(names) if not geometry.has_atom(name)}
+        projected = Chem.RWMol(heavy)
+        for atom in projected.GetAtoms():
+            if any(neighbor.GetIdx() in missing for neighbor in atom.GetNeighbors()):
+                atom.SetChiralTag(Chem.ChiralType.CHI_UNSPECIFIED)
+        for bond in projected.GetBonds():
+            neighborhood = {
+                bond.GetBeginAtomIdx(),
+                bond.GetEndAtomIdx(),
+                *bond.GetStereoAtoms(),
+                *(
+                    neighbor.GetIdx()
+                    for atom in (bond.GetBeginAtom(), bond.GetEndAtom())
+                    for neighbor in atom.GetNeighbors()
+                ),
+            }
+            if missing.intersection(neighborhood):
+                bond.SetStereo(Chem.BondStereo.STEREONONE)
+        for index in sorted(missing, reverse=True):
+            projected.RemoveAtom(index)
+        heavy = projected.GetMol()
+        names = tuple(name for index, name in enumerate(names) if index not in missing)
     require_compatible_named_pose_stereochemistry(
         heavy,
-        component.heavy_atom_names(),
+        names,
         geometry,
-        hydrogen_attachments=hydrogen_attachments,
+        hydrogen_attachments=tuple(
+            (name, parent) for name, parent in hydrogen_attachments if parent in names
+        ),
     )
 
 

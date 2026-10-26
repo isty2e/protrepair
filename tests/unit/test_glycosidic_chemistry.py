@@ -21,7 +21,7 @@ from protrepair.chemistry import (
     build_default_component_library,
 )
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
@@ -826,7 +826,7 @@ def test_unlinked_asn_stays_a_primary_amide_after_context_rebinding():
             if bond not in context.external_heavy_bonds(ref)
         ),
     )
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(unlinked), build_default_component_library()
     )
     assert (
@@ -839,7 +839,7 @@ def test_unlinked_asn_stays_a_primary_amide_after_context_rebinding():
     assert (
         sum(
             parent == "ND2"
-            for _, parent in PolymerMicrostatePreparation(
+            for _, parent in AminoAcidPreparation(
                 context, build_default_component_library()
             ).fixed_hydrogen_atom_sites(ref.residue_id)
         )

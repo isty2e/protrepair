@@ -14,7 +14,7 @@ from tests.support.canonical_builders import (
 from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.microstate.resolution import MicrostateConstraints
 from protrepair.geometry import Vec3
 from protrepair.structure.aggregate import ProteinStructure
@@ -55,7 +55,7 @@ def source() -> ProteinStructure:
 
 def test_exact_binding_reuses_preparation_and_normalizes_empty_request(source):
     library = build_default_component_library()
-    prepared = PolymerMicrostatePreparation(PolymerMicrostateContext(source), library)
+    prepared = AminoAcidPreparation(PolymerMicrostateContext(source), library)
     assert prepared.for_inputs(source, library) is prepared
     assert prepared.for_inputs(source, library, requests={}) is prepared
 
@@ -65,7 +65,7 @@ def test_seeded_execution_preserves_the_complete_cold_result_after_stage_edits(
     source, binding
 ):
     library = build_default_component_library()
-    prepared = PolymerMicrostatePreparation(
+    prepared = AminoAcidPreparation(
         PolymerMicrostateContext(source),
         library,
         requests={(ResidueId("A", 1), PolymerChemicalSite.BACKBONE_N): None}
@@ -88,7 +88,7 @@ def test_seeded_execution_preserves_the_complete_cold_result_after_stage_edits(
 @pytest.mark.parametrize("change", ("equal_copy", "geometry", "provenance", "library"))
 def test_different_bindings_rebuild_even_when_count_chemistry_matches(source, change):
     library = build_default_component_library()
-    prepared = PolymerMicrostatePreparation(PolymerMicrostateContext(source), library)
+    prepared = AminoAcidPreparation(PolymerMicrostateContext(source), library)
     current = source.with_provenance(source.provenance)
     if change == "geometry":
         index = source.constitution.residue_index(ResidueId("A", 1))
@@ -107,7 +107,7 @@ def test_different_bindings_rebuild_even_when_count_chemistry_matches(source, ch
     assert rebound is not prepared
     assert rebound.context.source is current
     assert rebound.component_library is library
-    fresh = PolymerMicrostatePreparation(PolymerMicrostateContext(current), library)
+    fresh = AminoAcidPreparation(PolymerMicrostateContext(current), library)
     assert tuple(
         (target.site.kind, target.resolution)
         for target in rebound.targets_for(ResidueId("A", 1))
@@ -124,7 +124,7 @@ def test_requests_are_defensively_copied_and_reset_is_not_absence(source):
     requests: dict[
         tuple[ResidueId, PolymerChemicalSite], MicrostateConstraints | None
     ] = {key: neutral}
-    prepared = PolymerMicrostatePreparation(
+    prepared = AminoAcidPreparation(
         PolymerMicrostateContext(source), library, requests=requests
     )
     requests.clear()
@@ -146,7 +146,7 @@ def test_requests_are_defensively_copied_and_reset_is_not_absence(source):
 
 def test_rebinding_keeps_absent_site_request_validation(source):
     library = build_default_component_library()
-    prepared = PolymerMicrostatePreparation(PolymerMicrostateContext(source), library)
+    prepared = AminoAcidPreparation(PolymerMicrostateContext(source), library)
     for _ in range(2):
         with pytest.raises(ValueError, match="absent polymer site"):
             prepared.for_inputs(
@@ -161,7 +161,7 @@ def test_rebinding_keeps_absent_site_request_validation(source):
 def test_attachment_reuse_keeps_empty_results_private_and_keys_exact_objects(source):
     library = build_default_component_library()
     context = PolymerMicrostateContext(source)
-    prepared = PolymerMicrostatePreparation(context, library)
+    prepared = AminoAcidPreparation(context, library)
     target = prepared.targets_for(ResidueId("A", 1))[0]
     original = PolymerMicrostateContext.coordination_requirements
     with patch.object(
@@ -215,9 +215,7 @@ def test_attachment_reuse_keeps_empty_results_private_and_keys_exact_objects(sou
 def test_attachment_failures_never_become_successful_cached_results(source):
     library = build_default_component_library()
     context = PolymerMicrostateContext(source)
-    target = PolymerMicrostatePreparation(context, library).targets_for(
-        ResidueId("A", 1)
-    )[0]
+    target = AminoAcidPreparation(context, library).targets_for(ResidueId("A", 1))[0]
     missing = source.without_atom_refs((AtomRef(ResidueId("A", 1), "N"),))
     context = PolymerMicrostateContext(missing)
     for _ in range(2):

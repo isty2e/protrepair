@@ -27,10 +27,39 @@ preparation applies its own backbone and terminal rules; retained preparation
 uses the selected component state and its existing connection checks. This is
 dictionary-backed preparation, not pKa prediction.
 
-Retained standard amino acids are not fully supported: the built-in H rules
-for standard residues are written for polymer context and omit H on backbone
-N and OXT. A component can therefore report complete H coverage while native
-export rejects its remaining open valences.
+### Retained Amino Acids
+
+Retained standard amino acids and the H-capable CSO, HYP, MSE, PTR, SEP and TPO
+components share polymer free-terminal and standard side-chain state selection.
+Membership does not change. Both current and original N/C boundaries must permit
+free termini; unexplained relationships are not treated as missing peptide bonds.
+Explicit chemistry and caller-supplied templates keep their existing precedence.
+SAH, SAM and other cofactors do not enter this path merely because their atom
+names or a substructure resemble an amino acid.
+
+Without conflicting source evidence, the shared preparation convention selects
+protonated free N and deprotonated free carboxyl termini, charged ARG/LYS,
+deprotonated ASP/GLU, and the existing neutral-HIS environmental preference.
+PRO/HYP use generated N-H names H1/H2, while compatible source aliases and H/D/T
+identities survive. Existing H, explicit neutral charges and reported bond orders
+constrain selection; this policy does not silently replace them with defaults.
+HIS environmental selection considers admitted retained sites, but a requested
+polymer HIS ratio remains chain-scoped. KEEP workflows can therefore select a
+different neighboring HIS tautomer.
+
+The selected site graphs drive H inventory, generation, charges, topology and
+readiness. RDKit supplies only H coordinates on fixed heavy atoms, not a new
+chemical graph. Nonstandard ionizable body groups retain their component state;
+for example, the phosphate state of SEP/TPO/PTR is not predicted from pH.
+This is a preparation convention, not a general pKa or solvent model.
+
+Missing heavy atoms or unresolved sites do not suppress independent admitted
+updates. Such a residue still has indeterminate whole H coverage and an
+`unresolved_retained_hydrogen` reason; it is not ready for local refinement.
+After the admitted updates have been consumed, indeterminate coverage does not
+request another identical H action. H generation does not reconstruct missing
+heavy atoms. Wider nonstandard graph preparation and arbitrary retained peptide
+products remain unsupported by this path.
 
 ### Known References Without Preparation
 
@@ -568,9 +597,9 @@ general heavy-atom completion mechanism for arbitrary nonstandard components.
 Single-atom metals and ions are retained as not-applicable chemistry rather
 than passed through organic-molecule hydrogenation.
 
-Built-in standard amino-acid H rules still omit free N/OXT chemistry, as
-described above. A dictionary entry alone does not extend those rules or select
-a protonation state for an unsupported component.
+The shared amino-acid path above has explicit component and boundary admission.
+A dictionary entry alone does not extend that admission or select a protonation
+state for another unsupported component.
 
 ## Native RDKit Handoff
 

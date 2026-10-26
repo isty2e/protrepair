@@ -16,7 +16,7 @@ from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.component.semantics import HydrogenSemantics
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.diagnostics.polymer_hydrogen import unresolved_fixed_hydrogen_issue
@@ -146,7 +146,7 @@ def test_external_occupancy_suppresses_only_unresolved_parent_h(
 ) -> None:
     source = linked_serine(relationship, element=element)
     library = build_default_component_library()
-    prepared = PolymerMicrostatePreparation(PolymerMicrostateContext(source), library)
+    prepared = AminoAcidPreparation(PolymerMicrostateContext(source), library)
     context = prepared.fixed_hydrogen_context(SERINE)
     assert context is not None and context.unresolved_parent_names == {"OG"}
     assert "HG" not in context.hydrogen_atom_names()
@@ -328,7 +328,7 @@ def test_multiple_unresolved_parents_do_not_hide_independent_fixed_h() -> None:
         ),
         provenance=source.provenance,
     )
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_default_component_library()
     )
     fixed = preparation.fixed_hydrogen_context(SERINE)
@@ -467,9 +467,7 @@ def test_branch_issue_burden_counts_current_h_state_not_preparation_history(
 ) -> None:
     source = materialize_hydrogens_core(linked_serine()).structure
     library = build_default_component_library()
-    preparation = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(source), library
-    )
+    preparation = AminoAcidPreparation(PolymerMicrostateContext(source), library)
     current_issue = unresolved_fixed_hydrogen_issue(preparation, SERINE)
     assert current_issue is not None
     unrelated = ValidationIssue(
@@ -503,9 +501,7 @@ def test_current_h_projection_drops_stale_warnings_not_unrelated_history(
 ) -> None:
     source = materialize_hydrogens_core(linked_serine()).structure
     library = build_default_component_library()
-    preparation = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(source), library
-    )
+    preparation = AminoAcidPreparation(PolymerMicrostateContext(source), library)
     stale = unresolved_fixed_hydrogen_issue(preparation, SERINE)
     assert stale is not None
     unrelated = ValidationIssue(
@@ -566,7 +562,7 @@ def test_cleanup_preserves_h_when_its_template_parent_is_missing() -> None:
         source, component_library=build_default_component_library()
     )
     assert cleaned.geometry.atom_geometry(index) == source.geometry.atom_geometry(index)
-    fixed = PolymerMicrostatePreparation(
+    fixed = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_default_component_library()
     ).fixed_hydrogen_context(SERINE)
     assert fixed is not None and not fixed.unresolved_parent_names
@@ -596,9 +592,7 @@ def test_no_op_suppression_keeps_independent_fixed_h_failure_reason() -> None:
         write_structure_string(source, FileFormat.MMCIF), FileFormat.MMCIF
     )
     library = build_default_component_library()
-    preparation = PolymerMicrostatePreparation(
-        PolymerMicrostateContext(source), library
-    )
+    preparation = AminoAcidPreparation(PolymerMicrostateContext(source), library)
     with pytest.raises(
         ValueError, match="source H exceed fixed template inventory at CB"
     ):

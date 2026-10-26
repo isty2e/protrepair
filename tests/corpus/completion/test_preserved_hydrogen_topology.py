@@ -17,7 +17,7 @@ from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.nonstandard.registry import build_bundled_nonstandard_registry
 from protrepair.diagnostics.kinds import RepairEventKind
 from protrepair.geometry import GeometryPlacementError, Vec3
@@ -182,7 +182,7 @@ def test_no_selected_present_h_skips_preparation(
         source = source.without_hydrogens()
     library = build_default_component_library()
     seed = (
-        PolymerMicrostatePreparation(PolymerMicrostateContext(source), library)
+        AminoAcidPreparation(PolymerMicrostateContext(source), library)
         if seeded
         else None
     )
@@ -190,11 +190,9 @@ def test_no_selected_present_h_skips_preparation(
     def unexpected_preparation(*args, **kwargs):
         raise AssertionError("no selected present H needs chemical preparation")
 
+    monkeypatch.setattr(AminoAcidPreparation, "for_inputs", unexpected_preparation)
     monkeypatch.setattr(
-        PolymerMicrostatePreparation, "for_inputs", unexpected_preparation
-    )
-    monkeypatch.setattr(
-        "protrepair.transformer.completion.hydrogen.topology.PolymerMicrostatePreparation",
+        "protrepair.transformer.completion.hydrogen.topology.AminoAcidPreparation",
         unexpected_preparation,
     )
     result = resolve_fixed_hydrogen_topology(
@@ -208,7 +206,7 @@ def test_no_selected_present_h_skips_preparation(
 def test_seeded_topology_preserves_cold_results_and_exact_binding(binding):
     source = _proline()
     library = build_default_component_library()
-    seed = PolymerMicrostatePreparation(
+    seed = AminoAcidPreparation(
         PolymerMicrostateContext(source),
         library,
         requests={(_RID, PolymerChemicalSite.BACKBONE_N): None}
@@ -220,9 +218,9 @@ def test_seeded_topology_preserves_cold_results_and_exact_binding(binding):
     elif binding == "library":
         library = replace(library)
     cold = resolve_fixed_hydrogen_topology(source, library)
-    initialize = PolymerMicrostatePreparation.__init__
+    initialize = AminoAcidPreparation.__init__
     with patch.object(
-        PolymerMicrostatePreparation, "__init__", autospec=True, side_effect=initialize
+        AminoAcidPreparation, "__init__", autospec=True, side_effect=initialize
     ) as constructor:
         warm = resolve_fixed_hydrogen_topology(
             source, library, observed_preparation=seed
@@ -241,7 +239,7 @@ def test_present_alias_bonds_preserve_all_other_facets_and_are_idempotent(
     assert _bond(source, alias, "CB") is None
     assert _hydrogen_topology_state(source) is TopologyAvailabilityState.ABSENT
     library = build_default_component_library()
-    query = PolymerMicrostatePreparation(PolymerMicrostateContext(source), library)
+    query = AminoAcidPreparation(PolymerMicrostateContext(source), library)
     assert query.fixed_hydrogen_topology_updates(_RID)
     assert _bond(source, alias, "CB") is None
 

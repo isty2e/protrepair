@@ -244,8 +244,8 @@ def test_same_modified_component_keeps_role_specific_terminal_chemistry(
         constitution=result.structure.constitution,
         residue_index=result.structure.constitution.residue_index(ResidueId("A", 1)),
     )
-    assert sum(parent == "N" for parent in parents.values()) == (1 if retained else 2)
-    assert sum(parent == "OXT" for parent in parents.values()) == int(retained)
+    assert sum(parent == "N" for parent in parents.values()) == 2
+    assert sum(parent == "OXT" for parent in parents.values()) == 0
     assert not result.issues
 
 

@@ -24,7 +24,7 @@ from tests.support.workflow_proposals import workflow_proposals
 
 from protrepair.api import process_structure
 from protrepair.chemistry import RestraintLibrary, build_default_component_library
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics import (
     IssueSeverity,
     RepairEventKind,
@@ -711,7 +711,7 @@ def test_process_structure_threads_typed_histidine_request_to_hydrogen_completio
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: PrasRatioHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
-        preparation: PolymerMicrostatePreparation | None = None,
+        preparation: AminoAcidPreparation | None = None,
     ) -> ProcessResult:
         assert preparation is not None
         assert preparation.context.source is structure
@@ -1747,7 +1747,7 @@ def test_process_structure_applies_local_refinement_after_heavy_repair(
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
-        preparation: PolymerMicrostatePreparation | None = None,
+        preparation: AminoAcidPreparation | None = None,
     ) -> ProcessResult:
         assert preparation is not None
         assert preparation.context.source is structure
@@ -3782,7 +3782,7 @@ def test_process_structure_applies_local_refinement_after_hydrogenation(
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
-        preparation: PolymerMicrostatePreparation | None = None,
+        preparation: AminoAcidPreparation | None = None,
     ) -> ProcessResult:
         assert preparation is not None
         assert preparation.context.source is structure
@@ -3950,7 +3950,7 @@ def test_process_structure_applies_local_prerequisites_before_explicit_refinemen
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
-        preparation: PolymerMicrostatePreparation | None = None,
+        preparation: AminoAcidPreparation | None = None,
     ) -> ProcessResult:
         assert preparation is not None
         assert preparation.context.source is structure
@@ -4066,7 +4066,7 @@ def test_process_structure_recommended_policy_defers_binding_until_hydrogens_exi
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
-        preparation: PolymerMicrostatePreparation | None = None,
+        preparation: AminoAcidPreparation | None = None,
     ) -> ProcessResult:
         assert preparation is not None
         assert preparation.context.source is structure
@@ -4197,7 +4197,7 @@ def test_process_structure_does_not_hydrogenate_after_failed_heavy_completion(
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
-        preparation: PolymerMicrostatePreparation | None = None,
+        preparation: AminoAcidPreparation | None = None,
     ) -> ProcessResult:
         assert preparation is not None
         assert preparation.context.source is structure
@@ -4271,7 +4271,7 @@ def test_process_structure_uses_partitioned_hydrogen_route_for_heterogeneous_inp
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
-        preparation: PolymerMicrostatePreparation | None = None,
+        preparation: AminoAcidPreparation | None = None,
     ) -> ProcessResult:
         assert preparation is not None
         assert preparation.context.source is structure
@@ -4465,7 +4465,7 @@ def test_process_structure_recommended_policy_defers_binding_for_heavy_only_refi
         orphan_fragment_policy: OrphanFragmentPolicy,
         histidine_protonation: DisabledHistidineProtonationRequest,
         local_refinement: RepairLocalRefinementDirective | None = None,
-        preparation: PolymerMicrostatePreparation | None = None,
+        preparation: AminoAcidPreparation | None = None,
     ) -> ProcessResult:
         assert preparation is not None
         assert preparation.context.source is structure

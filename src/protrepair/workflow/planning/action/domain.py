@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 
 from protrepair.chemistry import ComponentLibrary
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.scope import AtomSetScope
 from protrepair.scope.relations import scopes_overlap
 from protrepair.state import (
@@ -383,7 +383,7 @@ class WorkflowActionDomain:
     adopted_actions: tuple[WorkflowActionAdoption, ...] = ()
     relaxation_executions: tuple[ContinuousRelaxationExecution, ...] = ()
     attempts: tuple[WorkflowActionAttempt, ...] = ()
-    _observed_preparation: PolymerMicrostatePreparation | None = field(
+    _observed_preparation: AminoAcidPreparation | None = field(
         default=None, init=False, compare=False, hash=False, repr=False
     )
     _hydrogen_planning_outcome: (
@@ -450,12 +450,12 @@ class WorkflowActionDomain:
         return self.chemistry_observation.whole_structure_facts()[1]
 
     @property
-    def observed_preparation(self) -> PolymerMicrostatePreparation:
+    def observed_preparation(self) -> AminoAcidPreparation:
         """Return observed targets bound once to this exact carrier.
 
         Returns
         -------
-        PolymerMicrostatePreparation
+        AminoAcidPreparation
             Current-source placement authority, even when count expectations
             were reusable from an older equal-chemistry snapshot.
         """

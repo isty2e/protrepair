@@ -11,7 +11,7 @@ from tests.support.structure_summary import summarize_structure
 
 from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.io import read_structure, read_structure_string
 from protrepair.state import StructureProjectionStateFacts
 from protrepair.structure import ResidueId
@@ -73,7 +73,7 @@ def test_add_hydrogens_matches_coupled_chemistry_snapshot(
 
 
 def _assert_2a1d_chemistry(structure):
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(structure), build_default_component_library()
     )
     assert all(

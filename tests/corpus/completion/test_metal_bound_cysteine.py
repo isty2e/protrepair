@@ -9,7 +9,7 @@ from protrepair.api import process_structure
 from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.errors import RefinementError
@@ -52,7 +52,7 @@ def prepared_6nbb():
 def test_6nbb_h_goal_does_not_certify_zinc_cysteine_microstates(prepared_6nbb):
     result = prepared_6nbb
     structure = result.structure
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(structure), build_default_component_library()
     )
 

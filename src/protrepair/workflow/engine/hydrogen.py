@@ -1,7 +1,7 @@
 """Current H-preparation diagnostics for workflow assessment and output."""
 
 from protrepair.chemistry import ComponentLibrary
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.diagnostics.polymer_hydrogen import unresolved_fixed_hydrogen_issue
@@ -26,7 +26,7 @@ def project_hydrogen_issues(
     requested_goal_report: RequestedGoalReport | None,
     component_library: ComponentLibrary,
     repair_refinement: RepairRefinementSpec | None = None,
-    preparation: PolymerMicrostatePreparation | None = None,
+    preparation: AminoAcidPreparation | None = None,
     chemistry_observation: StructureChemistryObservation | None = None,
 ) -> tuple[ValidationIssue, ...]:
     """Replace H-preparation history with current requested-site warnings.
@@ -41,7 +41,7 @@ def project_hydrogen_issues(
         Active chemistry definitions.
     repair_refinement : RepairRefinementSpec or None
         Local request whose included region requires H preparation.
-    preparation : PolymerMicrostatePreparation or None
+    preparation : AminoAcidPreparation or None
         Optional seed rebound to the current structure and library before use.
     chemistry_observation : StructureChemistryObservation or None
         Current observation with the active retained chemistry evidence.
@@ -150,7 +150,7 @@ def project_hydrogen_issues(
         and not fact.has_complete_reference_hydrogens()
         and observation.hydrogen_expectation_model.resolution_for_retained_non_polymer(
             fact.residue_id
-        ).reference_requires_hydrogens
+        ).unresolved_hydrogen_requirement
         is not None
     )
     return retained + polymer_issues + retained_issues

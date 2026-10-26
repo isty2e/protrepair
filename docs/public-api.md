@@ -88,7 +88,13 @@ separates observed coverage from generation capability:
   facts and projections evaluating that inventory propagate the same nullable
   coverage rather than treating an empty expectation as completion.
 - `hydrogen_generation_supported` reports whether the selected chemistry
-  admits generation, independently of the observed coverage.
+  admits whole-component generation, independently of the observed coverage.
+- `hydrogen_updates_pending` identifies concrete admitted updates in the current
+  snapshot, including independent amino-acid sites when whole coverage is
+  indeterminate. `requires_hydrogen_completion()` includes those updates; a
+  nullable coverage value alone never requests generation or admits refinement.
+  Such independent updates can exist while whole-component generation support
+  is false.
 - `reference_hydrogens_verified` reports whether read-only reference comparison
   established the observed coverage. It can be true for partial coverage and
   does not expose the internal reference graph or parent correspondence.
