@@ -503,6 +503,14 @@ class StructureChemistryObservation:
                 if any(atom.is_hydrogen() for atom in residue.atom_sites)
                 else HydrogenCoverageState.NONE
             )
+        reference_assessment = (
+            self.hydrogen_expectation_model.polymer_reference_assessments.get(
+                residue.residue_id
+            )
+        )
+        if reference_assessment is not None:
+            h_applicability_state = HydrogenApplicabilityState.APPLICABLE
+            h_coverage_state = reference_assessment.coverage_state
         heavy_atom_topology_availability_state = (
             _polymer_heavy_topology_availability_state(
                 self.context_structure,
@@ -513,7 +521,9 @@ class StructureChemistryObservation:
                 covalent_like_endpoint_pairs=self.covalent_like_endpoint_pairs,
             )
         )
-        if heavy_atom_topology_availability_state.is_unavailable():
+        if reference_assessment is not None:
+            attachment_state = TopologyAvailabilityState.UNSUPPORTED
+        elif heavy_atom_topology_availability_state.is_unavailable():
             attachment_state = heavy_atom_topology_availability_state
         elif h_applicability_state is HydrogenApplicabilityState.NOT_APPLICABLE:
             attachment_state = TopologyAvailabilityState.NOT_APPLICABLE
@@ -970,13 +980,19 @@ class StructureChemistryObservation:
             if residue_fact.hydrogen_applicability_state
             is HydrogenApplicabilityState.APPLICABLE
         )
+        h_coverage_state: HydrogenCoverageState | None
         if not applicable_residue_facts:
             h_coverage_state = HydrogenCoverageState.COMPLETE
             hydrogen_topology_availability_state = (
                 TopologyAvailabilityState.NOT_APPLICABLE
             )
         else:
-            if all(
+            if any(
+                fact.hydrogen_coverage_state is None
+                for fact in applicable_residue_facts
+            ):
+                h_coverage_state = None
+            elif all(
                 residue_fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
                 for residue_fact in applicable_residue_facts
             ):

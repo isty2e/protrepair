@@ -153,6 +153,7 @@ def component_reference_hydrogen_bond_lengths(
     geometry: ResidueGeometry,
     *,
     bond_order_constraints: dict[tuple[str, str], int],
+    omitted_heavy_names: frozenset[str] = frozenset(),
 ) -> tuple[tuple[str, float], ...]:
     """Prepare temporary reference H lengths on fixed current heavy coordinates.
 
@@ -164,6 +165,9 @@ def component_reference_hydrogen_bond_lengths(
         Current named heavy coordinates; source H positions are not replaced.
     bond_order_constraints : dict[tuple[str, str], int]
         Known heavy orders that must remain compatible with the reference.
+    omitted_heavy_names : frozenset[str]
+        Reference atoms absent under an independently validated occurrence
+        boundary. Project them out; never supply missing heavy coordinates.
 
     Returns
     -------
@@ -193,6 +197,15 @@ def component_reference_hydrogen_bond_lengths(
     names = component.heavy_atom_names()
     if heavy.GetNumAtoms() != len(names):
         raise ValueError("reference H removal did not preserve the heavy inventory")
+    if omitted_heavy_names:
+        if not omitted_heavy_names <= set(names):
+            raise ValueError("reference H projection omits unknown heavy atoms")
+        projected = chem.RWMol(heavy)
+        for index in reversed(range(len(names))):
+            if names[index] in omitted_heavy_names:
+                projected.RemoveAtom(index)
+        heavy = projected.GetMol()
+        names = tuple(name for name in names if name not in omitted_heavy_names)
     conformer = chem.Conformer(len(names))
     conformer.Set3D(True)
     for index, name in enumerate(names):
@@ -231,6 +244,8 @@ def component_reference_hydrogen_bond_lengths(
     if Counter(parent for parent, _ in lengths) != Counter(
         component.hydrogen_anchor_atom_name(atom.atom_name)
         for atom in component.hydrogen_atoms()
+        if component.hydrogen_anchor_atom_name(atom.atom_name)
+        not in omitted_heavy_names
     ):
         raise ValueError("prepared H parents do not match the reference inventory")
     return tuple(lengths)

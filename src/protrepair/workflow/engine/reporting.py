@@ -357,6 +357,23 @@ def evaluate_requested_goal_report(
             blocking_scopes = tuple(
                 ResidueSetScope((fact.residue_id,)) for fact in failures
             )
+            polymer_failures = (
+                ()
+                if hydrogen_facts is None
+                else tuple(
+                    (fact.residue_id, assessment.failure)
+                    for fact in hydrogen_facts.residue_facts
+                    for assessment in (
+                        observation.hydrogen_expectation_model.polymer_reference_assessments.get(
+                            fact.residue_id
+                        ),
+                    )
+                    if assessment is not None and assessment.failure is not None
+                )
+            )
+            blocking_scopes += tuple(
+                ResidueSetScope((residue_id,)) for residue_id, _ in polymer_failures
+            )
             details = (
                 "; ".join(
                     f"{fact.residue_id.display_token()} {fact.component_id}: "
@@ -366,6 +383,19 @@ def evaluate_requested_goal_report(
                 )
                 or None
             )
+            if polymer_failures:
+                details = "; ".join(
+                    filter(
+                        None,
+                        (
+                            details,
+                            *(
+                                f"{residue_id.display_token()}: {failure.detail}"
+                                for residue_id, failure in polymer_failures
+                            ),
+                        ),
+                    )
+                )
         outcomes.append(
             RequestedGoalOutcome(
                 requested_goal=goal,

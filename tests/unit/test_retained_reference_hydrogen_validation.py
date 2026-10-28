@@ -12,7 +12,7 @@ from tests.support.canonical_builders import (
 from tests.support.request_builders import whole_structure_requested_goals
 from tests.support.retained_reference_fixtures import LIGAND, reference_structure
 
-import protrepair.state.retained_non_polymer_chemistry as retained_chemistry
+import protrepair.state.reference_hydrogen as reference_chemistry
 from protrepair.api import process_structure
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.chemistry.inference.idealized_stereochemistry import (
@@ -28,8 +28,8 @@ from protrepair.geometry import Vec3
 from protrepair.io import read_structure_string, write_structure_string
 from protrepair.state import HydrogenCoverageState
 from protrepair.state.chemistry_observation import StructureChemistryObservation
+from protrepair.state.reference_hydrogen import ReferenceHydrogenParentInterpretation
 from protrepair.state.retained_non_polymer_chemistry import (
-    ReferenceHydrogenParentInterpretation,
     RetainedNonPolymerChemistryFailureKind,
     RetainedNonPolymerChemistryResolution,
     RetainedReferenceHydrogenInventory,
@@ -303,10 +303,10 @@ def test_reference_lengths_are_prepared_lazily_once(
     if rename:
         source = _renamed_hydrogens(source, permute=False)
     prepare = Mock(
-        side_effect=retained_chemistry.component_reference_hydrogen_bond_lengths
+        side_effect=reference_chemistry.component_reference_hydrogen_bond_lengths
     )
     monkeypatch.setattr(
-        retained_chemistry, "component_reference_hydrogen_bond_lengths", prepare
+        reference_chemistry, "component_reference_hydrogen_bond_lengths", prepare
     )
     resolution = RetainedNonPolymerChemistryResolution.observe_unprepared_reference(
         build_default_component_library().require("3CF"),
@@ -330,7 +330,7 @@ def test_failed_reference_correspondence_is_typed_and_preserves_source(
 ) -> None:
     source = _renamed_hydrogens(reference_structure("3CF", with_h=True), permute=False)
     monkeypatch.setattr(
-        retained_chemistry,
+        reference_chemistry,
         "component_reference_hydrogen_bond_lengths",
         Mock(
             side_effect=RdkitUnavailableError("unavailable")
@@ -1137,7 +1137,7 @@ def test_ambiguous_unnamed_parent_is_not_chosen_to_fill_reference_counts(
     )
     prepare = Mock(side_effect=AssertionError("ambiguous parent must not be assigned"))
     monkeypatch.setattr(
-        retained_chemistry, "component_reference_hydrogen_bond_lengths", prepare
+        reference_chemistry, "component_reference_hydrogen_bond_lengths", prepare
     )
     fact = (
         StructureChemistryObservation(source)

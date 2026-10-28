@@ -79,6 +79,19 @@ products remain unsupported by this path.
 
 ### Known References Without Preparation
 
+The same read-only comparison also covers polymer components with a full active
+reference but no admitted H preparation. Their coverage is indeterminate unless
+existing H match the reference body and allowed terminal states under the actual
+peptide boundaries. A linked C terminus may omit the reference acid OXT and its H;
+an ester OXT is not omitted. Supported terminal sites are checked by exact H
+parent counts, known charges and bond orders, not by a preparation default.
+Unknown boundaries, unexplained external links and source conflicts remain
+indeterminate. Missing H do not select the dictionary's protonation state.
+Independent admitted backbone updates remain available, but cannot certify the
+whole residue. Unmet requested H goals report one current
+`unresolved_polymer_hydrogen` warning per such residue with blocking scopes and
+reasons. Read-only completeness does not admit topology completion or refinement.
+
 A full component reference is chemical knowledge, not permission to infer a
 replacement graph or a promise that H coordinates can be generated. If the
 active reference has no admitted preparation, ProtRepair preserves the residue

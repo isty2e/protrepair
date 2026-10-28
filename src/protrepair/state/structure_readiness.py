@@ -76,7 +76,7 @@ class StructureChemistryReadinessFacts:
     heavy_atom_topology_availability_state: TopologyAvailabilityState
     hydrogen_topology_availability_state: TopologyAvailabilityState
     hydrogen_applicability_state: HydrogenApplicabilityState
-    hydrogen_coverage_state: HydrogenCoverageState
+    hydrogen_coverage_state: HydrogenCoverageState | None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "residue_facts", tuple(self.residue_facts))

@@ -118,8 +118,12 @@ for naming, source-state and stereo limits.
 The `hydrogen_coverage_state` fields on `ProteinStructureObservation`,
 `AtomScopeObservation` and `ResidueChemistryReadinessFacts` also allow `None`.
 Check for `None` before reading `.value`. The polymer-only aggregate
-`StructureChemistryReadinessFacts.hydrogen_coverage_state` remains non-nullable;
-retained-component facts are evaluated separately.
+`StructureChemistryReadinessFacts.hydrogen_coverage_state` also allows `None`
+when an included polymer inventory cannot be verified. Retained-component facts
+are evaluated separately. Known polymer components without admitted H preparation
+are not treated as complete merely because only their backbone sites have H.
+Existing H can be verified against the active reference and supported peptide
+boundaries without authorizing generation, topology completion or refinement.
 
 An indeterminate whole-structure H goal uses `RequestedGoalOutcome`:
 `observed_state=None`, unmet status, blocking residue scopes and explanatory

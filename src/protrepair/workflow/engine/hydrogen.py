@@ -132,7 +132,22 @@ def project_hydrogen_issues(
         issue
         for residue in structure.constitution.iter_residues()
         if residue.residue_id in selected
-        for issue in (unresolved_fixed_hydrogen_issue(preparation, residue.residue_id),)
+        for assessment in (
+            observation.hydrogen_expectation_model.polymer_reference_assessments.get(
+                residue.residue_id
+            ),
+        )
+        for issue in (
+            unresolved_fixed_hydrogen_issue(
+                preparation,
+                residue.residue_id,
+                reference_failure_detail=(
+                    assessment.failure.detail
+                    if assessment is not None and assessment.failure is not None
+                    else None
+                ),
+            ),
+        )
         if issue is not None
     )
     retained_issues = tuple(
