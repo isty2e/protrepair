@@ -7,6 +7,7 @@ from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.scope import ResidueSetScope
 from protrepair.state import (
+    HydrogenCoverageState,
     StructureChemistryReadinessFacts,
     StructureCoverageFacts,
     derive_structure_coverage_and_chemistry_readiness_facts,
@@ -238,6 +239,19 @@ def plan_hydrogen_completion_transformers(
     )
     selected = set(hydrogen_target_residue_ids)
     for fact in active_chemistry_readiness_facts.residue_facts:
+        residue = structure.constitution.residue_or_ligand(fact.residue_id)
+        template = (
+            None if residue is None else component_library.get(residue.component_id)
+        )
+        if (
+            template is not None
+            and template.has_unprepared_hydrogen_reference()
+            and fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
+        ):
+            # Read-only validation does not authorize replacing source chemistry
+            # with the preparation defaults of independently supported sites.
+            selected.discard(fact.residue_id)
+            continue
         if (
             not fact.is_supported()
             or fact.heavy_atom_topology_availability_state.is_unavailable()

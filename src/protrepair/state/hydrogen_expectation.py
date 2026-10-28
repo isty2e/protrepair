@@ -11,6 +11,10 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
     evidence_by_residue_id,
 )
+from protrepair.state.polymer_reference_hydrogen import (
+    PolymerReferenceHydrogenAssessment,
+    assess_polymer_reference_hydrogens,
+)
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
     RetainedNonPolymerChemistryResolution,
@@ -41,6 +45,9 @@ class StructureHydrogenExpectationModel:
 
     expected_hydrogen_atom_names_by_residue: Mapping[ResidueId, tuple[str, ...]]
     polymer_preparation: AminoAcidPreparation
+    polymer_reference_assessments: Mapping[
+        ResidueId, PolymerReferenceHydrogenAssessment
+    ]
     retained_non_polymer_resolution_by_residue_id: Mapping[
         ResidueId,
         RetainedNonPolymerChemistryResolution,
@@ -71,6 +78,15 @@ class StructureHydrogenExpectationModel:
             disulfide_bonded_residue_ids=disulfides,
             preparation=preparation,
         )
+        polymer_references = {}
+        for residue in structure.constitution.iter_residues():
+            template = component_library.get(residue.component_id)
+            if template is not None and template.has_unprepared_hydrogen_reference():
+                polymer_references[residue.residue_id] = (
+                    assess_polymer_reference_hydrogens(
+                        preparation.context, residue, template
+                    )
+                )
         resolutions = {}
         for ligand in structure.constitution.ligands:
             resolution = resolve_retained_non_polymer_chemistry(
@@ -94,6 +110,9 @@ class StructureHydrogenExpectationModel:
                 )
 
         object.__setattr__(self, "polymer_preparation", preparation)
+        object.__setattr__(
+            self, "polymer_reference_assessments", MappingProxyType(polymer_references)
+        )
         object.__setattr__(
             self, "expected_hydrogen_atom_names_by_residue", MappingProxyType(names)
         )
@@ -149,6 +168,10 @@ class StructureHydrogenExpectationModel:
         # even when polymer identity selection does not.
         if source.geometry is structure.geometry:
             return True
+        for residue_id in self.polymer_reference_assessments:
+            index = source.constitution.residue_index(residue_id)
+            if source.residue_geometry(index) != structure.residue_geometry(index):
+                return False
         for ligand in source.constitution.ligands:
             index = source.constitution.residue_index(ligand.residue_id)
             if source.residue_geometry(index) != structure.residue_geometry(index):

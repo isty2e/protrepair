@@ -503,6 +503,8 @@ def _whole_structure_hydrogen_goal_observed_state(
         chemistry_readiness_facts.hydrogen_applicability_state
         is not HydrogenApplicabilityState.NOT_APPLICABLE
     ):
+        if chemistry_readiness_facts.hydrogen_coverage_state is None:
+            return None
         applicable_coverage_states.append(
             chemistry_readiness_facts.hydrogen_coverage_state
         )

@@ -5,7 +5,6 @@ from collections.abc import Collection
 from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import combinations
-from math import isfinite
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.idealized import IdealizedComponent
@@ -15,11 +14,6 @@ from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.component.topology import (
     template_heavy_bond_definitions_for_present_atoms,
     template_hydrogen_bond_definitions_for_names,
-)
-from protrepair.chemistry.inference.idealized_stereochemistry import (
-    component_reference_hydrogen_bond_lengths,
-    require_compatible_component_pose,
-    require_compatible_component_reference,
 )
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     require_retained_non_polymer_evidence_stereochemistry,
@@ -46,20 +40,23 @@ from protrepair.chemistry.retained_non_polymer.covalent_context import (
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
-from protrepair.chemistry.retained_non_polymer.hydrogen_correspondence import (
-    source_hydrogen_bond_length_is_compatible,
-)
 from protrepair.chemistry.retained_non_polymer.template_binding import (
     RetainedTemplateBinding,
 )
 from protrepair.chemistry.single_atom_inorganic import RetainedAtomicSite
-from protrepair.errors import BondOrderConstraintError, RdkitUnavailableError
+from protrepair.state.reference_hydrogen import (
+    ReferenceHydrogenFailure,
+    assess_reference_hydrogens,
+)
+from protrepair.state.reference_hydrogen import (
+    ReferenceHydrogenInventory as RetainedReferenceHydrogenInventory,
+)
 from protrepair.state.structure_axes import HydrogenCoverageState
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.labels import AtomRef, ResidueId
-from protrepair.structure.topology import BondProvenance, BondRelationshipType
+from protrepair.structure.topology import BondRelationshipType
 
 
 class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
@@ -108,86 +105,6 @@ class RetainedNonPolymerChemistryFailure:
 
     kind: RetainedNonPolymerChemistryFailureKind
     detail: str
-
-
-class ReferenceHydrogenParentInterpretation(str, Enum):
-    """Parent correspondence without an asserted connectivity relationship."""
-
-    REFERENCE_NAME = "reference_name"
-    COMPATIBLE_GEOMETRY = "compatible_geometry"
-
-
-@dataclass(frozen=True, slots=True)
-class RetainedReferenceHydrogenInventory:
-    """Comparable current H inventory without preparation authority.
-
-    Parameters
-    ----------
-    reference : IdealizedComponent
-        Active chemical reference, independent of H placement support.
-    residue_id : ResidueId
-        Stable occurrence identity for these observations.
-    hydrogen_parents : tuple[tuple[str, str, BondProvenance or ReferenceHydrogenParentInterpretation], ...]
-        Current H name, heavy parent and either connection provenance or
-        ReferenceHydrogenParentInterpretation. Naming and compatible geometry
-        interpretations do not assert a source bond.
-
-    Raises
-    ------
-    ValueError
-        H identities repeat, parents are unknown, or multiplicities exceed the
-        reference. Reference/pose conformance is checked by the observation owner;
-        this value is not a transferable chemistry-validity token.
-    TypeError
-        A parent interpretation has no canonical evidence basis.
-    """
-
-    reference: IdealizedComponent
-    residue_id: ResidueId
-    hydrogen_parents: tuple[
-        tuple[str, str, BondProvenance | ReferenceHydrogenParentInterpretation], ...
-    ]
-
-    def __post_init__(self) -> None:
-        names = tuple(name for name, _, _ in self.hydrogen_parents)
-        expected = Counter(
-            self.reference.hydrogen_anchor_atom_name(atom.atom_name)
-            for atom in self.reference.hydrogen_atoms()
-        )
-        observed = Counter(parent for _, parent, _ in self.hydrogen_parents)
-        if None in expected or len(set(names)) != len(names):
-            raise ValueError(
-                "reference H inventory needs unique identities and parents"
-            )
-        if any(count > expected[parent] for parent, count in observed.items()):
-            raise ValueError("observed H parents do not match the reference state")
-        if set(names).intersection(self.reference.heavy_atom_names()):
-            raise ValueError("reference H identities collide with heavy atoms")
-        if any(
-            not isinstance(
-                basis, (BondProvenance, ReferenceHydrogenParentInterpretation)
-            )
-            for _, _, basis in self.hydrogen_parents
-        ):
-            raise TypeError(
-                "reference H interpretation needs a canonical evidence basis"
-            )
-
-    def coverage_state(self) -> HydrogenCoverageState:
-        """Return coverage of the validated reference inventory.
-
-        Returns
-        -------
-        HydrogenCoverageState
-            Complete, empty or proper-subset H coverage under this reference,
-            without implying graph realization or generation support.
-        """
-        expected_count = len(self.reference.hydrogen_atoms())
-        if len(self.hydrogen_parents) == expected_count:
-            return HydrogenCoverageState.COMPLETE
-        if not self.hydrogen_parents:
-            return HydrogenCoverageState.NONE
-        return HydrogenCoverageState.PARTIAL
 
 
 @dataclass(frozen=True, slots=True)
@@ -1055,281 +972,12 @@ def _assess_reference_hydrogens(
     residue: ResidueSite,
     reference: IdealizedComponent,
 ) -> RetainedReferenceHydrogenInventory | RetainedNonPolymerChemistryFailure:
-    try:
-        require_compatible_component_reference(reference)
-    except RdkitUnavailableError as error:
+    assessment = assess_reference_hydrogens(structure, residue, reference)
+    if isinstance(assessment, ReferenceHydrogenFailure):
         return RetainedNonPolymerChemistryFailure(
-            RetainedNonPolymerChemistryFailureKind.BACKEND_UNAVAILABLE, str(error)
+            RetainedNonPolymerChemistryFailureKind(assessment.kind), assessment.detail
         )
-    except (ValueError, RuntimeError) as error:
-        return RetainedNonPolymerChemistryFailure(
-            RetainedNonPolymerChemistryFailureKind.REFERENCE_INVALID, str(error)
-        )
-
-    expected_heavy = {atom.atom_name: atom.element for atom in reference.heavy_atoms()}
-    current_heavy = {
-        atom.name: atom.element for atom in residue.atom_sites if not atom.is_hydrogen()
-    }
-    if current_heavy != expected_heavy:
-        return RetainedNonPolymerChemistryFailure(
-            RetainedNonPolymerChemistryFailureKind.REFERENCE_STATE_NOT_COVERED,
-            "reference H validation requires the complete named heavy scaffold "
-            "with matching elements",
-        )
-
-    constitution = structure.constitution
-    incident = structure.topology.incident_bonds_by_atom()
-    current_bonds = tuple(
-        dict.fromkeys(
-            bond
-            for atom in residue.atom_sites
-            for bond in incident.get(
-                constitution.atom_index(AtomRef(residue.residue_id, atom.name)), ()
-            )
-        )
-    )
-    snapshots = [(constitution, structure.topology, current_bonds)]
-    observation = structure.provenance.ingress.observation
-    if observation is not None:
-        original = observation.constitution.residue_or_ligand(residue.residue_id)
-        if original is not None and (
-            original.component_id != residue.component_id
-            or any(
-                not residue.has_atom_site(atom.name)
-                or residue.atom_site(atom.name).element_identity
-                != atom.element_identity
-                for atom in original.atom_sites
-            )
-        ):
-            return RetainedNonPolymerChemistryFailure(
-                RetainedNonPolymerChemistryFailureKind.SOURCE_CONFLICT,
-                "reference H validation cannot hide changed original atom identities",
-            )
-        if any(
-            endpoint.atom_ref.residue_id == residue.residue_id
-            for connection in observation.excluded_coordination_connections
-            for endpoint in connection.endpoint_pair()
-        ):
-            return RetainedNonPolymerChemistryFailure(
-                RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
-                "read-only reference H validation cannot hide excluded coordination",
-            )
-        snapshots.append(
-            (
-                observation.constitution,
-                observation.topology,
-                observation.bonds_for_residue(residue.residue_id),
-            )
-        )
-
-    reference_pairs = {
-        frozenset((bond.atom_name_1, bond.atom_name_2))
-        for bond in reference.heavy_bonds()
-    }
-    parents: dict[str, tuple[str, BondProvenance]] = {}
-    orders: dict[tuple[str, str], int] = {}
-    for snapshot_constitution, topology, bonds in snapshots:
-        snapshot_residue = snapshot_constitution.residue_or_ligand(residue.residue_id)
-        if snapshot_residue is None:
-            continue
-        for atom in snapshot_residue.atom_sites:
-            charge = topology.formal_charge(
-                snapshot_constitution.atom_index(AtomRef(residue.residue_id, atom.name))
-            )
-            expected = reference.atom(atom.name)
-            expected_charge = (
-                0
-                if atom.is_hydrogen()
-                else (None if expected is None else expected.formal_charge)
-            )
-            if charge is not None and charge != expected_charge:
-                return RetainedNonPolymerChemistryFailure(
-                    RetainedNonPolymerChemistryFailureKind.REFERENCE_STATE_NOT_COVERED,
-                    f"known charge at {residue.residue_id.display_token()}.{atom.name} "
-                    "differs from the represented reference state",
-                )
-        for bond in bonds:
-            if bond.relationship_type is BondRelationshipType.HYDROGEN_BOND:
-                continue
-            first, second = (
-                snapshot_constitution.atom_ref_at(index)
-                for index in bond.endpoint_pair()
-            )
-            if (
-                first.residue_id != residue.residue_id
-                or second.residue_id != residue.residue_id
-                or bond.relationship_type is BondRelationshipType.METAL_COORDINATION
-            ):
-                return RetainedNonPolymerChemistryFailure(
-                    RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
-                    "read-only reference H validation requires an isolated molecular "
-                    f"context: {first.display_token()}--{second.display_token()}",
-                )
-            atoms = tuple(
-                snapshot_constitution.atom_site_at(i) for i in bond.endpoint_pair()
-            )
-            if any(atom.is_hydrogen() for atom in atoms):
-                if (
-                    sum(atom.is_hydrogen() for atom in atoms) != 1
-                    or bond.aromatic
-                    or bond.order not in (None, 1)
-                    or bond.relationship_type
-                    not in {BondRelationshipType.COVALENT, BondRelationshipType.UNKNOWN}
-                    or (
-                        (
-                            bond.order is None
-                            or bond.relationship_type is BondRelationshipType.UNKNOWN
-                        )
-                        and bond.provenance is not BondProvenance.SOURCE_EXPLICIT
-                    )
-                ):
-                    return RetainedNonPolymerChemistryFailure(
-                        RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
-                        "reference H validation requires one local heavy parent per H",
-                    )
-                hydrogen, parent = (
-                    (first, second) if atoms[0].is_hydrogen() else (second, first)
-                )
-                previous = parents.get(hydrogen.atom_name)
-                if previous is not None and previous[0] != parent.atom_name:
-                    return RetainedNonPolymerChemistryFailure(
-                        RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
-                        f"conflicting H parents for {hydrogen.display_token()}",
-                    )
-                parents[hydrogen.atom_name] = (parent.atom_name, bond.provenance)
-                continue
-            if frozenset((first.atom_name, second.atom_name)) not in reference_pairs:
-                return RetainedNonPolymerChemistryFailure(
-                    RetainedNonPolymerChemistryFailureKind.REFERENCE_STATE_NOT_COVERED,
-                    "current/source heavy connectivity differs from the reference",
-                )
-            if bond.order is not None:
-                pair = (
-                    (first.atom_name, second.atom_name)
-                    if first.atom_name < second.atom_name
-                    else (second.atom_name, first.atom_name)
-                )
-                if pair in orders and orders[pair] != bond.order:
-                    return RetainedNonPolymerChemistryFailure(
-                        RetainedNonPolymerChemistryFailureKind.SOURCE_CONFLICT,
-                        "current and original heavy bond orders disagree",
-                    )
-                orders[pair] = bond.order
-
-    geometry = structure.residue_geometry(
-        constitution.residue_index(residue.residue_id)
-    )
-    expected_parent_counts = Counter(
-        reference.hydrogen_anchor_atom_name(atom.atom_name)
-        for atom in reference.hydrogen_atoms()
-    )
-    prepared_lengths: tuple[tuple[str, float], ...] | None = None
-    interpreted = []
-    for atom in residue.atom_sites:
-        if not atom.is_hydrogen():
-            continue
-        connection = parents.get(atom.name)
-        basis: BondProvenance | ReferenceHydrogenParentInterpretation
-        if connection is None:
-            position = geometry.position(atom.name)
-            distances = {
-                name: position.distance_to(geometry.position(name))
-                for name in current_heavy
-            }
-            if any(not isfinite(distance) for distance in distances.values()):
-                return RetainedNonPolymerChemistryFailure(
-                    RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
-                    "reference H parent comparison requires finite local distances "
-                    f"for {residue.residue_id.display_token()}.{atom.name}",
-                )
-            nearest_distance = min(distances.values(), default=float("inf"))
-            named_parent = reference.hydrogen_anchor_atom_name(atom.name)
-            if (
-                named_parent in distances
-                and distances[named_parent] == nearest_distance
-            ):
-                parent = named_parent
-                basis = ReferenceHydrogenParentInterpretation.REFERENCE_NAME
-            else:
-                closest = tuple(
-                    name
-                    for name, distance in distances.items()
-                    if distance == nearest_distance
-                )
-                if len(closest) != 1:
-                    return RetainedNonPolymerChemistryFailure(
-                        RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
-                        "no unambiguous local heavy parent for "
-                        f"{residue.residue_id.display_token()}.{atom.name}",
-                    )
-                parent = closest[0]
-                if not expected_parent_counts[parent]:
-                    return RetainedNonPolymerChemistryFailure(
-                        RetainedNonPolymerChemistryFailureKind.REFERENCE_STATE_NOT_COVERED,
-                        f"observed H at {residue.residue_id.display_token()}.{parent} "
-                        "is outside the represented reference state",
-                    )
-                if prepared_lengths is None:
-                    try:
-                        prepared_lengths = component_reference_hydrogen_bond_lengths(
-                            reference, geometry, bond_order_constraints=orders
-                        )
-                    except RdkitUnavailableError as error:
-                        return RetainedNonPolymerChemistryFailure(
-                            RetainedNonPolymerChemistryFailureKind.BACKEND_UNAVAILABLE,
-                            str(error),
-                        )
-                    except BondOrderConstraintError as error:
-                        return RetainedNonPolymerChemistryFailure(
-                            RetainedNonPolymerChemistryFailureKind.SOURCE_CONFLICT,
-                            str(error),
-                        )
-                    except (ValueError, RuntimeError) as error:
-                        return RetainedNonPolymerChemistryFailure(
-                            RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
-                            f"reference H correspondence is unavailable: {error}",
-                        )
-                if not any(
-                    source_hydrogen_bond_length_is_compatible(nearest_distance, length)
-                    for anchor, length in prepared_lengths
-                    if anchor == parent
-                ):
-                    return RetainedNonPolymerChemistryFailure(
-                        RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
-                        f"source H {residue.residue_id.display_token()}.{atom.name} "
-                        "has no compatible prepared-reference parent distance",
-                    )
-                basis = ReferenceHydrogenParentInterpretation.COMPATIBLE_GEOMETRY
-        else:
-            parent, basis = connection
-        interpreted.append((atom.name, parent, basis))
-    try:
-        inventory = RetainedReferenceHydrogenInventory(
-            reference, residue.residue_id, tuple(interpreted)
-        )
-    except ValueError as error:
-        return RetainedNonPolymerChemistryFailure(
-            RetainedNonPolymerChemistryFailureKind.REFERENCE_STATE_NOT_COVERED,
-            str(error),
-        )
-    try:
-        require_compatible_component_pose(
-            reference,
-            geometry,
-            hydrogen_attachments=tuple(
-                (name, parent) for name, parent, _ in interpreted
-            ),
-            bond_order_constraints=orders,
-        )
-    except RdkitUnavailableError as error:
-        return RetainedNonPolymerChemistryFailure(
-            RetainedNonPolymerChemistryFailureKind.BACKEND_UNAVAILABLE, str(error)
-        )
-    except (ValueError, RuntimeError) as error:
-        return RetainedNonPolymerChemistryFailure(
-            RetainedNonPolymerChemistryFailureKind.SOURCE_CONFLICT, str(error)
-        )
-    return inventory
+    return assessment
 
 
 def _preferred_expected_hydrogen_atom_names(

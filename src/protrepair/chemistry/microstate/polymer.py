@@ -641,8 +641,11 @@ class PolymerMicrostateSite:
     def _scaffold_matches_template(self, residue: ResidueSite) -> bool:
         expected = set(self.template.expected_atom_names()) | {"OXT"}
         semantics = self.template.heavy_atom_semantics
+        reference = self.template.reference_component
         elements = (
-            {atom.atom_name: atom.element for atom in semantics.component.atoms}
+            {atom.atom_name: atom.element for atom in reference.atoms}
+            if reference is not None
+            else {atom.atom_name: atom.element for atom in semantics.component.atoms}
             if isinstance(semantics, IdealGeometryHeavyAtomSemantics)
             else {}
         )

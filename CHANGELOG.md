@@ -41,7 +41,8 @@
   chemistry and H-capable custom templates remain supported
 - allow `hydrogen_coverage_state` to be `None` in `ProteinStructureObservation`,
   `AtomScopeObservation`, `ResidueChemistryReadinessFacts` and
-  `RetainedNonPolymerChemistryReadinessFact` when an H inventory cannot be
+  `RetainedNonPolymerChemistryReadinessFact`, and in the polymer aggregate
+  `StructureChemistryReadinessFacts`, when an H inventory cannot be
   verified, instead of manufacturing complete or partial coverage. Check for
   `None` before reading the enum's `.value`
 - normalize residue `is_hetero` flags from chain/ligand membership when building
@@ -143,6 +144,12 @@
 
 ### Fixed
 
+- stop reporting complete H coverage for known polymer components whose body H
+  cannot be prepared. Verify existing H against reference chemistry and actual
+  peptide boundaries; otherwise report indeterminate coverage, an
+  `unresolved_polymer_hydrogen` warning and unmet-goal reasons. Independent
+  supported backbone updates remain available without certifying the residue.
+  Use reference elements rather than atom-name initials for modified scaffolds
 - preserve source terminal H on retained standard amino acids instead of
   silently deleting them and reporting complete H coverage with open valences;
   fully hydrogenated alanine inputs could lose three H in 0.2.0
