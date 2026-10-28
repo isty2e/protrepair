@@ -30,7 +30,8 @@ dictionary-backed preparation, not pKa prediction.
 ### Retained Amino Acids
 
 Retained standard amino acids and the H-capable CSO, HYP, MSE, PTR, SEP and TPO
-components share polymer free-terminal and standard side-chain state selection.
+components share polymer free-terminal and standard side-chain catalogs and
+preparation defaults.
 Membership does not change. Both current and original N/C boundaries must permit
 free termini; unexplained relationships are not treated as missing peptide bonds.
 Explicit chemistry and caller-supplied templates keep their existing precedence.
@@ -44,12 +45,20 @@ unresolved. This withdraws an isolation assumption without adding a bond or
 changing membership. Other admitted sites may still be prepared; current
 coordinates are reassessed after geometry changes.
 
-Without conflicting source evidence, the shared preparation convention selects
+An existing H-bearing site prefers compatible catalog states with the same
+per-parent H counts before generic preparation defaults. A valid neutral amine
+is not protonated merely because another H could be missing. Source constraints
+and physical requirements still filter candidates first, and compatible applied
+choices keep their existing authority. This is a state-selection preference,
+not a declaration that missing source charges were explicit zero. Polymer
+selection is unchanged.
+
+When no valid H-bearing match supplies a preference, the shared convention selects
 protonated free N and deprotonated free carboxyl termini, charged ARG/LYS,
 deprotonated ASP/GLU, and the existing neutral-HIS environmental preference.
 PRO/HYP use generated N-H names H1/H2, while compatible source aliases and H/D/T
 identities survive. Existing H, explicit neutral charges and reported bond orders
-constrain selection; this policy does not silently replace them with defaults.
+constrain selection; original atom identities and coordinates remain protected.
 HIS environmental selection considers admitted retained sites, but a requested
 polymer HIS ratio remains chain-scoped. KEEP workflows can therefore select a
 different neighboring HIS tautomer.

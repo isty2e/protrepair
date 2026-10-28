@@ -498,7 +498,12 @@ class AminoAcidPreparation:
                         retained_context,
                         residue.residue_id,
                         site,
-                        preferences=preferences,
+                        preferences=(
+                            *retained_context.existing_hydrogen_preferences(
+                                residue.residue_id, site
+                            ),
+                            *preferences,
+                        ),
                     )
                 )
             if entries:

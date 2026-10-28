@@ -166,6 +166,54 @@ class RetainedAminoAcidContext(AminoAcidMicrostateContext):
             bonds=bonds,
         )
 
+    def existing_hydrogen_preferences(
+        self, residue_id: ResidueId, site: PolymerMicrostateSite
+    ) -> tuple[MicrostateConstraints, ...]:
+        """Prefer a valid existing H inventory without claiming exact evidence.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Retained occurrence in this snapshot.
+        site : PolymerMicrostateSite
+            Catalogued chemical site whose source parents are interpreted.
+
+        Returns
+        -------
+        tuple[MicrostateConstraints, ...]
+            One preference matching the H-bearing site's parent counts, or
+            empty for absent, uninterpretable or nonmatching inventories.
+            Hard chemistry requirements still filter candidates first.
+            H from an applied choice is not
+            promoted into fresh source evidence.
+        """
+        catalog = site.candidates()
+        if catalog is None:
+            return ()
+        names = {atom.name for atom in catalog.candidates[0].atoms}
+        try:
+            parents = self.hydrogen_parents(residue_id, site, original=True)
+            if not any(
+                any(atom.name in names for atom in choice.graph.atoms)
+                for choice in self._choices_by_residue.get(residue_id, ())
+            ):
+                parents.update(self.hydrogen_parents(residue_id, site))
+        except ValueError:
+            return ()
+        counts = Counter(parent for parent in parents.values() if parent in names)
+        if not counts:
+            return ()
+        preference = MicrostateConstraints(
+            hydrogens=tuple((name, counts[name]) for name in sorted(names))
+        )
+        return (
+            (preference,)
+            if any(
+                preference.violations(graph).is_empty() for graph in catalog.candidates
+            )
+            else ()
+        )
+
     def require_compatible_scaffold(
         self, residue_id: ResidueId, template: ResidueTemplate
     ) -> None:
