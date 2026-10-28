@@ -1,6 +1,6 @@
 """Diagnostic projection of unresolved fixed polymer H inventories."""
 
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -8,13 +8,13 @@ from protrepair.structure.topology import BondRelationshipType
 
 
 def unresolved_fixed_hydrogen_issue(
-    preparation: PolymerMicrostatePreparation, residue_id: ResidueId
+    preparation: AminoAcidPreparation, residue_id: ResidueId
 ) -> ValidationIssue | None:
     """Report unresolved fixed H without reinterpreting its inventory.
 
     Parameters
     ----------
-    preparation : PolymerMicrostatePreparation
+    preparation : AminoAcidPreparation
         Selected chemistry bound to the current snapshot and library.
     residue_id : ResidueId
         Polymer identity to report.

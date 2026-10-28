@@ -1,6 +1,6 @@
 """Hydrogen completion over retained non-polymer components."""
 
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, replace
 from itertools import chain
@@ -25,6 +25,8 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
 )
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.chemistry.retained_non_polymer.coordination import (
     CoordinatedComponentPreparation,
@@ -36,6 +38,9 @@ from protrepair.chemistry.retained_non_polymer.covalent_context import (
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
     evidence_by_residue_id,
+)
+from protrepair.chemistry.retained_non_polymer.hydrogen_correspondence import (
+    source_hydrogen_bond_length_is_compatible,
 )
 from protrepair.chemistry.retained_non_polymer.template_binding import (
     RetainedTemplateBinding,
@@ -65,10 +70,12 @@ from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryFailure,
     RetainedNonPolymerChemistryFailureKind,
     RetainedNonPolymerChemistryResolution,
+    resolve_retained_non_polymer_chemistry,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
+from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.topology import (
@@ -94,6 +101,9 @@ from protrepair.transformer.completion.hydrogen.domain import (
     HydrogenCompletionEnvironment,
     HydrogenResidueSite,
 )
+from protrepair.transformer.completion.hydrogen.microstate import (
+    place_amino_acid_microstate_hydrogens,
+)
 from protrepair.transformer.completion.hydrogen.static_patch import (
     generate_hydrogen_patch,
 )
@@ -102,6 +112,9 @@ from protrepair.transformer.completion.retained_non_polymer_hydrogen import (
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
+from protrepair.transformer.polymer_microstate import (
+    apply_amino_acid_microstate_patches,
+)
 from protrepair.transformer.result import TransformationResult
 
 from .rdkit_evidence import (
@@ -113,7 +126,6 @@ _RDKIT_FALLBACK_VISIBILITY_DETAILS = (
     "retained non-polymer hydrogens inferred via RDKit coordinate/proximity fallback"
 )
 _SOURCE_HYDROGEN_RECONCILIATION_CANDIDATE_LIMIT = 4096
-_SOURCE_HYDROGEN_ANCHOR_DISTANCE_TOLERANCE_ANGSTROM = 0.35
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,6 +312,40 @@ def _execute_retained_non_polymer_hydrogen_stage(
 ) -> TransformationResult:
     """Validate retained chemistry, then publish atoms or only their graph."""
 
+    preparation = AminoAcidPreparation(
+        PolymerMicrostateContext(structure),
+        component_library,
+        excluded_retained_residue_ids=frozenset(chemistry_evidence_by_residue_id),
+    )
+    amino_acids = frozenset(
+        residue_id
+        for residue_id in target_residue_ids
+        if preparation.targets_for(residue_id)
+        and any(
+            ligand.residue_id == residue_id for ligand in structure.constitution.ligands
+        )
+    )
+    if amino_acids:
+        result = _prepare_retained_amino_acids(
+            structure, preparation, amino_acids, topology_only=topology_only
+        )
+        remaining = target_residue_ids - amino_acids
+        if not remaining:
+            return result
+        other = _execute_retained_non_polymer_hydrogen_stage(
+            result.structure,
+            component_library=component_library,
+            target_residue_ids=remaining,
+            chemistry_evidence_by_residue_id=chemistry_evidence_by_residue_id,
+            allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+            topology_only=topology_only,
+        )
+        return TransformationResult(
+            other.structure,
+            result.repairs + other.repairs,
+            result.issues + other.issues,
+        )
+
     disulfide_residue_ids = disulfide_bonded_cysteine_residue_ids(structure)
     hydrogenated_payloads: list[CompletionResiduePayload] = []
     topology_plans: list[_RetainedNonPolymerTopologyPlan] = []
@@ -380,16 +426,17 @@ def _execute_retained_non_polymer_hydrogen_stage(
                     evidence = coordination_preparation.hydrogenation_template
             if evidence is None and not RetainedAtomicSite(ligand).is_monatomic_ion():
                 guarded = (
-                    RetainedNonPolymerChemistryResolution.from_unprepared_reference(
-                        template
+                    RetainedNonPolymerChemistryResolution.observe_unprepared_reference(
+                        template, structure, ligand
                     )
                 )
                 if guarded is not None and guarded.failure is not None:
-                    issues.append(
-                        unresolved_retained_hydrogen_issue(
-                            ligand.residue_id, ligand.component_id, guarded.failure
+                    if not guarded.has_complete_reference_hydrogens():
+                        issues.append(
+                            unresolved_retained_hydrogen_issue(
+                                ligand.residue_id, ligand.component_id, guarded.failure
+                            )
                         )
-                    )
                     continue
             try:
                 if evidence is not None:
@@ -659,6 +706,344 @@ def _execute_retained_non_polymer_hydrogen_stage(
         repairs=tuple(repairs),
         issues=tuple(issues),
     )
+
+
+def _prepare_retained_amino_acids(
+    structure: ProteinStructure,
+    preparation: AminoAcidPreparation,
+    target_residue_ids: frozenset[ResidueId],
+    *,
+    topology_only: bool,
+) -> TransformationResult:
+    staged_patches = []
+    staged_payloads = []
+    staged_bonds: list[tuple[ResidueId, BondDefinition]] = []
+    staged_external_bonds: set[tuple[AtomRef, AtomRef]] = set()
+    repairs = []
+    issues = []
+    polar_chemistry = PolarContactChemistry(
+        structure.constitution, structure.topology, preparation.component_library
+    )
+    for residue_id in sorted(target_residue_ids):
+        prepared = preparation
+        targets = prepared.targets_for(residue_id)
+        template = targets[0].site.template
+        original = _payload_for_structure(structure, residue_id)
+        if not topology_only and not prepared.has_pending_hydrogen_updates(residue_id):
+            continue
+        if template.component_id == "CYS":
+            covalent_context = RetainedCovalentContext(structure, residue_id)
+            if covalent_context.attachments:
+                staged_external_bonds.add(
+                    covalent_context.require_neutral_disulfide_pair()
+                )
+        patches = []
+        failures = []
+        for target in targets:
+            if target.resolution.graph is None or target.is_realized():
+                continue
+            try:
+                if topology_only and not all(
+                    original.has_atom(atom.name)
+                    for atom, _ in target.hydrogen_atom_sites()
+                ):
+                    continue
+                patches.append(
+                    place_amino_acid_microstate_hydrogens(
+                        target.context,
+                        residue_id,
+                        target.site,
+                        preferences=target.preferences,
+                    )
+                )
+            except (ValueError, GeometryPlacementError) as error:
+                failures.append(str(error))
+        try:
+            candidate = apply_amino_acid_microstate_patches(structure, tuple(patches))
+            payload = _payload_for_structure(candidate, residue_id)
+            placement_names = prepared.fixed_hydrogen_placement_names(residue_id)
+            fixed_context = prepared.fixed_hydrogen_context(residue_id)
+            assert fixed_context is not None
+            active_template = fixed_context.template
+            controlled = {
+                name for target in targets for name in target.controlled_parent_names()
+            }
+            fixed_names = active_template.expected_polymer_hydrogen_atom_names()
+            anchors = active_template.template_hydrogen_anchor_by_name(fixed_names)
+            selected_names = frozenset(placement_names)
+            available_parents = {anchors[name] for name in placement_names}
+            selected = tuple(
+                (atom, parent)
+                for atom, parent in prepared.fixed_hydrogen_atom_sites(residue_id)
+                if payload.has_atom(parent)
+                and (payload.has_atom(atom.name) or parent in available_parents)
+            )
+            missing = tuple(
+                atom for atom, _ in selected if not payload.has_atom(atom.name)
+            )
+            generated = None
+            if missing and not topology_only:
+                directive = hydrogen_placement_directive(
+                    residue_index=ResidueIndex(0), template=active_template
+                )
+                if directive is None:
+                    raise ValueError("fixed amino-acid H placement is unavailable")
+                generated = _apply_retained_non_polymer_hydrogen_directive(
+                    original.without_atom_sites(_hydrogen_atom_names(original)),
+                    template=active_template,
+                    polar_chemistry=polar_chemistry,
+                    placement_directive=directive,
+                    is_disulfide_bonded=False,
+                    selected_hydrogen_names=selected_names,
+                )
+                if generated is None:
+                    raise ValueError("fixed amino-acid H placement failed")
+            site = payload.residue_site
+            geometry = payload.residue_geometry
+            charges = dict(payload.formal_charge_by_atom_name)
+            available: dict[str, list[tuple[str, AtomGeometry]]] = defaultdict(list)
+            if generated is not None:
+                fixed_parents = {atom.name: parent for atom, parent in selected}
+                fixed_source = original.without_atom_sites(
+                    tuple(
+                        name
+                        for name in _hydrogen_atom_names(original)
+                        if name not in fixed_parents
+                    )
+                )
+                observation = structure.provenance.ingress.observation
+                if observation is not None:
+                    for atom, _parent in selected:
+                        index = observation.constitution.resolve_atom_index(
+                            AtomRef(residue_id, atom.name)
+                        )
+                        if not fixed_source.has_atom(atom.name) and index is not None:
+                            fixed_source = fixed_source.with_atom_payload(
+                                atom,
+                                atom_geometry=observation.geometry.atom_geometry(index),
+                                formal_charge=observation.topology.formal_charge(index),
+                            )
+                fixed_source_names = _hydrogen_atom_names(fixed_source)
+                assignment = _source_hydrogen_generated_name_assignment(
+                    generated,
+                    source_payload=fixed_source,
+                    source_hydrogen_atom_names=fixed_source_names,
+                    generated_hydrogen_atom_names=tuple(
+                        name
+                        for name in generated.atom_names()
+                        if name in selected_names
+                    ),
+                    source_hydrogen_anchor_by_name=fixed_parents,
+                    source_explicit_hydrogen_anchor_by_name={},
+                    generated_hydrogen_anchor_by_name={
+                        name: anchors[name] for name in selected_names
+                    },
+                )
+                if len(assignment) != len(fixed_source_names):
+                    raise ValueError(
+                        "source fixed H cannot be reconciled with amino-acid slots"
+                    )
+                occupied = set(assignment.values())
+                for name in generated.atom_names():
+                    if name in selected_names and name not in occupied:
+                        available[anchors[name]].append(
+                            (name, generated.atom_geometry(name))
+                        )
+            for atom, parent in selected:
+                if payload.has_atom(atom.name) or topology_only:
+                    continue
+                observation = structure.provenance.ingress.observation
+                ref = AtomRef(residue_id, atom.name)
+                observed_index = (
+                    None
+                    if observation is None
+                    else observation.constitution.resolve_atom_index(ref)
+                )
+                if observed_index is not None and observation is not None:
+                    atom_geometry = observation.geometry.atom_geometry(observed_index)
+                else:
+                    slots = available[parent]
+                    if not slots:
+                        raise ValueError(
+                            f"no generated fixed H slot is available at {parent}"
+                        )
+                    slot = next(
+                        (i for i, (name, _) in enumerate(slots) if name == atom.name), 0
+                    )
+                    _name, atom_geometry = slots.pop(slot)
+                site = site.with_atom_site(atom)
+                geometry = geometry.with_atom_geometry(atom.name, atom_geometry)
+                charges[atom.name] = 0
+            body_charges = tuple(
+                (name, charge)
+                for name, charge in template.heavy_atom_charge_requirements()
+                if name not in controlled and site.has_atom_site(name)
+            )
+            _require_compatible_formal_charges(charges, body_charges)
+            charges.update(body_charges)
+            candidate = candidate.with_updated_residue_facets_batch(
+                ((site, geometry, tuple(charges.items())),)
+            )
+            definitions = [
+                bond
+                for bond in template.definition.bonds
+                if site.has_atom_site(bond.atom_name_1)
+                and site.has_atom_site(bond.atom_name_2)
+                and not any(
+                    {bond.atom_name_1, bond.atom_name_2}
+                    <= target.controlled_parent_names()
+                    for target in targets
+                )
+            ]
+            definitions.extend(
+                BondDefinition(parent, atom.name, order=1)
+                for atom, parent in selected
+                if site.has_atom_site(atom.name)
+            )
+            staged_patches.extend(patches)
+            staged_payloads.append((site, geometry, tuple(charges.items())))
+            staged_bonds.extend((residue_id, definition) for definition in definitions)
+            added = tuple(
+                atom.name
+                for atom in site.atom_sites
+                if atom.is_hydrogen() and not original.has_atom(atom.name)
+            )
+            if added:
+                repairs.append(
+                    RepairEvent.for_residue(
+                        kind=RepairEventKind.HYDROGENS_ADDED,
+                        residue_id=residue_id,
+                        component_id=template.component_id,
+                        atom_names=added,
+                        details="prepared retained amino acid with shared site policy",
+                    )
+                )
+        except (ValueError, GeometryPlacementError) as error:
+            failures.append(str(error))
+            if patches:
+                candidate = apply_amino_acid_microstate_patches(
+                    structure, tuple(patches)
+                )
+                payload = _payload_for_structure(candidate, residue_id)
+                staged_patches.extend(patches)
+                staged_payloads.append(
+                    (
+                        payload.residue_site,
+                        payload.residue_geometry,
+                        payload.formal_charge_by_atom_name,
+                    )
+                )
+                added = tuple(
+                    name
+                    for name in _hydrogen_atom_names(payload)
+                    if not original.has_atom(name)
+                )
+                if added:
+                    repairs.append(
+                        RepairEvent.for_residue(
+                            kind=RepairEventKind.HYDROGENS_ADDED,
+                            residue_id=residue_id,
+                            component_id=template.component_id,
+                            atom_names=added,
+                            details="prepared independent retained amino-acid sites",
+                        )
+                    )
+        if failures:
+            issues.append(
+                unresolved_retained_hydrogen_issue(
+                    residue_id,
+                    template.component_id,
+                    RetainedNonPolymerChemistryFailure(
+                        RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
+                        "; ".join(dict.fromkeys(failures)),
+                    ),
+                )
+            )
+    updated = apply_amino_acid_microstate_patches(structure, tuple(staged_patches))
+    updated = updated.with_updated_residue_facets_batch(staged_payloads)
+    bonds = {bond.endpoint_pair(): bond for bond in updated.topology.bonds}
+    for residue_id, definition in staged_bonds:
+        first = updated.constitution.atom_index(
+            AtomRef(residue_id, definition.atom_name_1)
+        )
+        second = updated.constitution.atom_index(
+            AtomRef(residue_id, definition.atom_name_2)
+        )
+        bond = TopologyBond(
+            first,
+            second,
+            order=definition.order,
+            aromatic=definition.aromatic,
+            provenance=BondProvenance.TEMPLATE_RESOLVED,
+        )
+        existing = bonds.get(bond.endpoint_pair())
+        if existing is None:
+            bonds[bond.endpoint_pair()] = bond
+        elif (
+            existing.relationship_type is not BondRelationshipType.COVALENT
+            or existing.order != bond.order
+            or existing.aromatic != bond.aromatic
+        ):
+            bonds[bond.endpoint_pair()] = existing.with_resolved_chemistry(bond)
+    for first_ref, second_ref in sorted(staged_external_bonds):
+        first = updated.constitution.atom_index(first_ref)
+        second = updated.constitution.atom_index(second_ref)
+        pair = (first, second) if first.value < second.value else (second, first)
+        existing = bonds[pair]
+        bonds[pair] = existing.with_resolved_chemistry(replace(existing, order=1))
+    updated = ProteinStructure.from_payload(
+        constitution=updated.constitution,
+        geometry=updated.geometry,
+        topology=StructureTopology(
+            constitution=updated.constitution,
+            atom_topologies=updated.topology.atom_topologies,
+            bonds=tuple(bonds.values()),
+        ),
+        polymer_blueprint=updated.polymer_blueprint,
+        provenance=updated.provenance,
+    )
+    if updated != structure:
+        added_ids = {repair.residue_id for repair in repairs}
+        repairs.extend(
+            _retained_topology_resolution_repairs(
+                structure,
+                updated,
+                residue_ids=tuple(sorted(target_residue_ids - added_ids)),
+            )
+        )
+    if any(repair.kind is RepairEventKind.HYDROGENS_ADDED for repair in repairs):
+        updated, cleanup_issues = cleanup_residual_hydrogen_clashes(
+            updated,
+            component_library=preparation.component_library,
+            fixed_hydrogen_atom_refs=frozenset(
+                AtomRef(ligand.residue_id, atom.name)
+                for ligand in structure.constitution.ligands
+                for atom in ligand.atom_sites
+                if atom.is_hydrogen()
+            ),
+            target_residue_ids=target_residue_ids,
+        )
+        issues.extend(cleanup_issues)
+    final_preparation = preparation.for_inputs(updated, preparation.component_library)
+    reported = {issue.residue_id for issue in issues}
+    for residue_id in sorted(target_residue_ids - reported):
+        residue = updated.constitution.residue_or_ligand(residue_id)
+        assert residue is not None
+        resolution = resolve_retained_non_polymer_chemistry(
+            updated,
+            residue,
+            component_library=preparation.component_library,
+            amino_acid_preparation=final_preparation,
+        )
+        if resolution.failure is not None:
+            issues.append(
+                unresolved_retained_hydrogen_issue(
+                    residue_id, residue.component_id, resolution.failure
+                )
+            )
+    if updated == structure:
+        updated = structure
+    return TransformationResult(updated, tuple(repairs), tuple(issues))
 
 
 def _retained_topology_resolution_repairs(
@@ -1609,9 +1994,8 @@ def _source_hydrogen_anchor_distance_is_compatible(
     generated_anchor_distance = hydrogenated_payload.position(
         generated_name
     ).distance_to(hydrogenated_payload.position(generated_anchor))
-    return (
-        abs(source_anchor_distance - generated_anchor_distance)
-        <= _SOURCE_HYDROGEN_ANCHOR_DISTANCE_TOLERANCE_ANGSTROM
+    return source_hydrogen_bond_length_is_compatible(
+        source_anchor_distance, generated_anchor_distance
     )
 
 
@@ -2065,6 +2449,7 @@ def _apply_retained_non_polymer_hydrogen_directive(
     | RigidHydrogenPlacementDirective,
     is_disulfide_bonded: bool,
     template_binding: RetainedTemplateBinding | None = None,
+    selected_hydrogen_names: frozenset[str] | None = None,
 ) -> CompletionResiduePayload | None:
     """Return one hydrogenated retained non-polymer payload."""
 
@@ -2091,6 +2476,7 @@ def _apply_retained_non_polymer_hydrogen_directive(
                 site=site,
                 patch=patch,
                 semantics=placement_directive.semantics,
+                selected_hydrogen_names=selected_hydrogen_names,
             )
         except (GeometryPlacementError, KeyError):
             return None
@@ -2117,7 +2503,7 @@ def _apply_retained_non_polymer_hydrogen_directive(
         semantics=semantics,
         skip_hydrogens_with_absent_anchors=True,
         selected_hydrogen_names=(
-            None
+            selected_hydrogen_names
             if michael is None
             else frozenset(template.expected_hydrogen_atom_names()).difference(
                 reaction_names

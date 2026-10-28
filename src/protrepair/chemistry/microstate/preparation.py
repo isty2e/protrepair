@@ -1,4 +1,4 @@
-"""Polymer preparation targets, separate from observed chemistry."""
+"""Shared amino-acid preparation targets, separate from observed chemistry."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -6,13 +6,17 @@ from types import MappingProxyType
 
 from protrepair.chemistry.component.defaults import build_default_component_library
 from protrepair.chemistry.component.library import ComponentLibrary
+from protrepair.chemistry.component.semantics import HydrogenSemantics
 from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.microstate.catalog import (
     PeptideLinkage,
     PolymerChemicalSite,
     standard_microstate_candidates,
 )
-from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.context import (
+    AminoAcidMicrostateContext,
+    PolymerMicrostateContext,
+)
 from protrepair.chemistry.microstate.histidine_environment import HistidineEnvironment
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
@@ -20,6 +24,7 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateResolution,
     MicrostateResolutionStatus,
 )
+from protrepair.chemistry.microstate.retained import RetainedAminoAcidContext
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
@@ -43,15 +48,15 @@ from protrepair.structure.topology import (
 
 
 @dataclass(frozen=True, slots=True)
-class PolymerSitePreparation:
+class AminoAcidSitePreparation:
     """Bind desired chemistry and realization queries to the same snapshot.
 
     Parameters
     ----------
-    context : PolymerMicrostateContext
+    context : AminoAcidMicrostateContext
         Current structure and immutable original observations.
     residue_id : ResidueId
-        Polymer residue identity.
+        Admitted amino-acid occurrence identity.
     site : PolymerMicrostateSite
         Chemical site and established linkage context.
     preferences : tuple[MicrostateConstraints, ...]
@@ -67,7 +72,7 @@ class PolymerSitePreparation:
     and mutation remain transformer responsibilities.
     """
 
-    context: PolymerMicrostateContext = field(repr=False)
+    context: AminoAcidMicrostateContext = field(repr=False)
     residue_id: ResidueId
     site: PolymerMicrostateSite
     preferences: tuple[MicrostateConstraints, ...]
@@ -192,7 +197,7 @@ class FixedPolymerHydrogenContext:
 
     def __init__(
         self,
-        context: PolymerMicrostateContext,
+        context: AminoAcidMicrostateContext,
         residue_id: ResidueId,
         template: ResidueTemplate,
         component_library: ComponentLibrary,
@@ -337,8 +342,8 @@ class FixedPolymerHydrogenContext:
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class PolymerMicrostatePreparation:
-    """Resolve one snapshot's polymer targets for placement and state consumers.
+class AminoAcidPreparation:
+    """Resolve one snapshot's amino-acid targets for placement and observation.
 
     Parameters
     ----------
@@ -351,6 +356,8 @@ class PolymerMicrostatePreparation:
         Keys are (ResidueId, PolymerChemicalSite), values are constraints or None.
         An absent key preserves a saved choice. A present None resets that site
         to source-compatible preferences; constraints request an explicit override.
+    excluded_retained_residue_ids : frozenset[ResidueId]
+        Retained occurrences owned by explicit chemistry rather than this policy.
 
     Notes
     -----
@@ -365,7 +372,7 @@ class PolymerMicrostatePreparation:
         A request targets a site absent from this polymer preparation.
     """
 
-    _targets: Mapping[ResidueId, tuple[PolymerSitePreparation, ...]]
+    _targets: Mapping[ResidueId, tuple[AminoAcidSitePreparation, ...]]
     context: PolymerMicrostateContext
     component_library: ComponentLibrary
     _disulfides: frozenset[ResidueId]
@@ -374,6 +381,8 @@ class PolymerMicrostatePreparation:
     _requests: Mapping[
         tuple[ResidueId, PolymerChemicalSite], MicrostateConstraints | None
     ]
+    _excluded_retained_residue_ids: frozenset[ResidueId]
+    _retained_context: RetainedAminoAcidContext
 
     def __init__(
         self,
@@ -384,6 +393,7 @@ class PolymerMicrostatePreparation:
             tuple[ResidueId, PolymerChemicalSite], MicrostateConstraints | None
         ]
         | None = None,
+        excluded_retained_residue_ids: frozenset[ResidueId] = frozenset(),
     ) -> None:
         requested = {} if requests is None else dict(requests)
         pending = dict(requested)
@@ -448,7 +458,7 @@ class PolymerMicrostatePreparation:
                                 context, residue.residue_id, component_library
                             )
                     entries.append(
-                        PolymerSitePreparation(
+                        AminoAcidSitePreparation(
                             context,
                             residue.residue_id,
                             site,
@@ -458,6 +468,47 @@ class PolymerMicrostatePreparation:
                         )
                     )
                 targets[residue.residue_id] = tuple(entries)
+        retained_context = RetainedAminoAcidContext(context.source)
+        object.__setattr__(self, "_retained_context", retained_context)
+        coordinate_dependent_retained = False
+        for residue in context.source.constitution.ligands:
+            if residue.residue_id in excluded_retained_residue_ids:
+                continue
+            template = component_library.get(residue.component_id)
+            if template is None:
+                continue
+            entries = []
+            for site in retained_context.admitted_sites(residue.residue_id, template):
+                preferences = pras_microstate_preferences(site)
+                if site.kind is PolymerChemicalSite.SIDECHAIN:
+                    if template.component_id == "HIS":
+                        preferences = preferences[:1]
+                    elif template.component_id == "CYS" and any(
+                        bond.relationship_type
+                        is BondRelationshipType.METAL_COORDINATION
+                        for bond in retained_context.external_heavy_bonds(
+                            AtomRef(residue.residue_id, "SG")
+                        )
+                    ):
+                        preferences = _cysteine_microstate_preferences(
+                            context, residue.residue_id, component_library
+                        )
+                entries.append(
+                    AminoAcidSitePreparation(
+                        retained_context,
+                        residue.residue_id,
+                        site,
+                        preferences=(
+                            *retained_context.existing_hydrogen_preferences(
+                                residue.residue_id, site
+                            ),
+                            *preferences,
+                        ),
+                    )
+                )
+            if entries:
+                targets[residue.residue_id] = tuple(entries)
+                coordinate_dependent_retained = True
         if pending:
             raise ValueError("microstate request targets an absent polymer site")
         unresolved_histidines = tuple(
@@ -501,13 +552,20 @@ class PolymerMicrostatePreparation:
         object.__setattr__(
             self,
             "_coordinate_dependent",
-            bool(unresolved_histidines) or coordinate_dependent_adducts,
+            bool(unresolved_histidines)
+            or coordinate_dependent_adducts
+            or coordinate_dependent_retained,
         )
         object.__setattr__(self, "_cysteine_adducts", MappingProxyType(adducts))
         object.__setattr__(self, "_targets", MappingProxyType(targets))
         object.__setattr__(self, "context", context)
         object.__setattr__(self, "component_library", component_library)
         object.__setattr__(self, "_requests", MappingProxyType(requested))
+        object.__setattr__(
+            self,
+            "_excluded_retained_residue_ids",
+            frozenset(excluded_retained_residue_ids),
+        )
         object.__setattr__(
             self, "_disulfides", disulfide_bonded_cysteine_residue_ids(context.source)
         )
@@ -521,7 +579,7 @@ class PolymerMicrostatePreparation:
             tuple[ResidueId, PolymerChemicalSite], MicrostateConstraints | None
         ]
         | None = None,
-    ) -> "PolymerMicrostatePreparation":
+    ) -> "AminoAcidPreparation":
         """Bind placement targets to the exact snapshot and complete requests.
 
         Parameters
@@ -537,7 +595,7 @@ class PolymerMicrostatePreparation:
 
         Returns
         -------
-        PolymerMicrostatePreparation
+        AminoAcidPreparation
             This instance only for identical bindings; otherwise a fresh one.
 
         Raises
@@ -552,10 +610,11 @@ class PolymerMicrostatePreparation:
             and self._requests == requested
         ):
             return self
-        return PolymerMicrostatePreparation(
+        return AminoAcidPreparation(
             PolymerMicrostateContext(structure),
             component_library,
             requests=requested,
+            excluded_retained_residue_ids=self._excluded_retained_residue_ids,
         )
 
     def matches_chemistry(self, structure: ProteinStructure) -> bool:
@@ -585,7 +644,7 @@ class PolymerMicrostatePreparation:
         Parameters
         ----------
         residue_id : ResidueId
-            Polymer identity in the preparation snapshot.
+            Amino-acid occurrence in the preparation snapshot.
 
         Returns
         -------
@@ -595,7 +654,7 @@ class PolymerMicrostatePreparation:
         Raises
         ------
         ValueError
-            The polymer residue is absent from this snapshot.
+            The occurrence is absent from this snapshot.
         """
         residue = self.context.source.constitution.residue_or_ligand(residue_id)
         if residue is None:
@@ -624,7 +683,7 @@ class PolymerMicrostatePreparation:
         Parameters
         ----------
         residue_id : ResidueId
-            Polymer residue in this snapshot.
+            Amino-acid occurrence in this snapshot.
 
         Returns
         -------
@@ -645,6 +704,11 @@ class PolymerMicrostatePreparation:
         template = self.component_library.get(residue.component_id)
         if template is None or not template.can_add_hydrogens():
             return ()
+        constitution = self.context.source.constitution
+        if constitution.residue_index(residue_id).value >= len(
+            constitution.residue_slots
+        ) - len(constitution.ligands):
+            self._retained_context.require_compatible_scaffold(residue_id, template)
         isolated = template
         fixed_context = self.fixed_hydrogen_context(residue_id)
         assert fixed_context is not None
@@ -741,9 +805,14 @@ class PolymerMicrostatePreparation:
         )
         template = self.component_library.get(residue.component_id)
         assert template is not None
+        context = self.context
+        if structure.constitution.residue_index(residue_id).value >= len(
+            structure.constitution.residue_slots
+        ) - len(structure.constitution.ligands):
+            context = self._retained_context
         return tuple(
             bond
-            for bond in self.context.hydrogen_topology_updates(
+            for bond in context.hydrogen_topology_updates(
                 residue_id,
                 PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN),
             )
@@ -754,8 +823,10 @@ class PolymerMicrostatePreparation:
             )
         )
 
-    def targets_for(self, residue_id: ResidueId) -> tuple[PolymerSitePreparation, ...]:
-        """Return all chemical targets for a polymer residue.
+    def targets_for(
+        self, residue_id: ResidueId
+    ) -> tuple[AminoAcidSitePreparation, ...]:
+        """Return chemical targets for an admitted amino-acid occurrence.
 
         Parameters
         ----------
@@ -764,11 +835,95 @@ class PolymerMicrostatePreparation:
 
         Returns
         -------
-        tuple[PolymerSitePreparation, ...]
-            Empty for an unknown component or non-polymer residue; emptiness is
+        tuple[AminoAcidSitePreparation, ...]
+            Empty for unknown or unadmitted components; emptiness is
             not evidence of chemistry readiness.
         """
         return self._targets.get(residue_id, ())
+
+    def known_hydrogen_atom_sites(
+        self, residue_id: ResidueId
+    ) -> tuple[tuple[AtomSite, str], ...]:
+        """Project selected H identities without claiming whole-residue coverage.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Admitted occurrence in this snapshot.
+
+        Returns
+        -------
+        tuple[tuple[AtomSite, str], ...]
+            Known disjoint inventories. Unresolved sites remain in targets_for
+            and readiness; omitting them here never certifies completion.
+        """
+        try:
+            known = list(self.fixed_hydrogen_atom_sites(residue_id))
+        except ValueError:
+            known = []
+        for target in self.targets_for(residue_id):
+            try:
+                known.extend(target.hydrogen_atom_sites())
+            except ValueError:
+                continue
+        return tuple(known)
+
+    def fixed_hydrogen_placement_names(self, residue_id: ResidueId) -> tuple[str, ...]:
+        """Select fixed-H operations whose existing primitive has its anchors.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Admitted occurrence in this snapshot.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Template-coordinate names, not final source-preserving identities.
+            This is placement admission, not the whole chemical H requirement.
+        """
+        fixed = self.fixed_hydrogen_context(residue_id)
+        residue = self.context.source.constitution.residue_or_ligand(residue_id)
+        if fixed is None or residue is None:
+            return ()
+        controlled = {
+            name
+            for target in self.targets_for(residue_id)
+            for name in target.controlled_parent_names()
+        }
+        names = fixed.hydrogen_atom_names()
+        anchors = fixed.template.template_hydrogen_anchor_by_name(names)
+        present = set(residue.atom_site_names())
+        available = set(names)
+        semantics = fixed.template.hydrogen_semantics
+        if isinstance(semantics, HydrogenSemantics):
+            if semantics.rotatable_kind is not None:
+                # These fixed-body primitives use N/CA and side-chain anchors,
+                # but do not read the peptide carbonyl.
+                required = set(fixed.template.expected_polymer_heavy_atom_names()) - {
+                    "C",
+                    "O",
+                }
+                if not required <= present:
+                    return ()
+            else:
+                available = {
+                    name
+                    for outputs, _method, arguments in (
+                        semantics.static_plan(include_backbone_hydrogen=False) or ()
+                    )
+                    if all(
+                        not isinstance(arg, str) or arg in present for arg in arguments
+                    )
+                    for name in outputs
+                }
+        return tuple(
+            name
+            for name in names
+            if name in available
+            and anchors.get(name) in present
+            and anchors.get(name) not in controlled
+        )
 
     def has_pending_hydrogen_updates(self, residue_id: ResidueId) -> bool:
         """Return whether supported H or selected chemistry still needs an edit.
@@ -776,7 +931,7 @@ class PolymerMicrostatePreparation:
         Parameters
         ----------
         residue_id : ResidueId
-            Polymer identity in this preparation's snapshot.
+            Amino-acid occurrence in this preparation's snapshot.
 
         Returns
         -------
@@ -794,17 +949,48 @@ class PolymerMicrostatePreparation:
         Unresolved parents do not become executable work merely because the
         residue's overall H coverage remains incomplete.
         """
-        if any(
-            target.resolution.graph is not None and not target.is_realized()
-            for target in self.targets_for(residue_id)
-        ):
+        for target in self.targets_for(residue_id):
+            if target.resolution.graph is None or target.is_realized():
+                continue
+            if not isinstance(target.context, RetainedAminoAcidContext):
+                return True
+            try:
+                target.hydrogen_atom_sites()
+            except ValueError:
+                continue
             return True
         residue = self.context.source.constitution.residue_or_ligand(residue_id)
         if residue is None:
             raise ValueError("H update assessment requires a present residue")
+        template = self.component_library.get(residue.component_id)
+        if template is None:
+            return False
         try:
             selected = self.fixed_hydrogen_atom_sites(residue_id)
-            if any(not residue.has_atom_site(atom.name) for atom, _ in selected):
+            constitution = self.context.source.constitution
+            if constitution.residue_index(residue_id).value < len(
+                constitution.residue_slots
+            ) - len(constitution.ligands):
+                return any(
+                    not residue.has_atom_site(atom.name) for atom, _ in selected
+                ) or bool(self.fixed_hydrogen_topology_updates(residue_id))
+            if residue_id in self._disulfides:
+                first, second = RetainedCovalentContext(
+                    self.context.source, residue_id
+                ).require_neutral_disulfide_pair()
+                bond = self.context.source.topology.bond_between(
+                    constitution.atom_index(first), constitution.atom_index(second)
+                )
+                if bond is not None and bond.order != 1:
+                    return True
+            available_names = self.fixed_hydrogen_placement_names(residue_id)
+            available_parents = set(
+                template.template_hydrogen_anchor_by_name(available_names).values()
+            )
+            if any(
+                not residue.has_atom_site(atom.name) and parent in available_parents
+                for atom, parent in selected
+            ):
                 return True
             return bool(self.fixed_hydrogen_topology_updates(residue_id))
         except ValueError:

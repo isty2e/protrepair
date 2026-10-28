@@ -162,7 +162,7 @@ def histidine_microstate_requests(
     Returns
     -------
     dict
-        Site-keyed requests for PolymerMicrostatePreparation. Selected HIS request
+        Site-keyed requests for AminoAcidPreparation. Selected HIS request
         both ring protons; None resets saved choices without overriding source H.
 
     Raises

@@ -14,6 +14,7 @@ from protrepair.chemistry.component.graph import (
     CoordinationBondDefinition,
 )
 from protrepair.errors import BondOrderConstraintError, RdkitUnavailableError
+from protrepair.structure.geometry import ResidueGeometry
 
 if TYPE_CHECKING:
     from rdkit.Chem.rdchem import Mol
@@ -175,6 +176,68 @@ def require_compatible_pose_stereochemistry(molecule: "Mol") -> None:
             raise ValueError(
                 "declared bond stereochemistry contradicts source geometry"
             )
+
+
+def require_compatible_named_pose_stereochemistry(
+    molecule: "Mol",
+    atom_names: tuple[str, ...],
+    geometry: ResidueGeometry,
+    *,
+    hydrogen_attachments: tuple[tuple[str, str], ...] = (),
+) -> None:
+    """Compare declared stereo with named heavy and complete parent-H poses.
+
+    Parameters
+    ----------
+    molecule : Mol
+        Heavy graph with declared stereo and its expected H counts.
+    atom_names : tuple[str, ...]
+        Heavy names in native atom order.
+    geometry : ResidueGeometry
+        Actual coordinates, never a generated comparison pose.
+    hydrogen_attachments : tuple[tuple[str, str], ...]
+        Interpreted H-name and parent-name pairs.
+
+    Raises
+    ------
+    ValueError
+        Mapping or confirmed geometric stereo disagrees with the graph.
+    RdkitUnavailableError
+        Native interpretation is unavailable.
+    """
+    if Chem is None:
+        raise RdkitUnavailableError("stereochemistry requires operational RDKit")
+    if not has_declared_stereochemistry(molecule):
+        return
+    if len(atom_names) != molecule.GetNumAtoms():
+        raise ValueError("pose atom names do not match the native graph")
+    template = Chem.Mol(molecule)
+    names = dict(enumerate(atom_names))
+    hydrogens_by_parent: dict[str, list[str]] = {}
+    for hydrogen, parent in hydrogen_attachments:
+        hydrogens_by_parent.setdefault(parent, []).append(hydrogen)
+    complete_parents = tuple(
+        index
+        for index, name in names.items()
+        if name in hydrogens_by_parent
+        and len(hydrogens_by_parent[name])
+        == template.GetAtomWithIdx(index).GetTotalNumHs()
+    )
+    if complete_parents:
+        template = Chem.AddHs(template, onlyOnAtoms=complete_parents)
+        for atom in template.GetAtoms():
+            if atom.GetIdx() not in names:
+                parent = names[atom.GetNeighbors()[0].GetIdx()]
+                names[atom.GetIdx()] = hydrogens_by_parent[parent].pop(0)
+    conformer = Chem.Conformer(template.GetNumAtoms())
+    conformer.Set3D(True)
+    for index, name in names.items():
+        if not geometry.has_atom(name):
+            raise ValueError(f"pose mapping has no coordinate for atom {name}")
+        conformer.SetAtomPosition(index, tuple(geometry.position(name)))
+    template.RemoveAllConformers()
+    template.AddConformer(conformer, assignId=True)
+    require_compatible_pose_stereochemistry(template)
 
 
 def molecule_with_pose_stereochemistry(molecule: "Mol") -> "Mol":

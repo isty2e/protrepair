@@ -11,7 +11,7 @@ from protrepair.io import read_structure, read_structure_string, write_structure
 from protrepair.scope import WholeStructureScope
 from protrepair.state import HydrogenCoverageState, TopologyAvailabilityState
 from protrepair.state.chemistry_observation import StructureChemistryObservation
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
     add_retained_non_polymer_hydrogens,
@@ -59,18 +59,33 @@ def test_3enj_retains_source_cysteine_hydrogens(public_workflow: bool) -> None:
 
     repaired = result.structure
     repaired_index = repaired.constitution.residue_index(residue_id)
-    assert repaired.constitution.residue_site_at(repaired_index) == original
-    assert repaired.residue_geometry(repaired_index) == source.residue_geometry(
-        source_index
+    current = repaired.constitution.residue_site_at(repaired_index)
+    assert set(current.atom_site_names()) - set(original.atom_site_names()) == {"HA"}
+    for atom in original.atom_sites:
+        assert current.atom_site(atom.name) == atom
+        assert repaired.residue_geometry(repaired_index).atom_geometry(
+            atom.name
+        ) == source.residue_geometry(source_index).atom_geometry(atom.name)
+    assert (
+        repaired.topology.formal_charge(
+            repaired.constitution.atom_index(AtomRef(residue_id, "N"))
+        )
+        == 1
     )
-    assert repaired.residue_formal_charge_by_atom_name(
-        repaired_index
-    ) == source.residue_formal_charge_by_atom_name(source_index)
-    assert not any(repair.residue_id == residue_id for repair in result.repairs)
+    for name in ("H1", "H2", "H3"):
+        assert (
+            repaired.topology.formal_charge(
+                repaired.constitution.atom_index(AtomRef(residue_id, name))
+            )
+            == 0
+        )
+    assert (
+        repaired.provenance.ingress.observation == source.provenance.ingress.observation
+    )
+    assert any(repair.residue_id == residue_id for repair in result.repairs)
     assert any(
-        issue.kind is ValidationIssueKind.UNSUPPORTED_HYDROGENATION
+        issue.kind is ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN
         and issue.residue_id == residue_id
-        and issue.atom_names == ("H1", "H2", "H3", "HB2", "HB3")
         for issue in result.issues
     )
 
@@ -86,6 +101,7 @@ def test_3enj_retains_source_cysteine_hydrogens(public_workflow: bool) -> None:
     assert (
         fact.heavy_atom_topology_availability_state is TopologyAvailabilityState.ABSENT
     )
+    assert fact.hydrogen_coverage_state is None
 
     for file_format in (FileFormat.PDB, FileFormat.MMCIF):
         reread = read_structure_string(
@@ -94,4 +110,4 @@ def test_3enj_retains_source_cysteine_hydrogens(public_workflow: bool) -> None:
         )
         reread_residue = reread.constitution.residue_or_ligand(residue_id)
         assert reread_residue is not None
-        assert reread_residue.atom_site_names() == original.atom_site_names()
+        assert reread_residue.atom_site_names() == current.atom_site_names()

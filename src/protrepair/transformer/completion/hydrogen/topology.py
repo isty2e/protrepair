@@ -2,7 +2,7 @@
 
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.diagnostics.kinds import (
     IssueSeverity,
@@ -21,7 +21,7 @@ def resolve_fixed_hydrogen_topology(
     component_library: ComponentLibrary,
     *,
     target_residue_ids: frozenset[ResidueId] | None = None,
-    observed_preparation: PolymerMicrostatePreparation | None = None,
+    observed_preparation: AminoAcidPreparation | None = None,
 ) -> TransformationResult:
     """Attach present fixed H without changing atom identity or geometry.
 
@@ -33,7 +33,7 @@ def resolve_fixed_hydrogen_topology(
         Component definitions used to interpret names and fixed H inventory.
     target_residue_ids : frozenset[ResidueId] or None
         Polymer residues to update; None selects all polymer residues.
-    observed_preparation : PolymerMicrostatePreparation or None
+    observed_preparation : AminoAcidPreparation or None
         Seed rebound to this exact snapshot and library without new requests.
         Not acquired when no selected residue has H.
 
@@ -45,7 +45,7 @@ def resolve_fixed_hydrogen_topology(
         Coupled microstate sites retain their separate atomic
         realization path; this operation neither selects nor changes protonation.
     """
-    prepared: PolymerMicrostatePreparation | None = None
+    prepared: AminoAcidPreparation | None = None
     updates = []
     repairs = []
     issues = []
@@ -60,7 +60,7 @@ def resolve_fixed_hydrogen_topology(
                 continue
             if prepared is None:
                 prepared = (
-                    PolymerMicrostatePreparation(
+                    AminoAcidPreparation(
                         PolymerMicrostateContext(structure), component_library
                     )
                     if observed_preparation is None

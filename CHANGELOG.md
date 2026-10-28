@@ -4,8 +4,13 @@
 
 ### Added
 
-- expose H-generation support and typed `chemistry_failure` details on retained
-  chemistry-readiness facts
+- expose H-generation support, read-only `reference_hydrogens_verified` and typed
+  `chemistry_failure` details on retained chemistry-readiness facts. Isolated
+  reference-compatible existing H can satisfy a whole-structure H goal without
+  admitted H preparation. Different H names can use unambiguous, reference-backed
+  geometric correspondence without moving or renaming source atoms. Naming
+  checks have no absolute distance bound; validation does not publish topology
+  or admit local refinement
 - report assessed terminal and frontier candidates, the search stop reason and
   observed native FF returns on workflow results
 - retain actual native FF settings, source motion scope, return status and
@@ -14,12 +19,24 @@
 
 ### Changed
 
+- prepare retained standard amino acids and the supported CSO/HYP/MSE/PTR/SEP/TPO
+  components with shared polymer free-terminal and standard side-chain defaults.
+  Prefer valid existing H-bearing site states over those defaults rather than
+  adding H to an already neutral amine. Polymer selection is unchanged.
+  Source H, declared charges and explicit chemistry retain
+  precedence; cofactors keep their component-specific chemistry. Missing or
+  unexplained sites remain indeterminate, while independent admitted sites can
+  be prepared without certifying whole-residue or refinement readiness. A nearby
+  peptide-like C-N pair withdraws the free-terminal assumption without inferring
+  a bond. In the incomplete retained CYS of 3ENJ, this preserves source H,
+  assigns the observed three-H N a +1 charge and adds the supported alpha H;
+  it does not invent the missing carboxyl scaffold
 - block geometry-based H inference for retained bundled components whose active
   reference has no admitted preparation, even with fallback enabled. Preserve
   source atoms and report one current `unresolved_retained_hydrogen` warning
-  per requested residue, with blocking scopes and reasons on unmet
-  whole-structure H goals. Local refinement is refused when its included region
-  contains such unresolved chemistry.
+  per incomplete or unverifiable requested residue, with blocking scopes and
+  reasons on unmet whole-structure H goals. Local refinement is refused when its
+  included region contains such unresolved chemistry.
   This reduces automatic H preparation relative to 0.2.0; compatible explicit
   chemistry and H-capable custom templates remain supported
 - allow `hydrogen_coverage_state` to be `None` in `ProteinStructureObservation`,
@@ -126,6 +143,9 @@
 
 ### Fixed
 
+- preserve source terminal H on retained standard amino acids instead of
+  silently deleting them and reporting complete H coverage with open valences;
+  fully hydrogenated alanine inputs could lose three H in 0.2.0
 - avoid replacing known component bonds with proximity-inferred chemistry during
   retained H completion, which could add four extra H to a correctly hydrogenated
   3CF nitrile while reporting completion; known-reference H need no longer

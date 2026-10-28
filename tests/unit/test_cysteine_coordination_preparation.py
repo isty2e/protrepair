@@ -15,7 +15,7 @@ from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import (
-    PolymerMicrostatePreparation,
+    AminoAcidPreparation,
     pras_microstate_preferences,
 )
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
@@ -231,7 +231,7 @@ def test_uncoordinated_cysteine_keeps_the_existing_fixed_hydrogen_path():
             ingress=replace(source.provenance.ingress, observation=None),
         )
     )
-    prepared = PolymerMicrostatePreparation(
+    prepared = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_default_component_library()
     )
     assert not any(

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics import (
     ClashPolicy,
     ClashReport,
@@ -47,7 +47,7 @@ def cleanup_targets_from_report(
 
     targets_by_key: dict[tuple[str, int, str, str], RotatableHydrogenCleanupTarget] = {}
     context: PolymerMicrostateContext | None = None
-    preparation: PolymerMicrostatePreparation | None = None
+    preparation: AminoAcidPreparation | None = None
     for clash in report.clashes:
         for residue_id, atom_name in (
             (clash.left_residue_id, clash.left_atom_name),
@@ -85,9 +85,7 @@ def cleanup_targets_from_report(
                     and context.external_heavy_bonds(AtomRef(residue_id, parent))
                 ):
                     if preparation is None:
-                        preparation = PolymerMicrostatePreparation(
-                            context, component_library
-                        )
+                        preparation = AminoAcidPreparation(context, component_library)
                     fixed = preparation.fixed_hydrogen_context(residue_id)
                     if fixed is not None and parent in fixed.unresolved_parent_names:
                         continue

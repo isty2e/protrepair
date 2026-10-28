@@ -14,7 +14,7 @@ from protrepair.chemistry.microstate.catalog import (
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.graph import MicrostateAtom, MicrostateGraph
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.microstate.resolution import (
     HydrogenAttachmentBasis,
     MicrostateConstraints,
@@ -168,7 +168,7 @@ def _with_source_bonds(
 @pytest.mark.parametrize("element", ("H", "D", "T"))
 def test_fixed_h_identity_retains_source_alias_and_isotope(element: str) -> None:
     source = _source("SER", hydrogens=(("HB3", element),))
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_standard_component_library()
     )
     selected = preparation.fixed_hydrogen_atom_sites(ResidueId("A", 1))
@@ -182,7 +182,7 @@ def test_fixed_h_identity_uses_explicit_source_parent_for_nonstandard_name() -> 
         _source("SER", hydrogens=(("DX", "D"),)),
         ("CB", "DX", BondRelationshipType.COVALENT, 1),
     )
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_standard_component_library()
     )
     selected = preparation.fixed_hydrogen_atom_sites(ResidueId("A", 1))
@@ -207,7 +207,7 @@ def test_fixed_h_identity_refuses_incompatible_source(failure: str) -> None:
             ("CB", "HB2", BondRelationshipType.COVALENT, 1),
             ("CA", "HB2", BondRelationshipType.COVALENT, 1),
         )
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_standard_component_library()
     )
     with pytest.raises(ValueError):

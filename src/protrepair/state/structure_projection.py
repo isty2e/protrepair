@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from protrepair.chemistry import ComponentLibrary
-from protrepair.chemistry.microstate.preparation import PolymerSitePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidSitePreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
@@ -191,7 +191,7 @@ class StructureProjectionStateFacts:
     terminal_boundary_observation: TerminalBoundaryObservation = field(
         default_factory=TerminalBoundaryObservation.empty
     )
-    polymer_microstate_targets: tuple[PolymerSitePreparation, ...] = ()
+    polymer_microstate_targets: tuple[AminoAcidSitePreparation, ...] = ()
 
     def __post_init__(self) -> None:
         shared_facts = (

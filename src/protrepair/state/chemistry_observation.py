@@ -15,7 +15,7 @@ from protrepair.chemistry.component.topology import (
 from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import (
-    PolymerMicrostatePreparation,
+    AminoAcidPreparation,
 )
 from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.chemistry.retained_non_polymer.evidence import (
@@ -454,7 +454,7 @@ class StructureChemistryObservation:
             residue.is_hetero
             and self.hydrogen_expectation_model.resolution_for_retained_non_polymer(
                 residue.residue_id
-            ).reference_requires_hydrogens
+            ).unresolved_hydrogen_requirement
             is not None
         ):
             retained = self._retained_readiness(residue)
@@ -591,7 +591,10 @@ class StructureChemistryObservation:
                 expected_hydrogen_atom_names_by_residue
             ),
         )
-        reference_need = hydrogen_expectation_resolution.reference_requires_hydrogens
+        reference_need = hydrogen_expectation_resolution.unresolved_hydrogen_requirement
+        reference_inventory = (
+            hydrogen_expectation_resolution.reference_hydrogen_inventory
+        )
         if reference_need is not None:
             h_applicability_state = (
                 HydrogenApplicabilityState.APPLICABLE
@@ -605,6 +608,8 @@ class StructureChemistryObservation:
                 if reference_need
                 else HydrogenCoverageState.COMPLETE
             )
+            if reference_inventory is not None:
+                h_coverage_state = reference_inventory.coverage_state()
         hydrogen_topology_availability_state = TopologyAvailabilityState.ABSENT
         if (
             hydrogen_expectation_resolution.source
@@ -617,6 +622,7 @@ class StructureChemistryObservation:
                 else TopologyAvailabilityState.ABSENT
             )
         elif hydrogen_expectation_resolution.source in {
+            RetainedNonPolymerChemistryEvidenceSource.AMINO_ACID_PREPARATION,
             RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE,
             RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION,
         }:
@@ -782,6 +788,8 @@ class StructureChemistryObservation:
                 hydrogen_expectation_resolution.can_generate_hydrogens()
             ),
             chemistry_failure=hydrogen_expectation_resolution.failure,
+            reference_hydrogens_verified=reference_inventory is not None,
+            hydrogen_updates_pending=hydrogen_expectation_resolution.hydrogen_updates_pending,
         )
 
     def residue_completion_facts(
@@ -1046,7 +1054,7 @@ def _polymer_hydrogen_topology_availability_state(
     *,
     component_library: ComponentLibrary,
     expected_hydrogen_atom_names: tuple[str, ...],
-    preparation: PolymerMicrostatePreparation,
+    preparation: AminoAcidPreparation,
 ) -> TopologyAvailabilityState:
     """Check H attachment topology independently of heavy-site conformance."""
 

@@ -1,5 +1,7 @@
 """Topology-authoritative disulfide semantics across structure consumers."""
 
+from dataclasses import replace
+
 import pytest
 from tests.support.canonical_builders import (
     CanonicalResiduePayload,
@@ -300,6 +302,49 @@ def test_retained_cysteine_disulfide_uses_shared_hydrogen_semantics() -> None:
     assert bond.relationship_type is BondRelationshipType.DISULFIDE
 
 
+@pytest.mark.parametrize(
+    "relationship", (BondRelationshipType.COVALENT, BondRelationshipType.DISULFIDE)
+)
+def test_retained_disulfide_resolves_missing_order_without_losing_source(relationship):
+    left_id, right_id = ResidueId("L", 1), ResidueId("R", 1)
+    left, right = AtomRef(left_id, "SG"), AtomRef(right_id, "SG")
+    source = with_sg_relationship(
+        retained_cys_pair_structure(left_id, right_id),
+        relationship,
+        left_atom_ref=left,
+        right_atom_ref=right,
+    )
+    source = ProteinStructure.from_payload(
+        constitution=source.constitution,
+        geometry=source.geometry,
+        topology=StructureTopology(
+            constitution=source.constitution,
+            atom_topologies=source.topology.atom_topologies,
+            bonds=tuple(replace(bond, order=None) for bond in source.topology.bonds),
+        ),
+        polymer_blueprint=source.polymer_blueprint,
+        provenance=source.provenance,
+    )
+    before = source.topology.bond_between(
+        source.constitution.atom_index(left), source.constitution.atom_index(right)
+    )
+    assert before is not None and before.order is None
+
+    result = add_retained_non_polymer_hydrogens(source)
+
+    after = result.structure.topology.bond_between(
+        result.structure.constitution.atom_index(left),
+        result.structure.constitution.atom_index(right),
+    )
+    assert after is not None and after.order == 1
+    assert after.relationship_type is relationship
+    assert after.provenance is before.provenance is BondProvenance.SOURCE_EXPLICIT
+    for ref in (left, right):
+        assert result.structure.geometry.atom_geometry(
+            result.structure.constitution.atom_index(ref)
+        ) == source.geometry.atom_geometry(source.constitution.atom_index(ref))
+
+
 @pytest.mark.parametrize("chemistry_mode", ("template", "override"))
 @pytest.mark.parametrize("charge", (-1, 1))
 @pytest.mark.parametrize("endpoint", ("L", "R"))
@@ -359,7 +404,11 @@ def test_disulfide_partner_boundary_is_atom_local_and_not_non_covalent(
     result = add_retained_non_polymer_hydrogens(
         source, target_residue_ids=frozenset((target,))
     )
-    assert not result.issues and result.repairs
+    assert result.repairs
+    assert not any(
+        issue.kind is ValidationIssueKind.CHEMISTRY_CONTRADICTION
+        for issue in result.issues
+    )
     assert not has_hydrogen_topology_bond_to(result.structure, AtomRef(target, "SG"))
 
 

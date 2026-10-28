@@ -5,14 +5,21 @@ from collections.abc import Collection
 from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import combinations
+from math import isfinite
 
 from protrepair.chemistry.component.graph import BondDefinition
+from protrepair.chemistry.component.idealized import IdealizedComponent
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.component.semantics import IdealGeometryHydrogenSemantics
 from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.component.topology import (
     template_heavy_bond_definitions_for_present_atoms,
     template_hydrogen_bond_definitions_for_names,
+)
+from protrepair.chemistry.inference.idealized_stereochemistry import (
+    component_reference_hydrogen_bond_lengths,
+    require_compatible_component_pose,
+    require_compatible_component_reference,
 )
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     require_retained_non_polymer_evidence_stereochemistry,
@@ -28,6 +35,8 @@ from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
     preferred_retained_non_polymer_expected_hydrogen_atom_names,
 )
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.coordination import (
     coordinated_component_preparation,
 )
@@ -37,15 +46,20 @@ from protrepair.chemistry.retained_non_polymer.covalent_context import (
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
+from protrepair.chemistry.retained_non_polymer.hydrogen_correspondence import (
+    source_hydrogen_bond_length_is_compatible,
+)
 from protrepair.chemistry.retained_non_polymer.template_binding import (
     RetainedTemplateBinding,
 )
 from protrepair.chemistry.single_atom_inorganic import RetainedAtomicSite
+from protrepair.errors import BondOrderConstraintError, RdkitUnavailableError
+from protrepair.state.structure_axes import HydrogenCoverageState
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.labels import AtomRef, ResidueId
-from protrepair.structure.topology import BondRelationshipType
+from protrepair.structure.topology import BondProvenance, BondRelationshipType
 
 
 class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
@@ -55,6 +69,7 @@ class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
     EXTERNAL_OVERRIDE = "external_override"
     COORDINATION_PREPARATION = "coordination_preparation"
     ATOMIC_INVENTORY = "atomic_inventory"
+    AMINO_ACID_PREPARATION = "amino_acid_preparation"
     RDKIT_FALLBACK = "rdkit_fallback"
     UNRESOLVED = "unresolved"
 
@@ -72,6 +87,11 @@ class RetainedNonPolymerChemistryFailureKind(str, Enum):
     EVIDENCE_REJECTED = "evidence_rejected"
     FALLBACK_DISABLED = "fallback_disabled"
     INFERENCE_FAILED = "inference_failed"
+    REFERENCE_INVALID = "reference_invalid"
+    REFERENCE_STATE_NOT_COVERED = "reference_state_not_covered"
+    HYDROGEN_PARENT_UNRESOLVED = "hydrogen_parent_unresolved"
+    SOURCE_CONFLICT = "source_conflict"
+    BACKEND_UNAVAILABLE = "backend_unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +110,86 @@ class RetainedNonPolymerChemistryFailure:
     detail: str
 
 
+class ReferenceHydrogenParentInterpretation(str, Enum):
+    """Parent correspondence without an asserted connectivity relationship."""
+
+    REFERENCE_NAME = "reference_name"
+    COMPATIBLE_GEOMETRY = "compatible_geometry"
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedReferenceHydrogenInventory:
+    """Comparable current H inventory without preparation authority.
+
+    Parameters
+    ----------
+    reference : IdealizedComponent
+        Active chemical reference, independent of H placement support.
+    residue_id : ResidueId
+        Stable occurrence identity for these observations.
+    hydrogen_parents : tuple[tuple[str, str, BondProvenance or ReferenceHydrogenParentInterpretation], ...]
+        Current H name, heavy parent and either connection provenance or
+        ReferenceHydrogenParentInterpretation. Naming and compatible geometry
+        interpretations do not assert a source bond.
+
+    Raises
+    ------
+    ValueError
+        H identities repeat, parents are unknown, or multiplicities exceed the
+        reference. Reference/pose conformance is checked by the observation owner;
+        this value is not a transferable chemistry-validity token.
+    TypeError
+        A parent interpretation has no canonical evidence basis.
+    """
+
+    reference: IdealizedComponent
+    residue_id: ResidueId
+    hydrogen_parents: tuple[
+        tuple[str, str, BondProvenance | ReferenceHydrogenParentInterpretation], ...
+    ]
+
+    def __post_init__(self) -> None:
+        names = tuple(name for name, _, _ in self.hydrogen_parents)
+        expected = Counter(
+            self.reference.hydrogen_anchor_atom_name(atom.atom_name)
+            for atom in self.reference.hydrogen_atoms()
+        )
+        observed = Counter(parent for _, parent, _ in self.hydrogen_parents)
+        if None in expected or len(set(names)) != len(names):
+            raise ValueError(
+                "reference H inventory needs unique identities and parents"
+            )
+        if any(count > expected[parent] for parent, count in observed.items()):
+            raise ValueError("observed H parents do not match the reference state")
+        if set(names).intersection(self.reference.heavy_atom_names()):
+            raise ValueError("reference H identities collide with heavy atoms")
+        if any(
+            not isinstance(
+                basis, (BondProvenance, ReferenceHydrogenParentInterpretation)
+            )
+            for _, _, basis in self.hydrogen_parents
+        ):
+            raise TypeError(
+                "reference H interpretation needs a canonical evidence basis"
+            )
+
+    def coverage_state(self) -> HydrogenCoverageState:
+        """Return coverage of the validated reference inventory.
+
+        Returns
+        -------
+        HydrogenCoverageState
+            Complete, empty or proper-subset H coverage under this reference,
+            without implying graph realization or generation support.
+        """
+        expected_count = len(self.reference.hydrogen_atoms())
+        if len(self.hydrogen_parents) == expected_count:
+            return HydrogenCoverageState.COMPLETE
+        if not self.hydrogen_parents:
+            return HydrogenCoverageState.NONE
+        return HydrogenCoverageState.PARTIAL
+
+
 @dataclass(frozen=True, slots=True)
 class RetainedNonPolymerChemistryResolution:
     """Selected chemistry facts bound to one retained residue and its context."""
@@ -105,7 +205,9 @@ class RetainedNonPolymerChemistryResolution:
     context_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     coordination_bonds: tuple[tuple[AtomRef, AtomRef], ...] = ()
     failure: RetainedNonPolymerChemistryFailure | None = None
-    reference_requires_hydrogens: bool | None = None
+    unresolved_hydrogen_requirement: bool | None = None
+    reference_hydrogen_inventory: RetainedReferenceHydrogenInventory | None = None
+    hydrogen_updates_pending: bool = False
     rdkit_backend_version: str | None = None
     hydrogen_name_projection_candidate_count: int = 0
     hydrogen_name_projection_candidate_limit: int = 0
@@ -140,13 +242,63 @@ class RetainedNonPolymerChemistryResolution:
             return None
         return cls(
             source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
-            reference_requires_hydrogens=bool(reference.hydrogen_atoms()),
+            unresolved_hydrogen_requirement=bool(reference.hydrogen_atoms()),
             failure=RetainedNonPolymerChemistryFailure(
                 RetainedNonPolymerChemistryFailureKind.NO_ADMITTED_PREPARATION,
                 "the active component reference has no admitted preparation; "
                 "geometry-based chemistry inference is blocked; provide compatible "
                 "explicit chemistry or a hydrogen-capable template",
             ),
+        )
+
+    @classmethod
+    def observe_unprepared_reference(
+        cls,
+        template: ResidueTemplate | None,
+        structure: ProteinStructure,
+        residue: ResidueSite,
+    ) -> "RetainedNonPolymerChemistryResolution | None":
+        """Observe a reference inventory without resolving preparation.
+
+        Parameters
+        ----------
+        template : ResidueTemplate or None
+            Active component authority, including custom replacements.
+        structure : ProteinStructure
+            Exact snapshot supplying current and original observations.
+        residue : ResidueSite
+            Retained occurrence in that snapshot.
+
+        Returns
+        -------
+        RetainedNonPolymerChemistryResolution or None
+            Guarded preparation with a comparable inventory or typed cause;
+            None when the reference guard does not apply.
+        """
+        guarded = cls.from_unprepared_reference(template)
+        if guarded is None or template is None or template.reference_component is None:
+            return guarded
+        assessment = _assess_reference_hydrogens(
+            structure, residue, template.reference_component
+        )
+        if isinstance(assessment, RetainedNonPolymerChemistryFailure):
+            if not any(atom.is_hydrogen() for atom in residue.atom_sites):
+                return guarded
+            return replace(guarded, failure=assessment)
+        return replace(guarded, reference_hydrogen_inventory=assessment)
+
+    def has_complete_reference_hydrogens(self) -> bool:
+        """Return whether read-only reference comparison established complete H.
+
+        Returns
+        -------
+        bool
+            Reference-verified completion, without generation or topology rights.
+        """
+        inventory = self.reference_hydrogen_inventory
+        return (
+            inventory is not None
+            and inventory.coverage_state() is HydrogenCoverageState.COMPLETE
         )
 
     def can_generate_hydrogens(self) -> bool:
@@ -382,6 +534,14 @@ class RetainedNonPolymerChemistryResolution:
             )
 
         resolved = self.source.is_resolved()
+        inventory = self.reference_hydrogen_inventory
+        if inventory is not None and (
+            resolved
+            or self.unresolved_hydrogen_requirement is None
+            or self.unresolved_hydrogen_requirement
+            != bool(inventory.reference.hydrogen_atoms())
+        ):
+            raise ValueError("reference inventory must not grant preparation authority")
         if (
             self.source is RetainedNonPolymerChemistryEvidenceSource.ATOMIC_INVENTORY
             and (
@@ -431,7 +591,7 @@ class RetainedNonPolymerChemistryResolution:
                 "resolved retained non-polymer chemistry must not carry a failure "
                 "reason"
             )
-        if resolved and self.reference_requires_hydrogens is not None:
+        if resolved and self.unresolved_hydrogen_requirement is not None:
             raise ValueError(
                 "unprepared reference requirements cannot accompany resolved chemistry"
             )
@@ -522,9 +682,17 @@ def resolve_retained_non_polymer_chemistry(
     evidence: RetainedNonPolymerChemistryEvidence | None = None,
     allow_rdkit_fallback: bool = True,
     disulfide_residue_ids: frozenset[ResidueId] | None = None,
+    amino_acid_preparation: AminoAcidPreparation | None = None,
 ) -> RetainedNonPolymerChemistryResolution:
     """Resolve selected chemistry against source and current connected context."""
 
+    prepared = (
+        AminoAcidPreparation(PolymerMicrostateContext(structure), component_library)
+        if amino_acid_preparation is None
+        else amino_acid_preparation
+    )
+    if evidence is None and prepared.targets_for(residue.residue_id):
+        return _amino_acid_chemistry_resolution(structure, residue, prepared)
     resolution = _resolve_retained_non_polymer_chemistry_source(
         structure,
         residue,
@@ -539,7 +707,7 @@ def resolve_retained_non_polymer_chemistry(
         if reference is not None:
             resolution = replace(
                 resolution,
-                reference_requires_hydrogens=reference.reference_requires_hydrogens,
+                unresolved_hydrogen_requirement=reference.unresolved_hydrogen_requirement,
                 failure=resolution.failure or reference.failure,
             )
     active_disulfide_residue_ids = (
@@ -551,6 +719,96 @@ def resolve_retained_non_polymer_chemistry(
         return resolution
 
     return resolution.without_hydrogens_anchored_to(("SG",))
+
+
+def _amino_acid_chemistry_resolution(
+    structure: ProteinStructure,
+    residue: ResidueSite,
+    preparation: AminoAcidPreparation,
+) -> RetainedNonPolymerChemistryResolution:
+    targets = preparation.targets_for(residue.residue_id)
+    template = targets[0].site.template
+    pending = preparation.has_pending_hydrogen_updates(residue.residue_id)
+    failures = [
+        "; ".join(target.resolution.details)
+        for target in targets
+        if target.resolution.graph is None
+    ]
+    missing_heavy = {*template.expected_polymer_heavy_atom_names(), "OXT"} - set(
+        residue.atom_site_names()
+    )
+    if missing_heavy:
+        failures.append(f"missing heavy atoms: {', '.join(sorted(missing_heavy))}")
+    fixed_context = preparation.fixed_hydrogen_context(residue.residue_id)
+    if fixed_context is not None and fixed_context.unresolved_parent_names:
+        failures.append(fixed_context.failure_reason)
+    identities = []
+    bonds = {
+        tuple(sorted((bond.atom_name_1, bond.atom_name_2))): bond
+        for bond in template_heavy_bond_definitions_for_present_atoms(
+            residue, template=template
+        )
+    }
+    controlled = {
+        name for target in targets for name in target.controlled_parent_names()
+    }
+    charges = {
+        name: charge
+        for name, charge in template.heavy_atom_charge_requirements()
+        if name not in controlled
+    }
+    try:
+        identities.extend(preparation.fixed_hydrogen_atom_sites(residue.residue_id))
+        for target in targets:
+            if target.resolution.graph is None:
+                continue
+            identities.extend(target.hydrogen_atom_sites())
+            for bond in target.resolution.graph.bonds:
+                bonds[tuple(sorted((bond.atom_name_1, bond.atom_name_2)))] = bond
+            charges.update(
+                (atom.name, atom.charge) for atom in target.resolution.graph.atoms
+            )
+    except (ValueError, RuntimeError) as error:
+        failures.append(str(error))
+    if failures:
+        return RetainedNonPolymerChemistryResolution(
+            source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
+            unresolved_hydrogen_requirement=True,
+            hydrogen_updates_pending=pending,
+            failure=RetainedNonPolymerChemistryFailure(
+                RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
+                "; ".join(dict.fromkeys(failures)),
+            ),
+        )
+    heavy_names = tuple(
+        dict.fromkeys((*template.expected_polymer_heavy_atom_names(), "OXT"))
+    )
+    elements = {
+        atom.atom_name: atom.element
+        for atom in (
+            ()
+            if template.reference_component is None
+            else template.reference_component.heavy_atoms()
+        )
+    }
+    external_bonds = ()
+    if residue.component_id == "CYS":
+        covalent_context = RetainedCovalentContext(structure, residue.residue_id)
+        if covalent_context.attachments:
+            external_bonds = (covalent_context.require_neutral_disulfide_pair(),)
+    return RetainedNonPolymerChemistryResolution(
+        source=RetainedNonPolymerChemistryEvidenceSource.AMINO_ACID_PREPARATION,
+        expected_hydrogen_atom_names=tuple(atom.name for atom, _ in identities),
+        expected_heavy_atom_names=heavy_names,
+        heavy_atom_elements=tuple(elements.get(name, name[0]) for name in heavy_names),
+        heavy_bond_definitions=tuple(bonds.values()),
+        hydrogen_bond_definitions=tuple(
+            BondDefinition(parent, atom.name, order=1) for atom, parent in identities
+        ),
+        formal_charge_requirements=tuple(charges.items()),
+        external_bonds=external_bonds,
+        hydrogen_updates_pending=pending,
+    )
 
 
 def _resolve_retained_non_polymer_chemistry_source(
@@ -728,7 +986,9 @@ def _resolve_retained_non_polymer_chemistry_source(
             ),
         )
 
-    guarded = RetainedNonPolymerChemistryResolution.from_unprepared_reference(template)
+    guarded = RetainedNonPolymerChemistryResolution.observe_unprepared_reference(
+        template, structure, residue
+    )
     if guarded is not None:
         return guarded
 
@@ -788,6 +1048,288 @@ def _resolve_retained_non_polymer_chemistry_source(
             fallback_inference_result.hydrogen_name_projection_candidate_limit
         ),
     )
+
+
+def _assess_reference_hydrogens(
+    structure: ProteinStructure,
+    residue: ResidueSite,
+    reference: IdealizedComponent,
+) -> RetainedReferenceHydrogenInventory | RetainedNonPolymerChemistryFailure:
+    try:
+        require_compatible_component_reference(reference)
+    except RdkitUnavailableError as error:
+        return RetainedNonPolymerChemistryFailure(
+            RetainedNonPolymerChemistryFailureKind.BACKEND_UNAVAILABLE, str(error)
+        )
+    except (ValueError, RuntimeError) as error:
+        return RetainedNonPolymerChemistryFailure(
+            RetainedNonPolymerChemistryFailureKind.REFERENCE_INVALID, str(error)
+        )
+
+    expected_heavy = {atom.atom_name: atom.element for atom in reference.heavy_atoms()}
+    current_heavy = {
+        atom.name: atom.element for atom in residue.atom_sites if not atom.is_hydrogen()
+    }
+    if current_heavy != expected_heavy:
+        return RetainedNonPolymerChemistryFailure(
+            RetainedNonPolymerChemistryFailureKind.REFERENCE_STATE_NOT_COVERED,
+            "reference H validation requires the complete named heavy scaffold "
+            "with matching elements",
+        )
+
+    constitution = structure.constitution
+    incident = structure.topology.incident_bonds_by_atom()
+    current_bonds = tuple(
+        dict.fromkeys(
+            bond
+            for atom in residue.atom_sites
+            for bond in incident.get(
+                constitution.atom_index(AtomRef(residue.residue_id, atom.name)), ()
+            )
+        )
+    )
+    snapshots = [(constitution, structure.topology, current_bonds)]
+    observation = structure.provenance.ingress.observation
+    if observation is not None:
+        original = observation.constitution.residue_or_ligand(residue.residue_id)
+        if original is not None and (
+            original.component_id != residue.component_id
+            or any(
+                not residue.has_atom_site(atom.name)
+                or residue.atom_site(atom.name).element_identity
+                != atom.element_identity
+                for atom in original.atom_sites
+            )
+        ):
+            return RetainedNonPolymerChemistryFailure(
+                RetainedNonPolymerChemistryFailureKind.SOURCE_CONFLICT,
+                "reference H validation cannot hide changed original atom identities",
+            )
+        if any(
+            endpoint.atom_ref.residue_id == residue.residue_id
+            for connection in observation.excluded_coordination_connections
+            for endpoint in connection.endpoint_pair()
+        ):
+            return RetainedNonPolymerChemistryFailure(
+                RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
+                "read-only reference H validation cannot hide excluded coordination",
+            )
+        snapshots.append(
+            (
+                observation.constitution,
+                observation.topology,
+                observation.bonds_for_residue(residue.residue_id),
+            )
+        )
+
+    reference_pairs = {
+        frozenset((bond.atom_name_1, bond.atom_name_2))
+        for bond in reference.heavy_bonds()
+    }
+    parents: dict[str, tuple[str, BondProvenance]] = {}
+    orders: dict[tuple[str, str], int] = {}
+    for snapshot_constitution, topology, bonds in snapshots:
+        snapshot_residue = snapshot_constitution.residue_or_ligand(residue.residue_id)
+        if snapshot_residue is None:
+            continue
+        for atom in snapshot_residue.atom_sites:
+            charge = topology.formal_charge(
+                snapshot_constitution.atom_index(AtomRef(residue.residue_id, atom.name))
+            )
+            expected = reference.atom(atom.name)
+            expected_charge = (
+                0
+                if atom.is_hydrogen()
+                else (None if expected is None else expected.formal_charge)
+            )
+            if charge is not None and charge != expected_charge:
+                return RetainedNonPolymerChemistryFailure(
+                    RetainedNonPolymerChemistryFailureKind.REFERENCE_STATE_NOT_COVERED,
+                    f"known charge at {residue.residue_id.display_token()}.{atom.name} "
+                    "differs from the represented reference state",
+                )
+        for bond in bonds:
+            if bond.relationship_type is BondRelationshipType.HYDROGEN_BOND:
+                continue
+            first, second = (
+                snapshot_constitution.atom_ref_at(index)
+                for index in bond.endpoint_pair()
+            )
+            if (
+                first.residue_id != residue.residue_id
+                or second.residue_id != residue.residue_id
+                or bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+            ):
+                return RetainedNonPolymerChemistryFailure(
+                    RetainedNonPolymerChemistryFailureKind.CONTEXT_UNRESOLVED,
+                    "read-only reference H validation requires an isolated molecular "
+                    f"context: {first.display_token()}--{second.display_token()}",
+                )
+            atoms = tuple(
+                snapshot_constitution.atom_site_at(i) for i in bond.endpoint_pair()
+            )
+            if any(atom.is_hydrogen() for atom in atoms):
+                if (
+                    sum(atom.is_hydrogen() for atom in atoms) != 1
+                    or bond.aromatic
+                    or bond.order not in (None, 1)
+                    or bond.relationship_type
+                    not in {BondRelationshipType.COVALENT, BondRelationshipType.UNKNOWN}
+                    or (
+                        (
+                            bond.order is None
+                            or bond.relationship_type is BondRelationshipType.UNKNOWN
+                        )
+                        and bond.provenance is not BondProvenance.SOURCE_EXPLICIT
+                    )
+                ):
+                    return RetainedNonPolymerChemistryFailure(
+                        RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
+                        "reference H validation requires one local heavy parent per H",
+                    )
+                hydrogen, parent = (
+                    (first, second) if atoms[0].is_hydrogen() else (second, first)
+                )
+                previous = parents.get(hydrogen.atom_name)
+                if previous is not None and previous[0] != parent.atom_name:
+                    return RetainedNonPolymerChemistryFailure(
+                        RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
+                        f"conflicting H parents for {hydrogen.display_token()}",
+                    )
+                parents[hydrogen.atom_name] = (parent.atom_name, bond.provenance)
+                continue
+            if frozenset((first.atom_name, second.atom_name)) not in reference_pairs:
+                return RetainedNonPolymerChemistryFailure(
+                    RetainedNonPolymerChemistryFailureKind.REFERENCE_STATE_NOT_COVERED,
+                    "current/source heavy connectivity differs from the reference",
+                )
+            if bond.order is not None:
+                pair = (
+                    (first.atom_name, second.atom_name)
+                    if first.atom_name < second.atom_name
+                    else (second.atom_name, first.atom_name)
+                )
+                if pair in orders and orders[pair] != bond.order:
+                    return RetainedNonPolymerChemistryFailure(
+                        RetainedNonPolymerChemistryFailureKind.SOURCE_CONFLICT,
+                        "current and original heavy bond orders disagree",
+                    )
+                orders[pair] = bond.order
+
+    geometry = structure.residue_geometry(
+        constitution.residue_index(residue.residue_id)
+    )
+    expected_parent_counts = Counter(
+        reference.hydrogen_anchor_atom_name(atom.atom_name)
+        for atom in reference.hydrogen_atoms()
+    )
+    prepared_lengths: tuple[tuple[str, float], ...] | None = None
+    interpreted = []
+    for atom in residue.atom_sites:
+        if not atom.is_hydrogen():
+            continue
+        connection = parents.get(atom.name)
+        basis: BondProvenance | ReferenceHydrogenParentInterpretation
+        if connection is None:
+            position = geometry.position(atom.name)
+            distances = {
+                name: position.distance_to(geometry.position(name))
+                for name in current_heavy
+            }
+            if any(not isfinite(distance) for distance in distances.values()):
+                return RetainedNonPolymerChemistryFailure(
+                    RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
+                    "reference H parent comparison requires finite local distances "
+                    f"for {residue.residue_id.display_token()}.{atom.name}",
+                )
+            nearest_distance = min(distances.values(), default=float("inf"))
+            named_parent = reference.hydrogen_anchor_atom_name(atom.name)
+            if (
+                named_parent in distances
+                and distances[named_parent] == nearest_distance
+            ):
+                parent = named_parent
+                basis = ReferenceHydrogenParentInterpretation.REFERENCE_NAME
+            else:
+                closest = tuple(
+                    name
+                    for name, distance in distances.items()
+                    if distance == nearest_distance
+                )
+                if len(closest) != 1:
+                    return RetainedNonPolymerChemistryFailure(
+                        RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
+                        "no unambiguous local heavy parent for "
+                        f"{residue.residue_id.display_token()}.{atom.name}",
+                    )
+                parent = closest[0]
+                if not expected_parent_counts[parent]:
+                    return RetainedNonPolymerChemistryFailure(
+                        RetainedNonPolymerChemistryFailureKind.REFERENCE_STATE_NOT_COVERED,
+                        f"observed H at {residue.residue_id.display_token()}.{parent} "
+                        "is outside the represented reference state",
+                    )
+                if prepared_lengths is None:
+                    try:
+                        prepared_lengths = component_reference_hydrogen_bond_lengths(
+                            reference, geometry, bond_order_constraints=orders
+                        )
+                    except RdkitUnavailableError as error:
+                        return RetainedNonPolymerChemistryFailure(
+                            RetainedNonPolymerChemistryFailureKind.BACKEND_UNAVAILABLE,
+                            str(error),
+                        )
+                    except BondOrderConstraintError as error:
+                        return RetainedNonPolymerChemistryFailure(
+                            RetainedNonPolymerChemistryFailureKind.SOURCE_CONFLICT,
+                            str(error),
+                        )
+                    except (ValueError, RuntimeError) as error:
+                        return RetainedNonPolymerChemistryFailure(
+                            RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
+                            f"reference H correspondence is unavailable: {error}",
+                        )
+                if not any(
+                    source_hydrogen_bond_length_is_compatible(nearest_distance, length)
+                    for anchor, length in prepared_lengths
+                    if anchor == parent
+                ):
+                    return RetainedNonPolymerChemistryFailure(
+                        RetainedNonPolymerChemistryFailureKind.HYDROGEN_PARENT_UNRESOLVED,
+                        f"source H {residue.residue_id.display_token()}.{atom.name} "
+                        "has no compatible prepared-reference parent distance",
+                    )
+                basis = ReferenceHydrogenParentInterpretation.COMPATIBLE_GEOMETRY
+        else:
+            parent, basis = connection
+        interpreted.append((atom.name, parent, basis))
+    try:
+        inventory = RetainedReferenceHydrogenInventory(
+            reference, residue.residue_id, tuple(interpreted)
+        )
+    except ValueError as error:
+        return RetainedNonPolymerChemistryFailure(
+            RetainedNonPolymerChemistryFailureKind.REFERENCE_STATE_NOT_COVERED,
+            str(error),
+        )
+    try:
+        require_compatible_component_pose(
+            reference,
+            geometry,
+            hydrogen_attachments=tuple(
+                (name, parent) for name, parent, _ in interpreted
+            ),
+            bond_order_constraints=orders,
+        )
+    except RdkitUnavailableError as error:
+        return RetainedNonPolymerChemistryFailure(
+            RetainedNonPolymerChemistryFailureKind.BACKEND_UNAVAILABLE, str(error)
+        )
+    except (ValueError, RuntimeError) as error:
+        return RetainedNonPolymerChemistryFailure(
+            RetainedNonPolymerChemistryFailureKind.SOURCE_CONFLICT, str(error)
+        )
+    return inventory
 
 
 def _preferred_expected_hydrogen_atom_names(

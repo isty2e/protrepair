@@ -1,4 +1,4 @@
-"""Read current polymer chemistry without confusing selection with realization."""
+"""Read amino-acid chemistry without confusing selection with realization."""
 
 from collections import Counter, defaultdict
 from collections.abc import Mapping
@@ -33,7 +33,7 @@ from protrepair.structure.topology import (
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class PolymerMicrostateContext:
+class AminoAcidMicrostateContext:
     """Bind source evidence, applied choices and current bonds to one snapshot.
 
     Parameters
@@ -91,7 +91,7 @@ class PolymerMicrostateContext:
         Parameters
         ----------
         atom_ref : AtomRef
-            Stable identity of a present polymer atom.
+            Stable identity of a present amino-acid atom.
 
         Returns
         -------
@@ -129,7 +129,7 @@ class PolymerMicrostateContext:
         Parameters
         ----------
         residue_id : ResidueId
-            Current polymer residue identity.
+            Current amino-acid occurrence identity.
         site : PolymerMicrostateSite
             Standard site with caller-established linkage.
         override : MicrostateConstraints or None
@@ -158,11 +158,6 @@ class PolymerMicrostateContext:
             raise TypeError("retaining an applied microstate choice requires a bool")
         constitution = self.source.constitution
         index = constitution.residue_index(residue_id)
-        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
-            return MicrostateResolution(
-                MicrostateResolutionStatus.UNSUPPORTED,
-                details=("polymer microstates require a polymer residue",),
-            )
         residue = constitution.residue_site_at(index)
         catalog = site.candidates()
         names = (
@@ -185,7 +180,7 @@ class PolymerMicrostateContext:
                 details=("multiple applied choices overlap the current site",),
             )
         try:
-            requirements = self.coordination_requirements(residue_id, site)
+            requirements = self.site_requirements(residue_id, site)
         except ValueError as error:
             return MicrostateResolution(
                 MicrostateResolutionStatus.UNSUPPORTED, details=(str(error),)
@@ -198,6 +193,30 @@ class PolymerMicrostateContext:
             preferences=preferences,
             requirements=requirements,
         )
+
+    def site_requirements(
+        self, residue_id: ResidueId, site: PolymerMicrostateSite
+    ) -> MicrostateConstraints:
+        """Bind physical requirements without original-evidence authority.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Present occurrence in the context snapshot.
+        site : PolymerMicrostateSite
+            Coupled site with caller-established linkage.
+
+        Returns
+        -------
+        MicrostateConstraints
+            Required current physical relationships, separate from preferences.
+
+        Raises
+        ------
+        ValueError
+            Current or original coordination cannot be admitted.
+        """
+        return self.coordination_requirements(residue_id, site)
 
     def coordination_requirements(
         self, residue_id: ResidueId, site: PolymerMicrostateSite
@@ -395,7 +414,7 @@ class PolymerMicrostateContext:
         Parameters
         ----------
         residue_id : ResidueId
-            Polymer residue in this snapshot.
+            Amino-acid occurrence in this snapshot.
         site : PolymerMicrostateSite
             Template and explicitly established chemical linkage.
         resolution : MicrostateResolution
@@ -703,12 +722,12 @@ class PolymerMicrostateContext:
     def hydrogen_topology_updates(
         self, residue_id: ResidueId, site: PolymerMicrostateSite
     ) -> tuple[TopologyBond, ...]:
-        """Propose missing single bonds for supported present polymer H.
+        """Propose missing single bonds for supported present amino-acid H.
 
         Parameters
         ----------
         residue_id : ResidueId
-            Polymer residue in this snapshot.
+            Amino-acid occurrence in this snapshot.
         site : PolymerMicrostateSite
             Component naming grammar, not a new protonation selection.
 
@@ -722,13 +741,10 @@ class PolymerMicrostateContext:
         Raises
         ------
         ValueError
-            The residue is not polymer, a parent is absent or unsupported, or H
-            chemistry contradicts source evidence or a known relationship.
+            A parent is absent or unsupported, or H chemistry contradicts source
+            evidence or a known relationship.
         """
         constitution = self.source.constitution
-        index = constitution.residue_index(residue_id)
-        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
-            raise ValueError("polymer H topology requires a polymer residue")
         updates = []
         for name, parent in self.hydrogen_parents(residue_id, site).items():
             hydrogen_index = constitution.atom_index(AtomRef(residue_id, name))
@@ -776,7 +792,7 @@ class PolymerMicrostateContext:
         Parameters
         ----------
         residue_id : ResidueId
-            Current polymer residue identity.
+            Current amino-acid occurrence identity.
         site : PolymerMicrostateSite
             Supported site with established linkage.
         resolution : MicrostateResolution
@@ -848,7 +864,7 @@ class PolymerMicrostateContext:
         Parameters
         ----------
         residue_id : ResidueId
-            Current polymer residue identity.
+            Current amino-acid occurrence identity.
         site : PolymerMicrostateSite
             Standard site and established chemical linkage.
         resolution : MicrostateResolution
@@ -916,7 +932,7 @@ class PolymerMicrostateContext:
         Parameters
         ----------
         residue_id : ResidueId
-            Current polymer residue identity.
+            Current amino-acid occurrence identity.
         site : PolymerMicrostateSite
             Standard chemical site with established linkage.
         resolution : MicrostateResolution
@@ -1013,4 +1029,97 @@ class PolymerMicrostateContext:
             )
             if index is not None
             else ()
+        )
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class PolymerMicrostateContext(AminoAcidMicrostateContext):
+    """Restrict amino-acid decisions to canonical polymer membership.
+
+    Parameters
+    ----------
+    source : ProteinStructure
+        Immutable snapshot containing the queried polymer residues.
+    """
+
+    def resolve(
+        self,
+        residue_id: ResidueId,
+        site: PolymerMicrostateSite,
+        *,
+        override: MicrostateConstraints | None = None,
+        preferences: tuple[MicrostateConstraints, ...] = (),
+        retain_applied_choice: bool = True,
+    ) -> MicrostateResolution:
+        """Resolve a polymer site without admitting retained slots.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Polymer occurrence in the context snapshot.
+        site : PolymerMicrostateSite
+            Coupled site with caller-established linkage.
+        override : MicrostateConstraints or None
+            Explicit replacement authority.
+        preferences : tuple[MicrostateConstraints, ...]
+            Ordered source-compatible preparation preferences.
+        retain_applied_choice : bool
+            Retain compatible prior selections at their original authority.
+
+        Returns
+        -------
+        MicrostateResolution
+            Desired chemistry, or unsupported for retained occurrences.
+
+        Raises
+        ------
+        ResidueNotFoundError
+            The occurrence is absent from the snapshot.
+        ValueError
+            An applicable explicit request is empty.
+        """
+        constitution = self.source.constitution
+        index = constitution.residue_index(residue_id)
+        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+            return MicrostateResolution(
+                MicrostateResolutionStatus.UNSUPPORTED,
+                details=("polymer microstates require a polymer residue",),
+            )
+        return AminoAcidMicrostateContext.resolve(
+            self,
+            residue_id,
+            site,
+            override=override,
+            preferences=preferences,
+            retain_applied_choice=retain_applied_choice,
+        )
+
+    def hydrogen_topology_updates(
+        self, residue_id: ResidueId, site: PolymerMicrostateSite
+    ) -> tuple[TopologyBond, ...]:
+        """Propose supported H bonds only for canonical polymer occurrences.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Polymer occurrence in this snapshot.
+        site : PolymerMicrostateSite
+            Owner of the component's H naming grammar.
+
+        Returns
+        -------
+        tuple[TopologyBond, ...]
+            Missing bonds or resolutions retaining source metadata.
+
+        Raises
+        ------
+        ValueError
+            Membership, H parents or current chemistry cannot be admitted.
+        """
+        constitution = self.source.constitution
+        index = constitution.residue_index(residue_id)
+        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+            raise ValueError("polymer H topology requires a polymer residue")
+        return AminoAcidMicrostateContext.hydrogen_topology_updates(
+            self, residue_id, site
         )

@@ -97,8 +97,11 @@ class HistidineEnvironment:
         )
         site_acceptors: dict[AtomRef, bool] = {}
         site_donors: set[AtomRef] = set()
-        for chain in constitution.chains:
-            for residue in chain.residues:
+        for residues in (
+            *(chain.residues for chain in constitution.chains),
+            constitution.ligands,
+        ):
+            for residue in residues:
                 template = library.get(residue.component_id)
                 resolution = sidechain_resolutions.get(residue.residue_id)
                 if template is None or resolution is None:

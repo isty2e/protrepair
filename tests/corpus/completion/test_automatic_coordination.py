@@ -17,7 +17,7 @@ from protrepair.chemistry import (
 )
 from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.microstate.resolution import MicrostateSelectionBasis
 from protrepair.chemistry.retained_non_polymer.coordination import (
     coordinated_component_preparation,
@@ -288,7 +288,7 @@ def test_1f4t_pim_goals_are_reobserved_without_claiming_full_metal_site(source_1
     )
     assert result.requested_goals_fully_satisfied()
     assert result.structure.provenance.ingress is source_1f4t.provenance.ingress
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(result.structure), build_default_component_library()
     )
     for index, _ in source_1f4t.geometry.iter_positions():

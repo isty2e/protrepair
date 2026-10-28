@@ -7,7 +7,7 @@ import pytest
 
 from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.microstate.resolution import (
     MicrostateConstraints,
     MicrostateSelectionBasis,
@@ -169,7 +169,7 @@ def _source(
 
 
 def _preparation(source, requests=None):
-    return PolymerMicrostatePreparation(
+    return AminoAcidPreparation(
         PolymerMicrostateContext(source),
         build_standard_component_library(),
         requests=requests,
@@ -654,7 +654,7 @@ def test_custom_histidine_template_is_not_silently_replaced():
     source = _source(contacts=(("ND1", 2.8, 0, "carbonyl"),))
     library = build_standard_component_library()
     changed = replace(library.require("HIS"), preferred_atom_order=("ND1", "NE2"))
-    preparation = PolymerMicrostatePreparation(
+    preparation = AminoAcidPreparation(
         PolymerMicrostateContext(source), library.with_template(changed)
     )
     assert _target(preparation).resolution.graph is None

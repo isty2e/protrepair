@@ -102,7 +102,7 @@ def test_incomplete_template_does_not_replace_source_hydrogens(element: str) -> 
     assert result.structure.topology == structure.topology
     assert result.repairs == ()
     assert any(
-        issue.kind is ValidationIssueKind.UNSUPPORTED_HYDROGENATION
+        issue.kind is ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN
         and issue.residue_id == ResidueId("L", 1)
         for issue in result.issues
     )
@@ -174,7 +174,7 @@ def test_incomplete_template_can_add_anchored_h_without_replacing_source() -> No
     )
 
 
-def test_incomplete_template_rejects_unmatched_h_below_generated_count() -> None:
+def test_incomplete_amino_acid_keeps_terminal_h_while_preparing_fixed_body() -> None:
     source = _incomplete_cysteine()
     residue_id = ResidueId("L", 1)
     index = source.constitution.residue_index(residue_id)
@@ -197,11 +197,20 @@ def test_incomplete_template_rejects_unmatched_h_below_generated_count() -> None
 
     result = add_retained_non_polymer_hydrogens(structure)
 
-    assert result.structure == structure
-    assert result.repairs == ()
+    repaired_index = result.structure.constitution.residue_index(residue_id)
+    assert result.structure.constitution.residue_site_at(repaired_index).atom_site(
+        "H1"
+    ) == residue.atom_site("H1")
+    assert result.structure.residue_geometry(repaired_index).atom_geometry(
+        "H1"
+    ) == source.residue_geometry(index).atom_geometry("H1")
+    assert {"HA", "HB1", "HB2", "HG"} <= set(
+        result.structure.constitution.residue_site_at(repaired_index).atom_site_names()
+    )
+    assert result.repairs
     assert any(
-        issue.kind is ValidationIssueKind.UNSUPPORTED_HYDROGENATION
-        and issue.atom_names == ("H1",)
+        issue.kind is ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN
+        and issue.residue_id == residue_id
         for issue in result.issues
     )
 
@@ -305,7 +314,7 @@ def test_failed_ligand_is_excluded_from_cleanup_in_mixed_batch(
         is (
             ValidationIssueKind.CHEMISTRY_CONTRADICTION
             if invalid_evidence
-            else ValidationIssueKind.UNSUPPORTED_HYDROGENATION
+            else ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN
         )
         and issue.residue_id == failed_id
         for issue in result.issues

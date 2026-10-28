@@ -10,7 +10,9 @@ except ImportError:  # pragma: no cover - tested through the unavailable boundar
     Chem = None
 
 from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
-from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.context import (
+    AminoAcidMicrostateContext,
+)
 from protrepair.chemistry.microstate.graph import MicrostateGraph
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
@@ -23,6 +25,7 @@ from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.transformer.polymer_microstate import (
+    AminoAcidMicrostatePatch,
     MicrostateHydrogenPlacement,
     PolymerMicrostatePatch,
 )
@@ -32,7 +35,7 @@ if TYPE_CHECKING:
 
 
 def place_polymer_microstate_hydrogens(
-    context: PolymerMicrostateContext,
+    context: AminoAcidMicrostateContext,
     residue_id: ResidueId,
     site: PolymerMicrostateSite,
     *,
@@ -45,7 +48,7 @@ def place_polymer_microstate_hydrogens(
 
     Parameters
     ----------
-    context : PolymerMicrostateContext
+    context : AminoAcidMicrostateContext
         Immutable snapshot, original observations and applied chemical choices.
     residue_id : ResidueId
         Polymer residue to prepare.
@@ -88,6 +91,112 @@ def place_polymer_microstate_hydrogens(
     peptide partner supplies the carbonyl needed for planar amide N placement.
     No minimization, pKa prediction or clash-free pose is promised here.
     """
+    constitution = context.source.constitution
+    index = constitution.residue_index(residue_id)
+    if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+        raise ValueError("polymer microstate placement requires a polymer residue")
+    placements, applied, repositioned = _place_site_hydrogens(
+        context,
+        residue_id,
+        site,
+        override,
+        preferences,
+        rebuild_existing,
+        retain_applied_choice,
+    )
+    return PolymerMicrostatePatch(
+        context.source,
+        residue_id,
+        site,
+        placements,
+        reposition_hydrogens=repositioned,
+        override=override,
+        applied_choice=applied,
+        preferences=preferences,
+        context=context,
+    )
+
+
+def place_amino_acid_microstate_hydrogens(
+    context: AminoAcidMicrostateContext,
+    residue_id: ResidueId,
+    site: PolymerMicrostateSite,
+    *,
+    override: MicrostateConstraints | None = None,
+    preferences: tuple[MicrostateConstraints, ...] = (),
+    rebuild_existing: bool = False,
+    retain_applied_choice: bool = True,
+) -> AminoAcidMicrostatePatch:
+    """Place an admitted amino-acid site without changing its heavy atoms.
+
+    Parameters
+    ----------
+    context : AminoAcidMicrostateContext
+        Snapshot-bound source, current chemistry and admission rules.
+    residue_id : ResidueId
+        Occurrence admitted by the context.
+    site : PolymerMicrostateSite
+        Coupled chemistry and established linkage.
+    override : MicrostateConstraints or None
+        Explicit replacement constraints.
+    preferences : tuple[MicrostateConstraints, ...]
+        Ordered source-compatible choices shared with observation.
+    rebuild_existing : bool
+        Regenerate selected H coordinates while preserving identities and scalars.
+    retain_applied_choice : bool
+        Retain compatible prior selections at their original authority.
+
+    Returns
+    -------
+    AminoAcidMicrostatePatch
+        Complete snapshot-bound site update, not yet applied.
+
+    Raises
+    ------
+    TypeError
+        Coordinate rebuilding is not a boolean.
+    ValueError
+        Chemistry, H identities or current boundaries cannot be admitted.
+    GeometryPlacementError
+        Native placement fails or returns invalid coordinates.
+    RdkitUnavailableError
+        Required RDKit installation is unavailable.
+    """
+    placements, applied, repositioned = _place_site_hydrogens(
+        context,
+        residue_id,
+        site,
+        override,
+        preferences,
+        rebuild_existing,
+        retain_applied_choice,
+    )
+    return AminoAcidMicrostatePatch(
+        context.source,
+        residue_id,
+        site,
+        placements,
+        reposition_hydrogens=repositioned,
+        override=override,
+        applied_choice=applied,
+        preferences=preferences,
+        context=context,
+    )
+
+
+def _place_site_hydrogens(
+    context: AminoAcidMicrostateContext,
+    residue_id: ResidueId,
+    site: PolymerMicrostateSite,
+    override: MicrostateConstraints | None,
+    preferences: tuple[MicrostateConstraints, ...],
+    rebuild_existing: bool,
+    retain_applied_choice: bool,
+) -> tuple[
+    tuple[MicrostateHydrogenPlacement, ...],
+    AppliedMicrostateChoice | None,
+    frozenset[str],
+]:
     if type(rebuild_existing) is not bool:
         raise TypeError("microstate coordinate rebuilding must be a boolean")
     resolution = context.resolve(
@@ -159,23 +268,16 @@ def place_polymer_microstate_hydrogens(
         if resolution.basis is not MicrostateSelectionBasis.EVIDENCE
         else None
     )
-    return PolymerMicrostatePatch(
-        context.source,
-        residue_id,
-        site,
-        placements,
-        reposition_hydrogens=frozenset(atom.name for atom, _ in identities)
+    repositioned = (
+        frozenset(atom.name for atom, _ in identities)
         if rebuild_existing
-        else frozenset(),
-        override=override,
-        applied_choice=applied,
-        preferences=preferences,
-        context=context,
+        else frozenset()
     )
+    return placements, applied, repositioned
 
 
 def _existing_geometry(
-    context: PolymerMicrostateContext, atom_ref: AtomRef
+    context: AminoAcidMicrostateContext, atom_ref: AtomRef
 ) -> AtomGeometry | None:
     source = context.source
     index = source.constitution.resolve_atom_index(atom_ref)
@@ -190,7 +292,7 @@ def _existing_geometry(
 
 
 def _coordinate_stencil(
-    context: PolymerMicrostateContext,
+    context: AminoAcidMicrostateContext,
     residue_id: ResidueId,
     site: PolymerMicrostateSite,
     graph: MicrostateGraph,

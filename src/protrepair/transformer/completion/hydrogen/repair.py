@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -39,7 +39,7 @@ def add_hydrogens(
     histidine_protonation: HistidineProtonationRequest | None = None,
     protonate_histidines: bool = False,
     local_refinement: RepairLocalRefinementDirective | None = None,
-    preparation: PolymerMicrostatePreparation | None = None,
+    preparation: AminoAcidPreparation | None = None,
 ) -> TransformationResult:
     """Add hydrogens to supported chains while preserving input ligands.
 
@@ -63,7 +63,7 @@ def add_hydrogens(
         Request the default ratio; mutually exclusive with an explicit request.
     local_refinement : RepairLocalRefinementDirective or None
         Optional post-preparation refinement.
-    preparation : PolymerMicrostatePreparation or None
+    preparation : AminoAcidPreparation or None
         Optional seed; every consuming stage rebinds after input changes.
 
     Returns
@@ -115,9 +115,7 @@ def add_hydrogens(
         repairs = heavy_result.repairs
         issues = heavy_result.issues
         preparation = (
-            PolymerMicrostatePreparation(
-                PolymerMicrostateContext(prepared_structure), library
-            )
+            AminoAcidPreparation(PolymerMicrostateContext(prepared_structure), library)
             if preparation is None
             else preparation.for_inputs(prepared_structure, library)
         )

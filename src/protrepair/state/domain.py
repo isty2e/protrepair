@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
-from protrepair.chemistry.microstate.preparation import PolymerSitePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidSitePreparation
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.scope import AtomSetScope, ResidueSetScope
 from protrepair.state.scoped import CarrierScopedState
@@ -221,7 +221,7 @@ class ContinuousRegionReadinessFacts:
             )
         )
 
-    def _models_target(self, target: PolymerSitePreparation) -> bool:
+    def _models_target(self, target: AminoAcidSitePreparation) -> bool:
         name = {
             PolymerChemicalSite.BACKBONE_N: "N",
             PolymerChemicalSite.BACKBONE_C: "C",

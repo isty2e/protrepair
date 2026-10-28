@@ -30,7 +30,7 @@ from protrepair.chemistry import (
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.semantics import IdealGeometryHydrogenSemantics
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
-from protrepair.chemistry.microstate.preparation import PolymerMicrostatePreparation
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.restraint.structure import StructureRestraints
 from protrepair.chemistry.restraint.template import PlaneRestraintTarget
 from protrepair.chemistry.retained_non_polymer.michael_adduct import (
@@ -123,10 +123,10 @@ def test_actual_linked_qs7_realizes_product_atomically_and_repeats(strict):
             assert geometry.position(name).distance_to(
                 geometry.position(parent)
             ) == pytest.approx(1.09)
-    before = PolymerMicrostatePreparation(
+    before = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_default_component_library()
     )
-    after = PolymerMicrostatePreparation(
+    after = AminoAcidPreparation(
         PolymerMicrostateContext(result.structure), build_default_component_library()
     )
     unresolved = before.fixed_hydrogen_context(CYSTEINE)
