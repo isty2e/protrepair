@@ -115,6 +115,71 @@ class AminoAcidMicrostateContext:
             and not constitution.atom_site_at(other).is_hydrogen()
         )
 
+    def existing_hydrogen_preferences(
+        self, residue_id: ResidueId, site: PolymerMicrostateSite
+    ) -> tuple[MicrostateConstraints, ...]:
+        """Read a compatible H-bearing inventory as a preference, not evidence.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Amino-acid occurrence in this snapshot.
+        site : PolymerMicrostateSite
+            Catalogued chemical site whose source parents are interpreted.
+
+        Returns
+        -------
+        tuple[MicrostateConstraints, ...]
+            One preference matching the H-bearing site's parent counts, or
+            empty for absent, uninterpretable or nonmatching inventories.
+            Hard chemistry requirements still filter candidates first.
+            H from an applied choice is not promoted into source evidence.
+        """
+        catalog = site.candidates()
+        if catalog is None:
+            return ()
+        names = {atom.name for atom in catalog.candidates[0].atoms}
+        saved = next(
+            (
+                choice.graph
+                for choice in self._choices_by_residue.get(residue_id, ())
+                if names == {atom.name for atom in choice.graph.atoms}
+                and choice.component_id == site.template.component_id
+            ),
+            None,
+        )
+        try:
+            parents = self.hydrogen_parents(residue_id, site, original=True)
+            if not any(
+                any(atom.name in names for atom in choice.graph.atoms)
+                for choice in self._choices_by_residue.get(residue_id, ())
+            ):
+                parents.update(self.hydrogen_parents(residue_id, site))
+        except ValueError:
+            return ()
+        counts = Counter(parent for parent in parents.values() if parent in names)
+        if not counts:
+            return ()
+        constitution = self.source.constitution
+        preference = MicrostateConstraints(
+            charges=tuple(
+                (name, charge)
+                for name in sorted(names)
+                if (index := constitution.resolve_atom_index(AtomRef(residue_id, name)))
+                is not None
+                and (charge := self.source.topology.formal_charge(index)) is not None
+                and (saved is None or saved.atom(name).charge != charge)
+            ),
+            hydrogens=tuple((name, counts[name]) for name in sorted(names)),
+        )
+        return (
+            (preference,)
+            if any(
+                preference.violations(graph).is_empty() for graph in catalog.candidates
+            )
+            else ()
+        )
+
     def resolve(
         self,
         residue_id: ResidueId,

@@ -60,7 +60,7 @@ class AminoAcidSitePreparation:
     site : PolymerMicrostateSite
         Chemical site and established linkage context.
     preferences : tuple[MicrostateConstraints, ...]
-        Ordered preparation preferences shared with graph-constrained placement.
+        Ordered defaults after the compatible existing-H preference.
     override : MicrostateConstraints or None
         Explicit replacement constraints, if requested.
     retain_applied_choice : bool
@@ -78,9 +78,15 @@ class AminoAcidSitePreparation:
     preferences: tuple[MicrostateConstraints, ...]
     override: MicrostateConstraints | None = None
     retain_applied_choice: bool = True
+    selection_preferences: tuple[MicrostateConstraints, ...] = field(init=False)
     resolution: MicrostateResolution = field(init=False)
 
     def __post_init__(self) -> None:
+        preferences = (
+            *self.context.existing_hydrogen_preferences(self.residue_id, self.site),
+            *self.preferences,
+        )
+        object.__setattr__(self, "selection_preferences", preferences)
         object.__setattr__(
             self,
             "resolution",
@@ -88,7 +94,7 @@ class AminoAcidSitePreparation:
                 self.residue_id,
                 self.site,
                 override=self.override,
-                preferences=self.preferences,
+                preferences=preferences,
                 retain_applied_choice=self.retain_applied_choice,
             ),
         )
@@ -498,12 +504,7 @@ class AminoAcidPreparation:
                         retained_context,
                         residue.residue_id,
                         site,
-                        preferences=(
-                            *retained_context.existing_hydrogen_preferences(
-                                residue.residue_id, site
-                            ),
-                            *preferences,
-                        ),
+                        preferences=preferences,
                     )
                 )
             if entries:
