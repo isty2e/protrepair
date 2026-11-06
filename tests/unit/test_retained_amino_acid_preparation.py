@@ -20,6 +20,7 @@ from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemi
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.microstate.resolution import MicrostateSelectionBasis
+from protrepair.chemistry.microstate.retained import RetainedAminoAcidContext
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.geometry import Vec3
 from protrepair.io import (
@@ -42,12 +43,22 @@ from protrepair.structure.topology import (
     StructureTopology,
     TopologyBond,
 )
+from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.completion.retained_non_polymer_hydrogen.repair import (
     add_retained_non_polymer_hydrogens,
     resolve_retained_non_polymer_topology,
 )
 from protrepair.transformer.completion.terminal.augmentation import (
     augment_c_terminal_oxt,
+)
+from protrepair.transformer.continuous.settings import (
+    ContinuousRelaxationConfig,
+    ContinuousRelaxationForceField,
+)
+from protrepair.transformer.local import (
+    DirectRegionTransformationSpec,
+    LocalScopeSpec,
+    transform_local_region,
 )
 from protrepair.workflow.contracts import LigandPolicy, StructureIngressOptions
 
@@ -59,7 +70,9 @@ def protein() -> ProteinStructure:
     return read_structure(Path(__file__).parents[1] / "fixtures/corpus/pdb1afc.ent")
 
 
-def _free_amino_acid(protein: ProteinStructure, component: str) -> ProteinStructure:
+def _free_amino_acid(
+    protein: ProteinStructure, component: str, *, polymer: bool = False
+) -> ProteinStructure:
     template = build_default_component_library().require(component)
     if component in {"CSO", "HYP", "MSE", "PTR", "SEP", "TPO"}:
         source = reference_structure(component, with_h=False)
@@ -84,7 +97,7 @@ def _free_amino_acid(protein: ProteinStructure, component: str) -> ProteinStruct
         for atom in residue.atom_sites
         if not atom.is_hydrogen()
     )
-    polymer = build_bonded_structure(
+    polymer_structure = build_bonded_structure(
         chains=(
             chain_payload(
                 "L",
@@ -97,7 +110,9 @@ def _free_amino_acid(protein: ProteinStructure, component: str) -> ProteinStruct
         ),
         source_format=FileFormat.MMCIF,
     )
-    terminal = augment_c_terminal_oxt(polymer).structure
+    terminal = augment_c_terminal_oxt(polymer_structure).structure
+    if polymer:
+        return terminal
     terminal_geometry = terminal.residue_geometry(
         terminal.constitution.residue_index(LIGAND)
     )
@@ -829,7 +844,7 @@ def test_peptide_proximity_does_not_reinterpret_nonmatching_elements(
     assert (target.resolution.graph is None) is wrong_target
 
 
-def _existing_neutral_amino_acid(protein, component):
+def _existing_neutral_amino_acid(protein, component, *, polymer=False):
     source = _free_amino_acid(protein, component)
     index = source.constitution.residue_index(LIGAND)
     source = source.with_updated_residue_facets_batch(
@@ -867,16 +882,25 @@ def _existing_neutral_amino_acid(protein, component):
             line = line[:78] + "  " + line[80:]
             if line[12:16].strip() == "H1":
                 line = line[:12] + " H  " + line[16:]
+            if polymer:
+                line = "ATOM  " + line[6:]
         lines.append(line)
     return read_structure_string("\n".join(lines) + "\n", FileFormat.PDB)
 
 
+def _complete_amino_acid(source):
+    if source.constitution.ligands:
+        return add_retained_non_polymer_hydrogens(source)
+    return add_hydrogens(source)
+
+
+@pytest.mark.parametrize("polymer", (False, True), ids=("retained", "polymer"))
 @pytest.mark.parametrize(
-    "component", ("ALA", "PRO", "ASP", "LYS", "ARG", "MSE", "HYP", "SEP")
+    "component", ("ALA", "PRO", "ASP", "LYS", "ARG", "HIS", "MSE", "HYP", "SEP")
 )
-def test_valid_existing_retained_state_precedes_generic_defaults(protein, component):
-    source = _existing_neutral_amino_acid(protein, component)
-    result = add_retained_non_polymer_hydrogens(source)
+def test_valid_existing_amino_acid_state_precedes_defaults(protein, component, polymer):
+    source = _existing_neutral_amino_acid(protein, component, polymer=polymer)
+    result = _complete_amino_acid(source)
     assert not result.issues, [issue.message for issue in result.issues]
     assert result.structure.constitution.atom_slots == source.constitution.atom_slots
     assert result.structure.geometry == source.geometry
@@ -899,14 +923,17 @@ def test_valid_existing_retained_state_precedes_generic_defaults(protein, compon
     assert choice.basis is MicrostateSelectionBasis.DEFAULT
     molecule = to_rdkit_molecule(result.structure)
     assert not any(atom.GetNumRadicalElectrons() for atom in molecule.GetAtoms())
-    again = add_retained_non_polymer_hydrogens(result.structure)
+    again = _complete_amino_acid(result.structure)
     assert again.structure == result.structure
     assert not again.repairs
 
 
+@pytest.mark.parametrize("polymer", (False, True), ids=("retained", "polymer"))
 @pytest.mark.parametrize("component", ("ALA", "PRO", "MSE"))
-def test_public_h_goal_keeps_valid_existing_amino_acid_state(protein, component):
-    source = _existing_neutral_amino_acid(protein, component)
+def test_public_h_goal_keeps_valid_existing_amino_acid_state(
+    protein, component, polymer
+):
+    source = _existing_neutral_amino_acid(protein, component, polymer=polymer)
     result = process_structure(
         source,
         ingress=StructureIngressOptions(ligand_policy=LigandPolicy.KEEP),
@@ -920,11 +947,12 @@ def test_public_h_goal_keeps_valid_existing_amino_acid_state(protein, component)
     assert molecule.GetAtomWithIdx(nitrogen.value).GetFormalCharge() == 0
 
 
+@pytest.mark.parametrize("polymer", (False, True), ids=("retained", "polymer"))
 @pytest.mark.parametrize("original_charge", (False, True))
 def test_declared_cation_can_complete_h_despite_existing_neutral_inventory(
-    protein, original_charge
+    protein, original_charge, polymer
 ):
-    source = _existing_neutral_amino_acid(protein, "ALA")
+    source = _existing_neutral_amino_acid(protein, "ALA", polymer=polymer)
     index = source.constitution.residue_index(LIGAND)
     source = source.with_updated_residue_facets_batch(
         (
@@ -949,7 +977,7 @@ def test_declared_cation_can_complete_h_despite_existing_neutral_inventory(
                 ),
             )
         )
-    result = add_retained_non_polymer_hydrogens(source)
+    result = _complete_amino_acid(source)
     assert not result.issues, [issue.message for issue in result.issues]
     parents = result.structure.topology.residue_hydrogen_anchor_by_name(
         constitution=result.structure.constitution,
@@ -962,15 +990,19 @@ def test_declared_cation_can_complete_h_despite_existing_neutral_inventory(
         )
         == 1
     )
-    for atom in source.constitution.ligands[0].atom_sites:
+    residue = source.constitution.residue_site_at(index)
+    for atom in residue.atom_sites:
         ref = AtomRef(LIGAND, atom.name)
         assert result.structure.geometry.atom_geometry(
             result.structure.constitution.atom_index(ref)
         ) == source.geometry.atom_geometry(source.constitution.atom_index(ref))
 
 
-def test_existing_state_preference_accepts_api_input_without_observation(protein):
-    source = _existing_neutral_amino_acid(protein, "ALA")
+@pytest.mark.parametrize("polymer", (False, True), ids=("retained", "polymer"))
+def test_existing_state_preference_accepts_api_input_without_observation(
+    protein, polymer
+):
+    source = _existing_neutral_amino_acid(protein, "ALA", polymer=polymer)
     source = ProteinStructure.from_payload(
         constitution=source.constitution,
         geometry=source.geometry,
@@ -999,9 +1031,10 @@ def test_existing_state_preference_accepts_api_input_without_observation(protein
             ingress=replace(source.provenance.ingress, observation=None),
         )
     )
-    result = add_retained_non_polymer_hydrogens(source)
+    result = _complete_amino_acid(source)
     assert not result.issues, [issue.message for issue in result.issues]
-    assert result.structure is source
+    assert result.structure.constitution == source.constitution
+    assert result.structure.geometry == source.geometry
     preparation = AminoAcidPreparation(
         PolymerMicrostateContext(source), build_default_component_library()
     )
@@ -1017,9 +1050,10 @@ def test_existing_state_preference_accepts_api_input_without_observation(protein
     assert molecule.GetAtomWithIdx(nitrogen.value).GetFormalCharge() == 0
 
 
+@pytest.mark.parametrize("polymer", (False, True), ids=("retained", "polymer"))
 @pytest.mark.parametrize("isotope", ("D", "T"))
-def test_existing_state_preference_preserves_source_isotopes(protein, isotope):
-    source = _existing_neutral_amino_acid(protein, "ALA")
+def test_existing_state_preference_preserves_source_isotopes(protein, isotope, polymer):
+    source = _existing_neutral_amino_acid(protein, "ALA", polymer=polymer)
     index = source.constitution.residue_index(LIGAND)
     residue = source.constitution.residue_site_at(index)
     for name in ("H", "H2"):
@@ -1042,7 +1076,7 @@ def test_existing_state_preference_preserves_source_isotopes(protein, isotope):
             ),
         )
     )
-    result = add_retained_non_polymer_hydrogens(source)
+    result = _complete_amino_acid(source)
     assert result.structure.constitution.atom_slots == source.constitution.atom_slots
     assert result.structure.geometry == source.geometry
     assert (
@@ -1053,9 +1087,12 @@ def test_existing_state_preference_preserves_source_isotopes(protein, isotope):
     )
 
 
-def test_saved_amino_acid_choice_does_not_become_new_source_h_evidence(protein):
-    source = add_retained_non_polymer_hydrogens(
-        _free_amino_acid(protein, "ALA")
+@pytest.mark.parametrize("polymer", (False, True), ids=("retained", "polymer"))
+def test_saved_amino_acid_choice_does_not_become_new_source_h_evidence(
+    protein, polymer
+):
+    source = _complete_amino_acid(
+        _free_amino_acid(protein, "ALA", polymer=polymer)
     ).structure
     index = source.constitution.residue_index(LIGAND)
     residue = source.constitution.residue_site_at(index).without_atom_sites(("H3",))
@@ -1068,10 +1105,133 @@ def test_saved_amino_acid_choice_does_not_become_new_source_h_evidence(protein):
             ),
         )
     )
-    result = add_retained_non_polymer_hydrogens(source)
+    result = _complete_amino_acid(source)
     assert not result.issues, [issue.message for issue in result.issues]
     parents = result.structure.topology.residue_hydrogen_anchor_by_name(
         constitution=result.structure.constitution,
         residue_index=result.structure.constitution.residue_index(LIGAND),
     )
     assert Counter(parents.values())["N"] == 3
+
+
+@pytest.mark.parametrize("polymer", (False, True), ids=("retained", "polymer"))
+def test_valid_existing_neutral_lysine_sidechain_is_preserved(protein, polymer):
+    source = _existing_neutral_amino_acid(protein, "LYS", polymer=polymer)
+    index = source.constitution.residue_index(LIGAND)
+    residue = source.constitution.residue_site_at(index)
+    source = source.with_updated_residue_facets_batch(
+        (
+            (
+                residue.without_atom_sites(("HZ3",)),
+                source.residue_geometry(index).without_atoms(("HZ3",)),
+                source.residue_formal_charge_by_atom_name(index),
+            ),
+        )
+    )
+    source = source.with_provenance(
+        replace(
+            source.provenance,
+            ingress=replace(
+                source.provenance.ingress,
+                observation=StructureObservation.from_source_facets(
+                    constitution=source.constitution,
+                    geometry=source.geometry,
+                    topology=source.topology,
+                ),
+            ),
+        )
+    )
+    result = _complete_amino_acid(source)
+    assert not result.issues, [issue.message for issue in result.issues]
+    assert result.structure.constitution.atom_slots == source.constitution.atom_slots
+    assert result.structure.geometry == source.geometry
+    nitrogen = result.structure.constitution.atom_index(AtomRef(LIGAND, "NZ"))
+    assert result.structure.topology.formal_charge(nitrogen) == 0
+    parents = result.structure.topology.residue_hydrogen_anchor_by_name(
+        constitution=result.structure.constitution,
+        residue_index=result.structure.constitution.residue_index(LIGAND),
+    )
+    assert Counter(parents.values())["NZ"] == 2
+    assert not any(
+        atom.GetNumRadicalElectrons()
+        for atom in to_rdkit_molecule(result.structure).GetAtoms()
+    )
+
+
+@pytest.mark.parametrize("polymer", (False, True), ids=("retained", "polymer"))
+@pytest.mark.parametrize("component", ("ALA", "LYS"))
+def test_h_free_amino_acids_keep_preparation_defaults(protein, component, polymer):
+    source = _free_amino_acid(protein, component, polymer=polymer)
+    result = _complete_amino_acid(source)
+    assert not result.issues, [issue.message for issue in result.issues]
+    parents = result.structure.topology.residue_hydrogen_anchor_by_name(
+        constitution=result.structure.constitution,
+        residue_index=result.structure.constitution.residue_index(LIGAND),
+    )
+    for name in ("N", "NZ") if component == "LYS" else ("N",):
+        assert Counter(parents.values())[name] == 3
+        index = result.structure.constitution.atom_index(AtomRef(LIGAND, name))
+        assert result.structure.topology.formal_charge(index) == 1
+
+
+@pytest.mark.parametrize("polymer", (False, True), ids=("retained", "polymer"))
+def test_existing_state_preference_rebinds_without_retaining_old_constraints(
+    protein, polymer
+):
+    source = _existing_neutral_amino_acid(protein, "ALA", polymer=polymer)
+    target = next(
+        target
+        for target in AminoAcidPreparation(
+            PolymerMicrostateContext(source), build_default_component_library()
+        ).targets_for(LIGAND)
+        if target.site.kind is PolymerChemicalSite.BACKBONE_N
+    )
+    assert replace(target) == target
+    assert target.resolution.graph is not None
+    assert target.resolution.graph.atom("N").charge == 0
+
+    index = source.constitution.residue_index(LIGAND)
+    changed = source.with_updated_residue_facets_batch(
+        (
+            (
+                source.constitution.residue_site_at(index),
+                source.residue_geometry(index),
+                (("N", 1),),
+            ),
+        )
+    )
+    context = (
+        PolymerMicrostateContext(changed)
+        if polymer
+        else RetainedAminoAcidContext(changed)
+    )
+    rebound = replace(target, context=context)
+    assert rebound.resolution.graph is not None
+    assert rebound.resolution.graph.atom("N").charge == 1
+    assert rebound.resolution.graph.atom("N").hydrogens == 3
+
+
+@pytest.mark.parametrize("polymer", (False, True), ids=("retained", "polymer"))
+def test_local_refinement_uses_the_prepared_existing_amino_acid_state(protein, polymer):
+    source = _existing_neutral_amino_acid(protein, "ALA", polymer=polymer)
+    prepared = _complete_amino_acid(source).structure
+    result = transform_local_region(
+        prepared,
+        DirectRegionTransformationSpec(
+            scope_spec=LocalScopeSpec.from_atoms((AtomRef(LIGAND, "H"),)),
+            force_field=ContinuousRelaxationForceField.MMFF,
+            config=ContinuousRelaxationConfig(max_iterations=20),
+        ),
+    )
+    assert len(result.relaxation_executions) == 1
+    refined = result.refined_structure
+    nitrogen = refined.constitution.atom_index(AtomRef(LIGAND, "N"))
+    assert refined.topology.formal_charge(nitrogen) == 0
+    parents = refined.topology.residue_hydrogen_anchor_by_name(
+        constitution=refined.constitution,
+        residue_index=refined.constitution.residue_index(LIGAND),
+    )
+    assert Counter(parents.values())["N"] == 2
+    assert not any(
+        atom.GetNumRadicalElectrons() for atom in to_rdkit_molecule(refined).GetAtoms()
+    )

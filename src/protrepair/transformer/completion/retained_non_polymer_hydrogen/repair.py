@@ -753,7 +753,7 @@ def _prepare_retained_amino_acids(
                         target.context,
                         residue_id,
                         target.site,
-                        preferences=target.preferences,
+                        preferences=target.selection_preferences,
                     )
                 )
             except (ValueError, GeometryPlacementError) as error:

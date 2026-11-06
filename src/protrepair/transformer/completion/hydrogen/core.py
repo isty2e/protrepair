@@ -215,7 +215,7 @@ def materialize_hydrogens_core(
                         residue_id,
                         target.site,
                         override=target.override,
-                        preferences=target.preferences,
+                        preferences=target.selection_preferences,
                         retain_applied_choice=target.retain_applied_choice,
                         rebuild_existing=residue_id in rebuilding,
                     )

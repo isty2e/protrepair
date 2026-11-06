@@ -21,8 +21,9 @@
 
 - prepare retained standard amino acids and the supported CSO/HYP/MSE/PTR/SEP/TPO
   components with shared polymer free-terminal and standard side-chain defaults.
-  Prefer valid existing H-bearing site states over those defaults rather than
-  adding H to an already neutral amine. Polymer selection is unchanged.
+  Prefer valid existing H-bearing site states over those defaults in both
+  polymer and retained amino acids, rather than adding H to an already neutral
+  amine. H-free inputs keep their preparation defaults.
   Source H, declared charges and explicit chemistry retain
   precedence; cofactors keep their component-specific chemistry. Missing or
   unexplained sites remain indeterminate, while independent admitted sites can
