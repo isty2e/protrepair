@@ -75,7 +75,7 @@ class PreparedRefinementCandidateBase:
 def build_refinement_execution_batch(
     request: "LocalRefinementRequest",
 ) -> RefinementExecutionBatch:
-    """Construct baseline and seeded execution candidates for one request."""
+    """Construct prepared starts and an optional original-input rescue."""
 
     prepared_base = prepare_refinement_candidate_base(
         request.context,
@@ -106,7 +106,18 @@ def build_refinement_execution_batch(
             fallback_structure=request.context.source_snapshot.structure,
         )
     )
-    return RefinementExecutionBatch(candidates=tuple(candidates))
+
+    original_start: RefinementExecutionCandidate | None = None
+    if prepared_base.lineage.moved_atom_indices():
+        original_start = RefinementExecutionCandidate(
+            context=request.context,
+            lineage=RefinementCandidateLineage(),
+            fallback_structure=request.context.source_snapshot.structure,
+        )
+
+    return RefinementExecutionBatch(
+        candidates=tuple(candidates), original_start=original_start
+    )
 
 
 def prepare_refinement_candidate_base(
