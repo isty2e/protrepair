@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, TypeAlias
 
-from protrepair.errors import RefinementError
+from protrepair.errors import ModelInvariantError, RefinementError
 from protrepair.scope import Scope
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.artifacts import RegionTransformationResult
@@ -164,15 +164,53 @@ class RefinementExecutionCandidate:
 
 @dataclass(frozen=True, slots=True)
 class RefinementExecutionBatch:
-    """Candidate-construction output ready for backend execution."""
+    """Primary candidates and an assessment-gated original-input rescue."""
 
     candidates: tuple[RefinementExecutionCandidate, ...]
+    original_start: RefinementExecutionCandidate | None = None
+
+    def __post_init__(self) -> None:
+        original = self.original_start
+        if original is None:
+            return
+
+        if (
+            original.execution_mode is not RefinementExecutionMode.CONTINUOUS_RELAXATION
+            or original.lineage.steps
+            or original.context.source_snapshot.structure
+            is not original.fallback_structure
+        ):
+            raise ModelInvariantError(
+                "original-start rescue must use its unchanged parent"
+            )
+        if any(
+            candidate is original
+            or candidate.fallback_structure is not original.fallback_structure
+            for candidate in self.candidates
+        ):
+            raise ModelInvariantError(
+                "refinement starts must share one parent without duplication"
+            )
+        if not any(
+            candidate.lineage.moved_atom_indices() for candidate in self.candidates
+        ):
+            raise ModelInvariantError(
+                "original-start rescue requires preparation movement"
+            )
+
+    def all_candidates(self) -> tuple[RefinementExecutionCandidate, ...]:
+        """Return planned candidates, including the assessment-gated rescue."""
+
+        if self.original_start is None:
+            return self.candidates
+
+        return (*self.candidates, self.original_start)
 
     def candidate_count_for_mode(self, mode: RefinementExecutionMode) -> int:
         """Return how many candidates in this batch use one execution mode."""
 
         return sum(
-            1 for candidate in self.candidates if candidate.execution_mode is mode
+            1 for candidate in self.all_candidates() if candidate.execution_mode is mode
         )
 
     def discrete_parser_preconditioning_candidate(
@@ -200,7 +238,12 @@ class RefinementExecutionBatch:
                 candidate
                 for candidate in self.candidates
                 if candidate is not excluded_candidate
-            )
+            ),
+            original_start=(
+                None
+                if self.original_start is excluded_candidate
+                else self.original_start
+            ),
         )
 
     def execute(
@@ -208,7 +251,7 @@ class RefinementExecutionBatch:
         *,
         request: "LocalRefinementRequest",
     ) -> "ExecutedRefinementBatch":
-        """Execute this full candidate batch through the backend stage."""
+        """Execute primary candidates; assessment gates the original-start rescue."""
 
         executed_candidates: list[ExecutedRefinementCandidate] = []
         execution_errors: list[RefinementError] = []
@@ -266,6 +309,23 @@ class AssessedRefinementBatch(
             self,
             "relaxation_executions",
             ContinuousRelaxationExecution.deduplicated(self.relaxation_executions),
+        )
+
+    def followed_by(
+        self, following: "AssessedRefinementBatch"
+    ) -> "AssessedRefinementBatch":
+        """Combine stages in execution order without losing errors or native returns."""
+
+        return type(self)(
+            evaluated_proposals=(
+                *self.evaluated_proposals,
+                *following.evaluated_proposals,
+            ),
+            execution_errors=(*self.execution_errors, *following.execution_errors),
+            relaxation_executions=(
+                *self.relaxation_executions,
+                *following.relaxation_executions,
+            ),
         )
 
 

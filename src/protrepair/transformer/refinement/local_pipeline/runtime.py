@@ -29,7 +29,7 @@ from protrepair.transformer.refinement.result import LocalRefinementResult
 
 @dataclass(frozen=True, slots=True)
 class LocalRefinementRuntimeProfile:
-    """Stage timing breakdown for one local-refinement pipeline execution."""
+    """Stage timing and constructed-candidate counts for one refinement request."""
 
     request_normalization_runtime_ms: float
     candidate_construction_runtime_ms: float
@@ -231,7 +231,7 @@ def execute_local_refinement_pipeline_profiled(
         LocalRefinementRuntimeProfile(
             request_normalization_runtime_ms=0.0,
             candidate_construction_runtime_ms=candidate_construction_runtime_ms,
-            execution_candidate_count=len(execution_batch.candidates),
+            execution_candidate_count=len(execution_batch.all_candidates()),
             continuous_backend_candidate_count=(
                 execution_batch.candidate_count_for_mode(
                     RefinementExecutionMode.CONTINUOUS_RELAXATION,

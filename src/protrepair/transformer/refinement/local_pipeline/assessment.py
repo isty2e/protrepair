@@ -10,6 +10,7 @@ from protrepair.transformer.refinement.acceptance import (
     RefinementAcceptanceMetrics,
     assess_refinement_result_with_before_metrics,
     measure_refinement_acceptance_metrics_for_scope,
+    refinement_metrics_order_key,
 )
 from protrepair.transformer.refinement.candidate_selection import (
     assessed_refinement_candidate_order_key,
@@ -39,7 +40,7 @@ def execute_refinement_candidate_batch(
     *,
     request: LocalRefinementRequest,
 ) -> ExecutedRefinementBatch:
-    """Execute one full candidate batch through the continuous backend stage."""
+    """Execute primary candidates without the assessment-gated rescue."""
 
     return batch.execute(request=request)
 
@@ -49,7 +50,40 @@ def execute_and_assess_refinement_candidate_batch(
     *,
     request: LocalRefinementRequest,
 ) -> tuple[AssessedRefinementBatch, float, float]:
-    """Execute and assess candidates, short-circuiting parser preconditioning."""
+    """Assess prepared starts, rescuing stalled preparation from the input."""
+
+    before_metrics_cache: BeforeMetricsCache = {}
+    assessed_batch, backend_runtime_ms, assessment_runtime_ms, shortcut_taken = (
+        _execute_and_assess_primary_candidates(
+            batch, request=request, before_metrics_cache=before_metrics_cache
+        )
+    )
+    if (
+        not shortcut_taken
+        and batch.original_start is not None
+        and not _has_parent_improvement(assessed_batch)
+    ):
+        rescue_batch, rescue_backend_ms, rescue_assessment_ms, _ = (
+            _execute_and_assess_primary_candidates(
+                RefinementExecutionBatch(candidates=(batch.original_start,)),
+                request=request,
+                before_metrics_cache=before_metrics_cache,
+            )
+        )
+        assessed_batch = assessed_batch.followed_by(rescue_batch)
+        backend_runtime_ms += rescue_backend_ms
+        assessment_runtime_ms += rescue_assessment_ms
+
+    return assessed_batch, backend_runtime_ms, assessment_runtime_ms
+
+
+def _execute_and_assess_primary_candidates(
+    batch: RefinementExecutionBatch,
+    *,
+    request: LocalRefinementRequest,
+    before_metrics_cache: BeforeMetricsCache,
+) -> tuple[AssessedRefinementBatch, float, float, bool]:
+    """Run a primary stage and report whether its parser shortcut was taken."""
 
     backend_execution_runtime_ms = 0.0
     assessment_runtime_ms = 0.0
@@ -66,16 +100,21 @@ def execute_and_assess_refinement_candidate_batch(
         assessed_batch = assess_refinement_candidate_batch(
             executed_batch,
             request=request,
+            before_metrics_cache=before_metrics_cache,
         )
         assessment_runtime_ms = (perf_counter() - start) * 1000.0
-        return assessed_batch, backend_execution_runtime_ms, assessment_runtime_ms
+        return (
+            assessed_batch,
+            backend_execution_runtime_ms,
+            assessment_runtime_ms,
+            False,
+        )
 
     start = perf_counter()
     discrete_execution = discrete_candidate.execute_discrete_only()
     backend_execution_runtime_ms += (perf_counter() - start) * 1000.0
 
     start = perf_counter()
-    before_metrics_cache: BeforeMetricsCache = {}
     before_metrics = cached_before_acceptance_metrics(
         discrete_execution,
         request=request,
@@ -94,6 +133,7 @@ def execute_and_assess_refinement_candidate_batch(
             ),
             backend_execution_runtime_ms,
             assessment_runtime_ms,
+            True,
         )
 
     remaining_batch = batch.without_candidate(discrete_candidate)
@@ -113,15 +153,11 @@ def execute_and_assess_refinement_candidate_batch(
     assessment_runtime_ms += (perf_counter() - start) * 1000.0
     return (
         AssessedRefinementBatch(
-            evaluated_proposals=(
-                discrete_assessment,
-                *remaining_assessed_batch.evaluated_proposals,
-            ),
-            execution_errors=remaining_assessed_batch.execution_errors,
-            relaxation_executions=remaining_assessed_batch.relaxation_executions,
-        ),
+            evaluated_proposals=(discrete_assessment,),
+        ).followed_by(remaining_assessed_batch),
         backend_execution_runtime_ms,
         assessment_runtime_ms,
+        False,
     )
 
 
@@ -225,6 +261,16 @@ def cached_before_acceptance_metrics(
     )
     cache[cache_key] = measured_metrics
     return measured_metrics
+
+
+def _has_parent_improvement(batch: AssessedRefinementBatch) -> bool:
+    """Return whether a retained endpoint strictly improves its request parent."""
+
+    return any(
+        assessed_refinement_candidate_order_key(candidate.evaluation)
+        < refinement_metrics_order_key(candidate.evaluation.before_metrics)
+        for candidate in batch.evaluated_proposals
+    )
 
 
 def select_refinement_candidate(

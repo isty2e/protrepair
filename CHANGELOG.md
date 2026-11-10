@@ -145,6 +145,10 @@
 
 ### Fixed
 
+- retry continuous refinement from the original input when preparation moves
+  atoms but no prepared candidate strictly improves the parent under the common
+  quality order, unless an accepted discrete parser shortcut returns. Keep improving
+  prepared results; stalled preparation may require one additional FF minimization
 - stop reporting complete H coverage for known polymer components whose body H
   cannot be prepared. Verify existing H against reference chemistry and actual
   peptide boundaries; otherwise report indeterminate coverage, an

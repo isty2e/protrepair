@@ -99,6 +99,15 @@ Existing checks for new stereo violations and severe restraint-backed bond
 distortion still apply. This is endpoint assessment, not selection of additional
 intermediate optimization frames.
 
+When preparation moves atoms but no assessed prepared or seeded endpoint strictly
+improves the parent under the common quality order, local refinement retries
+from the original input, unless an accepted discrete parser shortcut returns.
+This rescue can require one additional FF minimization; equal-quality prepared
+outcomes do not suppress it. Improving prepared results keep their existing
+paths. The rescue does not compete with an improving endpoint or add seeds to
+the original start. Candidate profiles count all constructed starts, while native
+records count only observed executions.
+
 The native backend also checks explicit X-H bond lengths, including D and T,
 against the selected UFF or MMFF94s equilibrium distances. It discards newly
 worsened large distortions, while allowing inherited distortion to remain or

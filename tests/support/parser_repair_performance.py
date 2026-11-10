@@ -459,7 +459,7 @@ def run_first_parser_cluster_repair_probe(
             extra_bond_count=len(cluster.bonds),
             extra_bonds=tuple(bond.display_token() for bond in cluster.bonds),
         ),
-        candidate_count=len(batch.candidates),
+        candidate_count=len(batch.all_candidates()),
         executed_count=len(assessed_batch.evaluated_proposals),
         execution_error_count=len(assessed_batch.execution_errors),
         candidate_summaries=tuple(
@@ -601,7 +601,10 @@ def _execute_and_assess_all_candidates(
 
     executed_batch = _timed(
         "backend_execution",
-        lambda: execute_refinement_candidate_batch(batch, request=request),
+        lambda: execute_refinement_candidate_batch(
+            RefinementExecutionBatch(candidates=batch.all_candidates()),
+            request=request,
+        ),
         timings,
     )
     return _timed(
