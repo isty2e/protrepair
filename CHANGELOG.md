@@ -4,6 +4,11 @@
 
 ### Added
 
+- add internal component-state geometry reference support to direct diagnostics
+  and local refinement. Match realized chemistry without
+  changing H or charge; preserve static fallbacks and caller dictionary overrides.
+  Monomer CIF input uses explicit targets and ESDs with content provenance.
+  This does not bundle new reference data or activate phosphate state preparation
 - expose H-generation support, read-only `reference_hydrogens_verified` and typed
   `chemistry_failure` details on retained chemistry-readiness facts. Isolated
   reference-compatible existing H can satisfy a whole-structure H goal without
