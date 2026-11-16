@@ -31,6 +31,7 @@ from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.semantics import IdealGeometryHydrogenSemantics
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
+from protrepair.chemistry.restraint.reference import ComponentRestraintReference
 from protrepair.chemistry.restraint.structure import StructureRestraints
 from protrepair.chemistry.restraint.template import PlaneRestraintTarget
 from protrepair.chemistry.retained_non_polymer.michael_adduct import (
@@ -340,6 +341,33 @@ def test_product_preserves_custom_restraint_dictionary():
         ).for_residue(LIGAND)
         == custom
     )
+
+
+def test_component_reference_cannot_bypass_realized_product_filter():
+    library = build_default_component_library()
+    restraints = build_default_restraint_library()
+    default = restraints.require("QS7")
+    component = library.require("QS7").reference_component
+    assert component is not None
+    old = default.bond_target("OAU", "CAV")
+    assert old is not None
+    target = replace(old, target_distance_angstrom=old.target_distance_angstrom + 0.01)
+    reference = ComponentRestraintReference(
+        component,
+        frozenset({"CAO", "OAU", "CAV"}),
+        frozenset({"CAO"}),
+        (target,),
+        (),
+        "test:bystander-reference",
+    )
+    prepared = add_retained_non_polymer_hydrogens(_source()).structure
+    selected = StructureRestraints(
+        prepared, library, restraints.with_component_reference(reference)
+    ).for_residue(LIGAND)
+    assert selected is not None
+    assert selected.bond_target("OAU", "CAV") == target
+    assert selected.bond_target("CBF", "CBG") is None
+    assert not any(t.center_atom_name in {"CBF", "CBG"} for t in selected.angle_targets)
 
 
 def test_product_restraint_projection_drops_only_reaction_site_planes():

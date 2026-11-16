@@ -120,6 +120,34 @@ deviations. Angle restraints retain their separate five-degree minimum. These
 are calibration choices for optimization, not exact validity bounds or promises
 that every reported geometry issue will disappear.
 
+Component-state geometry references are read-only alternatives to a static
+dictionary. They apply only when the complete declared heavy scope, charge,
+bond orders, aromaticity, H/D/T parent counts and boundary orders match the
+current structure. Coordinates do not select the chemical state. Unknown H
+parents, incomplete or mismatched chemistry, or external relationships on the
+scope retain the static targets without introducing a new input rejection.
+Replacing a component's dictionary explicitly removes its automatic references.
+
+References replace existing bond targets and complete angle centres only;
+centres touching the declared boundary retain all their static angles. Stereo,
+plane targets, restraint coverage, window policy and force constants stay
+unchanged. Native constraints, diagnostics and the severe-bond guard use the
+same snapshot-bound selection. Loaded monomer references use explicit target
+values and ESDs, not distances measured from their coordinates, and retain a
+source identity with the supplied text's UTF-8 SHA-256. An upstream raw-file
+checksum is a separate boundary provenance check.
+
+This is internal reference-binding infrastructure, not a supported custom
+restraint-library input to `process_structure`. Source identities and text
+digests remain on the reference objects; they are not serialized into structure
+provenance, diagnostics or native records. Static fallback selection is silent.
+
+No additional monomer dataset or phosphate-state default is activated by this
+mechanism. In particular, matching a supplied dianion reference does not prepare
+that state or bypass the existing H/refinement-readiness checks. State preparation
+and reference applicability are separate capabilities; an absent reference does
+not imply that the structure is invalid.
+
 The common region result owns structural edits and diagnostics, without depending
 on a particular transformation family. A continuous result associates its endpoint
 with one native invocation. A local refinement result can instead select a
