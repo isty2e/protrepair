@@ -29,6 +29,7 @@ canonical workflow goal. Supported target axes include:
 - `BackboneHeavyAtomCompletenessState`
 - `SidechainHeavyAtomCompletenessState`
 - `HydrogenCoverageState`
+- `BondedGeometryState.WITHIN_REFERENCE` with `WholeStructureScope`
 - `OxtPresenceState` with a C-terminal `ResidueBoundaryScope`
 - `ClashState` for local scopes
 - `ClashPresenceState` for whole-structure scope
@@ -36,6 +37,18 @@ canonical workflow goal. Supported target axes include:
 Scopes are imported from `protrepair.scope`; target state values are imported
 from `protrepair.state`. Invalid scope and state combinations raise at the
 request boundary.
+
+`BondedGeometryState.WITHIN_REFERENCE` asks the workflow to repair
+intra-residue heavy bond and angle outliers against the applicable standard
+polymer references. The goal uses the same tolerance windows as the geometry
+diagnostic. It can therefore select outliers in deposited coordinates, not
+just introduced distortions. Missing or unqualified references cannot
+satisfy the goal by omission.
+
+Request hydrogen completion separately if it is needed. Geometry repair
+uses the current atom inventory and chemistry, and can return an unmet goal
+when prerequisites or safe motion are unavailable. Without a geometry goal,
+the residual warnings still appear but authorize no new motion.
 
 ## Ingress Options
 
@@ -173,6 +186,10 @@ descendant subtrees are not included, so this is not a complete workflow-wide
 execution log. Exceptions may leave native work unobserved. The records contain
 settings, movable atoms, minimizer status, and backend version, not resumable
 solver state.
+
+Final `INVALID_GEOMETRY` warnings describe residual bonded geometry on the
+returned polymer, including outside reconstructed spans. A warning does not
+change the outcome of a separately requested hydrogen goal.
 
 ## Structure I/O
 

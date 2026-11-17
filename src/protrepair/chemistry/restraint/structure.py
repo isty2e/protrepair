@@ -50,7 +50,9 @@ class StructureRestraints:
         self._components = component_library
         self._restraints = restraint_library
         self._context: PolymerMicrostateContext | None = None
-        self._resolved: dict[ResidueId, ResidueRestraintTemplate | None] = {}
+        self._resolved: dict[
+            ResidueId, tuple[ResidueRestraintTemplate | None, frozenset[str]]
+        ] = {}
 
     def for_residue(self, residue_id: ResidueId) -> ResidueRestraintTemplate | None:
         """Return flat applicable targets for this residue and snapshot.
@@ -70,12 +72,20 @@ class StructureRestraints:
         ResidueNotFoundError
             The residue is absent from the bound snapshot.
         """
+        return self.bound_targets(residue_id)[0]
+
+    def bound_targets(
+        self, residue_id: ResidueId
+    ) -> tuple[ResidueRestraintTemplate | None, frozenset[str]]:
+        """Return usable targets and atoms with unresolved conditional evidence."""
+
         if residue_id in self._resolved:
             return self._resolved[residue_id]
         constitution = self._structure.constitution
         residue = constitution.residue_site_at(constitution.residue_index(residue_id))
         template = self._restraints.get(residue.component_id)
         static_template = template
+        unresolved: frozenset[str] = frozenset()
         references = self._restraints.component_references.get(
             self._restraints.normalize_component_id(residue.component_id), ()
         )
@@ -90,6 +100,10 @@ class StructureRestraints:
                 )
                 if reference is not None:
                     template = reference.apply_to(template)
+                else:
+                    unresolved = scope
+            else:
+                unresolved = scope
         if template is not None and template.sidechain_variants:
             component = self._components.get(residue.component_id)
             graph = None
@@ -99,7 +113,8 @@ class StructureRestraints:
                 site = PolymerMicrostateSite(component, PolymerChemicalSite.SIDECHAIN)
                 resolution = self._context.resolve(residue_id, site)
                 graph = self._context.realized_heavy_graph(residue_id, site, resolution)
-            template = template.for_sidechain_graph(graph)
+            template, unresolved_variant = template.resolve_sidechain_graph(graph)
+            unresolved |= unresolved_variant
         if (
             template is not None
             and static_template
@@ -122,8 +137,8 @@ class StructureRestraints:
                 else:
                     template = binding.applicable_restraints(template)
 
-        self._resolved[residue_id] = template
-        return template
+        self._resolved[residue_id] = (template, unresolved)
+        return template, unresolved
 
     def _component_state(
         self, residue_id: ResidueId, scope: frozenset[str]

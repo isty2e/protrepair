@@ -22,6 +22,7 @@ from protrepair.transformer.completion.span_reconstruction import (
 )
 from protrepair.workflow.contracts import (
     ExternalSpanReconstructionSpec,
+    ProcessResult,
     WorkflowTransformRequests,
 )
 
@@ -29,6 +30,15 @@ FIXTURE = (
     Path(__file__).resolve().parents[1]
     / "fixtures/pdb/span-reconstruction/1ubq-short-gaps.pdb"
 )
+
+
+def _span_issues(result: ProcessResult):
+    return tuple(
+        issue
+        for issue in result.issues
+        if issue.kind is not ValidationIssueKind.INVALID_GEOMETRY
+        or issue.provenance_origins
+    )
 
 
 def _source_lines(*, suffix: bool = False) -> list[str]:
@@ -94,9 +104,9 @@ def _assert_rejected(
     assert result.structure.geometry == source.geometry
     assert result.structure.topology == source.topology
     assert not result.repairs
-    assert len(result.issues) == 1
-    assert result.issues[0].kind is ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED
-    assert reason in result.issues[0].message
+    (failure,) = _span_issues(result)
+    assert failure.kind is ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED
+    assert reason in failure.message
 
 
 @pytest.mark.parametrize("workflow", [False, True])
@@ -255,7 +265,7 @@ def test_terminal_span_preserves_noncovalent_carbonyl_connection(
             ),
         ),
     )
-    assert not result.issues
+    assert not _span_issues(result)
     preserved = result.structure.topology.bond_between(
         result.structure.constitution.atom_index(left),
         result.structure.constitution.atom_index(right),
@@ -298,7 +308,7 @@ def test_span_inserts_a_declared_insertion_code_with_both_peptide_bonds() -> Non
             ),
         ),
     )
-    assert not result.issues
+    assert not _span_issues(result)
     observed = {
         frozenset(
             result.structure.constitution.atom_ref_at(i) for i in bond.endpoint_pair()

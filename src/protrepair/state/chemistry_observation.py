@@ -24,6 +24,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 )
 from protrepair.relation.blueprint import StructureBlueprintCoverage
 from protrepair.scope import ResidueSetScope
+from protrepair.state.bonded_geometry import BondedGeometryObservation
 from protrepair.state.hydrogen_expectation import (
     StructureHydrogenExpectationModel,
 )
@@ -110,6 +111,7 @@ class StructureChemistryObservation:
     _hydrogen_expectation_model: StructureHydrogenExpectationModel | None
     _polar_contact_chemistry: PolarContactChemistry | None
     _whole_facts: tuple[StructureCoverageFacts, StructureChemistryReadinessFacts] | None
+    _bonded_geometry: BondedGeometryObservation | None
     _residue_facts: dict[ResidueId, ResidueCompletionStateFacts]
     _retained_facts: dict[ResidueId, RetainedNonPolymerChemistryReadinessFact]
     _external_covalent_attachment_atom_refs: frozenset[AtomRef] | None
@@ -175,6 +177,7 @@ class StructureChemistryObservation:
         )
         object.__setattr__(self, "_polar_contact_chemistry", polar_contact_chemistry)
         object.__setattr__(self, "_whole_facts", None)
+        object.__setattr__(self, "_bonded_geometry", None)
         object.__setattr__(self, "_residue_facts", {})
         object.__setattr__(self, "_retained_facts", {})
         object.__setattr__(self, "_external_covalent_attachment_atom_refs", None)
@@ -208,6 +211,18 @@ class StructureChemistryObservation:
             hydrogen_expectation_model=self._hydrogen_expectation_model,
             polar_contact_chemistry=self._polar_contact_chemistry,
         )
+
+    @property
+    def bonded_geometry(self) -> BondedGeometryObservation:
+        """Observe qualified bonded terms on this exact current structure."""
+
+        observed = self._bonded_geometry
+        if observed is None:
+            observed = BondedGeometryObservation.from_structure(
+                self.context_structure, component_library=self.component_library
+            )
+            object.__setattr__(self, "_bonded_geometry", observed)
+        return observed
 
     @property
     def polar_contact_chemistry(self) -> PolarContactChemistry:

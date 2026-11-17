@@ -3,6 +3,7 @@
 from protrepair.scope import ResidueBoundarySide
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
+    BondedGeometryState,
     HydrogenCoverageState,
     OxtPresenceState,
     SidechainHeavyAtomCompletenessState,
@@ -160,6 +161,17 @@ LOCAL_REFINEMENT_CAPABILITY = WorkflowActionCapability(
     supported_localities=(
         WorkflowActionLocality.RESIDUE_SET,
         WorkflowActionLocality.LOCAL_SCOPE,
+    ),
+)
+
+BONDED_GEOMETRY_CAPABILITY = WorkflowActionCapability(
+    reducible_deficit_families=(WorkflowCapabilityDeficitFamily.INTRINSIC_GEOMETRY,),
+    read_fact_families=(WorkflowCapabilityFactFamily.INTRINSIC_GEOMETRY,),
+    activation_mode=WorkflowActionActivationMode.AUTOMATIC_OR_GOAL_DRIVEN,
+    effect_class=WorkflowActionEffectClass.REVISES_PRESENT_GEOMETRY,
+    supported_localities=(WorkflowActionLocality.LOCAL_SCOPE,),
+    supported_goals=(
+        whole_structure_goal_descriptor(BondedGeometryState.WITHIN_REFERENCE),
     ),
 )
 

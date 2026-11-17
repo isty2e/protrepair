@@ -13,6 +13,7 @@ from protrepair.scope import (
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
+    BondedGeometryState,
     ClashPresenceState,
     ClashState,
     HydrogenCoverageState,
@@ -44,7 +45,8 @@ if TYPE_CHECKING:
     from protrepair.io.ingress_policy import StructureNormalizationPolicy
 
 WorkflowGoalStateValue: TypeAlias = (
-    ClashState
+    BondedGeometryState
+    | ClashState
     | ClashPresenceState
     | BackboneHeavyAtomCompletenessState
     | SidechainHeavyAtomCompletenessState
@@ -183,6 +185,14 @@ class RequestedGoalSet(Sequence[WorkflowGoal]):
             ClashPresenceState,
         )
         return requested_state is ClashPresenceState.NONE
+
+    def requests_bonded_geometry_repair(self) -> bool:
+        """Return whether the request authorizes bonded-geometry repair."""
+
+        return (
+            self.whole_structure_goal_state_value(BondedGeometryState)
+            is BondedGeometryState.WITHIN_REFERENCE
+        )
 
     def requests_hydrogen_preparation(
         self, *, required_residue_ids: tuple[ResidueId, ...] = ()
@@ -535,6 +545,7 @@ def is_workflow_goal_state_value(
     return isinstance(
         value,
         (
+            BondedGeometryState,
             ClashPresenceState,
             ClashState,
             BackboneHeavyAtomCompletenessState,
@@ -548,6 +559,10 @@ def is_workflow_goal_state_value(
 def validate_workflow_goal_scope(goal: WorkflowGoal) -> None:
     """Reject requested goal propositions with incompatible scope axes."""
 
+    if isinstance(goal.value, BondedGeometryState) and not isinstance(
+        goal.scope, WholeStructureScope
+    ):
+        raise ValueError("BondedGeometryState goals require WholeStructureScope")  # noqa: TRY004 - Invalid data values retain their ValueError contract.
     if isinstance(goal.value, ClashState) and isinstance(
         goal.scope,
         WholeStructureScope,

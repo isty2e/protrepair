@@ -19,6 +19,7 @@ from protrepair.scope import ResidueSetScope, Scope, WholeStructureScope
 from protrepair.scope.observed_atom_scope_lowering import OBSERVED_ATOM_SCOPE_LOWERING
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
+    BondedGeometryState,
     ClashPresenceState,
     HydrogenCoverageState,
     OrientationCorrectionEligibilityState,
@@ -330,6 +331,17 @@ def evaluate_requested_goal_report(
 
         blocking_scopes: tuple[Scope, ...] = ()
         details = None
+        if not satisfied and isinstance(goal.value, BondedGeometryState):
+            geometry = observation.bonded_geometry
+            blocking_scopes = tuple(
+                ResidueSetScope((rid,)) for rid in geometry.unassessed_residue_ids
+            )
+            details = (
+                f"{len(geometry.residual_excesses)} qualified bonded outlier(s); "
+                f"{len(geometry.assessed_references)} assessed term(s); "
+                f"{len(geometry.unassessed_residue_ids)} polymer residue(s) "
+                "with missing or unqualified reference evidence"
+            )
         if not satisfied and isinstance(goal.value, HydrogenCoverageState):
             if isinstance(goal.scope, WholeStructureScope):
                 hydrogen_facts = observation.whole_structure_facts()[1]
@@ -530,9 +542,21 @@ def evaluate_workflow_branch_quality_score(
             component_library=active_component_library,
             chemistry_readiness_facts=chemistry_readiness_facts,
         )
-    geometry_report = detect_heavy_geometry(
-        result.structure,
-        component_library=active_component_library,
+    bonded_geometry = (
+        observation.bonded_geometry
+        if any(
+            outcome.requested_goal.value is BondedGeometryState.WITHIN_REFERENCE
+            and outcome.status is not RequestedGoalStatus.UNSUPPORTED
+            for outcome in requested_goal_report.outcomes
+        )
+        else None
+    )
+    geometry_report = (
+        bonded_geometry.report
+        if bonded_geometry is not None
+        else detect_heavy_geometry(
+            result.structure, component_library=active_component_library
+        )
     )
     severe_geometry_residue_count = len(
         severe_intrinsic_geometry_residues(geometry_report)
@@ -579,6 +603,14 @@ def evaluate_workflow_branch_quality_score(
         ),
         severe_geometry_residue_count=severe_geometry_residue_count,
         search_depth=search_depth,
+        bonded_geometry_preference=(
+            None
+            if bonded_geometry is None
+            else (
+                len(bonded_geometry.unassessed_residue_ids),
+                bonded_geometry.total_excess(),
+            )
+        ),
     )
 
 

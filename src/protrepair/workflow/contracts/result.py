@@ -338,6 +338,7 @@ class WorkflowBranchQualityScore:
     stereochemistry_violation_count: int = 0
     severe_geometry_residue_count: int = 0
     search_depth: int = 0
+    bonded_geometry_preference: tuple[int, float] | None = None
 
     @classmethod
     def from_requested_goal_report(
@@ -357,6 +358,7 @@ class WorkflowBranchQualityScore:
         stereochemistry_violation_count: int = 0,
         severe_geometry_residue_count: int = 0,
         search_depth: int = 0,
+        bonded_geometry_preference: tuple[int, float] | None = None,
     ) -> "WorkflowBranchQualityScore":
         """Build a branch score from requested goals plus observed burdens."""
 
@@ -378,6 +380,7 @@ class WorkflowBranchQualityScore:
             stereochemistry_violation_count=stereochemistry_violation_count,
             severe_geometry_residue_count=severe_geometry_residue_count,
             search_depth=search_depth,
+            bonded_geometry_preference=bonded_geometry_preference,
         )
 
     def order_key(
@@ -426,6 +429,7 @@ class WorkflowBranchQualityScore:
                 self.unmet_goal_count,
                 self.blocked_goal_count,
                 self.unsupported_goal_count,
+                *(self.bonded_geometry_preference or ()),
             )
         if axis is WorkflowBranchQualityAxis.ISSUE_BURDEN:
             return (self.warning_count, self.issue_count)

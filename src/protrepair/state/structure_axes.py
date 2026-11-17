@@ -2,22 +2,6 @@
 
 from enum import Enum
 
-__all__ = [
-    "BackboneHeavyAtomCompletenessState",
-    "BoundaryAuthenticityState",
-    "ClashObservationMode",
-    "ClashPresenceState",
-    "ComponentSupportState",
-    "HydrogenApplicabilityState",
-    "HydrogenCoverageState",
-    "OrientationCorrectionEligibilityState",
-    "OxtPresenceState",
-    "ParserCompatibilityProfile",
-    "ParserCompatibilityState",
-    "SidechainHeavyAtomCompletenessState",
-    "StereochemistryState",
-]
-
 
 class ComponentSupportState(str, Enum):
     """Observed support coverage over one canonical residue set."""
@@ -78,6 +62,13 @@ class HydrogenCoverageState(str, Enum):
         """Return whether hydrogen completion may still add missing hydrogens."""
 
         return self is not HydrogenCoverageState.COMPLETE
+
+
+class BondedGeometryState(str, Enum):
+    """Polymer heavy bond and angle agreement with qualified references."""
+
+    WITHIN_REFERENCE = "within_reference"
+    OUTLIERS = "outliers"
 
 
 class ClashPresenceState(str, Enum):
@@ -164,3 +155,21 @@ class BoundaryAuthenticityState(str, Enum):
 
     AUTHENTIC_IN_CONTEXT = "authentic_in_context"
     PROJECTED_FRAGMENT_BOUNDARY = "projected_fragment_boundary"
+
+
+__all__ = [
+    "BackboneHeavyAtomCompletenessState",
+    "BondedGeometryState",
+    "BoundaryAuthenticityState",
+    "ClashObservationMode",
+    "ClashPresenceState",
+    "ComponentSupportState",
+    "HydrogenApplicabilityState",
+    "HydrogenCoverageState",
+    "OrientationCorrectionEligibilityState",
+    "OxtPresenceState",
+    "ParserCompatibilityProfile",
+    "ParserCompatibilityState",
+    "SidechainHeavyAtomCompletenessState",
+    "StereochemistryState",
+]

@@ -14,6 +14,7 @@ from protrepair.scope import (
 from protrepair.scope.observed_atom_scope_lowering import OBSERVED_ATOM_SCOPE_LOWERING
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
+    BondedGeometryState,
     ClashPresenceState,
     ClashState,
     HydrogenApplicabilityState,
@@ -289,6 +290,9 @@ def observed_requested_goal_value(
     structure = observation.context_structure
     scope = goal.scope
     value = goal.value
+    if isinstance(value, BondedGeometryState) and scope == WholeStructureScope():
+        return observation.bonded_geometry.observed_state(), snapshot, boundary_facts
+
     if scope == WholeStructureScope() and isinstance(
         value,
         (

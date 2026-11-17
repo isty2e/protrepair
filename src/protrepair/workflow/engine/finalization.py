@@ -128,7 +128,7 @@ def finalize_workflow_result(
     )
     if source_coordination_issues:
         result = result.with_appended_issues(source_coordination_issues)
-    geometry_issues = _final_reconstructed_geometry_issues(
+    geometry_issues = _final_geometry_issues(
         result, component_library=component_library
     )
     if geometry_issues:
@@ -155,12 +155,12 @@ def finalize_workflow_result(
     )
 
 
-def _final_reconstructed_geometry_issues(
+def _final_geometry_issues(
     result: ProcessResult,
     *,
     component_library: ComponentLibrary,
 ) -> tuple[ValidationIssue, ...]:
-    """Report residual span geometry after branch selection and any later repair."""
+    """Report residual geometry once, preserving reconstructed span origins."""
 
     origins_by_residue = {
         residue_id: repair.provenance_origins
@@ -168,18 +168,13 @@ def _final_reconstructed_geometry_issues(
         if repair.kind is RepairEventKind.ABSENT_RESIDUE_SPAN_RECONSTRUCTED
         for residue_id in repair.scope.residue_ids
     }
-    if not origins_by_residue:
-        return ()
-
     report = detect_heavy_geometry(
-        result.structure,
-        component_library=component_library,
-        residue_ids=tuple(origins_by_residue),
+        result.structure, component_library=component_library
     )
     return tuple(
         replace(
             issue,
-            provenance_origins=origins_by_residue[issue.scope.residue_ids[0]],
+            provenance_origins=origins_by_residue.get(issue.scope.residue_ids[0], ()),
         )
         for issue in report.to_issues()
     )
