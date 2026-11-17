@@ -8,14 +8,29 @@ import pytest
 
 from protrepair.api import process_structure
 from protrepair.chemistry.component.defaults import build_default_component_library
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
+from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
+from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
+from protrepair.diagnostics.kinds import IssueSeverity
 from protrepair.errors import StructureNormalizationError
-from protrepair.io import read_structure_string, write_structure_string
-from protrepair.io.ingress_policy import MutationPolicy, StructureNormalizationPolicy
+from protrepair.io import (
+    read_structure_string,
+    to_rdkit_molecule,
+    write_structure_string,
+)
+from protrepair.io.ingress_policy import (
+    MutationPolicy,
+    OccupancyPolicy,
+    StructureNormalizationPolicy,
+)
 from protrepair.io.structure_ingress import (
     apply_structure_normalization_policy,
     normalize_raw_structure,
 )
+from protrepair.scope import WholeStructureScope
+from protrepair.state import HydrogenCoverageState
 from protrepair.structure import ProteinStructure
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -28,6 +43,7 @@ from protrepair.structure.topology import (
     StructureTopology,
 )
 from protrepair.transformer.completion.heavy.core import repair_heavy_atoms_core
+from protrepair.workflow.contracts import requested_process_goal
 
 RESIDUE = ResidueId("A", 1)
 FAMILIES = (("OT1", "OT2"), ("OC2", "OC1"))
@@ -75,6 +91,31 @@ def _text(raw: gemmi.Structure, file_format: FileFormat) -> str:
         return raw.make_pdb_string()
     raw.setup_entities()
     return raw.make_mmcif_document().as_string()
+
+
+def _charged_text(
+    raw: gemmi.Structure,
+    file_format: FileFormat,
+    charges: dict[str, int | None],
+) -> str:
+    if file_format is FileFormat.MMCIF:
+        document = gemmi.cif.read_string(_text(raw, file_format))
+        values = document.sole_block().find_values("_atom_site.pdbx_formal_charge")
+        for index, atom in enumerate(raw[0][0][0]):
+            charge = charges.get(atom.name)
+            values[index] = "?" if charge is None else str(charge)
+        return document.as_string()
+
+    lines = []
+    for line in _text(raw, file_format).splitlines():
+        if line.startswith(("ATOM  ", "HETATM")):
+            charge = charges.get(line[12:16].strip())
+            token = (
+                "  " if charge is None else f"{abs(charge)}{'-' if charge < 0 else '+'}"
+            )
+            line = line[:78] + token + line[80:]
+        lines.append(line)
+    return "\n".join(lines) + "\n"
 
 
 def _normalize(
@@ -170,12 +211,15 @@ def test_mmcif_charge_declarations_follow_the_physical_oxygen(
         charges[i] = "?"
     charges[4] = "?" if charge is None else str(charge)
     source = read_structure_string(document.as_string(), FileFormat.MMCIF)
-    ref = AtomRef(RESIDUE, "O")
+    ref = AtomRef(RESIDUE, "OXT" if charge == -1 else "O")
     assert source.topology.formal_charge(source.constitution.atom_index(ref)) == charge
     observation = source.provenance.ingress.observation
     assert observation is not None
     assert observation.formal_charge(ref) == charge
-    assert observation.formal_charge(AtomRef(RESIDUE, "OXT")) is None
+    assert (
+        observation.formal_charge(AtomRef(RESIDUE, "O" if charge == -1 else "OXT"))
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -209,11 +253,14 @@ def test_nonoxygen_alias_is_refused() -> None:
 @pytest.mark.parametrize("isotope", ("H", "D", "T"))
 @pytest.mark.parametrize("parent_name", ("O", "OXT"))
 @pytest.mark.parametrize("declared", (False, True))
+@pytest.mark.parametrize("charged", (False, True))
 def test_name_dependent_terminal_hydrogens_are_refused_even_with_a_bond(
-    isotope: str, parent_name: str, declared: bool
+    isotope: str, parent_name: str, declared: bool, charged: bool
 ) -> None:
     hydrogen = isotope + ("O" if parent_name == "O" else "XT")
     raw = _raw(hydrogen=hydrogen, isotope=isotope)
+    if charged:
+        raw[0][0][0]["OT1"][0].charge = -1
     connections = (_connection("OT1", hydrogen),) if declared else ()
     with pytest.raises(StructureNormalizationError, match="terminal oxygen"):
         _normalize(raw, connections, isotope=isotope)
@@ -613,3 +660,208 @@ def test_normalization_does_not_construct_a_force_field(
     )
     source = _normalize(_raw())
     assert "OXT" in source.constitution.chains[0].residues[0].atom_site_names()
+
+
+@pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
+@pytest.mark.parametrize("names", FAMILIES)
+@pytest.mark.parametrize(
+    ("charges", "expected"),
+    (
+        ((-1, None), ("OXT", "O")),
+        ((None, -1), ("O", "OXT")),
+        ((-1, 0), ("OXT", "O")),
+        ((0, -1), ("O", "OXT")),
+        ((None, None), ("O", "OXT")),
+        ((0, 0), ("O", "OXT")),
+        ((-1, -1), ("O", "OXT")),
+        ((-2, 0), ("O", "OXT")),
+        ((-1, 1), ("O", "OXT")),
+        ((1, -1), ("O", "OXT")),
+    ),
+)
+def test_declared_charge_selects_labels_without_changing_physical_facts(
+    file_format: FileFormat,
+    names: tuple[str, str],
+    charges: tuple[int | None, int | None],
+    expected: tuple[str, str],
+) -> None:
+    raw = _raw(names)
+    text = _charged_text(raw, file_format, dict(zip(names, charges, strict=True)))
+    wire = (
+        gemmi.read_pdb_string(text)
+        if file_format is FileFormat.PDB
+        else gemmi.make_structure_from_block(gemmi.cif.read_string(text).sole_block())
+    )
+    source = read_structure_string(text, file_format)
+    observation = source.provenance.ingress.observation
+    assert observation is not None
+    assert source.constitution == observation.constitution
+    assert source.constitution.chains[0].residues[0].atom_site_names() == (
+        "N",
+        "CA",
+        "C",
+        "CB",
+        *expected,
+    )
+    for original, name, charge in zip(
+        tuple(wire[0][0][0])[-2:], expected, charges, strict=True
+    ):
+        ref = AtomRef(RESIDUE, name)
+        index = source.constitution.atom_index(ref)
+        geometry = source.geometry.atom_geometry(index)
+        assert tuple(geometry.position) == (
+            original.pos.x,
+            original.pos.y,
+            original.pos.z,
+        )
+        assert geometry.occupancy == original.occ
+        assert geometry.b_factor == original.b_iso
+        assert source.topology.formal_charge(index) == charge
+        assert observation.formal_charge(ref) == charge
+
+
+@pytest.mark.parametrize("names", FAMILIES)
+@pytest.mark.parametrize("order", (1, 2))
+def test_charge_mapping_preserves_source_orders_and_their_conflicts(
+    names: tuple[str, str], order: int
+) -> None:
+    raw = _raw(names)
+    raw[0][0][0][names[0]][0].charge = -1
+    connection = _connection("C", names[0])
+    connection = replace(
+        connection,
+        source_metadata=replace(connection.source_metadata, reported_order=order),
+    )
+    source = _normalize(raw, (connection,))
+    observation = source.provenance.ingress.observation
+    assert observation is not None
+    for constitution, topology in (
+        (source.constitution, source.topology),
+        (observation.constitution, observation.topology),
+    ):
+        bond = topology.bond_between(
+            constitution.atom_index(AtomRef(RESIDUE, "C")),
+            constitution.atom_index(AtomRef(RESIDUE, "OXT")),
+        )
+        assert bond is not None
+        assert bond.order == order
+        assert bond.source_metadata == connection.source_metadata
+    preparation = AminoAcidPreparation(
+        PolymerMicrostateContext(source), build_default_component_library()
+    )
+    target = next(
+        t
+        for t in preparation.targets_for(RESIDUE)
+        if t.site.kind is PolymerChemicalSite.BACKBONE_C
+    )
+    expected = (
+        MicrostateResolutionStatus.RESOLVED
+        if order == 1
+        else MicrostateResolutionStatus.CONFLICT
+    )
+    assert target.resolution.status is expected
+
+
+@pytest.mark.parametrize("names", FAMILIES)
+@pytest.mark.parametrize("isotope", ("H", "D", "T"))
+def test_charge_mapping_keeps_explicit_h_parent_even_when_chemistry_conflicts(
+    names: tuple[str, str], isotope: str
+) -> None:
+    raw = _raw(names, hydrogen="QH", isotope=isotope)
+    raw[0][0][0][names[0]][0].charge = -1
+    connection = _connection(names[0], "QH")
+    source = _normalize(raw, (connection,), isotope=isotope)
+    observation = source.provenance.ingress.observation
+    assert observation is not None
+    for constitution, topology in (
+        (source.constitution, source.topology),
+        (observation.constitution, observation.topology),
+    ):
+        bond = topology.bond_between(
+            constitution.atom_index(AtomRef(RESIDUE, "OXT")),
+            constitution.atom_index(AtomRef(RESIDUE, "QH")),
+        )
+        assert bond is not None
+        assert bond.source_metadata == connection.source_metadata
+    preparation = AminoAcidPreparation(
+        PolymerMicrostateContext(source), build_default_component_library()
+    )
+    target = next(
+        t
+        for t in preparation.targets_for(RESIDUE)
+        if t.site.kind is PolymerChemicalSite.BACKBONE_C
+    )
+    assert target.resolution.status is MicrostateResolutionStatus.CONFLICT
+
+
+@pytest.mark.parametrize("selection", (OccupancyPolicy.HIGHEST, OccupancyPolicy.LOWEST))
+def test_charge_mapping_uses_only_the_selected_altloc(
+    selection: OccupancyPolicy,
+) -> None:
+    raw = _raw()
+    for atom in raw[0][0][0]:
+        atom.altloc = "A"
+    raw[0][0][0]["OT1"][0].charge = -1
+    alternative = _raw()
+    alternative[0][0][0]["OT2"][0].charge = -1
+    for atom in alternative[0][0][0]:
+        atom.altloc = "B"
+        atom.occ = 0.1
+        atom.pos.x += 10
+        raw[0][0][0].add_atom(atom)
+    source = _normalize(
+        raw, policy=StructureNormalizationPolicy(occupancy_policy=selection)
+    )
+    index = source.constitution.atom_index(AtomRef(RESIDUE, "OXT"))
+    assert source.topology.formal_charge(index) == -1
+    geometry = source.geometry.atom_geometry(index)
+    expected = (
+        ("A", (2.8, 2.0, 0.0))
+        if selection is OccupancyPolicy.HIGHEST
+        else ("B", (11.8, 3.0, 0.0))
+    )
+    assert (geometry.altloc, tuple(geometry.position)) == expected
+
+
+@pytest.mark.parametrize("component", ("ALA", "GLY"))
+@pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
+@pytest.mark.parametrize("names", FAMILIES)
+@pytest.mark.parametrize("charged", (0, 1))
+def test_charge_disambiguated_peptide_has_coherent_hydrogens_and_native_graph(
+    component: str, file_format: FileFormat, names: tuple[str, str], charged: int
+) -> None:
+    raw = _raw(names, component=component)
+    residue = raw[0][0][0]
+    if component == "GLY":
+        residue.remove_atom("CB", "\x00")
+    residue[names[0]][0].pos = gemmi.Position(3.227, 1.618, 0)
+    residue[names[1]][0].pos = gemmi.Position(1.152, 2.321, 0)
+    source = read_structure_string(
+        _charged_text(raw, file_format, {names[charged]: -1, names[1 - charged]: 0}),
+        file_format,
+    )
+    result = process_structure(
+        source,
+        requested_goals=(
+            requested_process_goal(
+                scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+            ),
+        ),
+    )
+    assert result.requested_goal_report is not None
+    assert result.requested_goal_report.outcomes[0].status.value == "satisfied"
+    assert not [
+        issue for issue in result.issues if issue.severity is IssueSeverity.ERROR
+    ]
+    native = to_rdkit_molecule(result.structure)
+    for name, charge, order in (("O", 0, 2), ("OXT", -1, 1)):
+        ref = AtomRef(RESIDUE, name)
+        index = result.structure.constitution.atom_index(ref)
+        carbon = result.structure.constitution.atom_index(AtomRef(RESIDUE, "C"))
+        assert native.GetAtomWithIdx(index.value).GetFormalCharge() == charge
+        bond = native.GetBondBetweenAtoms(carbon.value, index.value)
+        assert bond is not None
+        assert bond.GetBondTypeAsDouble() == order
+        assert result.structure.geometry.atom_geometry(
+            index
+        ) == source.geometry.atom_geometry(source.constitution.atom_index(ref))

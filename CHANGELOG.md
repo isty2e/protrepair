@@ -26,7 +26,9 @@
 
 - normalize complete `OT1`/`OT2` and `OC1`/`OC2` terminal oxygen pairs to
   `O`/`OXT` at peptide ingress, preserving atom data and source connections
-  before completion. Refuse partial or mixed naming and source H/D/T whose
+  before completion. Assign `OXT` to a uniquely declared `-1` oxygen when its
+  partner is zero or unspecified; otherwise use the naming convention.
+  Refuse partial or mixed naming and source H/D/T whose
   parent interpretation depends on the new names; retained ligands are unchanged
 - prepare retained standard amino acids and the supported CSO/HYP/MSE/PTR/SEP/TPO
   components with shared polymer free-terminal and standard side-chain defaults.

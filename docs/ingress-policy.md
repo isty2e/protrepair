@@ -28,14 +28,17 @@ because the PDB alone cannot recover them.
 ## Terminal Oxygen Names
 
 After selecting atoms and residue variants, ingress normalizes complete terminal
-oxygen pairs in recognized peptide residues with canonical backbone templates:
+oxygen pairs in recognized peptide residues with canonical backbone templates.
+If one alias has a declared charge of `-1` and the other is explicitly `0` or
+unspecified, the charged atom becomes `OXT` and its partner becomes `O`. The
+charge stays on the same physical atom. Otherwise ingress uses this naming table:
 
 | Source names | Canonical names |
 | --- | --- |
 | `OT1`, `OT2` | `O`, `OXT` |
 | `OC1`, `OC2` | `OXT`, `O` |
 
-These mappings follow the GROMACS v2026.0
+The fallback mappings follow the GROMACS v2026.0
 [CHARMM27 terminal rules](https://raw.githubusercontent.com/gromacs/gromacs/v2026.0/share/top/charmm27.ff/aminoacids.c.tdb)
 and [Amber99SB-ILDN atom renaming table](https://raw.githubusercontent.com/gromacs/gromacs/v2026.0/share/top/amber99sb-ildn.ff/aminoacids.arn).
 

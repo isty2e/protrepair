@@ -158,8 +158,9 @@ def _terminal_oxygen_name_projection(
     residue: ResidueSite,
     *,
     template: ResidueTemplate | None,
+    formal_charge_by_atom_name: Mapping[str, int | None],
 ) -> tuple[tuple[str, str], ...]:
-    """Reconcile complete terminal pairs without selecting oxygen chemistry."""
+    """Choose terminal labels from declared charge or the naming convention."""
 
     aliases = frozenset({"OT1", "OT2", "OC1", "OC2"})
     present = frozenset(residue.atom_site_names())
@@ -198,6 +199,16 @@ def _terminal_oxygen_name_projection(
         raise StructureNormalizationError(
             error_prefix + "source H/D/T names depend on the newly created O/OXT names"
         )
+
+    for charged, _ in projection:
+        if formal_charge_by_atom_name.get(charged) == -1 and all(
+            formal_charge_by_atom_name.get(other) in (None, 0)
+            for other, _ in projection
+            if other != charged
+        ):
+            return tuple(
+                (name, "OXT" if name == charged else "O") for name, _ in projection
+            )
     return projection
 
 
@@ -385,6 +396,9 @@ def normalize_raw_structure(
                     _terminal_oxygen_name_projection(
                         payload.constitution,
                         template=component_library.get(payload.component_id),
+                        formal_charge_by_atom_name=dict(
+                            payload.formal_charge_by_atom_name
+                        ),
                     )
                 )
                 for payload in residues
@@ -578,7 +592,13 @@ def apply_structure_normalization_policy(
     for chain in selected_constitution.chains:
         for residue in chain.residues:
             if _terminal_oxygen_name_projection(
-                residue, template=component_library.get(residue.component_id)
+                residue,
+                template=component_library.get(residue.component_id),
+                formal_charge_by_atom_name=dict(
+                    structure.residue_formal_charge_by_atom_name(
+                        structure.constitution.residue_index(residue.residue_id)
+                    )
+                ),
             ):
                 raise StructureNormalizationError(
                     "terminal oxygen aliases in a canonical structure require "
