@@ -88,6 +88,21 @@ the last action executed.
 
 ## Local Refinement Assessment
 
+An explicit bonded-geometry goal selects defects in the requested chains or
+residues, or across the whole polymer. The planner starts with the defective
+term and can enlarge the movable set beyond the target along realized bonds
+or observed steric contacts. Atoms included only as force-field context
+remain fixed. Input H/D/T and heavy atoms whose attached H cannot move stay
+fixed. Candidate selection checks both focus progress and bonded geometry
+at the motion boundary, including incident peptide C-N bonds.
+
+The workflow search budget limits the attempts, not which graph distances
+are eligible. The workflow can retain a partial repair even if the goal
+remains unmet. When higher priority axes and goal statuses tie, the default
+requested-goal preference compares reference coverage and excess outside the
+diagnostic tolerances across the union of the requested geometry scopes. A
+custom branch preference without the requested-goals axis omits that tie-break.
+
 Local refinement measures contacts involving the selected residues, including
 contacts with retained ligands and cofactors. Heavy atoms and H/D/T participate;
 H-H pairs keep their usual exclusion. This default does not depend on the force

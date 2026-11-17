@@ -18,6 +18,7 @@ from protrepair.state.retained_non_polymer_chemistry import (
 from protrepair.state.scoped import CarrierScopedState, ScopedState
 from protrepair.state.structure_axes import (
     BackboneHeavyAtomCompletenessState,
+    BondedGeometryState,
     BoundaryAuthenticityState,
     ClashObservationMode,
     ClashPresenceState,
@@ -76,6 +77,7 @@ __all__ = [
     "AtomScopeObservation",
     "AtomScopeStateFacts",
     "BackboneHeavyAtomCompletenessState",
+    "BondedGeometryState",
     "BoundaryAuthenticityState",
     "CarrierScopedState",
     "ClashObservationMode",

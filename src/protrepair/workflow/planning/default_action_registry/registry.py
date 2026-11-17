@@ -3,6 +3,7 @@
 from protrepair.workflow.actions.backbone_window_refinement import (
     BackboneWindowRefinementTransformer,
 )
+from protrepair.workflow.actions.bonded_geometry import BondedGeometryRepairTransformer
 from protrepair.workflow.actions.disulfide_hydrogen import (
     DisulfideHydrogenNormalizationTransformer,
 )
@@ -35,8 +36,13 @@ from protrepair.workflow.actions.terminal_augmentation import (
 )
 from protrepair.workflow.planning.action.domain import WorkflowActionDomain
 from protrepair.workflow.planning.action.registry import WorkflowActionRegistryEntry
+from protrepair.workflow.planning.default_action_registry.bonded_geometry_proposals import (
+    bonded_geometry_is_admissible,
+    bonded_geometry_proposals,
+)
 from protrepair.workflow.planning.default_action_registry.capabilities import (
     BACKBONE_WINDOW_REFINEMENT_CAPABILITY,
+    BONDED_GEOMETRY_CAPABILITY,
     COMMITTED_PACKING_CAPABILITY,
     DISULFIDE_HYDROGEN_NORMALIZATION_CAPABILITY,
     DISULFIDE_TOPOLOGY_RESOLUTION_CAPABILITY,
@@ -135,6 +141,12 @@ REQUEST_DRIVEN_WORKFLOW_ACTION_REGISTRY: tuple[
         capability=TERMINAL_AUGMENTATION_CAPABILITY,
         is_admissible_for_domain=terminal_augmentation_is_admissible,
         proposals_for_domain=terminal_augmentation_proposals,
+    ),
+    WorkflowActionRegistryEntry(
+        action_type=BondedGeometryRepairTransformer,
+        capability=BONDED_GEOMETRY_CAPABILITY,
+        is_admissible_for_domain=bonded_geometry_is_admissible,
+        proposals_for_domain=bonded_geometry_proposals,
     ),
 )
 

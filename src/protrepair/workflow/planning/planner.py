@@ -30,6 +30,7 @@ from protrepair.transformer.continuous.execution import ContinuousRelaxationExec
 from protrepair.transformer.local.projection import (
     LocalContinuousExecutionResidueProjection,
 )
+from protrepair.workflow.actions.bonded_geometry import BondedGeometryFeedback
 from protrepair.workflow.contracts.planning import (
     WorkflowPlanningContext,
     WorkflowPlanningPhase,
@@ -404,6 +405,7 @@ class WorkflowPlannerMemory:
         transformer: WorkflowStateAction,
         *,
         input_structure: ProteinStructure | None = None,
+        bonded_geometry_feedback: BondedGeometryFeedback | None = None,
     ) -> "WorkflowPlannerMemory":
         """Record adoption without losing a repeated preparation's input.
 
@@ -421,7 +423,9 @@ class WorkflowPlannerMemory:
         """
 
         memory = self.with_attempted_transformer(
-            transformer, input_structure=input_structure
+            transformer,
+            input_structure=input_structure,
+            bonded_geometry_feedback=bonded_geometry_feedback,
         )
         if memory.has_adopted_transformer(transformer):
             return memory
@@ -436,6 +440,7 @@ class WorkflowPlannerMemory:
         transformer: WorkflowStateAction,
         *,
         input_structure: ProteinStructure | None = None,
+        bonded_geometry_feedback: BondedGeometryFeedback | None = None,
     ) -> "WorkflowPlannerMemory":
         """Record evaluation separately from output adoption.
 
@@ -456,7 +461,12 @@ class WorkflowPlannerMemory:
             transformer,
             None
             if input_structure is None
-            else transformer.reapplication_context(input_structure),
+            else (
+                input_structure
+                if bonded_geometry_feedback is not None
+                else transformer.reapplication_context(input_structure)
+            ),
+            bonded_geometry_feedback=bonded_geometry_feedback,
         )
         if attempt in self.attempts:
             return self

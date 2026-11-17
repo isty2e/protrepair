@@ -4,6 +4,11 @@
 
 ### Added
 
+- report residual bonded geometry across the final polymer, not just rebuilt
+  spans. Request `BondedGeometryState.WITHIN_TOLERANCE` to try coordinate-only
+  repair for selected residues, selected chains or the whole polymer. Without
+  that goal, geometry findings do not trigger new movement or change hydrogen
+  goal attainment
 - add internal component-state geometry reference support to direct diagnostics
   and local refinement. Match realized chemistry without
   changing H or charge; preserve static fallbacks and caller dictionary overrides.

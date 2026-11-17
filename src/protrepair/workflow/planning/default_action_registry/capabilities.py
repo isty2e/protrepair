@@ -3,10 +3,12 @@
 from protrepair.scope import ResidueBoundarySide
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
+    BondedGeometryState,
     HydrogenCoverageState,
     OxtPresenceState,
     SidechainHeavyAtomCompletenessState,
 )
+from protrepair.state.bonded_geometry import BONDED_GEOMETRY_SCOPE_TYPES
 from protrepair.workflow.planning.capability import (
     WorkflowActionActivationMode,
     WorkflowActionCapability,
@@ -15,6 +17,7 @@ from protrepair.workflow.planning.capability import (
     WorkflowActionLocality,
     WorkflowCapabilityDeficitFamily,
     WorkflowCapabilityFactFamily,
+    WorkflowGoalDescriptor,
     residue_boundary_goal_descriptor,
     whole_structure_goal_descriptor,
 )
@@ -160,6 +163,22 @@ LOCAL_REFINEMENT_CAPABILITY = WorkflowActionCapability(
     supported_localities=(
         WorkflowActionLocality.RESIDUE_SET,
         WorkflowActionLocality.LOCAL_SCOPE,
+    ),
+)
+
+BONDED_GEOMETRY_CAPABILITY = WorkflowActionCapability(
+    reducible_deficit_families=(WorkflowCapabilityDeficitFamily.INTRINSIC_GEOMETRY,),
+    read_fact_families=(WorkflowCapabilityFactFamily.INTRINSIC_GEOMETRY,),
+    activation_mode=WorkflowActionActivationMode.AUTOMATIC_OR_GOAL_DRIVEN,
+    effect_class=WorkflowActionEffectClass.REVISES_PRESENT_GEOMETRY,
+    supported_localities=(WorkflowActionLocality.LOCAL_SCOPE,),
+    supported_goals=tuple(
+        WorkflowGoalDescriptor(
+            scope_type=scope_type,
+            state_type=BondedGeometryState,
+            allowed_values=(BondedGeometryState.WITHIN_TOLERANCE,),
+        )
+        for scope_type in BONDED_GEOMETRY_SCOPE_TYPES
     ),
 )
 

@@ -65,10 +65,20 @@ from protrepair.workflow.actions.context import TransformerExecutionContext
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.contracts import (
     ExternalSpanReconstructionSpec,
+    ProcessResult,
     WorkflowTransformRequests,
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/pdb/span-reconstruction"
+
+
+def _span_issues(result: ProcessResult) -> tuple[ValidationIssue, ...]:
+    return tuple(
+        issue
+        for issue in result.issues
+        if issue.kind is not ValidationIssueKind.INVALID_GEOMETRY
+        or issue.provenance_origins
+    )
 
 
 @pytest.mark.parametrize("junction", [35, 36, 37, 38])
@@ -102,9 +112,9 @@ def test_span_rejects_disconnected_donor_window(junction: int, workflow: bool) -
         assert result.structure.geometry == source.geometry
         assert result.structure.topology == source.topology
         assert not result.repairs
-        assert len(result.issues) == 1
-        assert result.issues[0].kind is ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED
-        assert f"A:{junction}.C" in result.issues[0].message
+        (failure,) = _span_issues(result)
+        assert failure.kind is ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED
+        assert f"A:{junction}.C" in failure.message
     else:
         outcome = reconstruct_donor_span(
             source,
@@ -195,9 +205,9 @@ def test_span_rejects_existing_source_anchor_shortcut(
         assert result.structure.geometry == source.geometry
         assert result.structure.topology == source.topology
         assert not result.repairs
-        assert len(result.issues) == 1
-        assert result.issues[0].kind is ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED
-        assert "already" in result.issues[0].message
+        (failure,) = _span_issues(result)
+        assert failure.kind is ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED
+        assert "already" in failure.message
     else:
         outcome = reconstruct_donor_span(
             source,
@@ -254,8 +264,9 @@ def test_terminal_span_rejects_disconnected_donor_window(
     assert result.structure.geometry == source.geometry
     assert result.structure.topology == source.topology
     assert not result.repairs
-    assert len(result.issues) == 1
-    assert f"A:{junction}.C" in result.issues[0].message
+    (failure,) = _span_issues(result)
+    assert failure.kind is ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED
+    assert f"A:{junction}.C" in failure.message
 
 
 @pytest.mark.parametrize(
@@ -291,7 +302,7 @@ def test_source_anchor_guard_preserves_other_connection_roles(
             ),
         ),
     )
-    assert not result.issues
+    assert not _span_issues(result)
     assert all(
         result.structure.constitution.residue_or_ligand(rid) is not None for rid in gap
     )
@@ -377,7 +388,7 @@ def test_span_retains_inherited_geometry_findings_without_discarding_reconstruct
     expected_issues = final_report.to_issues()
     actual_issues = tuple(
         issue
-        for issue in result.issues
+        for issue in _span_issues(result)
         if issue.kind is ValidationIssueKind.INVALID_GEOMETRY
     )
     assert expected_issues
@@ -430,11 +441,11 @@ def test_real_short_gap_closure_preserves_source_and_donor_chemistry(
         assert any(
             issue.kind is ValidationIssueKind.INVALID_GEOMETRY
             and issue.severity is IssueSeverity.WARNING
-            for issue in result.issues
+            for issue in _span_issues(result)
         )
         assert not result.has_errors()
     else:
-        assert not result.issues
+        assert not _span_issues(result)
     residue = donor.constitution.residue_or_ligand(gap[0])
     assert residue is not None
     definition = (
@@ -588,7 +599,7 @@ def test_small_bond_excess_survives_until_final_state_assessment(
         assert actual_distance - upper == pytest.approx(0.01)
     warnings = tuple(
         issue
-        for issue in result.issues
+        for issue in _span_issues(result)
         if issue.kind is ValidationIssueKind.INVALID_GEOMETRY
     )
     assert bool(warnings) is (followup != "corrected")
@@ -961,8 +972,8 @@ def test_joint_candidate_still_passes_through_actual_junction_gate(
     assert result.structure.constitution == source.constitution
     assert result.structure.geometry == source.geometry
     assert result.structure.topology == source.topology
-    assert len(result.issues) == 1
-    assert "peptide-junction gate" in result.issues[0].message
+    (failure,) = _span_issues(result)
+    assert "peptide-junction gate" in failure.message
 
 
 @pytest.mark.parametrize("local", [False, True])
@@ -1193,7 +1204,7 @@ def test_reconstruction_preserves_covalent_geometry(
             ),
         ),
     )
-    assert not result.issues, [issue.message for issue in result.issues]
+    assert not _span_issues(result), _span_issues(result)
     assert all(
         result.structure.constitution.residue_or_ligand(rid) is not None for rid in gap
     )
@@ -1309,8 +1320,8 @@ def test_incomplete_amide_neighborhood_is_rejected_atomically(
     assert result.structure.constitution == source.constitution
     assert result.structure.geometry == source.geometry
     assert result.structure.topology == source.topology
-    assert len(result.issues) == 1
-    assert "amide-N neighbor" in result.issues[0].message
+    (failure,) = _span_issues(result)
+    assert "amide-N neighbor" in failure.message
 
 
 @pytest.mark.parametrize("perturbation", [0.0, 45.0])
@@ -1383,7 +1394,7 @@ def test_inserted_cysteine_is_followed_by_state_driven_disulfide_resolution() ->
             ),
         ),
     )
-    assert not result.issues
+    assert not _span_issues(result)
     assert disulfide_atom_ref_pairs(result.structure) == disulfide_atom_ref_pairs(
         reference
     )

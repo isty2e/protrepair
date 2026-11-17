@@ -258,9 +258,9 @@ class ResidueRestraintTemplate:
                 raise ValueError("sidechain restraint states must not repeat")
         object.__setattr__(self, "sidechain_variants", variants)
 
-    def for_sidechain_graph(
+    def resolve_sidechain_graph(
         self, graph: MicrostateGraph | None
-    ) -> "ResidueRestraintTemplate":
+    ) -> tuple["ResidueRestraintTemplate", frozenset[str]]:
         """Resolve conditional targets without overriding explicit static targets.
 
         Parameters
@@ -270,11 +270,11 @@ class ResidueRestraintTemplate:
 
         Returns
         -------
-        ResidueRestraintTemplate
-            Flat targets. Unresolved chemistry retains only static targets.
+        tuple
+            Flat targets and atoms covered by unresolved conditional targets.
         """
         if not self.sidechain_variants:
-            return self
+            return self, frozenset()
         variant = next(
             (
                 v
@@ -285,6 +285,7 @@ class ResidueRestraintTemplate:
         )
         bonds = self.bond_targets
         angles = self.angle_targets
+        unresolved: frozenset[str] = frozenset()
         if variant is not None:
             bonds += tuple(
                 t
@@ -303,8 +304,21 @@ class ResidueRestraintTemplate:
                     for s in angles
                 )
             )
-        return replace(
-            self, bond_targets=bonds, angle_targets=angles, sidechain_variants=()
+        else:
+            unresolved = frozenset(
+                name
+                for alternative in self.sidechain_variants
+                for names in (
+                    *((t.atom_name_1, t.atom_name_2) for t in alternative.bond_targets),
+                    *(t.canonical_triplet() for t in alternative.angle_targets),
+                )
+                for name in names
+            )
+        return (
+            replace(
+                self, bond_targets=bonds, angle_targets=angles, sidechain_variants=()
+            ),
+            unresolved,
         )
 
     def bond_target(

@@ -9,6 +9,8 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 )
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import ValidationIssueKind
+from protrepair.state import BondedGeometryState
+from protrepair.state.bonded_geometry import BondedGeometrySelection
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.completion.hydrogen.protonation import (
@@ -27,6 +29,10 @@ from protrepair.transformer.refinement.speculative_planning import (
     SpeculativeStopReason,
 )
 from protrepair.transformer.result import TransformationResult
+from protrepair.workflow.actions.bonded_geometry import (
+    BondedGeometryAttemptResult,
+    BondedGeometryRepairTransformer,
+)
 from protrepair.workflow.actions.context import TransformerExecutionContext
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.contracts.planning import (
@@ -41,7 +47,9 @@ from protrepair.workflow.contracts.request import (
     WorkflowTransformRequests,
 )
 from protrepair.workflow.contracts.result import (
+    RequestedGoalOutcome,
     RequestedGoalReport,
+    RequestedGoalStatus,
     WorkflowBranchOutcome,
     WorkflowBranchQualityScore,
     WorkflowBranchStatus,
@@ -322,10 +330,15 @@ class WorkflowBranchEvaluator:
                 chemistry_observation=observation,
             )
 
+        goal_report = evaluation.requested_goal_report
+        if self.requested_goals.requests_bonded_geometry_repair():
+            goal_report = _with_bonded_geometry_attempt_details(
+                goal_report, state.planner_memory, structure=result.structure
+            )
         return evaluate_workflow_branch_outcome(
             node_id=node_id,
             result=result,
-            requested_goal_report=evaluation.requested_goal_report,
+            requested_goal_report=goal_report,
             branch_quality_score=evaluation.quality_score,
             planning_context=self.planning_context,
             component_library=self.component_library,
@@ -511,9 +524,46 @@ def execute_iterative_workflow(
                 transformer=transformer,
                 execution_context=execution_context,
             )
-            planner_memory = runtime_state.planner_memory.with_adopted_transformer(
-                transformer, input_structure=runtime_state.result.structure
-            ).with_returned_relaxations(
+            feedback = (
+                execution_outcome.feedback
+                if isinstance(transformer, BondedGeometryRepairTransformer)
+                and isinstance(execution_outcome, BondedGeometryAttemptResult)
+                else None
+            )
+            if feedback is not None and feedback.failure is not None:
+                memory = runtime_state.planner_memory.with_attempted_transformer(
+                    transformer,
+                    input_structure=runtime_state.result.structure,
+                    bonded_geometry_feedback=feedback,
+                ).with_returned_relaxations(
+                    RefinementTransformationResult.observed_executions(
+                        execution_outcome
+                    )
+                )
+                # Spend a node on the attempt, not a second pose on its rejected coordinates.
+                adopted_children.append(
+                    SpeculativeAdoptedChild(
+                        state=WorkflowRuntimeState(
+                            result=runtime_state.result, planner_memory=memory
+                        ),
+                        adopted_decision=SpeculativeAdoptionDecision.reject(
+                            reason=feedback.failure
+                        ),
+                    )
+                )
+                continue
+
+            if feedback is None:
+                planner_memory = runtime_state.planner_memory.with_adopted_transformer(
+                    transformer, input_structure=runtime_state.result.structure
+                )
+            else:
+                planner_memory = runtime_state.planner_memory.with_adopted_transformer(
+                    transformer,
+                    input_structure=runtime_state.result.structure,
+                    bonded_geometry_feedback=feedback,
+                )
+            planner_memory = planner_memory.with_returned_relaxations(
                 RefinementTransformationResult.observed_executions(execution_outcome)
             )
             child_state = WorkflowRuntimeState(
@@ -522,7 +572,10 @@ def execute_iterative_workflow(
             )
             if (
                 transform_requests.repair_refinement is None
-                and not isinstance(transformer, LocalRefinementTransformer)
+                and not isinstance(
+                    transformer,
+                    (LocalRefinementTransformer, BondedGeometryRepairTransformer),
+                )
                 and _next_batch_is_local_refinement(
                     planning_session.plan(child_state),
                 )
@@ -630,6 +683,49 @@ def execute_iterative_workflow(
         branches=tuple(branches),
         stop_reason=trace.stop_reason or SpeculativeStopReason.NO_PROPOSALS_AVAILABLE,
     )
+
+
+def _with_bonded_geometry_attempt_details(
+    report: RequestedGoalReport,
+    memory: WorkflowPlannerMemory,
+    *,
+    structure: ProteinStructure,
+) -> RequestedGoalReport:
+    """Attribute retained-path attempts by focus term, not movable atoms."""
+
+    feedback = tuple(
+        (attempt.transformer.focus, attempt.bonded_geometry_feedback)
+        for attempt in memory.attempts
+        if isinstance(attempt.transformer, BondedGeometryRepairTransformer)
+        and attempt.bonded_geometry_feedback is not None
+    )
+    outcomes: list[RequestedGoalOutcome] = []
+    for outcome in report.outcomes:
+        if (
+            outcome.requested_goal.value is not BondedGeometryState.WITHIN_TOLERANCE
+            or outcome.is_satisfied()
+            or outcome.status is RequestedGoalStatus.UNSUPPORTED
+        ):
+            outcomes.append(outcome)
+            continue
+
+        selection = BondedGeometrySelection.from_scopes(
+            structure.constitution, (outcome.requested_goal.scope,)
+        )
+        scoped = tuple(item for term, item in feedback if selection.includes_term(term))
+        failures = tuple(item.failure for item in scoped if item.failure is not None)
+        detail = (
+            f"{len(scoped)} bonded-geometry attempt(s), {len(failures)} not retained"
+        )
+        if failures:
+            detail += f"; most recent refusal: {failures[-1]}"
+        outcomes.append(
+            replace(
+                outcome,
+                details=f"{outcome.details}; {detail}" if outcome.details else detail,
+            )
+        )
+    return RequestedGoalReport(outcomes=tuple(outcomes))
 
 
 def execute_workflow_transformer(

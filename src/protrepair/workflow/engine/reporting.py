@@ -15,10 +15,11 @@ from protrepair.diagnostics.parser_readability import (
 from protrepair.diagnostics.parser_topology import (
     ambiguous_disulfide_parser_witness_blockers,
 )
-from protrepair.scope import ResidueSetScope, Scope, WholeStructureScope
+from protrepair.scope import ChainSetScope, ResidueSetScope, Scope, WholeStructureScope
 from protrepair.scope.observed_atom_scope_lowering import OBSERVED_ATOM_SCOPE_LOWERING
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
+    BondedGeometryState,
     ClashPresenceState,
     HydrogenCoverageState,
     OrientationCorrectionEligibilityState,
@@ -330,6 +331,23 @@ def evaluate_requested_goal_report(
 
         blocking_scopes: tuple[Scope, ...] = ()
         details = None
+        if not satisfied and isinstance(goal.value, BondedGeometryState):
+            geometry = observation.bonded_geometry_for_scopes((goal.scope,))
+            blocking_scopes = (
+                *(ResidueSetScope((rid,)) for rid in geometry.unassessed_residue_ids),
+                *(ChainSetScope((cid,)) for cid in geometry.missing_chain_ids),
+            )
+            details = (
+                f"{len(geometry.residual_excesses)} qualified bonded outlier(s); "
+                f"{geometry.assessed_term_count} assessed term(s); "
+                f"{len(geometry.unassessed_residue_ids)} requested residue(s) "
+                "with missing or unqualified reference evidence"
+            )
+            if geometry.missing_chain_ids:
+                details += (
+                    f"; {len(geometry.missing_chain_ids)} requested chain(s) "
+                    "without polymer residues"
+                )
         if not satisfied and isinstance(goal.value, HydrogenCoverageState):
             if isinstance(goal.scope, WholeStructureScope):
                 hydrogen_facts = observation.whole_structure_facts()[1]
@@ -530,9 +548,25 @@ def evaluate_workflow_branch_quality_score(
             component_library=active_component_library,
             chemistry_readiness_facts=chemistry_readiness_facts,
         )
-    geometry_report = detect_heavy_geometry(
-        result.structure,
-        component_library=active_component_library,
+    bonded_geometry_scopes = tuple(
+        outcome.requested_goal.scope
+        for outcome in requested_goal_report.outcomes
+        if outcome.requested_goal.value is BondedGeometryState.WITHIN_TOLERANCE
+        and outcome.status is not RequestedGoalStatus.UNSUPPORTED
+    )
+    bonded_geometry_preference = (
+        observation.bonded_geometry_for_scopes(
+            bonded_geometry_scopes
+        ).branch_preference()
+        if bonded_geometry_scopes
+        else None
+    )
+    geometry_report = (
+        observation.bonded_geometry.report
+        if bonded_geometry_scopes
+        else detect_heavy_geometry(
+            result.structure, component_library=active_component_library
+        )
     )
     severe_geometry_residue_count = len(
         severe_intrinsic_geometry_residues(geometry_report)
@@ -579,6 +613,7 @@ def evaluate_workflow_branch_quality_score(
         ),
         severe_geometry_residue_count=severe_geometry_residue_count,
         search_depth=search_depth,
+        bonded_geometry_preference=bonded_geometry_preference,
     )
 
 
