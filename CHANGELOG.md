@@ -24,6 +24,11 @@
 
 ### Changed
 
+- include the concrete value type in `ScopedState` and `CarrierScopedState`
+  equality and hashing. Prevent initially-satisfied, blocked or unsupported
+  classifications from leaking between independent goal axes, and return each
+  goal's own outcome. Direct generic-model comparisons also distinguish raw strings
+  from enum members and numeric types such as `1`, `1.0` and `True`
 - normalize complete `OT1`/`OT2` and `OC1`/`OC2` terminal oxygen pairs to
   `O`/`OXT` at peptide ingress, preserving atom data and source connections
   before completion. Assign `OXT` to a uniquely declared `-1` oxygen when its

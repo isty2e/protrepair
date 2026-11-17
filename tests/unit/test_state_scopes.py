@@ -19,6 +19,7 @@ from protrepair.scope import (
     CompositeScope,
     ResidueSetScope,
     ResidueToChainSetScopeCoarsening,
+    Scope,
     ScopeKind,
     ScopeToWholeStructureCoarsening,
     WholeStructureScope,
@@ -27,9 +28,11 @@ from protrepair.scope import (
 )
 from protrepair.scope.observed_atom_scope_lowering import OBSERVED_ATOM_SCOPE_LOWERING
 from protrepair.state import (
+    BackboneHeavyAtomCompletenessState,
     CarrierScopedState,
     HydrogenCoverageState,
     ScopedState,
+    SidechainHeavyAtomCompletenessState,
 )
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -327,6 +330,127 @@ def test_structure_endpointd_state_binds_explicit_carrier_and_roundtrips() -> No
         value=HydrogenCoverageState.COMPLETE,
     )
     assert carrier_state.without_carrier() == scoped_state
+
+
+@pytest.mark.parametrize("bound", (False, True))
+@pytest.mark.parametrize(
+    "scope", (WholeStructureScope(), ResidueSetScope((ResidueId("A", 1),)))
+)
+@pytest.mark.parametrize(
+    ("left_value", "right_value"),
+    (
+        (BackboneHeavyAtomCompletenessState.COMPLETE, HydrogenCoverageState.COMPLETE),
+        (SidechainHeavyAtomCompletenessState.COMPLETE, HydrogenCoverageState.COMPLETE),
+        (
+            BackboneHeavyAtomCompletenessState.COMPLETE,
+            SidechainHeavyAtomCompletenessState.COMPLETE,
+        ),
+        (
+            BackboneHeavyAtomCompletenessState.INCOMPLETE,
+            SidechainHeavyAtomCompletenessState.INCOMPLETE,
+        ),
+        ("complete", HydrogenCoverageState.COMPLETE),
+        (1, 1.0),
+        (1, True),
+        (1.0, True),
+    ),
+)
+def test_scoped_state_identity_keeps_concrete_value_types(
+    left_value: str | float,
+    right_value: str | float,
+    scope: Scope,
+    bound: bool,
+) -> None:
+    left = ScopedState(scope, left_value)
+    right = ScopedState(scope, right_value)
+    repeated = ScopedState(scope, left_value)
+    if bound:
+        left = left.for_carrier(("carrier",))
+        right = right.for_carrier(("carrier",))
+        repeated = repeated.for_carrier(("carrier",))
+
+    assert left == repeated
+    assert repeated == left
+    assert hash(left) == hash(repeated)
+    assert left != right
+    assert right != left
+    assert len({left, right, repeated}) == 2
+    values = {left: "left", right: "right"}
+    assert values[repeated] == "left"
+    assert values[right] == "right"
+
+
+@pytest.mark.parametrize("value", (HydrogenCoverageState.COMPLETE, "complete", 1, None))
+def test_scoped_state_round_trip_preserves_value_type(value: str | int | None) -> None:
+    original = ScopedState(WholeStructureScope(), value)
+    bound = original.for_carrier(("carrier",))
+    restored = bound.without_carrier()
+
+    assert type(restored.value) is type(value)
+    assert restored == original
+    assert hash(restored) == hash(original)
+
+
+def test_scoped_state_equality_keeps_carrier_identity_shortcut() -> None:
+    class EqualityTrap:
+        def __eq__(self, other: object) -> bool:
+            raise AssertionError("same-object carrier equality must not be called")
+
+    carrier = EqualityTrap()
+    left = CarrierScopedState(
+        carrier, WholeStructureScope(), HydrogenCoverageState.COMPLETE
+    )
+    right = CarrierScopedState(
+        carrier, WholeStructureScope(), HydrogenCoverageState.COMPLETE
+    )
+
+    assert left == right
+    assert right == left
+
+
+def test_scoped_state_equality_preserves_scope_and_carrier_comparison() -> None:
+    value = HydrogenCoverageState.COMPLETE
+    whole = ScopedState(WholeStructureScope(), value)
+    local = ScopedState(ResidueSetScope((ResidueId("A", 1),)), value)
+
+    assert whole != local
+    assert whole.for_carrier(["a"]) == whole.for_carrier(["a"])
+    assert whole.for_carrier(["a"]) != whole.for_carrier(["b"])
+    assert whole.for_carrier(["a"]) != local.for_carrier(["a"])
+
+
+@pytest.mark.parametrize("bound", (False, True))
+def test_scoped_state_rejects_other_wrapper_classes_in_equality(bound: bool) -> None:
+    value = ScopedState(WholeStructureScope(), HydrogenCoverageState.COMPLETE)
+    subject = value.for_carrier(("carrier",)) if bound else value
+    other = value if bound else value.for_carrier(("carrier",))
+
+    assert subject.__eq__(other) is NotImplemented
+    assert subject.__eq__(object()) is NotImplemented
+    assert subject != other
+
+
+def test_scoped_state_equality_keeps_exact_wrapper_class() -> None:
+    class DerivedState(ScopedState[str]):
+        pass
+
+    base = ScopedState(WholeStructureScope(), "complete")
+    derived = DerivedState(WholeStructureScope(), "complete")
+
+    assert base.__eq__(derived) is NotImplemented
+    assert derived.__eq__(base) is NotImplemented
+    assert base != derived
+    assert derived == DerivedState(WholeStructureScope(), "complete")
+
+
+def test_scoped_state_hash_keeps_unhashable_payload_failures() -> None:
+    value = ScopedState(WholeStructureScope(), ["complete"])
+    with pytest.raises(TypeError):
+        hash(value)
+    with pytest.raises(TypeError):
+        hash(value.for_carrier(("carrier",)))
+    with pytest.raises(TypeError):
+        hash(ScopedState(WholeStructureScope(), "complete").for_carrier([]))
 
 
 def test_scope_coarsenings_cover_canonical_containment_paths() -> None:
