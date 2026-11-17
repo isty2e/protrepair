@@ -25,6 +25,52 @@ and B factors are unchanged apart from normal output rounding. The structure
 object and mmCIF output retain the selected labels; use mmCIF if they matter,
 because the PDB alone cannot recover them.
 
+## Terminal Oxygen Names
+
+After selecting atoms and residue variants, ingress normalizes complete terminal
+oxygen pairs in recognized peptide residues with canonical backbone templates.
+If one alias has a declared charge of `-1` and the other is explicitly `0` or
+unspecified, the charged atom becomes `OXT` and its partner becomes `O`. The
+charge stays on the same physical atom. Otherwise ingress uses this naming table:
+
+| Source names | Canonical names |
+| --- | --- |
+| `OT1`, `OT2` | `O`, `OXT` |
+| `OC1`, `OC2` | `OXT`, `O` |
+
+The fallback mappings follow the GROMACS v2026.0
+[CHARMM27 terminal rules](https://raw.githubusercontent.com/gromacs/gromacs/v2026.0/share/top/charmm27.ff/aminoacids.c.tdb)
+and [Amber99SB-ILDN atom renaming table](https://raw.githubusercontent.com/gromacs/gromacs/v2026.0/share/top/amber99sb-ildn.ff/aminoacids.arn).
+
+Both atoms must be oxygen, with no `O` or `OXT` already present. Lone aliases,
+mixed families and canonical/alias mixtures raise `StructureNormalizationError`
+at read time. Retained ligands and names defined by the component template keep
+their identities. Other naming schemes, including `O1`/`O2`, are not reconciled.
+The mapping is a naming convention, not a determination of bond order or
+protonation from coordinates.
+
+Coordinates, selected atom order, occupancy, B factors, isotopes and reported
+charges stay with each physical atom. Surviving source connection endpoints use
+the same name mapping and retain their component and altloc matching rules.
+Excluded coordination declarations keep their raw endpoint names.
+Normalization precedes template bonds and sequence-link inference, so the
+resulting `OXT` has the same terminal meaning as an input named `OXT`.
+
+An alias-bearing residue is refused if any source H/D/T name would identify one
+of the newly created `O`/`OXT` parents under the existing polymer naming rules,
+even when an explicit source bond is also present. These include `HO`, `HXT`
+and their isotope variants. Explicit parents of otherwise unrecognized H names
+are preserved by the name mapping. Resolving ambiguous source H names is outside
+this normalization step.
+
+The original observation is captured after this normalization. Output uses
+`O`/`OXT`; the raw alias spelling is not archived. Already constructed
+`ProteinStructure` objects apply the same checks to selected recognized peptide
+residues. Malformed or H-dependent aliases are refused; otherwise admissible
+pairs require re-reading the coordinate input to establish a normalized
+observation. Canonical objects already using `O`/`OXT` keep their existing
+observation.
+
 ## PDB Identifiers And Output Limits
 
 ProtRepair supports Gemmi's two-character chain IDs and uppercase hybrid-36
@@ -89,8 +135,8 @@ problem before repair starts.
 ## Original Chemistry Observations
 
 The selected input is retained at `structure.provenance.ingress.observation`.
-It keeps original atom identities, coordinates, reported charges, and explicit
-connections, including observed H, D, and T. Repair can remove or recreate an
+It keeps normalized selected atom identities, coordinates, reported charges, and
+explicit connections, including observed H, D, and T. Repair can remove or recreate an
 atom without erasing that observation. Original labels stay original even if
 the current structure renames an atom.
 

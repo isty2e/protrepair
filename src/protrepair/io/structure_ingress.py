@@ -2,12 +2,15 @@
 
 import itertools
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from math import isfinite
 
 from protrepair.chemistry.component.defaults import build_default_component_library
+from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.component.topology import template_resolved_topology_bonds
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.nonstandard.registry import (
     build_bundled_nonstandard_registry,
 )
@@ -78,6 +81,7 @@ class _NormalizedResiduePayload:
     constitution: ResidueSite
     geometry: ResidueGeometry
     formal_charge_by_atom_name: tuple[tuple[str, int | None], ...]
+    source_atom_name_projection: tuple[tuple[str, str], ...] = ()
 
     @property
     def residue_id(self) -> ResidueId:
@@ -103,6 +107,37 @@ class _NormalizedResiduePayload:
 
         return sum(occupancies) / len(occupancies)
 
+    def with_atom_name_projection(
+        self, projection: tuple[tuple[str, str], ...]
+    ) -> "_NormalizedResiduePayload":
+        """Project selected identities across every name-keyed payload facet."""
+
+        if not projection:
+            return self
+
+        names = dict(projection)
+        return replace(
+            self,
+            constitution=replace(
+                self.constitution,
+                atom_sites=tuple(
+                    replace(atom, name=names.get(atom.name, atom.name))
+                    for atom in self.constitution.atom_sites
+                ),
+            ),
+            geometry=ResidueGeometry(
+                atoms_by_name={
+                    names.get(name, name): geometry
+                    for name, geometry in self.geometry.atoms_by_name.items()
+                }
+            ),
+            formal_charge_by_atom_name=tuple(
+                (names.get(name, name), charge)
+                for name, charge in self.formal_charge_by_atom_name
+            ),
+            source_atom_name_projection=projection,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class _RawAtomPayload:
@@ -117,6 +152,97 @@ class _RawAtomPayload:
         """Return the canonical atom-name key used for duplicate resolution."""
 
         return self.atom_site.name.strip().upper()
+
+
+def _terminal_oxygen_name_projection(
+    residue: ResidueSite,
+    *,
+    template: ResidueTemplate | None,
+    formal_charge_by_atom_name: Mapping[str, int | None],
+) -> tuple[tuple[str, str], ...]:
+    """Choose terminal labels from declared charge or the naming convention."""
+
+    aliases = frozenset({"OT1", "OT2", "OC1", "OC2"})
+    present = frozenset(residue.atom_site_names())
+    observed_aliases = present & aliases
+    if not observed_aliases or residue.is_hetero or template is None:
+        return ()
+    expected = frozenset(template.expected_atom_names())
+    if expected & aliases:
+        return ()
+    if not (
+        build_standard_component_library().has(template.backbone_family_component_id)
+        and {"N", "CA", "C", "O"} <= expected
+    ):
+        return ()
+
+    if observed_aliases == {"OT1", "OT2"}:
+        projection = (("OT1", "O"), ("OT2", "OXT"))
+    elif observed_aliases == {"OC1", "OC2"}:
+        projection = (("OC1", "OXT"), ("OC2", "O"))
+    else:
+        projection = ()
+
+    error_prefix = (
+        "unsupported terminal oxygen name reconciliation for "
+        f"{residue.component_id} at {residue.residue_id.display_token()}: "
+    )
+    if not projection or present & {"O", "OXT"}:
+        raise StructureNormalizationError(
+            error_prefix + "requires one complete OT1/OT2 or OC1/OC2 pair without O/OXT"
+        )
+    if any(residue.atom_site(name).element != "O" for name in observed_aliases):
+        raise StructureNormalizationError(error_prefix + "aliases must be oxygen atoms")
+
+    site = PolymerMicrostateSite(template, PolymerChemicalSite.BACKBONE_C)
+    if {"O", "OXT"} & set(site.named_hydrogen_parents(residue).values()):
+        raise StructureNormalizationError(
+            error_prefix + "source H/D/T names depend on the newly created O/OXT names"
+        )
+
+    for charged, _ in projection:
+        if formal_charge_by_atom_name.get(charged) == -1 and all(
+            formal_charge_by_atom_name.get(other) in (None, 0)
+            for other, _ in projection
+            if other != charged
+        ):
+            return tuple(
+                (name, "OXT" if name == charged else "O") for name, _ in projection
+            )
+    return projection
+
+
+def _project_source_connection_names(
+    connections: tuple[SourceConnection, ...],
+    residue_payloads: tuple[_NormalizedResiduePayload, ...],
+) -> tuple[SourceConnection, ...]:
+    """Project selected source endpoints while retaining component and altloc qualifiers."""
+
+    projections = {
+        (payload.residue_id, payload.component_id): dict(
+            payload.source_atom_name_projection
+        )
+        for payload in residue_payloads
+        if payload.source_atom_name_projection
+    }
+    if not projections:
+        return connections
+
+    projected = []
+    for connection in connections:
+        endpoints = []
+        for endpoint in connection.endpoint_pair():
+            names = projections.get(
+                (endpoint.atom_ref.residue_id, endpoint.component_id), {}
+            )
+            name = names.get(endpoint.atom_ref.atom_name, endpoint.atom_ref.atom_name)
+            endpoints.append(
+                replace(endpoint, atom_ref=AtomRef(endpoint.atom_ref.residue_id, name))
+            )
+        projected.append(
+            replace(connection, endpoint_1=endpoints[0], endpoint_2=endpoints[1])
+        )
+    return tuple(projected)
 
 
 def normalize_raw_structure(
@@ -261,6 +387,25 @@ def normalize_raw_structure(
             chains.append((chain_id, polymer_residues))
         ligands.extend(chain_ligands)
 
+    component_library = build_default_component_library()
+    chains = [
+        (
+            chain_id,
+            [
+                payload.with_atom_name_projection(
+                    _terminal_oxygen_name_projection(
+                        payload.constitution,
+                        template=component_library.get(payload.component_id),
+                        formal_charge_by_atom_name=dict(
+                            payload.formal_charge_by_atom_name
+                        ),
+                    )
+                )
+                for payload in residues
+            ],
+        )
+        for chain_id, residues in chains
+    ]
     constitution = StructureConstitution(
         chains=tuple(
             ChainSite(
@@ -287,7 +432,7 @@ def normalize_raw_structure(
     )
     template_bonds = template_resolved_topology_bonds(
         constitution,
-        component_library=build_default_component_library(),
+        component_library=component_library,
     )
     expected_bonds_by_pair = {bond.endpoint_pair(): bond for bond in template_bonds}
     atom_topologies = _atom_topologies_from_payloads(
@@ -304,7 +449,9 @@ def normalize_raw_structure(
     for bond in peptide_candidates:
         expected_bonds_by_pair.setdefault(bond.endpoint_pair(), bond)
     source_topology_bonds = _topology_bonds_from_source_connections(
-        source_connections,
+        _project_source_connection_names(
+            source_connections, normalized_residue_payloads
+        ),
         constitution=constitution,
         geometry=geometry,
         expected_bonds_by_pair=expected_bonds_by_pair,
@@ -440,6 +587,23 @@ def apply_structure_normalization_policy(
         selected_ligands = ()
     else:
         selected_ligands = selected_ligand_candidates
+
+    component_library = build_default_component_library()
+    for chain in selected_constitution.chains:
+        for residue in chain.residues:
+            if _terminal_oxygen_name_projection(
+                residue,
+                template=component_library.get(residue.component_id),
+                formal_charge_by_atom_name=dict(
+                    structure.residue_formal_charge_by_atom_name(
+                        structure.constitution.residue_index(residue.residue_id)
+                    )
+                ),
+            ):
+                raise StructureNormalizationError(
+                    "terminal oxygen aliases in a canonical structure require "
+                    "re-reading the original coordinate input"
+                )
 
     if (
         selected_constitution == structure.constitution
