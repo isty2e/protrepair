@@ -1,4 +1,4 @@
-"""State assertions bound to semantic scopes, with or without explicit carriers."""
+"""Scoped state assertions whose identity includes the concrete value type."""
 
 from dataclasses import dataclass
 from typing import Generic, TypeVar
@@ -21,6 +21,23 @@ class CarrierScopedState(Generic[CarrierT, StateValueT]):
         if not isinstance(self.scope, Scope):
             raise TypeError("carrier-scoped states require a canonical Scope value")
 
+    def __eq__(self, other: object) -> bool:
+        if (
+            not isinstance(other, CarrierScopedState)
+            or self.__class__ is not other.__class__
+        ):
+            return NotImplemented
+
+        return (self.carrier, self.scope, type(self.value), self.value) == (
+            other.carrier,
+            other.scope,
+            type(other.value),
+            other.value,
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.carrier, self.scope, type(self.value), self.value))
+
     def without_carrier(self) -> "ScopedState[StateValueT]":
         """Return the carrier-less scoped state value for this fact."""
 
@@ -37,6 +54,19 @@ class ScopedState(Generic[StateValueT]):
     def __post_init__(self) -> None:
         if not isinstance(self.scope, Scope):
             raise TypeError("scoped states require a canonical Scope value")
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ScopedState) or self.__class__ is not other.__class__:
+            return NotImplemented
+
+        return (self.scope, type(self.value), self.value) == (
+            other.scope,
+            type(other.value),
+            other.value,
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.scope, type(self.value), self.value))
 
     def for_carrier(
         self,

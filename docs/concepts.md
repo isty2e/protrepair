@@ -36,6 +36,15 @@ A requested goal pairs one state value with a scope. The same whole-structure
 scope can carry separate goals for backbone atoms, side-chain atoms, and
 hydrogens because those are independent state axes.
 
+`ScopedState` equality and hashing include the concrete Python type of the value,
+so equal string codes on different state axes remain distinct. For example,
+backbone and hydrogen `COMPLETE` goals do not merge in a set or report lookup.
+`CarrierScopedState` follows the same rule and also compares its carrier. This
+type distinction applies to generic payloads too: a raw string differs from an
+enum member, and `1`, `1.0` and `True` are distinct scoped values.
+Hash values and set iteration order are process-local; reports retain requested
+goal order independently of them.
+
 ## Goals And Transform Requests
 
 Goals express desired end states. Transform requests name method choices that

@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 from tests.support.canonical_builders import (
     atom_payload,
+    build_bonded_structure,
     build_structure,
     chain_payload,
     residue_payload,
@@ -19,6 +20,7 @@ from protrepair.chemistry import ComponentLibrary, build_default_component_libra
 from protrepair.geometry import Vec3
 from protrepair.scope import ResidueSetScope, WholeStructureScope
 from protrepair.state import (
+    BackboneHeavyAtomCompletenessState,
     ClashObservationMode,
     ClashPresenceState,
     HydrogenCoverageState,
@@ -44,13 +46,230 @@ from protrepair.workflow.contracts import (
     WorkflowPhaseStatus,
     WorkflowPlanningContext,
     WorkflowPlanningPhase,
+    WorkflowTransformRequests,
     requested_process_goal,
+)
+from protrepair.workflow.contracts.request import (
+    RequestedGoalSet,
+    WorkflowGoalStateValue,
 )
 from protrepair.workflow.contracts.result import WorkflowBranchQualityScore
 from protrepair.workflow.engine.reporting import (
     evaluate_requested_goal_report,
     evaluate_workflow_phase_report,
 )
+from protrepair.workflow.planning.assessment.blockers import WorkflowBlocker
+from protrepair.workflow.planning.capability import WorkflowCapabilityDeficitFamily
+
+
+def _goal_identity_structure(
+    *, missing_sidechain: bool = False, retained_ligand: bool = False
+) -> ProteinStructure:
+    atoms = (
+        atom_payload("N", "N", Vec3(-0.528, 1.365, 0.0)),
+        atom_payload("CA", "C", Vec3(0.0, 0.0, 0.0)),
+        atom_payload("C", "C", Vec3(1.526, 0.0, 0.0)),
+        atom_payload("O", "O", Vec3(2.144, 1.052, 0.0)),
+        atom_payload("OXT", "O", Vec3(2.070, -1.070, 0.0)),
+    )
+    if not missing_sidechain:
+        atoms += (atom_payload("CB", "C", Vec3(-0.525, -0.773, -1.205)),)
+    ligand = residue_payload(
+        component_id="UNK",
+        residue_id=ResidueId("L", 99),
+        atoms=(
+            atom_payload("C1", "C", Vec3(10.0, 0.0, 0.0)),
+            atom_payload("O1", "O", Vec3(11.4, 0.0, 0.0)),
+        ),
+        is_hetero=True,
+    )
+    return build_bonded_structure(
+        chains=(
+            chain_payload(
+                "A",
+                (
+                    residue_payload(
+                        component_id="ALA", residue_id=ResidueId("A", 1), atoms=atoms
+                    ),
+                ),
+            ),
+        ),
+        ligands=(ligand,) if retained_ligand else (),
+        source_format=FileFormat.PDB,
+        source_name="goal-identity",
+    )
+
+
+@pytest.mark.parametrize("missing_sidechain", (False, True))
+@pytest.mark.parametrize(
+    "values",
+    (
+        (HydrogenCoverageState.COMPLETE,),
+        (
+            BackboneHeavyAtomCompletenessState.COMPLETE,
+            SidechainHeavyAtomCompletenessState.COMPLETE,
+            HydrogenCoverageState.COMPLETE,
+        ),
+        (
+            HydrogenCoverageState.COMPLETE,
+            SidechainHeavyAtomCompletenessState.COMPLETE,
+            BackboneHeavyAtomCompletenessState.COMPLETE,
+        ),
+    ),
+)
+def test_combined_goal_statuses_keep_each_axes_initial_state(
+    missing_sidechain: bool, values: tuple[WorkflowGoalStateValue, ...]
+) -> None:
+    source = _goal_identity_structure(missing_sidechain=missing_sidechain)
+    requested = tuple(
+        requested_process_goal(scope=WholeStructureScope(), value=value)
+        for value in values
+    )
+    result = process_structure(source, requested_goals=requested)
+    report = result.requested_goal_report
+    assert report is not None
+    expected: dict[type[WorkflowGoalStateValue], RequestedGoalStatus] = {
+        BackboneHeavyAtomCompletenessState: RequestedGoalStatus.ALREADY_SATISFIED,
+        SidechainHeavyAtomCompletenessState: RequestedGoalStatus.SATISFIED
+        if missing_sidechain
+        else RequestedGoalStatus.ALREADY_SATISFIED,
+        HydrogenCoverageState: RequestedGoalStatus.SATISFIED,
+    }
+    assert len(report.outcomes) == len(requested)
+    assert result.repairs
+    for goal, outcome in zip(requested, report.outcomes, strict=True):
+        assert outcome.requested_goal.value is goal.value
+        assert outcome.status is expected[type(goal.value)]
+        assert report.outcome_for(goal) is outcome
+
+    repeated = process_structure(result.structure, requested_goals=requested)
+    assert repeated.requested_goal_report is not None
+    assert all(
+        outcome.status is RequestedGoalStatus.ALREADY_SATISFIED
+        for outcome in repeated.requested_goal_report.outcomes
+    )
+
+
+def test_goal_normalization_and_set_identity_preserve_independent_axes() -> None:
+    goals = tuple(
+        requested_process_goal(scope=WholeStructureScope(), value=value)
+        for value in (
+            BackboneHeavyAtomCompletenessState.COMPLETE,
+            SidechainHeavyAtomCompletenessState.COMPLETE,
+            HydrogenCoverageState.COMPLETE,
+        )
+    )
+    normalized = RequestedGoalSet((*goals, goals[-1]))
+
+    assert len(normalized) == 3
+    assert len(set(normalized)) == 3
+    assert tuple(type(goal.value) for goal in normalized) == tuple(
+        type(goal.value) for goal in goals
+    )
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_unsupported_goal_classification_does_not_transfer_to_other_axes(
+    reverse: bool,
+) -> None:
+    source = _goal_identity_structure()
+    goals = tuple(
+        requested_process_goal(scope=WholeStructureScope(), value=value)
+        for value in (
+            BackboneHeavyAtomCompletenessState.COMPLETE,
+            SidechainHeavyAtomCompletenessState.COMPLETE,
+            HydrogenCoverageState.COMPLETE,
+        )
+    )
+    report = evaluate_requested_goal_report(
+        source,
+        requested_goals=goals[::-1] if reverse else goals,
+        unsupported_requested_goals=(goals[-1],),
+    )
+    for outcome in report.outcomes:
+        expected = (
+            RequestedGoalStatus.UNSUPPORTED
+            if isinstance(outcome.requested_goal.value, HydrogenCoverageState)
+            else RequestedGoalStatus.SATISFIED
+        )
+        assert outcome.status is expected
+        assert report.outcome_for(outcome.requested_goal) is outcome
+    assert report.satisfied_count() == 2
+    assert report.unsupported_count() == 1
+    assert report.completion_verdict().value == "partially_achieved"
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_retained_hydrogen_failure_stays_on_its_requested_axis(reverse: bool) -> None:
+    source = _goal_identity_structure(retained_ligand=True)
+    goals = tuple(
+        requested_process_goal(scope=WholeStructureScope(), value=value)
+        for value in (
+            BackboneHeavyAtomCompletenessState.COMPLETE,
+            SidechainHeavyAtomCompletenessState.COMPLETE,
+            HydrogenCoverageState.COMPLETE,
+        )
+    )
+    result = process_structure(
+        source,
+        ingress=StructureIngressOptions(ligand_policy=LigandPolicy.KEEP),
+        requested_goals=goals[::-1] if reverse else goals,
+        transform_requests=WorkflowTransformRequests(
+            allow_retained_non_polymer_rdkit_fallback=False
+        ),
+    )
+    report = result.requested_goal_report
+    assert report is not None
+    for outcome in report.outcomes:
+        expected = (
+            RequestedGoalStatus.UNMET
+            if isinstance(outcome.requested_goal.value, HydrogenCoverageState)
+            else RequestedGoalStatus.ALREADY_SATISFIED
+        )
+        assert outcome.status is expected
+        assert report.outcome_for(outcome.requested_goal) is outcome
+        if expected is RequestedGoalStatus.ALREADY_SATISFIED:
+            assert not outcome.blocking_scopes
+            assert not outcome.blocking_phases
+    assert report.satisfied_count() == 2
+    assert report.unmet_count() == 1
+    assert report.completion_verdict().value == "partially_achieved"
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_explicit_blocker_projection_does_not_transfer_to_other_axes(
+    reverse: bool,
+) -> None:
+    source = _goal_identity_structure(retained_ligand=True)
+    goals = tuple(
+        requested_process_goal(scope=WholeStructureScope(), value=value)
+        for value in (
+            BackboneHeavyAtomCompletenessState.COMPLETE,
+            SidechainHeavyAtomCompletenessState.COMPLETE,
+            HydrogenCoverageState.COMPLETE,
+        )
+    )
+    blocker = WorkflowBlocker.unsupported_component(
+        deficit_family=WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,
+        scope=ResidueSetScope((ResidueId("L", 99),)),
+    )
+    report = evaluate_requested_goal_report(
+        source,
+        requested_goals=goals[::-1] if reverse else goals,
+        blocked_requested_goal_blockers=((goals[-1], (blocker,)),),
+    )
+    for outcome in report.outcomes:
+        if isinstance(outcome.requested_goal.value, HydrogenCoverageState):
+            assert outcome.status is RequestedGoalStatus.BLOCKED
+            assert outcome.blocking_scopes == (blocker.scope,)
+            assert outcome.blocking_phases == (blocker.phase,)
+        else:
+            assert outcome.status is RequestedGoalStatus.SATISFIED
+            assert not outcome.blocking_scopes
+            assert not outcome.blocking_phases
+        assert report.outcome_for(outcome.requested_goal) is outcome
+    assert report.satisfied_count() == 2
+    assert report.blocked_count() == 1
 
 
 def test_phase_report_derives_joint_facts_once_without_cross_call_reuse() -> None:
