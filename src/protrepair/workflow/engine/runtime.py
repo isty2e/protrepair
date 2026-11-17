@@ -10,6 +10,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.state import BondedGeometryState
+from protrepair.state.bonded_geometry import BondedGeometrySelection
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.completion.hydrogen.protonation import (
@@ -46,7 +47,9 @@ from protrepair.workflow.contracts.request import (
     WorkflowTransformRequests,
 )
 from protrepair.workflow.contracts.result import (
+    RequestedGoalOutcome,
     RequestedGoalReport,
+    RequestedGoalStatus,
     WorkflowBranchOutcome,
     WorkflowBranchQualityScore,
     WorkflowBranchStatus,
@@ -330,7 +333,7 @@ class WorkflowBranchEvaluator:
         goal_report = evaluation.requested_goal_report
         if self.requested_goals.requests_bonded_geometry_repair():
             goal_report = _with_bonded_geometry_attempt_details(
-                goal_report, state.planner_memory
+                goal_report, state.planner_memory, structure=result.structure
             )
         return evaluate_workflow_branch_outcome(
             node_id=node_id,
@@ -683,31 +686,46 @@ def execute_iterative_workflow(
 
 
 def _with_bonded_geometry_attempt_details(
-    report: RequestedGoalReport, memory: WorkflowPlannerMemory
+    report: RequestedGoalReport,
+    memory: WorkflowPlannerMemory,
+    *,
+    structure: ProteinStructure,
 ) -> RequestedGoalReport:
-    """Report the retained path's attempts without grading them as repairs."""
+    """Attribute retained-path attempts by focus term, not movable atoms."""
 
     feedback = tuple(
-        attempt.bonded_geometry_feedback
+        (attempt.transformer.focus, attempt.bonded_geometry_feedback)
         for attempt in memory.attempts
-        if attempt.bonded_geometry_feedback is not None
+        if isinstance(attempt.transformer, BondedGeometryRepairTransformer)
+        and attempt.bonded_geometry_feedback is not None
     )
-    failures = tuple(item.failure for item in feedback if item.failure is not None)
-    detail = f"{len(feedback)} bonded-geometry attempt(s), {len(failures)} not retained"
-    if failures:
-        detail += f"; most recent refusal: {failures[-1]}"
-    return RequestedGoalReport(
-        outcomes=tuple(
+    outcomes: list[RequestedGoalOutcome] = []
+    for outcome in report.outcomes:
+        if (
+            outcome.requested_goal.value is not BondedGeometryState.WITHIN_TOLERANCE
+            or outcome.is_satisfied()
+            or outcome.status is RequestedGoalStatus.UNSUPPORTED
+        ):
+            outcomes.append(outcome)
+            continue
+
+        selection = BondedGeometrySelection.from_scopes(
+            structure.constitution, (outcome.requested_goal.scope,)
+        )
+        scoped = tuple(item for term, item in feedback if selection.includes_term(term))
+        failures = tuple(item.failure for item in scoped if item.failure is not None)
+        detail = (
+            f"{len(scoped)} bonded-geometry attempt(s), {len(failures)} not retained"
+        )
+        if failures:
+            detail += f"; most recent refusal: {failures[-1]}"
+        outcomes.append(
             replace(
                 outcome,
                 details=f"{outcome.details}; {detail}" if outcome.details else detail,
             )
-            if outcome.requested_goal.value is BondedGeometryState.WITHIN_REFERENCE
-            and not outcome.is_satisfied()
-            else outcome
-            for outcome in report.outcomes
         )
-    )
+    return RequestedGoalReport(outcomes=tuple(outcomes))
 
 
 def execute_workflow_transformer(

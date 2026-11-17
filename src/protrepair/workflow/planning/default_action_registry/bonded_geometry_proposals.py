@@ -29,8 +29,13 @@ def bonded_geometry_proposals(
 ) -> tuple[WorkflowActionProposal, ...]:
     """Offer one scope per planning step; the workflow meters each attempt."""
 
-    geometry = domain.chemistry_observation.bonded_geometry
-    motion = BondedGeometryMotion(domain.structure, geometry.qualified_residue_ids)
+    observation = domain.chemistry_observation
+    geometry = observation.bonded_geometry_for_scopes(
+        domain.requested_goals.bonded_geometry_repair_scopes()
+    )
+    motion = BondedGeometryMotion(
+        domain.structure, observation.bonded_geometry.qualified_residue_ids
+    )
     history: dict[BondedTerm, list[WorkflowActionAttempt]] = defaultdict(list)
     followups: set[BondedTerm] = set()
     for attempt in domain.attempts:

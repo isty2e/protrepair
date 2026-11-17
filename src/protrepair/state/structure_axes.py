@@ -65,9 +65,9 @@ class HydrogenCoverageState(str, Enum):
 
 
 class BondedGeometryState(str, Enum):
-    """Polymer heavy bond and angle agreement with qualified references."""
+    """Polymer heavy bond and angle agreement within diagnostic tolerances."""
 
-    WITHIN_REFERENCE = "within_reference"
+    WITHIN_TOLERANCE = "within_tolerance"
     OUTLIERS = "outliers"
 
 

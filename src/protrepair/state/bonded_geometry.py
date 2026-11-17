@@ -18,12 +18,87 @@ from protrepair.diagnostics.geometry import (
     bond_angle_degrees,
     detect_heavy_geometry,
 )
+from protrepair.scope import ChainSetScope, ResidueSetScope, Scope, WholeStructureScope
 from protrepair.state.structure_axes import BondedGeometryState
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.constitution import StructureConstitution
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import BondRelationshipType
 
 BondedTerm = tuple[AtomRef, ...]
+BONDED_GEOMETRY_SCOPE_TYPES = (WholeStructureScope, ChainSetScope, ResidueSetScope)
+
+
+@dataclass(frozen=True, slots=True)
+class BondedGeometrySelection:
+    """Resolve polymer targets without discarding explicitly requested identities."""
+
+    residue_ids: frozenset[ResidueId]
+    missing_chain_ids: tuple[str, ...]
+
+    @classmethod
+    def from_scopes(
+        cls,
+        constitution: StructureConstitution,
+        scopes: tuple[Scope, ...],
+    ) -> "BondedGeometrySelection":
+        """Union the requested scopes, including gaps in the current snapshot."""
+
+        select_all = False
+        chain_ids: set[str] = set()
+        residue_ids: set[ResidueId] = set()
+        for scope in scopes:
+            if isinstance(scope, WholeStructureScope):
+                select_all = True
+            elif isinstance(scope, ChainSetScope):
+                chain_ids.update(scope.chain_ids)
+            elif isinstance(scope, ResidueSetScope):
+                residue_ids.update(scope.residue_ids)
+            else:
+                raise TypeError("unsupported bonded-geometry goal scope")
+
+        found_chains: set[str] = set()
+        for chain in constitution.chains:
+            if chain.residues and (select_all or chain.chain_id in chain_ids):
+                found_chains.add(chain.chain_id)
+                residue_ids.update(residue.residue_id for residue in chain.residues)
+        return cls(frozenset(residue_ids), tuple(sorted(chain_ids - found_chains)))
+
+    def includes_term(self, term: BondedTerm) -> bool:
+        """Select an intra-residue term by its polymer residue identity."""
+
+        return term[0].residue_id in self.residue_ids
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedBondedGeometryObservation:
+    """Coverage and residual excess for the requested polymer terms only."""
+
+    assessed_term_count: int
+    unassessed_residue_ids: tuple[ResidueId, ...]
+    missing_chain_ids: tuple[str, ...]
+    residual_excesses: tuple[tuple[BondedTerm, float], ...]
+
+    def observed_state(self) -> BondedGeometryState | None:
+        """Keep known outliers distinct from incomplete or empty coverage."""
+
+        if self.residual_excesses:
+            return BondedGeometryState.OUTLIERS
+        if (
+            self.assessed_term_count
+            and not self.unassessed_residue_ids
+            and not self.missing_chain_ids
+        ):
+            return BondedGeometryState.WITHIN_TOLERANCE
+        return None
+
+    def branch_preference(self) -> tuple[int, float]:
+        """Prefer better coverage, then less normalized excess."""
+
+        return (
+            len(self.unassessed_residue_ids) + len(self.missing_chain_ids),
+            fsum(value for _, value in self.residual_excesses),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +108,6 @@ class BondedGeometryObservation:
     assessed_references: frozenset[
         tuple[BondedTerm, BondRestraintTarget | AngleRestraintTarget]
     ]
-    unassessed_residue_ids: tuple[ResidueId, ...]
     qualified_residue_ids: frozenset[ResidueId]
     residual_excesses: tuple[tuple[BondedTerm, float], ...]
     report: HeavyGeometryReport
@@ -53,7 +127,6 @@ class BondedGeometryObservation:
         library = build_default_restraint_library()
         references = StructureRestraints(structure, component_library, library)
         assessed: dict[BondedTerm, BondRestraintTarget | AngleRestraintTarget] = {}
-        unassessed: list[ResidueId] = []
         qualified: set[ResidueId] = set()
         for residue in structure.constitution.iter_residues():
             rid = residue.residue_id
@@ -71,7 +144,6 @@ class BondedGeometryObservation:
                 )
                 or template is None
             ):
-                unassessed.append(rid)
                 continue
 
             expected = (
@@ -108,9 +180,7 @@ class BondedGeometryObservation:
                     continue
                 assessed[refs] = target
                 measured += 1
-            if unresolved or not expected or measured != len(expected):
-                unassessed.append(rid)
-            else:
+            if not unresolved and expected and measured == len(expected):
                 qualified.add(rid)
 
         report = detect_heavy_geometry(
@@ -146,25 +216,30 @@ class BondedGeometryObservation:
 
         return cls(
             assessed_references=frozenset(assessed.items()),
-            unassessed_residue_ids=tuple(unassessed),
             qualified_residue_ids=frozenset(qualified),
             residual_excesses=tuple(residuals),
             report=report,
         )
 
-    def observed_state(self) -> BondedGeometryState | None:
-        """Keep known outliers distinct from incomplete or empty coverage."""
+    def for_selection(
+        self, selection: BondedGeometrySelection
+    ) -> ScopedBondedGeometryObservation:
+        """Project the observations without narrowing candidate motion or safety."""
 
-        if self.residual_excesses:
-            return BondedGeometryState.OUTLIERS
-        if self.assessed_references and not self.unassessed_residue_ids:
-            return BondedGeometryState.WITHIN_REFERENCE
-        return None
-
-    def total_excess(self) -> float:
-        """Sum normalized excess without mixing bond lengths and angle units."""
-
-        return fsum(value for _, value in self.residual_excesses)
+        return ScopedBondedGeometryObservation(
+            assessed_term_count=sum(
+                selection.includes_term(term) for term, _ in self.assessed_references
+            ),
+            unassessed_residue_ids=tuple(
+                sorted(selection.residue_ids - self.qualified_residue_ids)
+            ),
+            missing_chain_ids=selection.missing_chain_ids,
+            residual_excesses=tuple(
+                (term, excess)
+                for term, excess in self.residual_excesses
+                if selection.includes_term(term)
+            ),
+        )
 
 
 def _has_realized_heavy_term(structure: ProteinStructure, refs: BondedTerm) -> bool:

@@ -23,8 +23,12 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
     evidence_by_residue_id,
 )
 from protrepair.relation.blueprint import StructureBlueprintCoverage
-from protrepair.scope import ResidueSetScope
-from protrepair.state.bonded_geometry import BondedGeometryObservation
+from protrepair.scope import ResidueSetScope, Scope
+from protrepair.state.bonded_geometry import (
+    BondedGeometryObservation,
+    BondedGeometrySelection,
+    ScopedBondedGeometryObservation,
+)
 from protrepair.state.hydrogen_expectation import (
     StructureHydrogenExpectationModel,
 )
@@ -112,6 +116,7 @@ class StructureChemistryObservation:
     _polar_contact_chemistry: PolarContactChemistry | None
     _whole_facts: tuple[StructureCoverageFacts, StructureChemistryReadinessFacts] | None
     _bonded_geometry: BondedGeometryObservation | None
+    _bonded_geometry_by_scopes: dict[tuple[Scope, ...], ScopedBondedGeometryObservation]
     _residue_facts: dict[ResidueId, ResidueCompletionStateFacts]
     _retained_facts: dict[ResidueId, RetainedNonPolymerChemistryReadinessFact]
     _external_covalent_attachment_atom_refs: frozenset[AtomRef] | None
@@ -178,6 +183,7 @@ class StructureChemistryObservation:
         object.__setattr__(self, "_polar_contact_chemistry", polar_contact_chemistry)
         object.__setattr__(self, "_whole_facts", None)
         object.__setattr__(self, "_bonded_geometry", None)
+        object.__setattr__(self, "_bonded_geometry_by_scopes", {})
         object.__setattr__(self, "_residue_facts", {})
         object.__setattr__(self, "_retained_facts", {})
         object.__setattr__(self, "_external_covalent_attachment_atom_refs", None)
@@ -222,6 +228,20 @@ class StructureChemistryObservation:
                 self.context_structure, component_library=self.component_library
             )
             object.__setattr__(self, "_bonded_geometry", observed)
+        return observed
+
+    def bonded_geometry_for_scopes(
+        self, scopes: tuple[Scope, ...]
+    ) -> ScopedBondedGeometryObservation:
+        """Project a union of goal targets on this snapshot."""
+
+        observed = self._bonded_geometry_by_scopes.get(scopes)
+        if observed is None:
+            selection = BondedGeometrySelection.from_scopes(
+                self.context_structure.constitution, scopes
+            )
+            observed = self.bonded_geometry.for_selection(selection)
+            self._bonded_geometry_by_scopes[scopes] = observed
         return observed
 
     @property

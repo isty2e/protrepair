@@ -290,8 +290,9 @@ def observed_requested_goal_value(
     structure = observation.context_structure
     scope = goal.scope
     value = goal.value
-    if isinstance(value, BondedGeometryState) and scope == WholeStructureScope():
-        return observation.bonded_geometry.observed_state(), snapshot, boundary_facts
+    if isinstance(value, BondedGeometryState):
+        geometry = observation.bonded_geometry_for_scopes((scope,))
+        return geometry.observed_state(), snapshot, boundary_facts
 
     if scope == WholeStructureScope() and isinstance(
         value,

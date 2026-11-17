@@ -29,7 +29,8 @@ canonical workflow goal. Supported target axes include:
 - `BackboneHeavyAtomCompletenessState`
 - `SidechainHeavyAtomCompletenessState`
 - `HydrogenCoverageState`
-- `BondedGeometryState.WITHIN_REFERENCE` with `WholeStructureScope`
+- `BondedGeometryState.WITHIN_TOLERANCE` with `WholeStructureScope`,
+  `ChainSetScope`, or `ResidueSetScope`
 - `OxtPresenceState` with a C-terminal `ResidueBoundaryScope`
 - `ClashState` for local scopes
 - `ClashPresenceState` for whole-structure scope
@@ -38,17 +39,21 @@ Scopes are imported from `protrepair.scope`; target state values are imported
 from `protrepair.state`. Invalid scope and state combinations raise at the
 request boundary.
 
-`BondedGeometryState.WITHIN_REFERENCE` asks the workflow to repair
-intra-residue heavy bond and angle outliers against the applicable standard
-polymer references. The goal uses the same tolerance windows as the geometry
-diagnostic. It can therefore select outliers in deposited coordinates, not
-just introduced distortions. Missing or unqualified references cannot
-satisfy the goal by omission.
+`BondedGeometryState.WITHIN_TOLERANCE` asks the workflow to bring heavy-atom
+bond lengths and angles within the diagnostic tolerances for standard polymer
+residues in the selected scope. The tolerances also apply to deposited
+coordinates. If a requested chain has no polymer residues or a requested
+residue lacks qualified reference coverage, the goal remains unmet.
+
+Only intra-residue terms in the selected scope can trigger an attempt for
+this goal. The scope does not freeze other residues or chains: a candidate
+can include atoms outside it when a bond or steric contact couples them to
+the selected defect and the candidate passes the existing safeguards.
 
 Request hydrogen completion separately if it is needed. Geometry repair
 uses the current atom inventory and chemistry, and can return an unmet goal
-when prerequisites or safe motion are unavailable. Without a geometry goal,
-the residual warnings still appear but authorize no new motion.
+when prerequisites or safe motion are unavailable. Final warnings cover the
+whole polymer regardless of scope; those warnings do not trigger motion.
 
 ## Ingress Options
 

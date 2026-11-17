@@ -5,9 +5,10 @@ from pathlib import Path
 from protrepair.chemistry import build_default_component_library
 from protrepair.geometry import Vec3
 from protrepair.io import FileFormat, read_structure, read_structure_string
-from protrepair.scope import WholeStructureScope
+from protrepair.scope import ChainSetScope, ResidueSetScope, WholeStructureScope
 from protrepair.state import BondedGeometryState
 from protrepair.state.bonded_geometry import BondedGeometryObservation
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.transformer.completion.hydrogen import add_hydrogens
 from protrepair.transformer.continuous.shared import apply_position_updates
@@ -47,12 +48,13 @@ def test_unresolved_histidine_is_not_complete_bonded_geometry() -> None:
         FileFormat.PDB,
     )
     histidine = ResidueId("A", 54)
-    geometry = BondedGeometryObservation.from_structure(
+    observation = StructureChemistryObservation(
         structure, component_library=build_default_component_library()
     )
-    assert geometry.assessed_references
+    geometry = observation.bonded_geometry_for_scopes((ResidueSetScope((histidine,)),))
+    assert geometry.assessed_term_count > 0
     assert geometry.unassessed_residue_ids == (histidine,)
-    assert geometry.observed_state() is not BondedGeometryState.WITHIN_REFERENCE
+    assert geometry.observed_state() is not BondedGeometryState.WITHIN_TOLERANCE
 
 
 def test_retry_uses_bond_frontier_and_can_extend_past_first_shell() -> None:
@@ -141,7 +143,7 @@ def test_same_parent_followup_precedes_a_different_untried_defect() -> None:
         (
             requested_process_goal(
                 scope=WholeStructureScope(),
-                value=BondedGeometryState.WITHIN_REFERENCE,
+                value=BondedGeometryState.WITHIN_TOLERANCE,
             ),
         )
     )
@@ -174,6 +176,53 @@ def test_same_parent_followup_precedes_a_different_untried_defect() -> None:
     assert set(first.scope.atom_refs) < set(followup.scope.atom_refs)
 
 
+def test_chain_goal_can_include_a_coupled_partner_on_another_chain() -> None:
+    source = (_FIXTURES / "span-reconstruction" / "1ubq.pdb").read_text()
+    lines = (
+        line[:21] + "B" + line[22:]
+        if line.startswith("ATOM") and int(line[22:26]) >= 34
+        else line
+        for line in source.splitlines()
+    )
+    structure = read_structure_string("\n".join(lines) + "\n", FileFormat.PDB)
+    rid = ResidueId("A", 8)
+    focus = (AtomRef(rid, "C"), AtomRef(rid, "O"))
+    carbon, oxygen = (structure.constitution.atom_index(ref) for ref in focus)
+    c = structure.geometry.atom_geometry(carbon).position
+    o = structure.geometry.atom_geometry(oxygen).position
+    shortened = Vec3.from_iterable(a + 0.8 * (b - a) for a, b in zip(c, o, strict=True))
+    parent = apply_position_updates(structure, moved_positions={oxygen: shortened})
+    goal = requested_process_goal(
+        scope=ChainSetScope(("A",)), value=BondedGeometryState.WITHIN_TOLERANCE
+    )
+    goals = RequestedGoalSet((goal,))
+    requests = WorkflowTransformRequests()
+    (first,) = plan_workflow_actions(
+        parent, requested_goals=goals, transform_requests=requests
+    ).transformers
+    assert isinstance(first, BondedGeometryRepairTransformer)
+    assert first.focus == focus
+    assert {ref.residue_id for ref in first.scope.atom_refs} == {rid}
+
+    partner = AtomRef(ResidueId("B", 34), "N")
+    rejected = WorkflowPlannerMemory().with_attempted_transformer(
+        first,
+        input_structure=parent,
+        bonded_geometry_feedback=BondedGeometryFeedback(
+            "new crossing clash", coupled_atoms=(partner,)
+        ),
+    )
+    (followup,) = plan_workflow_actions(
+        parent,
+        requested_goals=goals,
+        transform_requests=requests,
+        planner_memory=rejected,
+    ).transformers
+    assert isinstance(followup, BondedGeometryRepairTransformer)
+    assert followup.focus == focus
+    assert set(followup.scope.atom_refs) == {*first.scope.atom_refs, partner}
+
+
 def test_source_hydrogen_and_its_parent_are_never_nominated() -> None:
     structure = read_structure(_FIXTURES / "1aho.pdb")
     rid = ResidueId("A", 27)
@@ -184,3 +233,29 @@ def test_source_hydrogen_and_its_parent_are_never_nominated() -> None:
     assert not motion.group_for(AtomRef(rid, "CA"))
     assert motion.heavy_contact_partner(AtomRef(rid, "HA")) is None
     assert motion.group_for(AtomRef(rid, "C")) == frozenset((AtomRef(rid, "C"),))
+
+
+def test_rebinding_checks_coverage_on_the_current_snapshot() -> None:
+    path = _FIXTURES / "span-reconstruction" / "1ubq.pdb"
+    rid = ResidueId("A", 34)
+    scope = ResidueSetScope((rid,))
+    partial = read_structure_string(
+        "\n".join(
+            line
+            for line in path.read_text().splitlines()
+            if not (line.startswith("ATOM") and int(line[22:26]) == rid.seq_num)
+        )
+        + "\n",
+        FileFormat.PDB,
+    )
+    observation = StructureChemistryObservation(partial)
+    before = observation.bonded_geometry_for_scopes((scope,))
+    assert before.observed_state() is None
+    assert before.unassessed_residue_ids == (rid,)
+    assert before.branch_preference() == (1, 0.0)
+
+    after = observation.for_structure(read_structure(path)).bonded_geometry_for_scopes(
+        (scope,)
+    )
+    assert after.observed_state() is BondedGeometryState.WITHIN_TOLERANCE
+    assert after.branch_preference() == (0, 0.0)
