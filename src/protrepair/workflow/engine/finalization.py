@@ -41,6 +41,7 @@ from protrepair.workflow.contracts.result import (
     WorkflowBranchReport,
 )
 from protrepair.workflow.engine.hydrogen import project_hydrogen_issues
+from protrepair.workflow.engine.hydrogen_lengths import WorkflowHydrogenLengthPlan
 from protrepair.workflow.engine.runtime import WorkflowBranch
 
 
@@ -53,6 +54,7 @@ def finalize_workflow_result(
     stop_reason: SpeculativeStopReason = SpeculativeStopReason.NO_PROPOSALS_AVAILABLE,
     preliminary_issues: tuple[ValidationIssue, ...] = (),
     repair_refinement: RepairRefinementSpec | None = None,
+    hydrogen_length_plan: WorkflowHydrogenLengthPlan | None = None,
     retained_non_polymer_chemistry_evidence: tuple[
         RetainedNonPolymerChemistryEvidence, ...
     ] = (),
@@ -76,6 +78,9 @@ def finalize_workflow_result(
     repair_refinement : RepairRefinementSpec or None
         Active local request whose included region requires H preparation,
         even without an explicit H-completion goal.
+    hydrogen_length_plan : WorkflowHydrogenLengthPlan or None
+        Input-bound observation and optional repair to run once on the
+        selected candidate, before final diagnostics.
     retained_non_polymer_chemistry_evidence : tuple
         Explicit chemistry used for final current-state diagnostics.
 
@@ -98,7 +103,17 @@ def finalize_workflow_result(
         requested_goal_report=(branch_report.preferred_outcome().requested_goal_report),
         branch_report=branch_report,
     )
+    if hydrogen_length_plan is not None:
+        result = hydrogen_length_plan.complete(
+            result, component_library=component_library
+        )
+
     if branch_report.search_exhausted():
+        retained_message = (
+            "returning the preferred assessed retained candidate; "
+            if result.structure is preferred_branch.result.structure
+            else "applied the explicit terminal hydrogen length repair after selection; "
+        )
         result = result.with_appended_issues(
             (
                 ValidationIssue(
@@ -108,7 +123,7 @@ def finalize_workflow_result(
                         "workflow search reached "
                         "max_speculative_nodes="
                         f"{planning_context.max_speculative_nodes}; "
-                        "returning the preferred assessed retained candidate; "
+                        f"{retained_message}"
                         "requested goals and unresolved defects are reported separately"
                     ),
                 ),

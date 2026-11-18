@@ -23,6 +23,7 @@ from protrepair.transformer.continuous.execution import ContinuousRelaxationExec
 from protrepair.transformer.refinement.result import RefinementTransformationResult
 from protrepair.transformer.refinement.speculative_planning import SpeculativeStopReason
 from protrepair.transformer.result import TransformationResult
+from protrepair.workflow.contracts.hydrogen_lengths import HydrogenLengthReport
 from protrepair.workflow.contracts.planning import (
     WorkflowBranchPreferencePolicy,
     WorkflowBranchQualityAxis,
@@ -707,7 +708,8 @@ class ProcessResult(TransformationResult):
     Parameters
     ----------
     structure : ProteinStructure
-        Selected retained structure, which may still have unresolved defects.
+        Returned structure after selection and any retained terminal length
+        adjustment. It may still have unresolved defects.
     repairs : tuple[RepairEvent, ...]
         Repair events belonging to the selected carrier.
     issues : tuple[ValidationIssue, ...]
@@ -717,7 +719,11 @@ class ProcessResult(TransformationResult):
     requested_goal_report : RequestedGoalReport or None
         Observed requested-goal outcomes.
     branch_report : WorkflowBranchReport or None
-        Retained candidate selection and search termination evidence.
+        Retained candidate selection and termination evidence from search,
+        before any terminal length adjustment.
+    hydrogen_length_report : HydrogenLengthReport or None
+        Observations of input H/D/T and optional repair dispositions. Ordinary
+        runs with no input H/D/T omit the report.
 
     Notes
     -----
@@ -729,6 +735,7 @@ class ProcessResult(TransformationResult):
     analyses: AnalysisBundle | None = None
     requested_goal_report: RequestedGoalReport | None = None
     branch_report: WorkflowBranchReport | None = None
+    hydrogen_length_report: HydrogenLengthReport | None = None
 
     @property
     def relaxation_executions(self) -> tuple[ContinuousRelaxationExecution, ...]:

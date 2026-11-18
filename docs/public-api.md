@@ -55,6 +55,103 @@ uses the current atom inventory and chemistry, and can return an unmet goal
 when prerequisites or safe motion are unavailable. Final warnings cover the
 whole polymer regardless of scope; those warnings do not trigger motion.
 
+## Existing Hydrogen Lengths
+
+`process_structure()` reports the X-H lengths of existing H, D, and T in
+`result.hydrogen_length_report`. The workflow selects these sites at input
+and measures them on the returned structure. If there are no input H/D/T,
+an ordinary call omits the report. Parent-position conflicts also appear in
+`result.issues`. A measured length without a reference remains unassessed.
+
+Use `analyze_hydrogen_lengths()` to make the same read-only observations on
+a structure without running the workflow. To grade a length, supply monomer
+CIF text with a standard side-chain graph, distance targets and ESDs. Loading
+the reference uses RDKit to validate its graph. No reference is downloaded
+or bundled for this check.
+
+```python
+from pathlib import Path
+
+from protrepair.analysis import HydrogenLengthReference, analyze_hydrogen_lengths
+from protrepair.io import read_structure
+
+structure = read_structure("model.cif")
+observations = analyze_hydrogen_lengths(structure)
+
+cysteine_reference = HydrogenLengthReference(
+    Path("CYS.cif").read_text(encoding="utf-8"),
+    component_id="CYS",
+    source="my monomer library, pinned version",
+)
+graded = analyze_hydrogen_lengths(structure, references=(cysteine_reference,))
+```
+
+The result has one entry per selected present H, D, or T in structure order;
+an empty result means no sites were selected. Use `scope=` to restrict the
+selection. Parent evidence and the nearest-heavy veto still use the supplied
+snapshot, including heavy atoms outside the selection. The veto does not
+reassign a parent. If a heavy coordinate is nonfinite, the check cannot
+establish which heavy atom is nearest. Backbone lengths may be measurable, but
+this check only grades standard polymer side-chain terms whose scaffold,
+attachments, and protonation state match the reference. Contradictory
+attachment evidence can leave the whole residue unassessed; an independently
+measurable length can also lack an applicable reference.
+The side-chain graph can join the backbone only through CA, so proline is
+outside the supported reference domain.
+
+The default convention for this check is `HydrogenLengthConvention.UNKNOWN`.
+With two applicable profiles it uses the outer limits of the two closed
+`target +/- 4*ESD` intervals. Values between disjoint intervals are reported
+separately from values inside an individual interval. The comparison reports
+which individual intervals match and a signed `outer_margin_angstrom`; a
+positive margin can still fall between intervals. Set `convention=` to
+`ELECTRON_CLOUD` or `NUCLEAR` only when the coordinate convention is known.
+Unassessed sites and parent-position conflicts are distinct from length
+outliers. The comparison uses the stored coordinates rather than a projection
+to PDB precision; a value near a bound can change grade after serialization.
+
+Pass a `HydrogenLengthRequest` to narrow the workflow's observation scope,
+grade lengths against supplied references, or request a repair:
+
+```python
+from protrepair import process_structure
+from protrepair.analysis import HydrogenLengthConvention
+from protrepair.workflow.contracts import HydrogenLengthRequest
+
+checked = process_structure(
+    structure,
+    hydrogen_lengths=HydrogenLengthRequest((cysteine_reference,)),
+)
+adjusted = process_structure(
+    structure,
+    hydrogen_lengths=HydrogenLengthRequest(
+        (cysteine_reference,),
+        convention=HydrogenLengthConvention.NUCLEAR,
+        repair=True,
+    ),
+)
+```
+
+Use `NUCLEAR` in the second call only if the model uses that coordinate
+convention. A request without references can narrow the scope without
+grading lengths. The scope limits both measurements and X-H warnings.
+Reference outliers appear in `result.issues`; a gap between two convention
+intervals is not a length warning.
+
+Repair requires a declared convention and moves only out-of-window sites
+whose assigned parent and input pose are unchanged. It runs once after the
+workflow selects a branch, without adding hydrogens or changing their chemistry.
+The selected hydrogen moves along its original bond direction to the
+reference target. The batch is kept only if it preserves the assigned parents
+on a no-CONECT PDB readback, meets the length limits at stored and PDB precision,
+and does not introduce or worsen an assessed clash or near-covalent contact. If the
+structure cannot be represented on that parser surface, repair is unavailable.
+See `repair_outcomes` for in-window, unavailable, rejected, and repaired sites.
+`branch_report` describes the search before this terminal operation.
+
+Length observation and repair are separate from hydrogen completeness and
+the heavy bonded-geometry goal.
+
 ## Ingress Options
 
 `StructureIngressOptions` controls source interpretation before canonical
@@ -303,7 +400,7 @@ apply when a caller later writes a PDB block.
 | `protrepair.workflow.contracts` | Workflow requests, policies, reports, and analysis result contracts |
 | `protrepair.scope` | Semantic scopes and scope relations |
 | `protrepair.state` | Target state axes and observation read models |
-| `protrepair.analysis` | Analysis kinds and structured analysis results |
+| `protrepair.analysis` | Read-only hydrogen length checks, analysis kinds, and structured results |
 | `protrepair.io` | PDB/mmCIF ingress and egress, and native RDKit export |
 | `protrepair.sources` | UniProt and AlphaFold source records, retrieval outcomes, and sequence projection |
 | `protrepair.structure` | Canonical structure, topology, provenance, and labels |

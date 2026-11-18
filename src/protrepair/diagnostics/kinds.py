@@ -18,6 +18,7 @@ class RepairEventKind(str, Enum):
     STEREOCHEMISTRY_CORRECTED = "stereochemistry_corrected"
     DISULFIDE_TOPOLOGY_RESOLVED = "disulfide_topology_resolved"
     HYDROGENS_REMOVED = "hydrogens_removed"
+    HYDROGEN_LENGTH_ADJUSTED = "hydrogen_length_adjusted"
 
 
 class ValidationIssueKind(str, Enum):
@@ -51,6 +52,8 @@ class ValidationIssueKind(str, Enum):
     RETAINED_NON_POLYMER_FALLBACK_BLOCKED = "retained_non_polymer_fallback_blocked"
     UNSUPPORTED_COMPONENT = "unsupported_component"
     STERIC_CLASH = "steric_clash"
+    HYDROGEN_LENGTH_OUTLIER = "hydrogen_length_outlier"
+    HYDROGEN_PARENT_POSITION_CONFLICT = "hydrogen_parent_position_conflict"
 
 
 class IssueSeverity(str, Enum):

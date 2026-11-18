@@ -4,8 +4,9 @@ from collections import defaultdict
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from math import dist, isfinite
 from types import MappingProxyType
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.diagnostics.events import ValidationIssue
@@ -29,6 +30,9 @@ from protrepair.structure.topology import (
     TopologyBond,
     is_covalent_like_relationship,
 )
+
+if TYPE_CHECKING:
+    from rdkit.Chem.rdchem import Conformer
 
 try:
     from rdkit import Chem, rdBase
@@ -107,6 +111,10 @@ class _RDKitMol(Protocol):
 
     def GetAtoms(self) -> Sequence[_RDKitAtom]:
         """Return atoms in the parsed molecule."""
+        ...
+
+    def GetConformer(self) -> "Conformer":
+        """Return the coordinates read from the rendered PDB."""
         ...
 
 
@@ -251,6 +259,15 @@ class RDKitNoConectSanitizeReadabilityMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class RDKitProjectedHydrogenAttachment:
+    """No-CONECT graph and projected distance to an independently assigned parent."""
+
+    hydrogen: AtomRef
+    neighbors: tuple[AtomRef, ...]
+    parent_distance_angstrom: float
+
+
+@dataclass(frozen=True, slots=True)
 class RDKitNoConectParserReadabilityProbe:
     """Sanitation outcome with separate failure and H-attachment evidence.
 
@@ -265,12 +282,16 @@ class RDKitNoConectParserReadabilityProbe:
     hydrogen_attachment_witnesses : tuple[RDKitProximityBondWitness, ...], default=()
         Observed attachments outside declared canonical H/D/T parents, even
         when sanitation succeeds. Undeclared parents are not inferred here.
+    projected_hydrogen_attachments : tuple[RDKitProjectedHydrogenAttachment, ...], default=()
+        Native neighbors and PDB-precision lengths for requested pairs.
+        Missing rows have no usable projection.
     """
 
     sanitize_readable: bool | None
     residue_problem_witnesses: tuple[RDKitParserProblemWitness, ...]
     structure_messages: tuple[str, ...]
     hydrogen_attachment_witnesses: tuple[RDKitProximityBondWitness, ...] = ()
+    projected_hydrogen_attachments: tuple[RDKitProjectedHydrogenAttachment, ...] = ()
 
     def extra_proximity_bonds(self) -> tuple[RDKitProximityBondWitness, ...]:
         """Return unique noncanonical bonds independently of sanitation success.
@@ -466,6 +487,51 @@ class _RDKitNoConectProblemSurface:
             MappingProxyType(dict(self.residue_problem_atom_indices)),
         )
 
+    def project_hydrogen_attachments(
+        self, assigned_parents: Mapping[AtomRef, AtomRef]
+    ) -> tuple[RDKitProjectedHydrogenAttachment, ...]:
+        molecule = self.molecule
+        if molecule is None or not assigned_parents:
+            return ()
+
+        native_indices = {
+            ref: index for index, ref in self.atom_refs_by_native_index.items()
+        }
+        if not native_indices:
+            return ()
+        conformer = molecule.GetConformer()
+        result = []
+        for hydrogen, parent in assigned_parents.items():
+            child_idx = native_indices.get(hydrogen)
+            parent_idx = native_indices.get(parent)
+            if child_idx is None or parent_idx is None:
+                continue
+            child_pos = conformer.GetAtomPosition(child_idx)
+            parent_pos = conformer.GetAtomPosition(parent_idx)
+            distance = dist(
+                (child_pos.x, child_pos.y, child_pos.z),
+                (parent_pos.x, parent_pos.y, parent_pos.z),
+            )
+            if not isfinite(distance):
+                continue
+
+            neighbors = []
+            for bond in molecule.GetAtomWithIdx(child_idx).GetBonds():
+                first = bond.GetBeginAtom().GetIdx()
+                second = bond.GetEndAtom().GetIdx()
+                neighbors.append(
+                    _require_native_atom_ref(
+                        second if first == child_idx else first,
+                        self.atom_refs_by_native_index,
+                    )
+                )
+            result.append(
+                RDKitProjectedHydrogenAttachment(
+                    hydrogen, tuple(sorted(neighbors)), distance
+                )
+            )
+        return tuple(result)
+
 
 @dataclass(frozen=True, slots=True)
 class RDKitKnownBondLookup:
@@ -614,6 +680,7 @@ def probe_rdkit_no_conect_parser_readability(
     component_library: ComponentLibrary | None = None,
     pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
     known_bond_lookup: RDKitKnownBondLookup | None = None,
+    assigned_hydrogen_parents: Mapping[AtomRef, AtomRef] | None = None,
 ) -> RDKitNoConectParserReadabilityProbe:
     """Parse current coordinates and localize no-CONECT chemistry failures.
 
@@ -627,6 +694,9 @@ def probe_rdkit_no_conect_parser_readability(
         Optional serialization preparation; incompatible inputs use full writing.
     known_bond_lookup : RDKitKnownBondLookup or None
         Optional graph preparation bound to this structure and library.
+    assigned_hydrogen_parents : Mapping[AtomRef, AtomRef] or None
+        Optional independently assigned pairs whose rendered distances and
+        all native neighbors should be reported, not used to change the graph.
 
     Returns
     -------
@@ -655,27 +725,27 @@ def probe_rdkit_no_conect_parser_readability(
             structure_messages=(),
         )
 
+    problem_surface = _rdkit_no_conect_problem_surface(
+        structure, pdb_block_projector=pdb_block_projector
+    )
     residue_problem_witnesses, structure_messages, attachments = (
         _rdkit_no_conect_problem_witnesses(
             structure,
+            problem_surface=problem_surface,
             component_library=component_library,
-            pdb_block_projector=pdb_block_projector,
             known_bond_lookup=known_bond_lookup,
         )
     )
-    if not residue_problem_witnesses and not structure_messages:
-        return RDKitNoConectParserReadabilityProbe(
-            sanitize_readable=True,
-            residue_problem_witnesses=(),
-            structure_messages=(),
-            hydrogen_attachment_witnesses=attachments,
-        )
-
     return RDKitNoConectParserReadabilityProbe(
-        sanitize_readable=False,
+        sanitize_readable=not (residue_problem_witnesses or structure_messages),
         residue_problem_witnesses=tuple(residue_problem_witnesses.values()),
         structure_messages=structure_messages,
         hydrogen_attachment_witnesses=attachments,
+        projected_hydrogen_attachments=(
+            ()
+            if assigned_hydrogen_parents is None
+            else problem_surface.project_hydrogen_attachments(assigned_hydrogen_parents)
+        ),
     )
 
 
@@ -963,8 +1033,8 @@ def _structure_contains_hydrogens(structure: ProteinStructure) -> bool:
 def _rdkit_no_conect_problem_witnesses(
     structure: ProteinStructure,
     *,
+    problem_surface: _RDKitNoConectProblemSurface,
     component_library: ComponentLibrary | None,
-    pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None,
     known_bond_lookup: RDKitKnownBondLookup | None = None,
 ) -> tuple[
     dict[ResidueId, RDKitParserProblemWitness],
@@ -973,10 +1043,6 @@ def _rdkit_no_conect_problem_witnesses(
 ]:
     """Return residue-localized parser chemistry problems and bond witnesses."""
 
-    problem_surface = _rdkit_no_conect_problem_surface(
-        structure,
-        pdb_block_projector=pdb_block_projector,
-    )
     if problem_surface.molecule is None:
         return ({}, problem_surface.structure_messages, ())
 

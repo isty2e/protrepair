@@ -20,6 +20,7 @@ from protrepair.io import read_structure
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.workflow.contracts.hydrogen_lengths import HydrogenLengthRequest
 from protrepair.workflow.contracts.planning import (
     WorkflowLigandContextMode,
     WorkflowPlanningContext,
@@ -34,6 +35,7 @@ from protrepair.workflow.contracts.request import (
 )
 from protrepair.workflow.contracts.result import ProcessResult
 from protrepair.workflow.engine.finalization import finalize_workflow_result
+from protrepair.workflow.engine.hydrogen_lengths import WorkflowHydrogenLengthPlan
 from protrepair.workflow.engine.packing.reference import (
     prepare_workflow_packing_reference,
 )
@@ -48,6 +50,7 @@ def process_canonical_structure(
     transform_requests: WorkflowTransformRequests | None = None,
     planning_context: WorkflowPlanningContext | None = None,
     analyses: Iterable[AnalysisKind] = frozenset(),
+    hydrogen_lengths: HydrogenLengthRequest | None = None,
 ) -> ProcessResult:
     """Process a canonical structure through the current repair workflow."""
 
@@ -73,6 +76,9 @@ def process_canonical_structure(
     normalized_structure = apply_structure_normalization_policy(
         structure,
         policy=normalization_policy,
+    )
+    hydrogen_length_plan = WorkflowHydrogenLengthPlan.for_input(
+        normalized_structure, hydrogen_lengths
     )
     initial_microstate_issues = diagnose_source_microstate_contradictions(
         normalized_structure,
@@ -121,6 +127,7 @@ def process_canonical_structure(
         requested_analyses=normalized_analyses,
         preliminary_issues=packing_reference_issues,
         repair_refinement=active_transform_requests.repair_refinement,
+        hydrogen_length_plan=hydrogen_length_plan,
         retained_non_polymer_chemistry_evidence=validated_retained_non_polymer_chemistry_evidence,
     )
 
@@ -134,6 +141,7 @@ def process_structure_source(
     transform_requests: WorkflowTransformRequests | None = None,
     planning_context: WorkflowPlanningContext | None = None,
     analyses: Iterable[AnalysisKind] = frozenset(),
+    hydrogen_lengths: HydrogenLengthRequest | None = None,
 ) -> ProcessResult:
     """Normalize one supported source and process it through the workflow."""
 
@@ -157,6 +165,7 @@ def process_structure_source(
         transform_requests=active_transform_requests,
         planning_context=planning_context,
         analyses=normalized_analyses,
+        hydrogen_lengths=hydrogen_lengths,
     )
 
 

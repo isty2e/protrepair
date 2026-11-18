@@ -4,6 +4,11 @@
 
 ### Added
 
+- report measurable X-H lengths and parent-position conflicts for existing
+  H/D/T by default. Grade supported polymer side-chain bonds against optional
+  monomer restraints. An explicit repair request with a reference and declared
+  coordinate convention can adjust out-of-range lengths without changing the
+  assigned parent, chemistry, or bond direction
 - report residual bonded geometry across the final polymer, not just rebuilt
   spans. Request `BondedGeometryState.WITHIN_TOLERANCE` to try coordinate-only
   repair for selected residues, selected chains or the whole polymer. Without

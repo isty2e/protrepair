@@ -23,7 +23,11 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateSite,
     ObservedHydrogenAttachment,
 )
-from protrepair.structure.constitution import ResidueSite, StructureConstitution
+from protrepair.structure.constitution import (
+    AtomSite,
+    ResidueSite,
+    StructureConstitution,
+)
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
 from protrepair.structure.topology import BondRelationshipType, TopologyBond
@@ -693,24 +697,22 @@ class PolymerMicrostateSite:
         for atom in residue.atom_sites:
             if not atom.is_hydrogen():
                 continue
-            canonical = atom.name
-            isotope_position = 1 if canonical[0].isdigit() else 0
-            if (
-                atom.element in {"D", "T"}
-                and canonical[isotope_position : isotope_position + 1] == atom.element
-            ):
-                canonical = (
-                    canonical[:isotope_position]
-                    + "H"
-                    + canonical[isotope_position + 1 :]
-                )
-            names[atom.name] = canonical
+            names[atom.name] = self.hydrogen_slot_name(atom)
         aliases = self.template.polymer_hydrogen_parent_aliases()
         return {
             name: aliases[canonical]
             for name, canonical in names.items()
             if canonical in aliases
         }
+
+    @staticmethod
+    def hydrogen_slot_name(atom: AtomSite) -> str:
+        """Return the polymer name with its isotope prefix removed, if present."""
+        name = atom.name
+        position = 1 if name[0].isdigit() else 0
+        if atom.element in {"D", "T"} and name[position : position + 1] == atom.element:
+            return name[:position] + "H" + name[position + 1 :]
+        return name
 
     def hydrogen_name_candidates(self, parent_name: str) -> tuple[str, ...]:
         """Return preferred new H names, without selecting a protonation state.
