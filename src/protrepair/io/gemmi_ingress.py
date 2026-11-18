@@ -1,5 +1,6 @@
 """gemmi-backed canonical structure ingress for coordinate formats."""
 
+import re
 from collections import Counter
 from collections.abc import Iterator
 from math import isfinite
@@ -23,7 +24,11 @@ from protrepair.io.source_identity import (
     normalize_chain_id,
     normalize_insertion_code,
 )
-from protrepair.io.structure_ingress import normalize_raw_structure
+from protrepair.io.source_peptide import SourcePolymerLabels
+from protrepair.io.structure_ingress import (
+    SourceAtomAnnotation,
+    normalize_raw_structure,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
@@ -35,6 +40,16 @@ from protrepair.structure.topology import (
 )
 
 MAX_STRUCTURE_INPUT_BYTES = 256 * 1024 * 1024
+
+_OCCUPANCY_COEFFICIENT = r"[+-]?(?P<coefficient>[0-9]+(?:\.[0-9]*)?|\.[0-9]+)"
+_OCCUPANCY_EXPONENT = r"[eE][+-]?[0-9]+"
+_PDB_OCCUPANCY_TOKEN = re.compile(
+    rf"{_OCCUPANCY_COEFFICIENT}(?:{_OCCUPANCY_EXPONENT})?"
+)
+_CIF_OCCUPANCY_TOKEN = re.compile(
+    rf"{_OCCUPANCY_COEFFICIENT}(?:{_OCCUPANCY_EXPONENT})?(?:\([0-9]+\))?"
+)
+_UNANNOTATED_ATOM = SourceAtomAnnotation()
 
 
 def read_structure(
@@ -129,7 +144,13 @@ def _normalize_structure_text(
     """Parse and normalize one coordinate payload through one boundary path."""
 
     _assert_structure_text_size(contents, source_name=source_name)
+    prove_whole_residue_omissions = policy.omit_zero_occupancy_polymer_residues
+    prove_zero_occupancy = (
+        policy.omit_zero_occupancy_sidechain_heavy_atoms
+        or prove_whole_residue_omissions
+    )
     source_orders_by_id: dict[str, int | None] = {}
+    source_labels_by_residue: dict[ResidueId, frozenset[SourcePolymerLabels]] = {}
     if file_format is FileFormat.PDB:
         raw_structure = gemmi.read_pdb_string(contents)
         # Validate serials even without CONECT, independently of atom attributes.
@@ -137,8 +158,12 @@ def _normalize_structure_text(
         pdb_conect_source_connections = _pdb_conect_source_connections(
             contents, atom_identity_by_serial=atom_identity_by_serial
         )
-        source_element_by_atom_identity, source_charges, peptide_break_after = (
-            _pdb_source_atom_attributes(contents)
+        source_element_by_atom_identity, source_annotations, peptide_break_after = (
+            _pdb_source_atom_attributes(
+                contents,
+                prove_zero_occupancy=prove_zero_occupancy,
+                prove_positive_occupancy=prove_whole_residue_omissions,
+            )
         )
     else:
         source_document = gemmi.cif.Document()
@@ -149,8 +174,14 @@ def _normalize_structure_text(
             source_document,
         )
         pdb_conect_source_connections = ()
-        source_element_by_atom_identity, source_charges = _mmcif_source_atom_attributes(
-            source_document
+        (
+            source_element_by_atom_identity,
+            source_annotations,
+            source_labels_by_residue,
+        ) = _mmcif_source_atom_attributes(
+            source_document,
+            prove_zero_occupancy=prove_zero_occupancy,
+            prove_whole_residue_omissions=prove_whole_residue_omissions,
         )
         source_orders_by_id = _mmcif_connection_orders(source_document)
         peptide_break_after = frozenset()
@@ -172,8 +203,9 @@ def _normalize_structure_text(
         source_name=source_name,
         source_connections=source_connections,
         source_element_by_atom_identity=source_element_by_atom_identity,
-        source_charges_by_atom_identity=source_charges,
+        source_annotations_by_atom_identity=source_annotations,
         source_peptide_break_after=peptide_break_after,
+        source_labels_by_residue=source_labels_by_residue,
     )
 
 
@@ -432,15 +464,18 @@ def _first_model_unambiguous_pdb_atom_identities(
 
 def _pdb_source_atom_attributes(
     contents: str,
+    *,
+    prove_zero_occupancy: bool,
+    prove_positive_occupancy: bool,
 ) -> tuple[
     dict[SourceAtomIdentity, str],
-    dict[SourceAtomIdentity, list[int | None]],
+    dict[SourceAtomIdentity, list[SourceAtomAnnotation]],
     frozenset[ResidueId],
 ]:
-    """Read isotope/charge observations and TER boundaries before Gemmi projection."""
+    """Read source atom annotations and TER boundaries before projection."""
 
     source_elements: dict[SourceAtomIdentity, str] = {}
-    source_charges: dict[SourceAtomIdentity, list[int | None]] = {}
+    source_annotations: dict[SourceAtomIdentity, list[SourceAtomAnnotation]] = {}
     peptide_break_after: set[ResidueId] = set()
     previous_residue: ResidueId | None = None
     for line in _first_model_pdb_coordinate_records(contents):
@@ -459,9 +494,25 @@ def _pdb_source_atom_attributes(
             charge = int(token[0]) * (-1 if token[1] == "-" else 1)
         else:
             raise StructureNormalizationError(f"invalid PDB formal charge {token!r}")
-        source_charges.setdefault(identity, []).append(charge)
-
         source_symbol = line[76:78].strip().upper()
+        if prove_zero_occupancy:
+            occupancy = line[54:60].strip() if len(line) >= 60 else ""
+            annotation = _occupancy_annotation(
+                occupancy,
+                _PDB_OCCUPANCY_TOKEN,
+                identity,
+                formal_charge=charge,
+                declared_element=source_symbol,
+                prove_positive=prove_positive_occupancy,
+            )
+        else:
+            annotation = (
+                _UNANNOTATED_ATOM
+                if charge is None
+                else SourceAtomAnnotation(formal_charge=charge)
+            )
+        source_annotations.setdefault(identity, []).append(annotation)
+
         if source_symbol not in {"D", "T"}:
             continue
         _record_source_isotope_element(
@@ -470,21 +521,28 @@ def _pdb_source_atom_attributes(
             source_symbol,
         )
 
-    return source_elements, source_charges, frozenset(peptide_break_after)
+    return source_elements, source_annotations, frozenset(peptide_break_after)
 
 
 def _mmcif_source_atom_attributes(
     document: gemmi.cif.Document,
-) -> tuple[dict[SourceAtomIdentity, str], dict[SourceAtomIdentity, list[int | None]]]:
-    """Read first-model isotope and charge annotations in source occurrence order."""
+    *,
+    prove_zero_occupancy: bool,
+    prove_whole_residue_omissions: bool,
+) -> tuple[
+    dict[SourceAtomIdentity, str],
+    dict[SourceAtomIdentity, list[SourceAtomAnnotation]],
+    dict[ResidueId, frozenset[SourcePolymerLabels]],
+]:
+    """Read first-model atom annotations and uncollapsed polymer labels."""
 
     if len(document) == 0:
-        return {}, {}
+        return {}, {}, {}
 
     block = document[0]
     type_symbols = tuple(block.find_values("_atom_site.type_symbol"))
     if not type_symbols:
-        return {}, {}
+        return {}, {}, {}
 
     row_count = len(type_symbols)
     charge_tokens = _coalesced_mmcif_column(
@@ -492,6 +550,25 @@ def _mmcif_source_atom_attributes(
         ("_atom_site.pdbx_formal_charge",),
         row_count=row_count,
         required=False,
+    )
+    occupancy_tokens = (
+        _coalesced_mmcif_column(
+            block, ("_atom_site.occupancy",), row_count=row_count, required=False
+        )
+        if prove_zero_occupancy
+        else None
+    )
+    source_label_columns = (
+        tuple(
+            _coalesced_mmcif_column(block, (tag,), row_count=row_count, required=False)
+            for tag in (
+                "_atom_site.label_asym_id",
+                "_atom_site.label_entity_id",
+                "_atom_site.label_seq_id",
+            )
+        )
+        if prove_whole_residue_omissions
+        else None
     )
     atom_names = _coalesced_mmcif_column(
         block,
@@ -541,7 +618,8 @@ def _mmcif_source_atom_attributes(
     )
 
     source_elements: dict[SourceAtomIdentity, str] = {}
-    source_charges: dict[SourceAtomIdentity, list[int | None]] = {}
+    source_annotations: dict[SourceAtomIdentity, list[SourceAtomAnnotation]] = {}
+    source_labels: dict[ResidueId, set[SourcePolymerLabels]] = {}
     for row_index, source_symbol in enumerate(type_symbols):
         normalized_source_symbol = _non_null_cif_value(source_symbol).upper()
         if (
@@ -561,20 +639,28 @@ def _mmcif_source_atom_attributes(
         except ValueError:
             continue
 
-        identity = SourceAtomIdentity(
-            atom_ref=AtomRef(
-                residue_id=ResidueId(
-                    chain_id=normalize_chain_id(chain_id),
-                    seq_num=seq_num,
-                    insertion_code=normalize_insertion_code(
-                        _non_null_cif_value(insertion_codes[row_index])
-                    ),
-                ),
-                atom_name=atom_name,
+        residue_id = ResidueId(
+            chain_id=normalize_chain_id(chain_id),
+            seq_num=seq_num,
+            insertion_code=normalize_insertion_code(
+                _non_null_cif_value(insertion_codes[row_index])
             ),
+        )
+        identity = SourceAtomIdentity(
+            atom_ref=AtomRef(residue_id, atom_name),
             component_id=component_id,
             altloc=normalize_altloc(_non_null_cif_value(altlocs[row_index])),
         )
+        if source_label_columns is not None:
+            subchain_id, entity_id, position_token = (
+                _non_null_cif_value(column[row_index])
+                for column in source_label_columns
+            )
+            if subchain_id or entity_id or position_token:
+                source_labels.setdefault(residue_id, set()).add(
+                    SourcePolymerLabels(subchain_id, entity_id, position_token)
+                )
+
         token = _non_null_cif_value(charge_tokens[row_index])
         try:
             charge = None if not token else int(token)
@@ -582,13 +668,62 @@ def _mmcif_source_atom_attributes(
             raise StructureNormalizationError(
                 f"invalid mmCIF formal charge {token!r}"
             ) from error
-        source_charges.setdefault(identity, []).append(charge)
+        if occupancy_tokens is not None:
+            occupancy = _non_null_cif_value(occupancy_tokens[row_index])
+            occupancy = "" if occupancy in {"?", "."} else occupancy
+            annotation = _occupancy_annotation(
+                occupancy,
+                _CIF_OCCUPANCY_TOKEN,
+                identity,
+                formal_charge=charge,
+                declared_element=normalized_source_symbol,
+                prove_positive=prove_whole_residue_omissions,
+            )
+        else:
+            annotation = (
+                _UNANNOTATED_ATOM
+                if charge is None
+                else SourceAtomAnnotation(formal_charge=charge)
+            )
+        source_annotations.setdefault(identity, []).append(annotation)
         if normalized_source_symbol in {"D", "T"}:
             _record_source_isotope_element(
                 source_elements, identity, normalized_source_symbol
             )
 
-    return source_elements, source_charges
+    return (
+        source_elements,
+        source_annotations,
+        {residue_id: frozenset(labels) for residue_id, labels in source_labels.items()},
+    )
+
+
+def _occupancy_annotation(
+    token: str,
+    token_pattern: re.Pattern[str],
+    identity: SourceAtomIdentity,
+    *,
+    formal_charge: int | None,
+    declared_element: str,
+    prove_positive: bool,
+) -> SourceAtomAnnotation:
+    """Test the source coefficient without rounding the value to native precision."""
+
+    zero = positive = False
+    if token:
+        match = token_pattern.fullmatch(token)
+        if match is None:
+            raise StructureNormalizationError(
+                f"invalid source occupancy {token!r} at {identity.atom_ref.display_token()}"
+            )
+        zero = all(digit in "0." for digit in match["coefficient"])
+        positive = prove_positive and not zero and not token.startswith("-")
+    return SourceAtomAnnotation(
+        formal_charge=formal_charge,
+        explicitly_zero_occupancy=zero,
+        declared_element=declared_element,
+        explicitly_positive_occupancy=positive,
+    )
 
 
 def _coalesced_mmcif_column(

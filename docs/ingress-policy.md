@@ -132,6 +132,72 @@ values such as occupancy `1.0000001` and B factor `-0.0000001`. It does not
 clamp them. Clamping would replace source evidence and hide a data-quality
 problem before repair starts.
 
+### Zero-Occupancy Side Chains
+
+By default the reader keeps selected coordinates with zero occupancy. Set
+`omit_zero_occupancy_sidechain_heavy_atoms=True` on `StructureIngressOptions`
+for `process_structure()` to treat eligible positions as missing.
+
+The option runs after alternate-location and residue-variant selection. It
+checks for an explicit zero in the input field, even when the atom has no
+alternate location. Blank or unspecified fields and nonzero values that round
+to zero are not declarations of zero. The reader does not fall back to another
+alternate when it withholds the selected coordinate.
+
+The option covers standard polymer side chains attached to the backbone only
+at `CA`, with `N`, `CA`, `C` and `O` present and none declared zero. A hydrogen
+is withheld only if it is also explicitly zero and its parent is withheld.
+Whole-zero residues, backbone and terminal atoms, Pro rings, and retained
+non-polymers are outside this option's scope.
+
+Ingress refuses ambiguous source records rather than guessing which coordinate
+carried a zero. It also refuses a projection that would remove a declared connection
+(including `CONECT`) or charge, affect a declared side-chain link or nonzero
+side-chain charge, leave a retained hydrogen without its parent, or disconnect
+a retained template fragment. Applying the option does not request repair.
+
+The withheld coordinates are excluded from the active source observation.
+Inspect their history in `structure.provenance.ingress.zero_occupancy_omissions`:
+`None` means the option was not applied, and an empty tuple means it was
+applied without omissions. This history describes the original source, not
+the current atom inventory. A canonical structure without that history
+requires re-reading the original input to apply the option. Reusing a
+structure with a receipt never removes a rebuilt atom a second time.
+
+### Whole Zero-Occupancy Residues
+
+Set `omit_zero_occupancy_polymer_residues=True` on `StructureIngressOptions`
+to withhold isolated, internal standard polymer residues with only explicit
+zero occupancies. This is independent of the side-chain option. All atom
+records at the slot in the first model must declare zero, including H/D/T and
+discarded alternate locations. Both flanks must have positively declared
+`N`, `CA`, `C` and `O` and follow the source polymer sequence through the
+slot. Terminal slots, consecutive zero runs, insertion codes and ambiguous
+or conflicting sequence evidence leave the selected coordinates in place.
+An otherwise eligible omission that would discard a declared connection or
+formal charge is refused.
+
+The reader does not align incomplete PDB coordinate records to `SEQRES`.
+An unmodeled residue or an extra record in the same chain, such as water,
+can prevent an exact match and leave a zero-occupancy residue in place.
+For mmCIF, the reader checks the declared sequence position, subchain and
+entity labels on the original atom rows for agreement with the polymer path.
+
+Inspect the original residue ID, component, flanks and withheld coordinates
+in `structure.provenance.ingress.zero_occupancy_residue_omissions`. An empty
+tuple means the policy ran without omissions; `None` means it did not run.
+The original coordinates are not used for repair. To fill a recorded gap,
+request an explicit span reconstruction matching its slot and flanks and
+provide a donor of the same component with positive occupancy on the heavy
+positions used for the insertion and the backbone fit.
+
+The in-memory record prevents geometrical peptide adjacency across the
+recorded gap. Coordinate exports contain neither the withheld atoms nor that
+history. A fresh read can still treat unusually close flanks as geometrical
+neighbors even without a C-N topology bond. To retain the source gap
+semantics, continue with the returned structure or reread the original input
+with the option enabled.
+
 ## Original Chemistry Observations
 
 The selected input is retained at `structure.provenance.ingress.observation`.

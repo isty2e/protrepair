@@ -34,8 +34,15 @@ from protrepair.io.source_identity import (
     normalize_insertion_code,
 )
 from protrepair.io.source_peptide import (
+    SourcePolymerLabels,
     source_compatible_peptide_bonds,
+    source_polymer_successions,
     source_sequence_inferred_polymer_topology_bonds,
+)
+from protrepair.io.zero_occupancy import (
+    project_zero_occupancy_omissions,
+    zero_occupancy_residue_omissions,
+    zero_occupancy_sidechain_omissions,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import (
@@ -75,6 +82,36 @@ class _CanonicalResidueRole(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class SourceAtomAnnotation:
+    """Attributes of one coordinate record before native scalar conversion.
+
+    Parameters
+    ----------
+    formal_charge : int or None, default=None
+        Declared charge, distinguishing zero from an absent annotation.
+    explicitly_zero_occupancy : bool or None, default=None
+        True for a token declaring zero; None means it was not inspected.
+    declared_element : str or None, default=None
+        Source spelling used to detect ambiguous isotope or element custody
+        when binding zero-occupancy evidence.
+    explicitly_positive_occupancy : bool, default=False
+        The source token is positive, when the whole-residue policy needs
+        flank evidence. Missing tokens do not provide this evidence.
+    """
+
+    formal_charge: int | None = None
+    explicitly_zero_occupancy: bool | None = None
+    declared_element: str | None = None
+    explicitly_positive_occupancy: bool = False
+
+    def __post_init__(self) -> None:
+        if self.explicitly_zero_occupancy and self.explicitly_positive_occupancy:
+            raise ValueError(
+                "source occupancy cannot be both explicitly zero and positive"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class _NormalizedResiduePayload:
     """One normalized residue payload over constitution and geometry facets."""
 
@@ -82,6 +119,8 @@ class _NormalizedResiduePayload:
     geometry: ResidueGeometry
     formal_charge_by_atom_name: tuple[tuple[str, int | None], ...]
     source_atom_name_projection: tuple[tuple[str, str], ...] = ()
+    explicitly_zero_atom_names: frozenset[str] = frozenset()
+    explicitly_positive_atom_names: frozenset[str] = frozenset()
 
     @property
     def residue_id(self) -> ResidueId:
@@ -106,6 +145,16 @@ class _NormalizedResiduePayload:
             return 0.0
 
         return sum(occupancies) / len(occupancies)
+
+    def has_positive_backbone(self) -> bool:
+        """Return whether all scaffold positions have positive source evidence."""
+
+        return {"N", "CA", "C", "O"} <= {
+            atom.name
+            for atom in self.constitution.atom_sites
+            if atom.name in self.explicitly_positive_atom_names
+            and atom.element == atom.name[0]
+        }
 
     def with_atom_name_projection(
         self, projection: tuple[tuple[str, str], ...]
@@ -136,6 +185,12 @@ class _NormalizedResiduePayload:
                 for name, charge in self.formal_charge_by_atom_name
             ),
             source_atom_name_projection=projection,
+            explicitly_zero_atom_names=frozenset(
+                names.get(name, name) for name in self.explicitly_zero_atom_names
+            ),
+            explicitly_positive_atom_names=frozenset(
+                names.get(name, name) for name in self.explicitly_positive_atom_names
+            ),
         )
 
 
@@ -146,6 +201,8 @@ class _RawAtomPayload:
     atom_site: AtomSite
     geometry: AtomGeometry
     formal_charge: int | None
+    explicitly_zero_occupancy: bool
+    explicitly_positive_occupancy: bool
 
     @property
     def atom_name_key(self) -> str:
@@ -253,9 +310,13 @@ def normalize_raw_structure(
     source_name: str | None = None,
     source_connections: tuple[SourceConnection, ...],
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str] | None = None,
-    source_charges_by_atom_identity: Mapping[SourceAtomIdentity, Sequence[int | None]]
+    source_annotations_by_atom_identity: Mapping[
+        SourceAtomIdentity, Sequence[SourceAtomAnnotation]
+    ]
     | None = None,
     source_peptide_break_after: frozenset[ResidueId] = frozenset(),
+    source_labels_by_residue: Mapping[ResidueId, frozenset[SourcePolymerLabels]]
+    | None = None,
 ) -> ProteinStructure:
     """Normalize one first model from format-boundary-projected source facts.
 
@@ -276,14 +337,14 @@ def normalize_raw_structure(
         Boundary-decoded declarations, before selected-atom filtering.
     source_element_by_atom_identity : Mapping[SourceAtomIdentity, str] or None
         Source isotope symbols that the native parser may collapse.
-    source_charges_by_atom_identity : Mapping or None
-        SourceAtomIdentity keys mapped to ordered int-or-None charge sequences,
-        including explicit zero and unspecified None. Without these annotations,
-        native zero cannot be distinguished from an unspecified charge and is
-        treated as unspecified.
+    source_annotations_by_atom_identity : Mapping or None
+        Boundary-decoded annotations in source occurrence order. Zero-occupancy
+        omission requires token evidence; a numeric Gemmi zero is insufficient.
     source_peptide_break_after : frozenset[ResidueId]
         Residues followed by a source TER record, even if the native parser
         did not retain that boundary.
+    source_labels_by_residue : Mapping or None, default=None
+        All declared atom-row polymer labels for each first-model source slot.
 
     Returns
     -------
@@ -301,6 +362,12 @@ def normalize_raw_structure(
     chains: list[tuple[str, list[_NormalizedResiduePayload]]] = []
     ligands: list[_NormalizedResiduePayload] = []
 
+    omit_sidechains = policy.omit_zero_occupancy_sidechain_heavy_atoms
+    omit_residues = policy.omit_zero_occupancy_polymer_residues
+    prove_zero_occupancy = omit_sidechains or omit_residues
+    source_annotations = _source_annotation_iterators(
+        source_annotations_by_atom_identity, require_occupancy=prove_zero_occupancy
+    )
     if len(raw_structure) == 0:
         empty_constitution = StructureConstitution(chains=(), ligands=())
         empty_geometry = StructureGeometry(
@@ -320,6 +387,8 @@ def normalize_raw_structure(
                         geometry=empty_geometry,
                         topology=empty_topology,
                     ),
+                    zero_occupancy_omissions=() if omit_sidechains else None,
+                    zero_occupancy_residue_omissions=() if omit_residues else None,
                 )
             ),
         )
@@ -328,16 +397,6 @@ def normalize_raw_structure(
         {}
         if source_element_by_atom_identity is None
         else source_element_by_atom_identity
-    )
-    # Occurrences, not a first-wins map: duplicate atoms still participate in
-    # occupancy selection with their own charge declaration.
-    source_charges = (
-        None
-        if source_charges_by_atom_identity is None
-        else {
-            identity: iter(charges)
-            for identity, charges in source_charges_by_atom_identity.items()
-        }
     )
     entity_type_by_id = _entity_type_by_id(raw_structure)
     source_peptide_link_pairs = _source_peptide_link_pairs(
@@ -379,7 +438,7 @@ def normalize_raw_structure(
             policy,
             residue_role_by_id=residue_role_by_id,
             source_element_by_atom_identity=normalized_source_elements,
-            source_charges=source_charges,
+            source_annotations=source_annotations,
             coordination_endpoints_by_residue=coordination_endpoints_by_residue,
         )
         excluded_source_endpoints.update(excluded_endpoints)
@@ -439,19 +498,24 @@ def normalize_raw_structure(
         constitution=constitution,
         residue_payloads=normalized_residue_payloads,
     )
-    peptide_candidates = source_sequence_inferred_polymer_topology_bonds(
+    successions = source_polymer_successions(
         raw_structure,
         file_format=file_format,
         constitution=constitution,
-        geometry=geometry,
         peptide_break_after=source_peptide_break_after,
+        verify_source_paths=omit_residues,
+        source_labels_by_residue=source_labels_by_residue,
+    )
+    peptide_candidates = source_sequence_inferred_polymer_topology_bonds(
+        successions, constitution=constitution, geometry=geometry
     )
     for bond in peptide_candidates:
         expected_bonds_by_pair.setdefault(bond.endpoint_pair(), bond)
+    projected_source_connections = _project_source_connection_names(
+        source_connections, normalized_residue_payloads
+    )
     source_topology_bonds = _topology_bonds_from_source_connections(
-        _project_source_connection_names(
-            source_connections, normalized_residue_payloads
-        ),
+        projected_source_connections,
         constitution=constitution,
         geometry=geometry,
         expected_bonds_by_pair=expected_bonds_by_pair,
@@ -480,7 +544,7 @@ def normalize_raw_structure(
         atom_topologies=atom_topologies,
         bonds=topology_bonds,
     )
-    return ProteinStructure.from_payload(
+    selected = ProteinStructure.from_payload(
         constitution=constitution,
         geometry=geometry,
         topology=topology,
@@ -504,6 +568,108 @@ def normalize_raw_structure(
             )
         ),
     )
+    if not prove_zero_occupancy:
+        return selected
+
+    atom_omissions = None
+    if omit_sidechains:
+        atom_omissions = zero_occupancy_sidechain_omissions(
+            selected,
+            explicitly_zero_refs=frozenset(
+                AtomRef(payload.residue_id, atom_name)
+                for payload in normalized_residue_payloads
+                for atom_name in payload.explicitly_zero_atom_names
+            ),
+            source_connections=projected_source_connections,
+        )
+    residue_omissions = None
+    if omit_residues:
+        assert source_annotations_by_atom_identity is not None
+        all_zero_ids, charged_atoms = _all_zero_source_residues(
+            source_annotations_by_atom_identity
+        )
+        residue_omissions = zero_occupancy_residue_omissions(
+            selected,
+            all_zero_residue_ids=frozenset(
+                payload.residue_id
+                for payload in normalized_residue_payloads
+                if (
+                    payload.residue_id in all_zero_ids
+                    and payload.explicitly_zero_atom_names
+                    and len(payload.explicitly_zero_atom_names)
+                    == len(payload.constitution.atom_sites)
+                )
+            ),
+            positive_backbone_residue_ids=frozenset(
+                payload.residue_id
+                for payload in normalized_residue_payloads
+                if payload.has_positive_backbone()
+            ),
+            verified_neighbors=frozenset(
+                (pair.preceding_residue_id, pair.following_residue_id)
+                for pair in successions
+                if pair.verified_source_path
+            ),
+            charged_source_atoms_by_residue=charged_atoms,
+            source_connections=projected_source_connections,
+        )
+    return project_zero_occupancy_omissions(
+        selected,
+        atom_omissions=atom_omissions,
+        residue_omissions=residue_omissions,
+    )
+
+
+def _all_zero_source_residues(
+    annotations: Mapping[SourceAtomIdentity, Sequence[SourceAtomAnnotation]],
+) -> tuple[frozenset[ResidueId], dict[ResidueId, AtomRef]]:
+    """Account for every source row, even if its conformer was not selected."""
+
+    components: dict[ResidueId, str] = {}
+    ineligible: set[ResidueId] = set()
+    charged: dict[ResidueId, AtomRef] = {}
+    for identity, occurrences in annotations.items():
+        residue_id = identity.atom_ref.residue_id
+        component = components.setdefault(residue_id, identity.component_id)
+        if component != identity.component_id or not all(
+            item.explicitly_zero_occupancy is True for item in occurrences
+        ):
+            ineligible.add(residue_id)
+        if any(item.formal_charge is not None for item in occurrences):
+            charged.setdefault(residue_id, identity.atom_ref)
+    return frozenset(components.keys() - ineligible), charged
+
+
+def _source_annotation_iterators(
+    annotations: Mapping[SourceAtomIdentity, Sequence[SourceAtomAnnotation]] | None,
+    *,
+    require_occupancy: bool,
+) -> dict[SourceAtomIdentity, Iterator[SourceAtomAnnotation]] | None:
+    """Bind annotations without assuming duplicate source rows survive in order."""
+
+    if annotations is None:
+        if require_occupancy:
+            raise StructureNormalizationError(
+                "zero-occupancy omission requires reading the source coordinate text"
+            )
+        return None
+
+    if require_occupancy:
+        for identity, occurrences in annotations.items():
+            if not occurrences or occurrences[0].explicitly_zero_occupancy is None:
+                raise StructureNormalizationError(
+                    f"missing source occupancy evidence at {identity.atom_ref.display_token()}"
+                )
+            # Native identity and occupancy cannot separate blank and numeric zero,
+            # or preserve the association through interleaved duplicate rows.
+            if any(occurrence != occurrences[0] for occurrence in occurrences):
+                raise StructureNormalizationError(
+                    f"ambiguous source atom annotations at {identity.atom_ref.display_token()}"
+                )
+
+    return {
+        identity: iter(occurrences) for identity, occurrences in annotations.items()
+    }
 
 
 def _structure_geometry_from_payloads(
@@ -558,6 +724,21 @@ def apply_structure_normalization_policy(
     policy: StructureNormalizationPolicy,
 ) -> ProteinStructure:
     """Apply one canonical normalization policy to an already canonical structure."""
+
+    if (
+        policy.omit_zero_occupancy_sidechain_heavy_atoms
+        and structure.provenance.ingress.zero_occupancy_omissions is None
+    ):
+        raise StructureNormalizationError(
+            "zero-occupancy omission requires re-reading the original coordinate input"
+        )
+    if (
+        policy.omit_zero_occupancy_polymer_residues
+        and structure.provenance.ingress.zero_occupancy_residue_omissions is None
+    ):
+        raise StructureNormalizationError(
+            "zero-occupancy residue omission requires re-reading the original coordinate input"
+        )
 
     if policy.selected_chain_ids is None:
         selected_chain_ids = structure.constitution.chain_ids()
@@ -962,7 +1143,8 @@ def _normalize_chain_residues(
     *,
     residue_role_by_id: Mapping[ResidueId, _CanonicalResidueRole],
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
-    source_charges: Mapping[SourceAtomIdentity, Iterator[int | None]] | None,
+    source_annotations: Mapping[SourceAtomIdentity, Iterator[SourceAtomAnnotation]]
+    | None,
     coordination_endpoints_by_residue: Mapping[ResidueId, list[SourceAtomIdentity]],
 ) -> tuple[
     list[_NormalizedResiduePayload],
@@ -1018,7 +1200,7 @@ def _normalize_chain_residues(
             policy.occupancy_policy,
             is_hetero=is_hetero,
             source_element_by_atom_identity=source_element_by_atom_identity,
-            source_charges=source_charges,
+            source_annotations=source_annotations,
         )
         if residue_id not in grouped_payloads:
             grouped_payloads[residue_id] = []
@@ -1225,7 +1407,8 @@ def _normalize_residue(
     *,
     is_hetero: bool,
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
-    source_charges: Mapping[SourceAtomIdentity, Iterator[int | None]] | None,
+    source_annotations: Mapping[SourceAtomIdentity, Iterator[SourceAtomAnnotation]]
+    | None,
 ) -> _NormalizedResiduePayload:
     """Normalize one raw gemmi residue into the canonical residue entity."""
 
@@ -1235,25 +1418,35 @@ def _normalize_residue(
         residue_id=residue_id,
         occupancy_policy=occupancy_policy,
         source_element_by_atom_identity=source_element_by_atom_identity,
-        source_charges=source_charges,
+        source_annotations=source_annotations,
     )
     return _NormalizedResiduePayload(
         constitution=ResidueSite(
             component_id=raw_residue.name,
             residue_id=residue_id,
-            atom_sites=tuple(atom_site for atom_site, _, _ in selected_atom_payloads),
+            atom_sites=tuple(payload.atom_site for payload in selected_atom_payloads),
             is_hetero=is_hetero,
         ),
         geometry=ResidueGeometry(
             atoms_by_name={
-                atom_site.name: atom_geometry
-                for atom_site, atom_geometry, _ in selected_atom_payloads
+                payload.atom_site.name: payload.geometry
+                for payload in selected_atom_payloads
             },
         ),
         formal_charge_by_atom_name=tuple(
-            (atom_site.name, formal_charge)
-            for atom_site, _, formal_charge in selected_atom_payloads
-            if formal_charge is not None
+            (payload.atom_site.name, payload.formal_charge)
+            for payload in selected_atom_payloads
+            if payload.formal_charge is not None
+        ),
+        explicitly_zero_atom_names=frozenset(
+            payload.atom_site.name
+            for payload in selected_atom_payloads
+            if payload.explicitly_zero_occupancy
+        ),
+        explicitly_positive_atom_names=frozenset(
+            payload.atom_site.name
+            for payload in selected_atom_payloads
+            if payload.explicitly_positive_occupancy
         ),
     )
 
@@ -1264,8 +1457,9 @@ def _select_atom_variants(
     residue_id: ResidueId,
     occupancy_policy: OccupancyPolicy,
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
-    source_charges: Mapping[SourceAtomIdentity, Iterator[int | None]] | None,
-) -> list[tuple[AtomSite, AtomGeometry, int | None]]:
+    source_annotations: Mapping[SourceAtomIdentity, Iterator[SourceAtomAnnotation]]
+    | None,
+) -> list[_RawAtomPayload]:
     """Resolve atom sites by residue altloc cohort, then by atom name."""
 
     raw_atom_payloads = tuple(
@@ -1274,24 +1468,16 @@ def _select_atom_variants(
             residue_id=residue_id,
             component_id=raw_residue.name,
             source_element_by_atom_identity=source_element_by_atom_identity,
-            source_charges=source_charges,
+            source_annotations=source_annotations,
         )
         for raw_atom in raw_residue
     )
     selected_altloc = _select_residue_altloc(raw_atom_payloads, occupancy_policy)
-    selected_atoms = _select_atom_name_variants(
+    return _select_atom_name_variants(
         _raw_atoms_for_selected_altloc(raw_atom_payloads, selected_altloc),
         selected_altloc=selected_altloc,
         occupancy_policy=occupancy_policy,
     )
-    return [
-        (
-            atom_payload.atom_site,
-            atom_payload.geometry,
-            atom_payload.formal_charge,
-        )
-        for atom_payload in selected_atoms
-    ]
 
 
 def _should_replace_occupancy_score(
@@ -1313,7 +1499,8 @@ def _atom_payload_from_raw_site(
     residue_id: ResidueId,
     component_id: str,
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
-    source_charges: Mapping[SourceAtomIdentity, Iterator[int | None]] | None,
+    source_annotations: Mapping[SourceAtomIdentity, Iterator[SourceAtomAnnotation]]
+    | None,
 ) -> _RawAtomPayload:
     """Validate and project one raw gemmi atom before variant selection."""
 
@@ -1343,19 +1530,31 @@ def _atom_payload_from_raw_site(
         component_id=component_id,
         altloc=altloc,
     )
-    if source_charges is None:
+    explicitly_zero_occupancy = False
+    explicitly_positive_occupancy = False
+    if source_annotations is None:
         formal_charge = normalize_formal_charge(int(raw_atom.charge))
     else:
         try:
-            formal_charge = next(source_charges[source_identity])
+            annotation = next(source_annotations[source_identity])
         except (KeyError, StopIteration) as error:
             raise StructureNormalizationError(
                 "source charge annotations do not match "
                 f"{source_identity.atom_ref.display_token()}"
             ) from error
+        formal_charge = annotation.formal_charge
         if (0 if formal_charge is None else formal_charge) != int(raw_atom.charge):
             raise StructureNormalizationError(
                 "source charge annotation disagrees with parsed atom "
+                f"{source_identity.atom_ref.display_token()}"
+            )
+        explicitly_zero_occupancy = annotation.explicitly_zero_occupancy is True
+        explicitly_positive_occupancy = (
+            annotation.explicitly_positive_occupancy and occupancy > 0
+        )
+        if explicitly_zero_occupancy and occupancy != 0.0:
+            raise StructureNormalizationError(
+                "source zero occupancy disagrees with parsed atom "
                 f"{source_identity.atom_ref.display_token()}"
             )
 
@@ -1378,6 +1577,8 @@ def _atom_payload_from_raw_site(
             altloc=altloc,
         ),
         formal_charge=formal_charge,
+        explicitly_zero_occupancy=explicitly_zero_occupancy,
+        explicitly_positive_occupancy=explicitly_positive_occupancy,
     )
 
 

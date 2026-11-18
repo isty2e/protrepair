@@ -1,6 +1,6 @@
 """Structure ingress normalization policy contracts."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -28,12 +28,39 @@ class LigandHandling(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class StructureNormalizationPolicy:
-    """Canonical normalization policy for one structure-ingress boundary."""
+    """Canonical normalization policy for one structure-ingress boundary.
+
+    Parameters
+    ----------
+    occupancy_policy : OccupancyPolicy, default=OccupancyPolicy.HIGHEST
+        How to select alternate atom positions.
+    mutation_policy : MutationPolicy, default=MutationPolicy.HIGHEST_OCCUPANCY
+        How to select between residue variants at one position.
+    ligand_handling : LigandHandling, default=LigandHandling.KEEP
+        How to treat non-water ligands.
+    selected_chain_ids : tuple of str or None, default=None
+        Chains to retain; None selects all chains.
+    omit_zero_occupancy_sidechain_heavy_atoms : bool, default=False
+        Treat eligible standard side-chain coordinates explicitly declared zero
+        in the source text as missing, including zero-occupancy dependent H/D/T.
+    omit_zero_occupancy_polymer_residues : bool, default=False
+        Withhold isolated interior standard residues with exclusively declared
+        zero source coordinates and observed backbone flanks.
+
+    Raises
+    ------
+    TypeError
+        A policy option has a noncanonical type.
+    ValueError
+        The chain selection contains a blank identifier.
+    """
 
     occupancy_policy: OccupancyPolicy = OccupancyPolicy.HIGHEST
     mutation_policy: MutationPolicy = MutationPolicy.HIGHEST_OCCUPANCY
     ligand_handling: LigandHandling = LigandHandling.KEEP
     selected_chain_ids: tuple[str, ...] | None = None
+    omit_zero_occupancy_sidechain_heavy_atoms: bool = field(default=False, kw_only=True)
+    omit_zero_occupancy_polymer_residues: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.occupancy_policy, OccupancyPolicy):
@@ -51,6 +78,11 @@ class StructureNormalizationPolicy:
             raise TypeError(
                 "structure normalization ligand_handling must be a LigandHandling value"
             )
+
+        if not isinstance(self.omit_zero_occupancy_sidechain_heavy_atoms, bool):
+            raise TypeError("omit_zero_occupancy_sidechain_heavy_atoms must be a bool")
+        if not isinstance(self.omit_zero_occupancy_polymer_residues, bool):
+            raise TypeError("omit_zero_occupancy_polymer_residues must be a bool")
 
         selected_chain_ids = self.selected_chain_ids
         if selected_chain_ids is None:

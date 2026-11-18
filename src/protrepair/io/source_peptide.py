@@ -3,6 +3,7 @@
 import itertools
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 import gemmi
 
@@ -24,15 +25,68 @@ from protrepair.structure.topology import (
 )
 
 
-def source_sequence_inferred_polymer_topology_bonds(
+@dataclass(frozen=True, slots=True)
+class SourcePolymerLabels:
+    """Polymer labels declared by a source atom row.
+
+    Parameters
+    ----------
+    subchain_id, entity_id, position_token : str
+        Source label-asym ID, label-entity ID and label-seq token, respectively.
+        An empty field carries no claim.
+    """
+
+    subchain_id: str
+    entity_id: str
+    position_token: str
+
+    def matches(self, residue: gemmi.Residue, position: int | None) -> bool:
+        """Check the row's available labels against the resolved source slot."""
+
+        if self.subchain_id and self.subchain_id != residue.subchain:
+            return False
+        if self.entity_id and self.entity_id != residue.entity_id:
+            return False
+        if not self.position_token:
+            return True
+        try:
+            return int(self.position_token) == position
+        except ValueError:
+            return False
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePolymerSuccession:
+    """An ordered polymer pair before lowering to materialized C/N positions.
+
+    Parameters
+    ----------
+    preceding_residue_id, following_residue_id : ResidueId
+        Selected identities supported by source polymer order.
+    consecutive_source_slots : bool
+        The two raw slots are immediate neighbors, without a skipped slot.
+    verified_source_path : bool
+        For coordinate omission, the consecutive path is unique and any
+        available declared sequence agrees with the two component identities.
+    """
+
+    preceding_residue_id: ResidueId
+    following_residue_id: ResidueId
+    consecutive_source_slots: bool
+    verified_source_path: bool
+
+
+def source_polymer_successions(
     source: gemmi.Structure,
     *,
     file_format: FileFormat,
     constitution: StructureConstitution,
-    geometry: StructureGeometry,
     peptide_break_after: frozenset[ResidueId],
-) -> tuple[TopologyBond, ...]:
-    """Resolve source-supported peptide succession without renumbering residues.
+    verify_source_paths: bool = False,
+    source_labels_by_residue: Mapping[ResidueId, frozenset[SourcePolymerLabels]]
+    | None = None,
+) -> tuple[SourcePolymerSuccession, ...]:
+    """Resolve sequence neighbors independently of their coordinate inventory.
 
     Parameters
     ----------
@@ -42,16 +96,18 @@ def source_sequence_inferred_polymer_topology_bonds(
         PDB SEQRES entities use chain names when no subchain was assigned.
     constitution : StructureConstitution
         Selected canonical residue and atom identities.
-    geometry : StructureGeometry
-        Selected coordinates used to corroborate unusual author numbering.
     peptide_break_after : frozenset[ResidueId]
         Explicit source TER boundaries.
+    verify_source_paths : bool, default=False
+        Check for unique, directly observed succession and validate any
+        declared sequence before the neighbors can authorize omission.
+    source_labels_by_residue : Mapping or None, default=None
+        Labels from the original atom rows, checked only for path verification.
 
     Returns
     -------
-    tuple[TopologyBond, ...]
-        Sequence-inferred candidates; surviving explicit connections must still
-        be checked with ``source_compatible_peptide_bonds``.
+    tuple of SourcePolymerSuccession
+        Candidate neighbors before checking actual or available peptide atoms.
 
     Raises
     ------
@@ -59,8 +115,9 @@ def source_sequence_inferred_polymer_topology_bonds(
         A source residue lacks an author sequence number.
     """
 
-    bonds: list[TopologyBond] = []
+    successions: list[SourcePolymerSuccession] = []
     chains_by_id = {chain.chain_id: chain for chain in constitution.chains}
+    source_labels = {} if source_labels_by_residue is None else source_labels_by_residue
     sequences = {
         subchain: tuple(entity.full_sequence)
         for entity in source.entities
@@ -153,33 +210,94 @@ def source_sequence_inferred_polymer_topology_bonds(
             elif not first_id.immediately_precedes(second_id):
                 continue
 
-            first_index = constitution.residue_index(first_id)
-            second_index = constitution.residue_index(second_id)
-            first_site = constitution.residue_site_at(first_index)
-            second_site = constitution.residue_site_at(second_index)
-            if (
-                not first_site.has_atom_site("C")
-                or first_site.has_atom_site("OXT")
-                or not second_site.has_atom_site("N")
-            ):
-                continue
-            carbon = constitution.atom_index_in_residue(first_index, "C")
-            nitrogen = constitution.atom_index_in_residue(second_index, "N")
-            if not first_id.immediately_precedes(second_id):
-                if source_offsets[second_id] != source_offsets[first_id] + 1:
-                    continue
-                separation = geometry.atom_geometry(carbon).position.distance_to(
-                    geometry.atom_geometry(nitrogen).position
+            consecutive = source_offsets[second_id] == source_offsets[first_id] + 1
+            verified = False
+            if verify_source_paths and consecutive:
+                verified = all(
+                    len(raw_slots[residue_id]) == 1
+                    and all(
+                        labels.matches(raw, position)
+                        for labels in source_labels.get(residue_id, ())
+                    )
+                    and _sequence_accepts_source_component(
+                        sequences.get(raw.subchain) or chain_sequences.get(chain_id),
+                        position,
+                        raw.name,
+                    )
+                    for residue_id, raw, position in (
+                        (first_id, first, first_position),
+                        (second_id, second, second_position),
+                    )
                 )
-                if not 0 < separation <= PEPTIDE_CN_DISTANCE_MAX_ANGSTROM:
-                    continue
-
-            bonds.append(
-                TopologyBond(
-                    carbon, nitrogen, provenance=BondProvenance.SEQUENCE_INFERRED
-                )
+            successions.append(
+                SourcePolymerSuccession(first_id, second_id, consecutive, verified)
             )
 
+    return tuple(successions)
+
+
+def _sequence_accepts_source_component(
+    sequence: tuple[str, ...] | None, position: int | None, component_id: str
+) -> bool:
+    if not sequence:
+        return True
+    return (
+        position is not None
+        and 0 < position <= len(sequence)
+        and sequence[position - 1].strip().upper() == component_id.strip().upper()
+    )
+
+
+def source_sequence_inferred_polymer_topology_bonds(
+    successions: tuple[SourcePolymerSuccession, ...],
+    *,
+    constitution: StructureConstitution,
+    geometry: StructureGeometry,
+) -> tuple[TopologyBond, ...]:
+    """Lower source sequence suggestions to materialized C-N bond candidates.
+
+    Parameters
+    ----------
+    successions : tuple of SourcePolymerSuccession
+        Ordered source-supported neighbors.
+    constitution : StructureConstitution
+        The selected residue and atom identities addressed by the neighbors.
+    geometry : StructureGeometry
+        Selected coordinates used to corroborate unusual author numbering.
+
+    Returns
+    -------
+    tuple of TopologyBond
+        Candidates still subject to checks against explicit source chemistry.
+    """
+
+    bonds: list[TopologyBond] = []
+    for succession in successions:
+        first_id = succession.preceding_residue_id
+        second_id = succession.following_residue_id
+        first_index = constitution.residue_index(first_id)
+        second_index = constitution.residue_index(second_id)
+        first_site = constitution.residue_site_at(first_index)
+        second_site = constitution.residue_site_at(second_index)
+        if (
+            not first_site.has_atom_site("C")
+            or first_site.has_atom_site("OXT")
+            or not second_site.has_atom_site("N")
+        ):
+            continue
+        carbon = constitution.atom_index_in_residue(first_index, "C")
+        nitrogen = constitution.atom_index_in_residue(second_index, "N")
+        if not first_id.immediately_precedes(second_id):
+            if not succession.consecutive_source_slots:
+                continue
+            separation = geometry.atom_geometry(carbon).position.distance_to(
+                geometry.atom_geometry(nitrogen).position
+            )
+            if not 0 < separation <= PEPTIDE_CN_DISTANCE_MAX_ANGSTROM:
+                continue
+        bonds.append(
+            TopologyBond(carbon, nitrogen, provenance=BondProvenance.SEQUENCE_INFERRED)
+        )
     return tuple(bonds)
 
 

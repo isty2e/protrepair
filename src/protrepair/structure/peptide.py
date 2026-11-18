@@ -31,15 +31,19 @@ def are_peptide_adjacent(
     ):
         return False
 
-    return _are_consecutive_polymer_residue_slots(
-        left_residue,
-        right_residue,
-        structure=structure,
-    ) or _has_topology_peptide_bond(
-        left_residue,
-        right_residue,
-        structure=structure,
-    )
+    if _are_consecutive_polymer_residue_slots(
+        left_residue, right_residue, structure=structure
+    ):
+        omissions = structure.provenance.ingress.zero_occupancy_residue_omissions
+        if not omissions or not any(
+            record.preceding_residue_id == left_residue.residue_id
+            and record.following_residue_id == right_residue.residue_id
+            and structure.constitution.residue_or_ligand(record.residue_id) is None
+            for record in omissions
+        ):
+            return True
+
+    return _has_topology_peptide_bond(left_residue, right_residue, structure=structure)
 
 
 def _peptide_cn_distance(
