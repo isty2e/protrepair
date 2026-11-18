@@ -31,6 +31,7 @@ from protrepair.structure.geometry import (
     ResidueGeometry,
 )
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.provenance import ZeroOccupancyResidueOmission
 from protrepair.structure.topology import (
     BondProvenance,
     BondRelationshipType,
@@ -47,7 +48,7 @@ ROTATION_AXIS_NORM_EPSILON = 1.0e-10
 
 
 class SpanChemistryConflictError(ProtrepairError, ValueError):
-    """Raised when donor sidechain chemistry cannot be adopted at a source span."""
+    """Raised when a span candidate conflicts with its destination."""
 
 
 class SpanReconstructionFailureKind(str, Enum):
@@ -143,8 +144,15 @@ class ReconstructedSpanCandidate:
     maximum_anchor_rmsd_angstrom: float | None
     iteration_count: int
     sidechain_choices: tuple[AppliedMicrostateChoice, ...] = ()
+    _bound_gap_source: ProteinStructure | None = field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
+        if self._bound_gap_source is not None and not isinstance(
+            self._bound_gap_source, ProteinStructure
+        ):
+            raise TypeError("a source-bound span candidate requires a ProteinStructure")
         residue_payloads = tuple(self.residue_payloads)
         if not residue_payloads:
             raise ValueError("reconstructed span candidates require residue payloads")
@@ -276,10 +284,25 @@ class ReconstructedSpanCandidate:
         ValueError
             A residue is already present or chains differ.
         SpanChemistryConflictError
-            Adopted chemistry conflicts with source evidence or the supported
-            sidechain catalog.
+            The candidate is not bound to the destination's recorded gap,
+            or adopted chemistry conflicts with the source or side-chain catalog.
         """
         sites = tuple(payload.residue_site for payload in self.residue_payloads)
+        if self._bound_gap_source is not None and self._bound_gap_source is not source:
+            raise SpanChemistryConflictError(
+                "a source-known gap candidate must be rebuilt for another structure"
+            )
+        for record in source.provenance.ingress.zero_occupancy_residue_omissions or ():
+            if any(record.contains_position(site.residue_id) for site in sites) and (
+                self._bound_gap_source is not source
+                or len(sites) != 1
+                or sites[0].residue_id != record.residue_id
+                or sites[0].component_id != record.component_id
+            ):
+                raise SpanChemistryConflictError(
+                    f"candidate was not admitted for the recorded gap at {record.residue_id.display_token()}"
+                )
+
         chain_id = sites[0].residue_id.chain_id
         if any(
             site.residue_id.chain_id != chain_id
@@ -948,6 +971,8 @@ def reconstruct_donor_span(
         A screened heavy-atom candidate, or failure evidence without a partial
         mutation. Disconnected donor windows, mismatched source span boundaries,
         and occupied source carbonyl attachment sites are rejected before fitting.
+        A recorded zero-occupancy gap also requires the original component and
+        positive occupancy at the donor positions used for insertion and fitting.
 
     Raises
     ------
@@ -1007,6 +1032,24 @@ def reconstruct_donor_span(
     if source_boundary_failure is not None:
         return source_boundary_failure
 
+    known_gap = _recorded_gap_for_span(source_structure, scope)
+    if isinstance(known_gap, SpanReconstructionFailure):
+        return known_gap
+    if known_gap is not None:
+        donor_residue_id = normalized_donor_residue_ids[0]
+        donor_residue = donor_structure.constitution.residue_or_ligand(donor_residue_id)
+        if donor_residue is None:
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.MISSING_BACKBONE_CONTEXT,
+                f"donor residue {donor_residue_id.display_token()} is absent",
+            )
+        if donor_residue.component_id != known_gap.component_id:
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.UNSUPPORTED_COMPONENT_CHEMISTRY,
+                f"recorded gap at {known_gap.residue_id.display_token()} requires "
+                f"{known_gap.component_id}, not donor {donor_residue.component_id}",
+            )
+
     source_topology_failure = _source_carbonyl_attachment_failure(
         source_structure, scope
     )
@@ -1033,6 +1076,7 @@ def reconstruct_donor_span(
         preceding_offset=preceding_offset,
         following_offset=following_offset,
         component_library=active_library,
+        require_positive_occupancy=known_gap is not None,
     )
     if isinstance(donor_window, SpanReconstructionFailure):
         return donor_window
@@ -1148,9 +1192,34 @@ def reconstruct_donor_span(
         residue_payloads=inserted_payloads,
         maximum_anchor_rmsd_angstrom=endpoint_rmsd,
         iteration_count=iteration_count,
+        _bound_gap_source=source_structure if known_gap is not None else None,
     ).with_donor_chemistry(
         donor_structure, normalized_donor_residue_ids, active_library
     )
+
+
+def _recorded_gap_for_span(
+    structure: ProteinStructure, scope: AbsentResidueSpanScope
+) -> ZeroOccupancyResidueOmission | SpanReconstructionFailure | None:
+    """Bind a request that touches a source-known gap to that exact slot."""
+
+    for record in structure.provenance.ingress.zero_occupancy_residue_omissions or ():
+        same_flanks = (
+            scope.preceding_residue_id == record.preceding_residue_id
+            and scope.following_residue_id == record.following_residue_id
+        )
+        if not same_flanks and not any(
+            record.contains_position(residue_id)
+            for residue_id in scope.absent_residue_ids
+        ):
+            continue
+        if not same_flanks or scope.absent_residue_ids != (record.residue_id,):
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.INVALID_TARGET_STATE,
+                f"span must match the recorded gap and flanks at {record.residue_id.display_token()}",
+            )
+        return record
+    return None
 
 
 def _source_span_boundary_failure(
@@ -1265,6 +1334,7 @@ def _build_donor_window(
     preceding_offset: int | None,
     following_offset: int | None,
     component_library: ComponentLibrary,
+    require_positive_occupancy: bool = False,
 ) -> _DonorWindow | SpanReconstructionFailure:
     residue_payloads: list[CompletionResiduePayload] = []
     coordinates: list[FloatArray] = []
@@ -1300,6 +1370,24 @@ def _build_donor_window(
                     f"atom(s) {', '.join(missing_backbone_names)}"
                 ),
             )
+
+        if require_positive_occupancy:
+            consumed_names = (
+                required_backbone_names
+                if residue_offset in (preceding_offset, following_offset)
+                else tuple(
+                    atom.name
+                    for atom in residue_site.atom_sites
+                    if not atom.is_hydrogen()
+                )
+            )
+            for name in consumed_names:
+                if residue_geometry.atom_geometry(name).occupancy <= 0:
+                    return SpanReconstructionFailure(
+                        SpanReconstructionFailureKind.MISSING_BACKBONE_CONTEXT,
+                        "recorded gap requires positive donor occupancy at "
+                        f"{AtomRef(residue_id, name).display_token()}",
+                    )
 
         hydrogen_atom_names = {
             atom_site.name

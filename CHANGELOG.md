@@ -4,6 +4,14 @@
 
 ### Added
 
+- opt in to treating explicitly zero-occupancy coordinates on eligible
+  standard polymer side chains as missing during PDB/mmCIF ingress. Keep
+  withheld source coordinates in ingress provenance and use existing
+  completion goals to request rebuilding
+- opt in separately to withholding standard internal residues with exclusively
+  zero-occupancy source records and observed backbone flanks. Keep the
+  original residue identity in ingress provenance and require a matching
+  donor when explicitly reconstructing the recorded gap
 - report measurable X-H lengths and parent-position conflicts for existing
   H/D/T by default. Grade supported polymer side-chain bonds against optional
   monomer restraints. An explicit repair request with a reference and declared

@@ -4,9 +4,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from protrepair.chemistry.microstate.resolution import AppliedMicrostateChoice
+from protrepair.structure.element import ElementIdentity
 from protrepair.structure.endpoint import StructureEndpoint
-from protrepair.structure.labels import AtomRef
+from protrepair.structure.geometry import AtomGeometry
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
+from protrepair.structure.source_connection import SourceAtomIdentity
 
 
 class FileFormat(str, Enum):
@@ -14,6 +17,125 @@ class FileFormat(str, Enum):
 
     PDB = "pdb"
     MMCIF = "mmcif"
+
+
+@dataclass(frozen=True, slots=True)
+class ZeroOccupancyOmission:
+    """Historical position withheld during source normalization.
+
+    Parameters
+    ----------
+    source_identity : SourceAtomIdentity
+        Selected atom identity, including component and alternate location.
+    element : ElementIdentity
+        Source element and isotope, independent of the name.
+    geometry : AtomGeometry
+        Original coordinate and scalars with an occupancy of zero.
+
+    Raises
+    ------
+    TypeError
+        A field has a noncanonical type.
+    ValueError
+        The occupancy or alternate location contradicts the omission.
+    """
+
+    source_identity: SourceAtomIdentity
+    element: ElementIdentity
+    geometry: AtomGeometry
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_identity, SourceAtomIdentity):
+            raise TypeError("an occupancy omission requires a SourceAtomIdentity")
+        if not isinstance(self.element, ElementIdentity):
+            raise TypeError("an occupancy omission requires an ElementIdentity")
+        if not isinstance(self.geometry, AtomGeometry):
+            raise TypeError("an occupancy omission requires AtomGeometry")
+        if self.geometry.occupancy != 0.0:
+            raise ValueError("an occupancy omission requires zero occupancy")
+        if self.geometry.altloc != self.source_identity.altloc:
+            raise ValueError("an occupancy omission must match the source altloc")
+
+
+@dataclass(frozen=True, slots=True)
+class ZeroOccupancyResidueOmission:
+    """An original internal residue withheld as one coordinate gap.
+
+    Parameters
+    ----------
+    preceding_residue_id, following_residue_id : ResidueId
+        The selected source flanks in chain order.
+    atoms : tuple of ZeroOccupancyOmission
+        Selected original positions and their common residue identity.
+
+    Raises
+    ------
+    TypeError
+        The flanks or atom records are noncanonical.
+    ValueError
+        The atoms do not describe a single ordinary-numbered internal slot.
+    """
+
+    preceding_residue_id: ResidueId
+    following_residue_id: ResidueId
+    atoms: tuple[ZeroOccupancyOmission, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.preceding_residue_id, ResidueId) or not isinstance(
+            self.following_residue_id, ResidueId
+        ):
+            raise TypeError("a residue omission requires ResidueId flanks")
+        if not isinstance(self.atoms, tuple) or any(
+            not isinstance(atom, ZeroOccupancyOmission) for atom in self.atoms
+        ):
+            raise TypeError("a residue omission requires a tuple of atom omissions")
+        if not self.atoms:
+            raise ValueError("a residue omission requires original atom records")
+
+        path = (self.preceding_residue_id, self.residue_id, self.following_residue_id)
+        if (
+            any(residue_id.insertion_code is not None for residue_id in path)
+            or not path[0].immediately_precedes(path[1])
+            or not path[1].immediately_precedes(path[2])
+        ):
+            raise ValueError(
+                "a residue omission requires consecutive ordinary source ids"
+            )
+        refs = {atom.source_identity.atom_ref for atom in self.atoms}
+        if len(refs) != len(self.atoms) or any(
+            atom.source_identity.atom_ref.residue_id != self.residue_id
+            or atom.source_identity.component_id != self.component_id
+            for atom in self.atoms
+        ):
+            raise ValueError("omitted atom records must be distinct within one residue")
+
+    @property
+    def residue_id(self) -> ResidueId:
+        """Return the source residue ID shared by the archived positions."""
+
+        return self.atoms[0].source_identity.atom_ref.residue_id
+
+    @property
+    def component_id(self) -> str:
+        """Return the source component ID shared by the archived positions."""
+
+        return self.atoms[0].source_identity.component_id
+
+    def contains_position(self, residue_id: ResidueId) -> bool:
+        """Return whether a proposed slot lies strictly between these flanks.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Proposed source slot, including insertion codes.
+
+        Returns
+        -------
+        bool
+            Whether the proposal lies inside this recorded gap.
+        """
+
+        return self.preceding_residue_id < residue_id < self.following_residue_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,16 +151,32 @@ class StructureIngress:
     observation : StructureObservation or None, default=None
         Selected original input facts. None denotes unavailable observations,
         including manual structures without an explicitly supplied snapshot.
+    zero_occupancy_omissions : tuple of ZeroOccupancyOmission or None, default=None
+        Side-chain positions withheld from the observation. An empty tuple means
+        the policy was applied without omissions; None means it was not applied.
+    zero_occupancy_residue_omissions : tuple of ZeroOccupancyResidueOmission or None, default=None
+        Whole source residues withheld from the observation. Empty and None
+        distinguish applied without omissions and not applied independently
+        of the side-chain policy.
 
     Raises
     ------
     TypeError
-        The source format or observation has a noncanonical type.
+        The source format, observation or omissions have noncanonical types.
+    ValueError
+        Omission history has no source observation, or an omitted atom appears
+        in the observation or more than once in the history.
     """
 
     source_format: FileFormat
     source_name: str | None = None
     observation: StructureObservation | None = field(default=None, repr=False)
+    zero_occupancy_omissions: tuple[ZeroOccupancyOmission, ...] | None = field(
+        default=None, kw_only=True, repr=False
+    )
+    zero_occupancy_residue_omissions: (
+        tuple[ZeroOccupancyResidueOmission, ...] | None
+    ) = field(default=None, kw_only=True, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_format, FileFormat):
@@ -50,6 +188,64 @@ class StructureIngress:
             raise TypeError(
                 "structure ingress observation must be a StructureObservation or None"
             )
+
+        omissions = self.zero_occupancy_omissions
+        residue_omissions = self.zero_occupancy_residue_omissions
+        if omissions is not None and (
+            not isinstance(omissions, tuple)
+            or any(
+                not isinstance(record, ZeroOccupancyOmission) for record in omissions
+            )
+        ):
+            raise TypeError("occupancy omission history must be a tuple of omissions")
+        if residue_omissions is not None and (
+            not isinstance(residue_omissions, tuple)
+            or any(
+                not isinstance(record, ZeroOccupancyResidueOmission)
+                for record in residue_omissions
+            )
+        ):
+            raise TypeError("residue omission history must be a tuple of omissions")
+
+        observation = self.observation
+        if (
+            omissions is not None or residue_omissions is not None
+        ) and observation is None:
+            raise ValueError("occupancy omission history requires a source observation")
+        if omissions is not None:
+            assert observation is not None
+            refs = {omission.source_identity.atom_ref for omission in omissions}
+            if len(refs) != len(omissions) or any(
+                observation.constitution.resolve_atom_index(ref) is not None
+                for ref in refs
+            ):
+                raise ValueError(
+                    "occupancy omissions must be distinct and absent from the source observation"
+                )
+        if residue_omissions is not None:
+            assert observation is not None
+            residue_ids = {record.residue_id for record in residue_omissions}
+            if len(residue_ids) != len(residue_omissions) or any(
+                observation.constitution.residue_or_ligand(residue_id) is not None
+                for residue_id in residue_ids
+            ):
+                raise ValueError(
+                    "omitted residues must be distinct and absent from the observation"
+                )
+            if any(
+                omission.source_identity.atom_ref.residue_id in residue_ids
+                for omission in omissions or ()
+            ):
+                raise ValueError(
+                    "side-chain and whole-residue omissions must be disjoint"
+                )
+            for record in residue_omissions:
+                for flank in (record.preceding_residue_id, record.following_residue_id):
+                    residue = observation.constitution.residue_or_ligand(flank)
+                    if residue is None or residue.is_hetero:
+                        raise ValueError(
+                            "residue omission requires present polymer source flanks"
+                        )
 
         source_name = self.source_name
         if source_name is not None:

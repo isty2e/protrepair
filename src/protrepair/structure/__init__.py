@@ -35,6 +35,8 @@ from protrepair.structure.provenance import (
     StructureIngress,
     StructureProvenance,
     StructureProvenanceOrigin,
+    ZeroOccupancyOmission,
+    ZeroOccupancyResidueOmission,
 )
 from protrepair.structure.topology import (
     AtomTopology,
@@ -78,6 +80,8 @@ __all__ = [
     "StructureRealizationSelector",
     "StructureTopology",
     "TopologyBond",
+    "ZeroOccupancyOmission",
+    "ZeroOccupancyResidueOmission",
     "address_space_key_without_atoms",
     "atom_count_in_address_space",
 ]
