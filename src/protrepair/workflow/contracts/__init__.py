@@ -19,6 +19,12 @@ from protrepair.workflow.contracts.external_reference import (
     ExternalSpanReconstructionSpec,
     build_alphafold_span_reconstruction_specs,
 )
+from protrepair.workflow.contracts.hydrogen_lengths import (
+    HydrogenLengthRepairOutcome,
+    HydrogenLengthRepairStatus,
+    HydrogenLengthReport,
+    HydrogenLengthRequest,
+)
 from protrepair.workflow.contracts.planning import (
     WorkflowLigandContextMode,
     WorkflowPlanningContext,
@@ -63,6 +69,10 @@ __all__ = [
     "ExternalSpanGapSelectionPolicy",
     "ExternalSpanReconstructionSpec",
     "HistidineProtonationRequest",
+    "HydrogenLengthRepairOutcome",
+    "HydrogenLengthRepairStatus",
+    "HydrogenLengthReport",
+    "HydrogenLengthRequest",
     "LigandPolicy",
     "MutationPolicy",
     "OccupancyPolicy",

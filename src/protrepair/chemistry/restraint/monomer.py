@@ -5,7 +5,6 @@ from dataclasses import replace
 from hashlib import sha256
 
 import gemmi
-from rdkit import Chem
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.idealized import (
@@ -18,6 +17,7 @@ from protrepair.chemistry.restraint.template import (
     BondRestraintTarget,
     ResidueRestraintTemplate,
 )
+from protrepair.errors import RdkitUnavailableError
 from protrepair.structure.element import ElementIdentity
 
 
@@ -28,7 +28,16 @@ def _positive_number(value: str) -> float:
     return number
 
 
-def _validate_graph(component: IdealizedComponent) -> None:
+def _validated_graph(
+    component: IdealizedComponent, *, normalize_aromatic: bool
+) -> IdealizedComponent:
+    try:
+        from rdkit import Chem
+    except ImportError as error:
+        raise RdkitUnavailableError(
+            "monomer reference validation requires operational RDKit"
+        ) from error
+
     molecule = Chem.RWMol()
     indices: dict[str, int] = {}
     for record in component.atoms:
@@ -37,7 +46,12 @@ def _validate_graph(component: IdealizedComponent) -> None:
         atom.SetNoImplicit(True)
         indices[record.atom_name] = molecule.AddAtom(atom)
     orders = {1: Chem.BondType.SINGLE, 2: Chem.BondType.DOUBLE, 3: Chem.BondType.TRIPLE}
+    seen: set[frozenset[str]] = set()
     for bond in component.bonds:
+        pair = frozenset((bond.atom_name_1, bond.atom_name_2))
+        if len(pair) != 2 or pair in seen:
+            raise ValueError("monomer bonds require distinct, unrepeated endpoints")
+        seen.add(pair)
         molecule.AddBond(
             indices[bond.atom_name_1],
             indices[bond.atom_name_2],
@@ -47,39 +61,59 @@ def _validate_graph(component: IdealizedComponent) -> None:
     Chem.SanitizeMol(checked)
     if any(atom.GetNumRadicalElectrons() for atom in checked.GetAtoms()):
         raise ValueError("monomer references require closed-shell chemical states")
+    if not normalize_aromatic:
+        return component
+
+    names = tuple(atom.atom_name for atom in component.atoms)
+    aromatic_pairs = {
+        frozenset((names[bond.GetBeginAtomIdx()], names[bond.GetEndAtomIdx()]))
+        for bond in checked.GetBonds()
+        if bond.GetIsAromatic()
+    }
+    return replace(
+        component,
+        bonds=tuple(
+            replace(
+                bond,
+                aromatic=frozenset((bond.atom_name_1, bond.atom_name_2))
+                in aromatic_pairs,
+            )
+            for bond in component.bonds
+        ),
+    )
 
 
-def component_reference_from_monomer(
+def read_monomer_chemistry(
     text: str,
     *,
-    fallback: ResidueRestraintTemplate,
-    atom_names: frozenset[str],
-    boundary_atom_names: frozenset[str],
+    component_id: str,
     source: str,
-) -> ComponentRestraintReference:
-    """Read explicit targets and ESDs without deriving them from coordinates.
+    normalize_aromatic: bool = False,
+) -> tuple[gemmi.cif.Block, IdealizedComponent, str]:
+    """Read one explicit monomer graph and bind provenance to the loaded text.
 
     Parameters
     ----------
     text : str
-        Loaded monomer-library CIF contents, not a path or remote locator.
-    fallback : ResidueRestraintTemplate
-        Existing dictionary whose target identities must remain unchanged.
-    atom_names, boundary_atom_names : frozenset[str]
-        Complete matching scope and its non-writable heavy boundary.
+        Loaded monomer-library CIF contents.
+    component_id : str
+        Canonical name of the requested component block.
     source : str
-        Stable provenance identity; a digest of the supplied UTF-8 text is added.
-        This is distinct from an upstream raw-file checksum.
+        Stable provenance identity supplied by the caller.
+    normalize_aromatic : bool, default=False
+        Use validated aromaticity rather than the input bond flags.
 
     Returns
     -------
-    ComponentRestraintReference
-        Closed-shell graph with eligible explicit heavy target replacements.
+    tuple[gemmi.cif.Block, IdealizedComponent, str]
+        Source block, validated closed-shell graph, and source with text digest.
 
     Raises
     ------
     ValueError
-        The supplied reference configuration is malformed or incompatible.
+        The reference has no matching component or a malformed chemical graph.
+    RdkitUnavailableError
+        The native graph validator cannot be imported.
     """
 
     source = source.strip()
@@ -90,7 +124,7 @@ def component_reference_from_monomer(
         document = gemmi.cif.read_string(text)
     except RuntimeError as error:
         raise ValueError("malformed monomer CIF") from error
-    block = document.find_block("comp_" + fallback.component_id)
+    block = document.find_block("comp_" + component_id)
     if block is None:
         raise ValueError("monomer CIF has no block for the fallback component")
     atoms = tuple(
@@ -125,8 +159,52 @@ def component_reference_from_monomer(
                 row.str(3).lower() == "y",
             )
         )
-    component = IdealizedComponent(fallback.component_id, None, atoms, tuple(bonds))
-    _validate_graph(component)
+    component = _validated_graph(
+        IdealizedComponent(component_id, None, atoms, tuple(bonds)),
+        normalize_aromatic=normalize_aromatic,
+    )
+    return (
+        block,
+        component,
+        source + "#text-sha256=" + sha256(text.encode("utf-8")).hexdigest(),
+    )
+
+
+def component_reference_from_monomer(
+    text: str,
+    *,
+    fallback: ResidueRestraintTemplate,
+    atom_names: frozenset[str],
+    boundary_atom_names: frozenset[str],
+    source: str,
+) -> ComponentRestraintReference:
+    """Read explicit targets and ESDs without deriving them from coordinates.
+
+    Parameters
+    ----------
+    text : str
+        Loaded monomer-library CIF contents, not a path or remote locator.
+    fallback : ResidueRestraintTemplate
+        Existing dictionary whose target identities must remain unchanged.
+    atom_names, boundary_atom_names : frozenset[str]
+        Complete matching scope and its non-writable heavy boundary.
+    source : str
+        Stable provenance identity; a digest of the supplied UTF-8 text is added.
+        This is distinct from an upstream raw-file checksum.
+
+    Returns
+    -------
+    ComponentRestraintReference
+        Closed-shell graph with eligible explicit heavy target replacements.
+
+    Raises
+    ------
+    ValueError
+        The supplied reference configuration is malformed or incompatible.
+    """
+    block, component, provenance = read_monomer_chemistry(
+        text, component_id=fallback.component_id, source=source
+    )
 
     scope = frozenset(name.strip().upper() for name in atom_names)
     boundary = frozenset(name.strip().upper() for name in boundary_atom_names)
@@ -163,7 +241,7 @@ def component_reference_from_monomer(
         boundary,
         tuple(bond_targets),
         (),
-        source + "#text-sha256=" + sha256(text.encode("utf-8")).hexdigest(),
+        provenance,
     )
     proposed_angles = []
     angle_rows = block.find(

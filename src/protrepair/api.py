@@ -6,6 +6,7 @@ from pathlib import Path
 from protrepair.analysis.kinds import AnalysisKind
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.workflow.contracts import (
+    HydrogenLengthRequest,
     ProcessResult,
     StructureIngressOptions,
     WorkflowGoal,
@@ -24,23 +25,34 @@ def process_structure(
     transform_requests: WorkflowTransformRequests | None = None,
     planning_context: WorkflowPlanningContext | None = None,
     analyses: Iterable[AnalysisKind] = frozenset(),
+    hydrogen_lengths: HydrogenLengthRequest | None = None,
 ) -> ProcessResult:
     """Process one structure source through the current workflow spine.
 
-    Args:
-        source: Raw path-like structure source or canonical ``ProteinStructure``.
-        ingress: Source-interpretation policy for normalization boundaries.
-        selected_source_chain_ids: Optional raw-source chain subset to read
-            before canonical normalization. This applies only to path-like
-            sources, not canonical ``ProteinStructure`` inputs.
-        requested_goals: Desired scoped state propositions over the canonical model.
-        transform_requests: Explicit transform requests not reducible to desired
-            states alone.
-        analyses: Structured analysis outputs to attach to the final result.
+    Parameters
+    ----------
+    source : Path, str or ProteinStructure
+        Structure source or canonical input.
+    ingress : StructureIngressOptions or None
+        Source-interpretation policy for normalization.
+    selected_source_chain_ids : tuple[str, ...] or None
+        Chain selection for path inputs, not canonical inputs.
+    requested_goals : Sequence[WorkflowGoal]
+        Desired scoped state propositions over the canonical model.
+    transform_requests : WorkflowTransformRequests or None
+        Explicit transform requests not reducible to desired states alone.
+    planning_context : WorkflowPlanningContext or None
+        Selection policy and search limits.
+    analyses : Iterable[AnalysisKind]
+        Structured analyses to attach to the final result.
+    hydrogen_lengths : HydrogenLengthRequest or None
+        Check existing X-H lengths on the selected result and optionally make
+        a guarded terminal correction under a declared convention.
 
-    Returns:
-        One structured workflow result containing the final structure, issues,
-        requested-goal reporting, and any requested analyses.
+    Returns
+    -------
+    ProcessResult
+        Final structure, issues, goal reporting and requested analyses.
     """
 
     return process_structure_source(
@@ -51,6 +63,7 @@ def process_structure(
         transform_requests=transform_requests,
         planning_context=planning_context,
         analyses=analyses,
+        hydrogen_lengths=hydrogen_lengths,
     )
 
 
