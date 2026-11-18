@@ -722,7 +722,8 @@ class ProcessResult(TransformationResult):
         Retained candidate selection and termination evidence from search,
         before any terminal length adjustment.
     hydrogen_length_report : HydrogenLengthReport or None
-        Explicitly requested observations and optional repair dispositions.
+        Observations of input H/D/T and optional repair dispositions. Ordinary
+        runs with no input H/D/T omit the report.
 
     Notes
     -----

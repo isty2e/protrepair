@@ -197,6 +197,22 @@ def test_tied_nearest_heavy_atoms_withdraw_name_based_measurement():
     assert result.distance_angstrom is None
 
 
+def test_default_observer_reports_equal_nearest_parents_in_structure_order():
+    source = structure_with_thiol(1.0)
+    carbon = AtomRef(THIOL.residue_id, "CB")
+    structure = with_position(
+        source, source.constitution.atom_index(carbon), Vec3(2.0, 0, 0)
+    )
+
+    (row,) = analyze_hydrogen_lengths(structure)
+    assert row.status is HydrogenLengthStatus.PARENT_POSITION_CONFLICT
+    assert row.parent == THIOL and row.distance_angstrom is None
+    assert row.position_conflict is not None
+    assert row.position_conflict.nearest == (carbon, THIOL)
+    assert row.position_conflict.assigned_distance_angstrom == 1.0
+    assert row.position_conflict.nearest_distance_angstrom == 1.0
+
+
 @pytest.mark.parametrize("missing_profile", [False, True])
 def test_uncatalogued_charge_is_not_graded_against_neutral_thiol(missing_profile):
     raw = structure_with_thiol(1.0)
@@ -330,7 +346,7 @@ def test_only_explicit_reference_loading_requires_rdkit(monkeypatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", without_rdkit)
-    (ungraded,) = analyze_hydrogen_lengths(structure, references=())
+    (ungraded,) = analyze_hydrogen_lengths(structure)
     assert ungraded.status is HydrogenLengthStatus.UNASSESSED
     assert ungraded.distance_angstrom == pytest.approx(1.0)
 

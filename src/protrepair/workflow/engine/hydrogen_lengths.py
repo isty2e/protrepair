@@ -1,4 +1,4 @@
-"""Terminal execution of explicit existing-hydrogen length requests."""
+"""Terminal observation and optional repair of existing X-H lengths."""
 
 from collections import defaultdict
 from collections.abc import Iterable
@@ -72,6 +72,18 @@ class WorkflowHydrogenLengthPlan:
     source: ProteinStructure
     _hydrogens: tuple[AtomRef, ...]
 
+    @classmethod
+    def for_input(
+        cls, source: ProteinStructure, request: HydrogenLengthRequest | None
+    ) -> "WorkflowHydrogenLengthPlan | None":
+        """Bind an explicit request or observe existing H/D/T by default."""
+
+        if request is None:
+            if not any(atom.is_hydrogen() for atom in source.constitution.atom_slots):
+                return None
+            request = HydrogenLengthRequest()
+        return cls(source, request)
+
     def __init__(
         self, source: ProteinStructure, request: HydrogenLengthRequest
     ) -> None:
@@ -94,7 +106,7 @@ class WorkflowHydrogenLengthPlan:
     def complete(
         self, result: ProcessResult, *, component_library: ComponentLibrary
     ) -> ProcessResult:
-        """Run one qualified terminal batch, then report the returned snapshot."""
+        """Report the selected snapshot after any requested length repair."""
 
         structure = result.structure
         observations = self._observe(structure)

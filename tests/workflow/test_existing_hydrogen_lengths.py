@@ -1,4 +1,4 @@
-"""Opt-in X-H length reporting and terminal workflow repair tests."""
+"""X-H length reporting and explicit terminal workflow repair tests."""
 
 from pathlib import Path
 
@@ -55,30 +55,40 @@ def repair_row(result: ProcessResult):
     return row
 
 
-def test_workflow_reports_length_only_when_explicitly_requested(tmp_path):
+def test_workflow_measures_by_default_and_grades_with_a_reference(tmp_path):
     path = tmp_path / "short-thiol.pdb"
     path.write_text(write_structure_string(structure_with_thiol(1.0), FileFormat.PDB))
-    legacy = process_structure(path)
+    measured = process_structure(path)
     checked = process_structure(
         path, hydrogen_lengths=HydrogenLengthRequest((reference(),))
     )
 
-    assert legacy.hydrogen_length_report is None
+    report = measured.hydrogen_length_report
+    assert report is not None and report.repair_outcomes is None
+    (row,) = report.observations
+    assert row.hydrogen == HG and row.parent == THIOL
+    assert row.distance_angstrom == pytest.approx(1.0)
+    assert row.status is HydrogenLengthStatus.UNASSESSED
+    assert row.comparison is None
+
     assert checked.hydrogen_length_report is not None
     assert (
         checked.hydrogen_length_report.observations[0].status
         is HydrogenLengthStatus.TOO_SHORT
     )
     assert checked.hydrogen_length_report.repair_outcomes is None
-    assert checked.structure == legacy.structure
-    assert checked.repairs == legacy.repairs
+    assert checked.structure == measured.structure
+    assert measured.structure.geometry == read_structure(path).geometry
+    assert checked.repairs == measured.repairs
+    assert checked.branch_report == measured.branch_report
+    assert checked.requested_goal_report == measured.requested_goal_report
     assert (
         tuple(
             i
             for i in checked.issues
             if i.kind is not ValidationIssueKind.HYDROGEN_LENGTH_OUTLIER
         )
-        == legacy.issues
+        == measured.issues
     )
     (issue,) = tuple(
         i
@@ -88,9 +98,62 @@ def test_workflow_reports_length_only_when_explicitly_requested(tmp_path):
     assert issue.residue_impacts[0].atom_names == ("HG", "SG")
 
 
+def test_default_workflow_reports_parent_conflict_without_rebinding_or_moving():
+    source = structure_with_thiol(-1.3)
+    measured = process_structure(source)
+    scoped = process_structure(
+        source, hydrogen_lengths=HydrogenLengthRequest(scope=AtomSetScope((THIOL,)))
+    )
+
+    report = measured.hydrogen_length_report
+    assert report is not None and report.repair_outcomes is None
+    (row,) = report.observations
+    assert row.hydrogen == HG and row.parent == THIOL
+    assert row.status is HydrogenLengthStatus.PARENT_POSITION_CONFLICT
+    assert row.position_conflict is not None
+    assert THIOL not in row.position_conflict.nearest
+    assert measured.structure == scoped.structure
+    assert measured.structure.geometry == source.geometry
+    assert measured.branch_report == scoped.branch_report
+    assert measured.repairs == scoped.repairs
+
+    assert scoped.hydrogen_length_report is not None
+    assert scoped.hydrogen_length_report.observations == ()
+    assert (
+        tuple(
+            issue
+            for issue in measured.issues
+            if issue.kind is not ValidationIssueKind.HYDROGEN_PARENT_POSITION_CONFLICT
+        )
+        == scoped.issues
+    )
+    assert (
+        sum(
+            issue.kind is ValidationIssueKind.HYDROGEN_PARENT_POSITION_CONFLICT
+            for issue in measured.issues
+        )
+        == 1
+    )
+
+
 def test_unknown_convention_is_not_a_repair_profile():
     with pytest.raises(ValueError, match="declared convention"):
         HydrogenLengthRequest((reference(),), repair=True)
+
+
+def test_repair_still_requires_an_explicit_reference():
+    with pytest.raises(ValueError, match="at least one hydrogen length reference"):
+        HydrogenLengthRequest(convention=HydrogenLengthConvention.NUCLEAR, repair=True)
+
+
+def test_explicit_measurement_without_input_hydrogens_has_an_empty_report():
+    source = structure_with_thiol(1.0).without_hydrogens()
+    result = process_structure(source, hydrogen_lengths=HydrogenLengthRequest())
+
+    report = result.hydrogen_length_report
+    assert report is not None
+    assert report.observations == ()
+    assert report.repair_outcomes is None
 
 
 @pytest.mark.parametrize(
@@ -243,7 +306,10 @@ def test_changed_source_positions_are_unavailable_even_if_currently_in_window(re
     assert retained.structure is changed
 
 
-def test_hydrogens_added_by_another_request_are_not_in_the_length_batch():
+@pytest.mark.parametrize("explicit_repair", [False, True])
+def test_hydrogens_added_by_another_request_are_not_in_the_length_batch(
+    explicit_repair,
+):
     source = read_structure(
         Path(__file__).parents[1] / "fixtures/pdb/span-reconstruction/1crn.pdb"
     ).without_hydrogens()
@@ -251,11 +317,18 @@ def test_hydrogens_added_by_another_request_are_not_in_the_length_batch():
         scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
     )
     checked = process_structure(
-        source, requested_goals=(goal,), hydrogen_lengths=nuclear_repair()
+        source,
+        requested_goals=(goal,),
+        hydrogen_lengths=nuclear_repair() if explicit_repair else None,
     )
     assert checked.structure.geometry.atom_count() > source.geometry.atom_count()
     report = checked.hydrogen_length_report
-    assert report is not None and report.observations == report.repair_outcomes == ()
+    if explicit_repair:
+        assert (
+            report is not None and report.observations == report.repair_outcomes == ()
+        )
+    else:
+        assert report is None
 
 
 def test_an_input_hydrogen_removed_during_other_work_is_reported_unavailable():

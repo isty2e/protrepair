@@ -46,13 +46,14 @@ def process_structure(
     analyses : Iterable[AnalysisKind]
         Structured analyses to attach to the final result.
     hydrogen_lengths : HydrogenLengthRequest or None
-        Check existing X-H lengths on the selected result and optionally make
-        a guarded terminal correction under a declared convention.
+        Scope or grade the observation of existing X-H lengths, or request a
+        guarded correction under a declared convention. None measures input
+        H/D/T on the selected result without grading or moving them.
 
     Returns
     -------
     ProcessResult
-        Final structure, issues, goal reporting and requested analyses.
+        Final structure, issues, goal reporting and analyses.
     """
 
     return process_structure_source(

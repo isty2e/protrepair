@@ -21,8 +21,9 @@ class HydrogenLengthRequest:
 
     Parameters
     ----------
-    references : Iterable[HydrogenLengthReference]
-        At least one caller-supplied reference, at most one per component.
+    references : Iterable[HydrogenLengthReference], default=()
+        At most one reference per component. An empty set requests only
+        measurements and parent-position checks.
     scope : Scope or None, default=None
         Observed scope at the normalized workflow input. Only H/D/T sites
         already present there are selected. None selects the whole structure.
@@ -36,7 +37,7 @@ class HydrogenLengthRequest:
     TypeError
         A supplied reference, scope, convention or repair flag is unsupported.
     ValueError
-        References are empty or repeated, or repair has no declared convention.
+        References repeat, or repair has no reference or declared convention.
     """
 
     references: tuple[HydrogenLengthReference, ...]
@@ -46,7 +47,7 @@ class HydrogenLengthRequest:
 
     def __init__(
         self,
-        references: Iterable[HydrogenLengthReference],
+        references: Iterable[HydrogenLengthReference] = (),
         *,
         scope: Scope | None = None,
         convention: HydrogenLengthConvention = HydrogenLengthConvention.UNKNOWN,
@@ -62,7 +63,7 @@ class HydrogenLengthRequest:
         if repair and convention is HydrogenLengthConvention.UNKNOWN:
             raise ValueError("hydrogen length repair requires a declared convention")
         by_component = index_hydrogen_length_references(references)
-        if not by_component:
+        if repair and not by_component:
             raise ValueError("supply at least one hydrogen length reference")
 
         object.__setattr__(self, "references", tuple(by_component.values()))
@@ -107,8 +108,8 @@ class HydrogenLengthReport:
     Parameters
     ----------
     observations : tuple[HydrogenLengthObservation, ...]
-        Grades on the returned structure, in input selection order. An empty
-        result means no input H/D/T sites were selected.
+        Measurements, conflicts and available grades on the returned structure,
+        in input selection order. An empty result means no H/D/T were selected.
     repair_outcomes : tuple[HydrogenLengthRepairOutcome, ...] or None
         Disposition of each selected site in the same order, or None when
         repair was not requested.

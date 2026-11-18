@@ -1,5 +1,6 @@
 """Read-only measurements and reference comparisons for existing X-H bonds."""
 
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -94,13 +95,26 @@ class _HeavyPositions:
         indices = tuple(
             AtomIndex(i) for i, a in enumerate(c.atom_slots) if not a.is_hydrogen()
         )
-        self._rows = {index: i for i, index in enumerate(indices)}
         self._refs = tuple(c.atom_ref_at(index) for index in indices)
-        self._positions = np.asarray(
+        positions = np.asarray(
             [tuple(structure.geometry.position(index)) for index in indices],
             dtype=np.float64,
         ).reshape(-1, 3)
-        self.has_finite_context = bool(np.isfinite(self._positions).all())
+        self.has_finite_context = bool(np.isfinite(positions).all())
+
+        with np.errstate(over="ignore"):
+            self._axis = (
+                int(np.argmax(np.ptp(positions, axis=0)))
+                if len(positions) and self.has_finite_context
+                else 0
+            )
+        self._original_rows = np.argsort(positions[:, self._axis], kind="stable")
+        self._positions = positions[self._original_rows]
+        self._axis_values = self._positions[:, self._axis]
+        self._rows = {
+            indices[int(original)]: row
+            for row, original in enumerate(self._original_rows)
+        }
 
     def measure(
         self, hydrogen: AtomIndex, parent: AtomIndex
@@ -108,19 +122,33 @@ class _HeavyPositions:
         position = self.structure.geometry.position(hydrogen)
         if not all(isfinite(x) for x in position):
             return None
-        with np.errstate(over="ignore", invalid="ignore"):
-            delta = self._positions - position.to_array()
-            distances = np.hypot(np.hypot(delta[:, 0], delta[:, 1]), delta[:, 2])
+        coordinates = position.to_array()
+        axis_coordinate = float(coordinates[self._axis])
         row = self._rows[parent]
-        assigned = float(distances[row])
+
+        def axis_delta(value: float) -> float:
+            return float(value) - axis_coordinate
+
+        with np.errstate(over="ignore", invalid="ignore"):
+            # Twice the largest parent displacement bounds its length.
+            # Search on the coordinate difference to avoid rounding a window
+            # around a large absolute position.
+            parent_delta = self._positions[row] - coordinates
+            radius = 2.0 * float(np.abs(parent_delta).max())
+            left = bisect_left(self._axis_values, -radius, key=axis_delta)
+            right = bisect_right(self._axis_values, radius, lo=left, key=axis_delta)
+            delta = self._positions[left:right] - coordinates
+            distances = np.hypot(np.hypot(delta[:, 0], delta[:, 1]), delta[:, 2])
+        assigned = float(distances[row - left])
         if not isfinite(assigned):
             return None
         closest = float(distances.min())
         nearest_rows = np.flatnonzero(distances == closest)
-        if len(nearest_rows) == 1 and nearest_rows[0] == row:
+        if len(nearest_rows) == 1 and nearest_rows[0] == row - left:
             return assigned, None
+        original = np.sort(self._original_rows[left + nearest_rows])
         return assigned, HydrogenParentPositionConflict(
-            tuple(self._refs[int(i)] for i in nearest_rows), assigned, closest
+            tuple(self._refs[int(i)] for i in original), assigned, closest
         )
 
 
@@ -425,7 +453,7 @@ class _HydrogenLengthAnalysis:
                 HydrogenLengthStatus.UNASSESSED,
                 parent,
                 distance,
-                detail="no supplied reference for the observed component",
+                detail="no length reference for the observed component",
             )
         if not scaffold_matches or not evidence.matches_reference(
             reference, residue, parent.atom_name
@@ -459,19 +487,19 @@ class _HydrogenLengthAnalysis:
 def analyze_hydrogen_lengths(
     structure: ProteinStructure,
     *,
-    references: Iterable[HydrogenLengthReference],
+    references: Iterable[HydrogenLengthReference] = (),
     convention: HydrogenLengthConvention = HydrogenLengthConvention.UNKNOWN,
     scope: Scope | None = None,
 ) -> tuple[HydrogenLengthObservation, ...]:
-    """Measure existing X-H lengths and compare applicable explicit references.
+    """Measure existing X-H lengths and optionally compare them to references.
 
     Parameters
     ----------
     structure : ProteinStructure
         Snapshot to assess without completing or changing its atoms or topology.
-    references : Iterable[HydrogenLengthReference]
-        Caller-supplied references, at most one per standard component. No
-        built-in or downloaded reference substitutes for a missing row.
+    references : Iterable[HydrogenLengthReference], default=()
+        Length references, at most one per standard component. Without an
+        applicable reference the measurement has no length grade.
     convention : HydrogenLengthConvention, default=UNKNOWN
         For unknown convention, compare to the outer limits of both applicable
         intervals and report any gap between them separately.

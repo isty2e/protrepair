@@ -57,11 +57,17 @@ whole polymer regardless of scope; those warnings do not trigger motion.
 
 ## Existing Hydrogen Lengths
 
-`analyze_hydrogen_lengths()` is a separate read-only check of covalent X-H
-lengths, not a workflow goal or a request to move atoms. Supply monomer CIF
-text with a standard side-chain graph and explicit distance targets and ESDs.
-Loading the reference uses RDKit to validate its graph. The check does not
-download references or use built-in length cutoffs.
+`process_structure()` reports the X-H lengths of existing H, D, and T in
+`result.hydrogen_length_report`. The workflow selects these sites at input
+and measures them on the returned structure. If there are no input H/D/T,
+an ordinary call omits the report. Parent-position conflicts also appear in
+`result.issues`. A measured length without a reference remains unassessed.
+
+Use `analyze_hydrogen_lengths()` to make the same read-only observations on
+a structure without running the workflow. To grade a length, supply monomer
+CIF text with a standard side-chain graph, distance targets and ESDs. Loading
+the reference uses RDKit to validate its graph. No reference is downloaded
+or bundled for this check.
 
 ```python
 from pathlib import Path
@@ -70,12 +76,14 @@ from protrepair.analysis import HydrogenLengthReference, analyze_hydrogen_length
 from protrepair.io import read_structure
 
 structure = read_structure("model.cif")
+observations = analyze_hydrogen_lengths(structure)
+
 cysteine_reference = HydrogenLengthReference(
     Path("CYS.cif").read_text(encoding="utf-8"),
     component_id="CYS",
     source="my monomer library, pinned version",
 )
-observations = analyze_hydrogen_lengths(structure, references=(cysteine_reference,))
+graded = analyze_hydrogen_lengths(structure, references=(cysteine_reference,))
 ```
 
 The result has one entry per selected present H, D, or T in structure order;
@@ -102,8 +110,8 @@ Unassessed sites and parent-position conflicts are distinct from length
 outliers. The comparison uses the stored coordinates rather than a projection
 to PDB precision; a value near a bound can change grade after serialization.
 
-To include the check in a workflow result, pass the same reference to
-`process_structure()`:
+Pass a `HydrogenLengthRequest` to narrow the workflow's observation scope,
+grade lengths against supplied references, or request a repair:
 
 ```python
 from protrepair import process_structure
@@ -125,10 +133,10 @@ adjusted = process_structure(
 ```
 
 Use `NUCLEAR` in the second call only if the model uses that coordinate
-convention. Both requests select existing H/D/T at workflow input and report
-their final lengths in `result.hydrogen_length_report`. Outliers and
-parent-position conflicts also appear in `result.issues`. A reported gap
-between two convention intervals is not a length warning.
+convention. A request without references can narrow the scope without
+grading lengths. The scope limits both measurements and X-H warnings.
+Reference outliers appear in `result.issues`; a gap between two convention
+intervals is not a length warning.
 
 Repair requires a declared convention and moves only out-of-window sites
 whose assigned parent and input pose are unchanged. It runs once after the
@@ -141,9 +149,8 @@ structure cannot be represented on that parser surface, repair is unavailable.
 See `repair_outcomes` for in-window, unavailable, rejected, and repaired sites.
 `branch_report` describes the search before this terminal operation.
 
-Without the `hydrogen_lengths` request, the workflow does not check or adjust
-X-H lengths. Hydrogen completeness and the heavy bonded-geometry goal are
-independent of this request.
+Length observation and repair are separate from hydrogen completeness and
+the heavy bonded-geometry goal.
 
 ## Ingress Options
 

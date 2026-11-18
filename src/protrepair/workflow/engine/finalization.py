@@ -79,8 +79,8 @@ def finalize_workflow_result(
         Active local request whose included region requires H preparation,
         even without an explicit H-completion goal.
     hydrogen_length_plan : WorkflowHydrogenLengthPlan or None
-        Explicit input-bound operation to run once on the selected candidate
-        before final diagnostics.
+        Input-bound observation and optional repair to run once on the
+        selected candidate, before final diagnostics.
     retained_non_polymer_chemistry_evidence : tuple
         Explicit chemistry used for final current-state diagnostics.
 

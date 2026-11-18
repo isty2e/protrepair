@@ -77,10 +77,8 @@ def process_canonical_structure(
         structure,
         policy=normalization_policy,
     )
-    hydrogen_length_plan = (
-        None
-        if hydrogen_lengths is None
-        else WorkflowHydrogenLengthPlan(normalized_structure, hydrogen_lengths)
+    hydrogen_length_plan = WorkflowHydrogenLengthPlan.for_input(
+        normalized_structure, hydrogen_lengths
     )
     initial_microstate_issues = diagnose_source_microstate_contradictions(
         normalized_structure,
