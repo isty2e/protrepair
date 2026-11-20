@@ -3974,6 +3974,73 @@ def test_write_structure_string_roundtrips_pdb_and_mmcif() -> None:
     assert summarize_structure(mmcif_roundtrip) == summarize_structure(structure)
 
 
+@pytest.mark.parametrize(("pdb_chain_id", "chain_id"), [(" ", "_"), ("A", "A")])
+@pytest.mark.parametrize("linked_ligand", [False, True])
+def test_write_mmcif_preserves_chain_and_subchain_ids(
+    pdb_chain_id: str, chain_id: str, linked_ligand: bool
+) -> None:
+    lines = [
+        build_pdb_atom_line(
+            serial=1,
+            atom_name=" O  ",
+            residue_name="ALA",
+            chain_id=pdb_chain_id,
+            residue_seq=1,
+            element="O",
+        )
+    ]
+    if linked_ligand:
+        lines.insert(
+            0,
+            f"LINK         O   ALA {pdb_chain_id}   1"
+            f"                ZN    ZN {pdb_chain_id}   2     1555   1555  2.00",
+        )
+        lines.append(
+            build_pdb_atom_line(
+                serial=2,
+                record_name="HETATM",
+                atom_name="ZN  ",
+                residue_name="ZN",
+                chain_id=pdb_chain_id,
+                residue_seq=2,
+                x=3.0,
+                element="ZN",
+            )
+        )
+    structure = read_structure_string(build_pdb_text([*lines, "END"]), FileFormat.PDB)
+    text = write_structure_string(structure, FileFormat.MMCIF)
+    roundtripped = read_structure_string(text, FileFormat.MMCIF)
+
+    assert roundtripped.constitution.chains[0].chain_id == chain_id
+    assert len(roundtripped.constitution.ligands) == int(linked_ligand)
+    assert summarize_structure(roundtripped) == summarize_structure(structure)
+
+    block = gemmi.cif.read_string(text).sole_block()
+    asym_ids = {
+        gemmi.cif.as_string(value) for value in block.find_values("_struct_asym.id")
+    }
+    atom_asym_ids = {
+        gemmi.cif.as_string(value)
+        for value in block.find_values("_atom_site.label_asym_id")
+    }
+    assert len(asym_ids) == 1 + int(linked_ligand)
+    assert atom_asym_ids == asym_ids
+
+    if linked_ligand:
+        (source_bond,) = structure.topology.bonds
+        (roundtripped_bond,) = roundtripped.topology.bonds
+        assert roundtripped_bond.relationship_type is source_bond.relationship_type
+        assert _bond_display_token(roundtripped, roundtripped_bond) == (
+            _bond_display_token(structure, source_bond)
+        )
+        linked_asym_ids = {
+            gemmi.cif.as_string(value)
+            for partner in (1, 2)
+            for value in block.find_values(f"_struct_conn.ptnr{partner}_label_asym_id")
+        }
+        assert linked_asym_ids == asym_ids
+
+
 def test_write_structure_writes_content_via_atomic_path_boundary(
     tmp_path: Path,
 ) -> None:

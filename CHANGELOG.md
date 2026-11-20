@@ -183,6 +183,9 @@
 
 ### Fixed
 
+- write readable mmCIF for PDB inputs with blank chain IDs by quoting subchain
+  declarations without renaming the chains
+
 - complete linked NME caps that use the legacy Amber `CH3` and `HH31` through
   `HH33` atom names. Keep existing atom identities and reject competing names
   for the same methyl position
