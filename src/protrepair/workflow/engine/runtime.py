@@ -1,6 +1,7 @@
 """Frontier runtime for workflow planning execution."""
 
 from dataclasses import dataclass, field, replace
+from functools import partial
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
@@ -34,6 +35,9 @@ from protrepair.workflow.actions.bonded_geometry import (
     BondedGeometryRepairTransformer,
 )
 from protrepair.workflow.actions.context import TransformerExecutionContext
+from protrepair.workflow.actions.external_span_reconstruction import (
+    ExternalSpanReconstructionTransformer,
+)
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.contracts.planning import (
     WorkflowBranchPreferencePolicy,
@@ -61,6 +65,10 @@ from protrepair.workflow.engine.reporting import (
     evaluate_requested_goal_report,
     evaluate_workflow_branch_outcome,
     evaluate_workflow_branch_quality_score,
+)
+from protrepair.workflow.engine.span_reporting import (
+    SpanReconstructionEvidence,
+    SpanReconstructionRecorder,
 )
 from protrepair.workflow.planning.action.proposals import WorkflowActionProposal
 from protrepair.workflow.planning.action.registry import WorkflowStateAction
@@ -90,6 +98,7 @@ class WorkflowPlanningSession:
     retained_non_polymer_chemistry_evidence: tuple[
         RetainedNonPolymerChemistryEvidence, ...
     ]
+    terminal_repair_requested: bool = False
     _outcomes_by_state: dict[
         int,
         tuple[
@@ -119,7 +128,12 @@ class WorkflowPlanningSession:
                     self.retained_non_polymer_chemistry_evidence
                 ),
             )
-            outcome = plan_workflow_actions(
+            plan_current = (
+                partial(plan_workflow_actions, terminal_repair_requested=True)
+                if self.terminal_repair_requested
+                else plan_workflow_actions
+            )
+            outcome = plan_current(
                 state.result.structure,
                 requested_goals=self.requested_goals,
                 transform_requests=self.transform_requests,
@@ -372,6 +386,7 @@ class WorkflowRuntimeResult:
 
     branches: tuple[WorkflowBranch, ...]
     stop_reason: SpeculativeStopReason = SpeculativeStopReason.NO_PROPOSALS_AVAILABLE
+    span_reconstruction_evidence: SpanReconstructionEvidence | None = None
 
 
 def execute_iterative_workflow(
@@ -388,6 +403,7 @@ def execute_iterative_workflow(
         RetainedNonPolymerChemistryEvidence, ...
     ] = (),
     initial_issues: tuple[ValidationIssue, ...] = (),
+    terminal_repair_requested: bool = False,
 ) -> WorkflowRuntimeResult:
     """Execute workflow planning through a frontier-based iterative driver."""
 
@@ -402,6 +418,10 @@ def execute_iterative_workflow(
         )
     )
     branches: list[WorkflowBranch] = []
+    span_requests = transform_requests.external_span_reconstructions
+    span_recorder = (
+        SpanReconstructionRecorder(structure, span_requests) if span_requests else None
+    )
     planning_session = WorkflowPlanningSession(
         requested_goals=requested_goals,
         transform_requests=transform_requests,
@@ -410,6 +430,7 @@ def execute_iterative_workflow(
         retained_non_polymer_chemistry_evidence=(
             retained_non_polymer_chemistry_evidence
         ),
+        terminal_repair_requested=terminal_repair_requested,
     )
     branch_evaluator: WorkflowBranchEvaluator | None = None
     while True:
@@ -524,6 +545,20 @@ def execute_iterative_workflow(
                 transformer=transformer,
                 execution_context=execution_context,
             )
+            if span_recorder is not None and isinstance(
+                transformer, ExternalSpanReconstructionTransformer
+            ):
+                previous_issues = _retained_execution_issues(
+                    runtime_state.result.issues
+                )
+                span_recorder.record(
+                    active_node.node_id,
+                    transformer=transformer,
+                    repairs=execution_outcome.repairs[
+                        len(runtime_state.result.repairs) :
+                    ],
+                    issues=execution_outcome.issues[len(previous_issues) :],
+                )
             feedback = (
                 execution_outcome.feedback
                 if isinstance(transformer, BondedGeometryRepairTransformer)
@@ -682,6 +717,9 @@ def execute_iterative_workflow(
     return WorkflowRuntimeResult(
         branches=tuple(branches),
         stop_reason=trace.stop_reason or SpeculativeStopReason.NO_PROPOSALS_AVAILABLE,
+        span_reconstruction_evidence=(
+            None if span_recorder is None else span_recorder.finish(trace)
+        ),
     )
 
 
@@ -740,16 +778,22 @@ def execute_workflow_transformer(
         result,
         context=execution_context,
     )
-    # Current-state H diagnostics belong to assessment, not execution history.
-    issues = tuple(
-        issue
-        for issue in outcome.issues
-        if issue.kind is not ValidationIssueKind.UNRESOLVED_POLYMER_HYDROGEN
-    )
+    issues = _retained_execution_issues(outcome.issues)
     return (
         outcome
         if len(issues) == len(outcome.issues)
         else replace(outcome, issues=issues)
+    )
+
+
+def _retained_execution_issues(
+    issues: tuple[ValidationIssue, ...],
+) -> tuple[ValidationIssue, ...]:
+    # Current-state H diagnostics belong to assessment, not execution history.
+    return tuple(
+        issue
+        for issue in issues
+        if issue.kind is not ValidationIssueKind.UNRESOLVED_POLYMER_HYDROGEN
     )
 
 

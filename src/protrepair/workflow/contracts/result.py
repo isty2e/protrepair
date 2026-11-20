@@ -35,6 +35,7 @@ from protrepair.workflow.contracts.request import (
     is_workflow_goal_state_value,
     validate_workflow_goal_scope,
 )
+from protrepair.workflow.contracts.span_report import ExternalSpanReconstructionReport
 
 if TYPE_CHECKING:
     from protrepair.transformer.refinement.speculative_planning import (
@@ -724,6 +725,9 @@ class ProcessResult(TransformationResult):
     hydrogen_length_report : HydrogenLengthReport or None
         Observations of input H/D/T and optional repair dispositions. Ordinary
         runs with no input H/D/T omit the report.
+    external_span_reconstruction_report : ExternalSpanReconstructionReport or None
+        One outcome per explicit span request, combining trial evidence and
+        returned coverage. Omitted when there were no span requests.
 
     Notes
     -----
@@ -736,6 +740,9 @@ class ProcessResult(TransformationResult):
     requested_goal_report: RequestedGoalReport | None = None
     branch_report: WorkflowBranchReport | None = None
     hydrogen_length_report: HydrogenLengthReport | None = None
+    external_span_reconstruction_report: ExternalSpanReconstructionReport | None = (
+        field(default=None, kw_only=True)
+    )
 
     @property
     def relaxation_executions(self) -> tuple[ContinuousRelaxationExecution, ...]:

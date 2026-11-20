@@ -4,6 +4,8 @@
 
 ### Added
 
+- report the outcome of each external span request, including unattempted
+  requests, unselected grafts and trial failures
 - prepare existing ACE and NME caps retained with `LigandPolicy.KEEP` from
   PDB `CONECT` attachments corroborated by source order and compatible
   chemistry. Preserve the declared connectivity and existing H/D/T; export
@@ -46,6 +48,9 @@
 
 ### Changed
 
+- try distinct spans in request order when a workflow requests only span
+  reconstruction and supplies one donor per scope. Continue after a refusal
+  and keep its error if that branch is returned
 - include the concrete value type in `ScopedState` and `CarrierScopedState`
   equality and hashing. Prevent initially-satisfied, blocked or unsupported
   classifications from leaking between independent goal axes, and return each
