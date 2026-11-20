@@ -12,6 +12,7 @@ from protrepair.chemistry.inference.idealized_stereochemistry import (
 from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
+from protrepair.chemistry.peptide_caps import require_source_cap_atoms
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
@@ -441,6 +442,8 @@ class RetainedTemplateBinding:
             raise ValueError(
                 "source polymer N is incompatible with linked amide chemistry"
             )
+        if residue.component_id == "ACE" and carbonyl.atom_name == "C":
+            require_source_cap_atoms(structure, residue, nitrogen)
 
         projected = semantics.component.without_hydrogens_anchored_to(
             (carbonyl.atom_name,)
@@ -509,6 +512,12 @@ def is_resolved_acyl_amide_link(
         for index in (carbonyl_index, nitrogen_index)
     ):
         return False
+    cap = constitution.residue_or_ligand(carbonyl.residue_id)
+    if cap is not None and cap.component_id == "ACE":
+        try:
+            require_source_cap_atoms(structure, cap, nitrogen)
+        except ValueError:
+            return False
     neighbors = []
     for bond in structure.topology.bonds:
         if carbonyl_index not in bond.endpoint_pair() or bond.relationship_type in (

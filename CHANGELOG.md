@@ -179,6 +179,11 @@
 
 ### Fixed
 
+- complete hydrogens on existing linked NME caps with methyl atom `C`, and
+  interpret chain ACE as an acetyl cap instead of reporting a missing carbonyl H.
+  This also supports NME retained with a typed covalent link under `KEEP`.
+  Existing H/D/T and the ligand `DROP` policy are unchanged
+
 - retry continuous refinement from the original input when preparation moves
   atoms but no prepared candidate strictly improves the parent under the common
   quality order, unless an accepted discrete parser shortcut returns. Keep improving

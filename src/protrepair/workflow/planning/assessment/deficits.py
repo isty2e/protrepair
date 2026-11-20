@@ -503,7 +503,10 @@ def _chemistry_readiness_deficit(
     for residue_fact in chemistry_readiness_facts.residue_facts:
         if not residue_fact.is_supported():
             unsupported_component_residue_ids.append(residue_fact.residue_id)
-            if requires_hydrogen_readiness:
+            if (
+                requires_hydrogen_readiness
+                and not residue_fact.supports_hydrogen_verification()
+            ):
                 hydrogen_blocked_residue_ids.append(residue_fact.residue_id)
         if (
             residue_fact.heavy_atom_topology_availability_state
@@ -530,7 +533,7 @@ def _chemistry_readiness_deficit(
             residue_fact.hydrogen_applicability_state
             is HydrogenApplicabilityState.NOT_APPLICABLE
             or not residue_fact.needs_hydrogenation()
-            or not residue_fact.is_supported()
+            or not residue_fact.supports_hydrogen_verification()
         ):
             continue
 

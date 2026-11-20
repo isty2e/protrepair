@@ -13,7 +13,10 @@ from protrepair.io.source_identity import normalize_chain_id, normalize_insertio
 from protrepair.structure.constitution import StructureConstitution
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import ResidueId
-from protrepair.structure.peptide import PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
+from protrepair.structure.peptide import (
+    PEPTIDE_CN_DISTANCE_MAX_ANGSTROM,
+    peptide_ports_allow_link,
+)
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
@@ -280,7 +283,10 @@ def source_sequence_inferred_polymer_topology_bonds(
         first_site = constitution.residue_site_at(first_index)
         second_site = constitution.residue_site_at(second_index)
         if (
-            not first_site.has_atom_site("C")
+            not peptide_ports_allow_link(
+                first_site.component_id, second_site.component_id
+            )
+            or not first_site.has_atom_site("C")
             or first_site.has_atom_site("OXT")
             or not second_site.has_atom_site("N")
         ):

@@ -80,6 +80,10 @@ class StructureHydrogenExpectationModel:
         )
         polymer_references = {}
         for residue in structure.constitution.iter_residues():
+            cap = preparation.linked_peptide_cap(residue.residue_id)
+            if cap is not None:
+                names[residue.residue_id] = cap.expected_hydrogen_names()
+                continue
             template = component_library.get(residue.component_id)
             if template is not None and template.has_unprepared_hydrogen_reference():
                 polymer_references[residue.residue_id] = (
@@ -89,6 +93,10 @@ class StructureHydrogenExpectationModel:
                 )
         resolutions = {}
         for ligand in structure.constitution.ligands:
+            cap = preparation.linked_peptide_cap(ligand.residue_id)
+            if cap is not None:
+                names[ligand.residue_id] = cap.expected_hydrogen_names()
+                continue
             resolution = resolve_retained_non_polymer_chemistry(
                 structure,
                 ligand,

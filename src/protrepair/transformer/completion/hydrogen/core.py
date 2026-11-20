@@ -54,6 +54,9 @@ from protrepair.transformer.completion.hydrogen.domain import (
     HydrogenCompletionEnvironment,
     HydrogenResidueSite,
 )
+from protrepair.transformer.completion.hydrogen.linked_caps import (
+    place_linked_cap_hydrogens,
+)
 from protrepair.transformer.completion.hydrogen.microstate import (
     place_polymer_microstate_hydrogens,
 )
@@ -286,10 +289,24 @@ def materialize_hydrogens_core(
     fixed = _fixed_hydrogens(
         result.structure, library, prepared, targets=targets, rebuilding=rebuilding
     )
+    structure = fixed.structure
+    repairs = [*result.repairs, *fixed.repairs]
+    issues = [*result.issues, *fixed.issues]
+    for residue_id in sorted(targets):
+        cap = prepared.linked_peptide_cap(residue_id)
+        if cap is None or cap.refusal is not None:
+            continue
+        prepared = prepared.for_inputs(structure, library)
+        cap = prepared.linked_peptide_cap(residue_id)
+        assert cap is not None
+        placed = place_linked_cap_hydrogens(structure, cap, library)
+        structure = placed.structure
+        repairs.extend(placed.repairs)
+        issues.extend(placed.issues)
     return TransformationResult(
-        fixed.structure,
-        result.repairs + fixed.repairs,
-        result.issues + fixed.issues,
+        structure,
+        tuple(repairs),
+        tuple(issues),
     )
 
 
@@ -334,6 +351,8 @@ def _fixed_hydrogens(
             zip(payloads, templates, strict=True)
         ):
             if payload.residue_id not in targets:
+                continue
+            if prepared.linked_peptide_cap(payload.residue_id) is not None:
                 continue
             diagnosis = diagnose_component_support(payload.component_id, library)
             if template is None:

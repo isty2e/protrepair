@@ -58,6 +58,10 @@ from protrepair.structure.geometry import (
 )
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
+from protrepair.structure.peptide import (
+    PEPTIDE_CAP_COMPONENT_IDS,
+    peptide_ports_allow_link,
+)
 from protrepair.structure.provenance import (
     FileFormat,
     StructureIngress,
@@ -957,14 +961,13 @@ def _source_peptide_link_pairs(
     if len(raw_structure) == 0 or not source_connections:
         return frozenset()
 
-    present_component_ids = {
-        (
-            _raw_residue_id(raw_residue, normalize_chain_id(raw_chain.name)),
-            raw_residue.name.strip().upper(),
-        )
-        for raw_chain in raw_structure[0]
-        for raw_residue in raw_chain
-    }
+    components_by_id: dict[ResidueId, set[str]] = {}
+    for raw_chain in raw_structure[0]:
+        chain_id = normalize_chain_id(raw_chain.name)
+        for raw in raw_chain:
+            components_by_id.setdefault(_raw_residue_id(raw, chain_id), set()).add(
+                raw.name.strip().upper()
+            )
     pairs: set[tuple[ResidueId, ResidueId]] = set()
     for connection in source_connections:
         if not connection.is_peptide_link_candidate():
@@ -974,13 +977,25 @@ def _source_peptide_link_pairs(
         endpoint_2 = connection.endpoint_2
         residue_id_1 = endpoint_1.atom_ref.residue_id
         residue_id_2 = endpoint_2.atom_ref.residue_id
-        if (
-            residue_id_1,
-            endpoint_1.component_id,
-        ) not in present_component_ids or (
-            residue_id_2,
-            endpoint_2.component_id,
-        ) not in present_component_ids:
+        if any(
+            endpoint.component_id not in components
+            or (
+                len(components) > 1
+                and PEPTIDE_CAP_COMPONENT_IDS.intersection(components)
+            )
+            for endpoint in (endpoint_1, endpoint_2)
+            for components in (
+                components_by_id.get(endpoint.atom_ref.residue_id, set()),
+            )
+        ):
+            continue
+
+        carbonyl, amide = (
+            (endpoint_1, endpoint_2)
+            if endpoint_1.atom_ref.atom_name == "C"
+            else (endpoint_2, endpoint_1)
+        )
+        if not peptide_ports_allow_link(carbonyl.component_id, amide.component_id):
             continue
 
         left_residue_id, right_residue_id = sorted((residue_id_1, residue_id_2))
@@ -1020,12 +1035,28 @@ def _canonical_residue_roles_for_chain(
         raw_residues_by_id.setdefault(residue_id, []).append(raw_residue)
 
     ordered_residue_ids = tuple(sorted(raw_residues_by_id))
+    components_by_id = {
+        residue_id: {raw.name.strip().upper() for raw in variants}
+        for residue_id, variants in raw_residues_by_id.items()
+    }
+    mixed_cap_slots = {
+        residue_id
+        for residue_id, components in components_by_id.items()
+        if len(components) > 1 and PEPTIDE_CAP_COMPONENT_IDS.intersection(components)
+    }
     sequence_neighbor_pairs = frozenset(
         (left_residue_id, right_residue_id)
         for left_residue_id, right_residue_id in itertools.pairwise(ordered_residue_ids)
         if _residue_ids_are_sequential_peptide_neighbors(
             left_residue_id,
             right_residue_id,
+        )
+        and left_residue_id not in mixed_cap_slots
+        and right_residue_id not in mixed_cap_slots
+        and all(
+            peptide_ports_allow_link(left_component, right_component)
+            for left_component in components_by_id[left_residue_id]
+            for right_component in components_by_id[right_residue_id]
         )
     )
 

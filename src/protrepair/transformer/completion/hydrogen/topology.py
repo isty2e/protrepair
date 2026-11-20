@@ -12,7 +12,11 @@ from protrepair.diagnostics.kinds import (
 from protrepair.diagnostics.polymer_hydrogen import unresolved_fixed_hydrogen_issue
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import ResidueId
+from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.topology import StructureTopology
+from protrepair.transformer.completion.hydrogen.linked_caps import (
+    publish_linked_cap_topology,
+)
 from protrepair.transformer.result import TransformationResult
 
 
@@ -23,7 +27,7 @@ def resolve_fixed_hydrogen_topology(
     target_residue_ids: frozenset[ResidueId] | None = None,
     observed_preparation: AminoAcidPreparation | None = None,
 ) -> TransformationResult:
-    """Attach present fixed H without changing atom identity or geometry.
+    """Resolve fixed H and linked-cap bonds without changing atom payloads.
 
     Parameters
     ----------
@@ -35,7 +39,7 @@ def resolve_fixed_hydrogen_topology(
         Polymer residues to update; None selects all polymer residues.
     observed_preparation : AminoAcidPreparation or None
         Seed rebound to this exact snapshot and library without new requests.
-        Not acquired when no selected residue has H.
+        Not acquired when no selected residue has H or a stock cap component.
 
     Returns
     -------
@@ -56,7 +60,11 @@ def resolve_fixed_hydrogen_topology(
                 and residue.residue_id not in target_residue_ids
             ):
                 continue
-            if not any(atom.is_hydrogen() for atom in residue.atom_sites):
+            has_hydrogens = any(atom.is_hydrogen() for atom in residue.atom_sites)
+            if (
+                not has_hydrogens
+                and residue.component_id not in PEPTIDE_CAP_COMPONENT_IDS
+            ):
                 continue
             if prepared is None:
                 prepared = (
@@ -66,6 +74,17 @@ def resolve_fixed_hydrogen_topology(
                     if observed_preparation is None
                     else observed_preparation.for_inputs(structure, component_library)
                 )
+            cap = prepared.linked_peptide_cap(residue.residue_id)
+            if cap is not None:
+                result = publish_linked_cap_topology(structure, cap)
+                repairs.extend(result.repairs)
+                issues.extend(result.issues)
+                if result.structure is not structure:
+                    structure = result.structure
+                    prepared = prepared.for_inputs(structure, component_library)
+                continue
+            if not has_hydrogens:
+                continue
             try:
                 issue = unresolved_fixed_hydrogen_issue(prepared, residue.residue_id)
                 if issue is not None:
@@ -99,7 +118,9 @@ def resolve_fixed_hydrogen_topology(
                 )
             )
     if not updates:
-        return TransformationResult(structure, repairs=(), issues=tuple(issues))
+        return TransformationResult(
+            structure, repairs=tuple(repairs), issues=tuple(issues)
+        )
 
     bonds_by_pair = {bond.endpoint_pair(): bond for bond in structure.topology.bonds}
     bonds_by_pair.update((bond.endpoint_pair(), bond) for bond in updates)

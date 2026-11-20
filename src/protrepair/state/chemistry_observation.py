@@ -17,6 +17,7 @@ from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.preparation import (
     AminoAcidPreparation,
 )
+from protrepair.chemistry.peptide_caps import LinkedPeptideCap
 from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
@@ -485,6 +486,11 @@ class StructureChemistryObservation:
     ) -> ResidueChemistryReadinessFacts:
         """Derive chemistry-readiness singleton residue facts from one residue."""
 
+        cap = self.hydrogen_expectation_model.polymer_preparation.linked_peptide_cap(
+            residue.residue_id
+        )
+        if cap is not None:
+            return _linked_cap_readiness(residue, cap, self.component_library)
         if (
             residue.is_hetero
             and self.hydrogen_expectation_model.resolution_for_retained_non_polymer(
@@ -602,6 +608,29 @@ class StructureChemistryObservation:
     ) -> RetainedNonPolymerChemistryReadinessFact:
         """Derive chemistry-readiness truth for one retained non-polymer component."""
 
+        cap = self.hydrogen_expectation_model.polymer_preparation.linked_peptide_cap(
+            residue.residue_id
+        )
+        if cap is not None:
+            readiness = _linked_cap_readiness(residue, cap, self.component_library)
+            source = (
+                RetainedNonPolymerChemistryEvidenceSource.TEMPLATE
+                if cap.refusal is None
+                else RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED
+            )
+            return RetainedNonPolymerChemistryReadinessFact(
+                residue_id=residue.residue_id,
+                component_id=residue.component_id,
+                component_support_state=readiness.component_support_state,
+                heavy_topology_source=source,
+                hydrogen_expectation_source=source,
+                heavy_atom_topology_availability_state=readiness.heavy_atom_topology_availability_state,
+                hydrogen_topology_availability_state=readiness.hydrogen_topology_availability_state,
+                hydrogen_applicability_state=readiness.hydrogen_applicability_state,
+                hydrogen_coverage_state=readiness.hydrogen_coverage_state,
+                hydrogen_generation_supported=cap.link_is_realized(),
+                linked_cap=cap,
+            )
         evidence = self.retained_non_polymer_evidence_by_residue_id.get(
             residue.residue_id
         )
@@ -1062,6 +1091,42 @@ class StructureChemistryObservation:
             hydrogen_coverage_state=h_coverage_state,
         )
         return coverage_facts, chemistry_readiness_facts
+
+
+def _linked_cap_readiness(
+    residue: ResidueSite, cap: LinkedPeptideCap, component_library: ComponentLibrary
+) -> ResidueChemistryReadinessFacts:
+    support = component_support_state((residue,), component_library=component_library)
+    heavy = TopologyAvailabilityState.UNSUPPORTED
+    if support.is_fully_supported() and cap.refusal is None:
+        heavy = (
+            TopologyAvailabilityState.PRESENT
+            if cap.link_is_realized()
+            else TopologyAvailabilityState.ABSENT
+        )
+    coverage = (
+        HydrogenCoverageState.COMPLETE
+        if cap.hydrogens_are_complete()
+        else HydrogenCoverageState.PARTIAL
+        if any(atom.is_hydrogen() for atom in residue.atom_sites)
+        else HydrogenCoverageState.NONE
+    )
+    hydrogen_topology = (
+        TopologyAvailabilityState.PRESENT
+        if coverage is HydrogenCoverageState.COMPLETE
+        else TopologyAvailabilityState.UNSUPPORTED
+        if cap.refusal is not None
+        else TopologyAvailabilityState.ABSENT
+    )
+    return ResidueChemistryReadinessFacts(
+        residue_id=residue.residue_id,
+        component_support_state=support,
+        heavy_atom_topology_availability_state=heavy,
+        hydrogen_topology_availability_state=hydrogen_topology,
+        hydrogen_applicability_state=HydrogenApplicabilityState.APPLICABLE,
+        hydrogen_coverage_state=coverage,
+        linked_cap=cap,
+    )
 
 
 def _polymer_heavy_topology_availability_state(

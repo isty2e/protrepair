@@ -9,6 +9,7 @@ from protrepair.chemistry import (
 from protrepair.chemistry.microstate.preparation import (
     AminoAcidSitePreparation,
 )
+from protrepair.chemistry.peptide_caps import LinkedPeptideCap
 from protrepair.scope import ResidueSetScope
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryEvidenceSource,
@@ -175,6 +176,7 @@ class ResidueChemistryReadinessFacts:
     hydrogen_coverage_state: HydrogenCoverageState | None
 
     polymer_microstate_targets: tuple[AminoAcidSitePreparation, ...] = ()
+    linked_cap: LinkedPeptideCap | None = None
 
     def requires_microstate_realization(self) -> bool:
         """Return whether a selected graph differs from current chemistry.
@@ -205,6 +207,10 @@ class ResidueChemistryReadinessFacts:
         """Return whether canonical chemistry support is available."""
 
         return self.component_support_state.is_fully_supported()
+
+    def supports_hydrogen_verification(self) -> bool:
+        """Include scoped cap chemistry without granting general support."""
+        return self.linked_cap is not None or self.is_supported()
 
     def needs_hydrogenation(self) -> bool:
         """Return whether hydrogen completion may still add missing hydrogens."""
@@ -252,6 +258,7 @@ class RetainedNonPolymerChemistryReadinessFact:
     chemistry_failure: RetainedNonPolymerChemistryFailure | None = None
     reference_hydrogens_verified: bool = False
     hydrogen_updates_pending: bool = False
+    linked_cap: LinkedPeptideCap | None = None
 
     def supports_hydrogen_verification(self) -> bool:
         """Return whether admitted chemistry or a reference can verify H.
@@ -261,7 +268,11 @@ class RetainedNonPolymerChemistryReadinessFact:
         bool
             Verification support, independent of generation or FF readiness.
         """
-        return self.is_supported() or self.reference_hydrogens_verified
+        return (
+            self.linked_cap is not None
+            or self.is_supported()
+            or self.reference_hydrogens_verified
+        )
 
     def has_complete_reference_hydrogens(self) -> bool:
         """Return whether read-only reference comparison established complete H.
@@ -299,9 +310,14 @@ class RetainedNonPolymerChemistryReadinessFact:
             is RetainedNonPolymerChemistryEvidenceSource.RDKIT_FALLBACK
         )
 
-    def requires_hydrogen_completion(self) -> bool:
-        """Return whether admitted generation can address known missing H."""
+    def requires_hydrogen_completion(self, *, for_hydrogen_goal: bool = False) -> bool:
+        """Select H work; only the H goal admits the scoped cap recipe."""
 
+        if self.linked_cap is not None:
+            return for_hydrogen_goal and (
+                self.linked_cap.link_is_realized()
+                and not self.linked_cap.hydrogens_are_complete()
+            )
         return self.hydrogen_updates_pending or (
             self.is_supported()
             and self.hydrogen_generation_supported
@@ -310,8 +326,14 @@ class RetainedNonPolymerChemistryReadinessFact:
             and self.needs_hydrogenation()
         )
 
-    def requires_topology_resolution(self) -> bool:
+    def requires_topology_resolution(self, *, for_hydrogen_goal: bool = False) -> bool:
         """Select graph-only repair when supported chemistry needs no new H.
+
+        Parameters
+        ----------
+        for_hydrogen_goal : bool, default=False
+            Permit the linked-cap heavy-bond prerequisite for an H goal.
+            Local refinement does not enable that preparation.
 
         Returns
         -------
@@ -319,6 +341,8 @@ class RetainedNonPolymerChemistryReadinessFact:
             Whether absent graph facts remain despite a complete or inapplicable
             H inventory. Chemistry conflicts still require transformer validation.
         """
+        if self.linked_cap is not None:
+            return for_hydrogen_goal and bool(self.linked_cap.heavy_bond_updates)
         return (
             self.is_supported()
             and self.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE

@@ -273,6 +273,17 @@ An entity-less PDB chain made entirely of peptide-compatible `HETATM` residues
 without explicit C-N links remains retained non-polymer content. Chemistry
 support alone is not evidence that a component occupies a polymer chain slot.
 
+Existing peptide caps supply context only at their open ends: `ACE.C` can
+link to the next backbone N, and `NME.N` can link to the preceding carbonyl
+C. `NME.C` is a methyl carbon, not an outgoing peptide site. A cap's closed
+end cannot promote a neighboring `HETATM` residue into the chain.
+
+Hydrogen completion supports linked NME with methyl atom `C` in a chain
+or under `LigandPolicy.KEEP` with a typed covalent link or an already
+resolved bond. It adds one amide H and three methyl H when all four are
+missing, without changing existing H/D/T. A bare retained `CONECT` does
+not establish the cap's chemistry or change `DROP` behavior.
+
 ## Egress Projection
 
 Canonical role controls the emitted entity type: polymer residues emit polymer

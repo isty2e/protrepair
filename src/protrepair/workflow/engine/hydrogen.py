@@ -4,7 +4,10 @@ from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import ValidationIssueKind
-from protrepair.diagnostics.polymer_hydrogen import unresolved_fixed_hydrogen_issue
+from protrepair.diagnostics.polymer_hydrogen import (
+    linked_cap_issue,
+    unresolved_fixed_hydrogen_issue,
+)
 from protrepair.diagnostics.retained_hydrogen import unresolved_retained_hydrogen_issue
 from protrepair.scope import WholeStructureScope
 from protrepair.scope.observed_atom_scope_lowering import OBSERVED_ATOM_SCOPE_LOWERING
@@ -168,4 +171,11 @@ def project_hydrogen_issues(
         ).unresolved_hydrogen_requirement
         is not None
     )
-    return retained + polymer_issues + retained_issues
+    refused_retained_caps = tuple(
+        linked_cap_issue(cap, cap.refusal)
+        for residue in structure.constitution.ligands
+        if residue.residue_id in selected
+        and (cap := preparation.linked_peptide_cap(residue.residue_id)) is not None
+        and cap.refusal is not None
+    )
+    return retained + polymer_issues + retained_issues + refused_retained_caps

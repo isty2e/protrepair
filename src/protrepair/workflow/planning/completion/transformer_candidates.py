@@ -57,6 +57,24 @@ class _ResidueCompletionPlanningFacts:
     needs_hydrogenation: bool
 
 
+def polymer_cap_hydrogen_target_residue_ids(
+    facts: StructureChemistryReadinessFacts,
+    *,
+    whole_structure: bool,
+    required_residue_ids: tuple[ResidueId, ...],
+) -> frozenset[ResidueId]:
+    """Limit graph and H writes to the same authorized polymer cap targets."""
+    return frozenset(
+        fact.residue_id
+        for fact in facts.residue_facts
+        if fact.linked_cap is not None
+        and (
+            whole_structure
+            or (fact.is_supported() and fact.residue_id in required_residue_ids)
+        )
+    )
+
+
 def plan_completion_transformers(
     structure: ProteinStructure,
     *,
@@ -237,8 +255,23 @@ def plan_hydrogen_completion_transformers(
             structure, component_library, requests=requests
         )
     )
+    whole_structure = requested_goals.requests_whole_structure_hydrogen_population()
+    cap_targets = polymer_cap_hydrogen_target_residue_ids(
+        active_chemistry_readiness_facts,
+        whole_structure=whole_structure,
+        required_residue_ids=required_residue_ids,
+    )
     selected = set(hydrogen_target_residue_ids)
     for fact in active_chemistry_readiness_facts.residue_facts:
+        if (cap := fact.linked_cap) is not None:
+            selected.discard(fact.residue_id)
+            if (
+                fact.residue_id in cap_targets
+                and cap.link_is_realized()
+                and not cap.hydrogens_are_complete()
+            ):
+                selected.add(fact.residue_id)
+            continue
         residue = structure.constitution.residue_or_ligand(fact.residue_id)
         template = (
             None if residue is None else component_library.get(residue.component_id)
@@ -280,6 +313,18 @@ def plan_hydrogen_completion_transformers(
                 and not preparation.has_pending_hydrogen_updates(fact.residue_id)
             ):
                 selected.discard(fact.residue_id)
+    # Defer the partner only if the cap write is allowed by this request.
+    selected.difference_update(
+        cap.partner.residue_id
+        for fact in (
+            *active_chemistry_readiness_facts.residue_facts,
+            *active_chemistry_readiness_facts.retained_non_polymer_facts,
+        )
+        if (whole_structure or fact.residue_id in cap_targets)
+        and (cap := fact.linked_cap) is not None
+        and cap.heavy_bond_updates
+        and cap.partner is not None
+    )
     return CompletionTransformerPlanningOutcome(
         transformers=tuple(
             transformer
@@ -317,7 +362,7 @@ def plan_retained_non_polymer_hydrogen_completion_transformers(
         for retained_fact in (
             active_chemistry_readiness_facts.retained_non_polymer_facts
         )
-        if retained_fact.requires_hydrogen_completion()
+        if retained_fact.requires_hydrogen_completion(for_hydrogen_goal=True)
     )
     return CompletionTransformerPlanningOutcome(
         transformers=tuple(

@@ -1,10 +1,22 @@
 """Diagnostic projection of unresolved fixed polymer H inventories."""
 
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
+from protrepair.chemistry.peptide_caps import LinkedPeptideCap
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import BondRelationshipType
+
+
+def linked_cap_issue(cap: LinkedPeptideCap, detail: str) -> ValidationIssue:
+    """Report why an occupied cap was left unprepared."""
+    return ValidationIssue.for_residue(
+        kind=ValidationIssueKind.UNSUPPORTED_HYDROGENATION,
+        severity=IssueSeverity.WARNING,
+        residue_id=cap.residue_id,
+        component_id=cap.component_id,
+        message=f"Linked cap hydrogenation unavailable: {detail}",
+    )
 
 
 def unresolved_fixed_hydrogen_issue(
@@ -35,6 +47,9 @@ def unresolved_fixed_hydrogen_issue(
     ValueError
         The residue is absent from the preparation snapshot.
     """
+    cap = preparation.linked_peptide_cap(residue_id)
+    if cap is not None:
+        return None if cap.refusal is None else linked_cap_issue(cap, cap.refusal)
     fixed = preparation.fixed_hydrogen_context(residue_id)
     if (
         fixed is None or not fixed.unresolved_parent_names

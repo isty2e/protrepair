@@ -25,6 +25,7 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateResolutionStatus,
 )
 from protrepair.chemistry.microstate.retained import RetainedAminoAcidContext
+from protrepair.chemistry.peptide_caps import LinkedPeptideCap
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
@@ -34,6 +35,9 @@ from protrepair.chemistry.retained_non_polymer.glycosidic import (
 from protrepair.chemistry.retained_non_polymer.michael_adduct import (
     CysteineMichaelAdductBinding,
 )
+from protrepair.chemistry.retained_non_polymer.template_binding import (
+    RetainedTemplateBinding,
+)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite
 from protrepair.structure.disulfide import (
@@ -41,6 +45,7 @@ from protrepair.structure.disulfide import (
     disulfide_bonded_cysteine_residue_ids,
 )
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.topology import (
     BondRelationshipType,
     TopologyBond,
@@ -389,6 +394,7 @@ class AminoAcidPreparation:
     ]
     _excluded_retained_residue_ids: frozenset[ResidueId]
     _retained_context: RetainedAminoAcidContext
+    _cap_preparation_by_residue: dict[ResidueId, LinkedPeptideCap | None]
 
     def __init__(
         self,
@@ -555,11 +561,18 @@ class AminoAcidPreparation:
             "_coordinate_dependent",
             bool(unresolved_histidines)
             or coordinate_dependent_adducts
-            or coordinate_dependent_retained,
+            or coordinate_dependent_retained
+            or any(
+                residue.component_id in PEPTIDE_CAP_COMPONENT_IDS
+                for residue in context.source.constitution.iter_residues(
+                    include_ligands=True
+                )
+            ),
         )
         object.__setattr__(self, "_cysteine_adducts", MappingProxyType(adducts))
         object.__setattr__(self, "_targets", MappingProxyType(targets))
         object.__setattr__(self, "context", context)
+        object.__setattr__(self, "_cap_preparation_by_residue", {})
         object.__setattr__(self, "component_library", component_library)
         object.__setattr__(self, "_requests", MappingProxyType(requested))
         object.__setattr__(
@@ -636,6 +649,41 @@ class AminoAcidPreparation:
                 not self._coordinate_dependent or source.geometry == structure.geometry
             )
         )
+
+    def linked_peptide_cap(self, residue_id: ResidueId) -> LinkedPeptideCap | None:
+        """Return stock linked-cap preparation, subordinate to explicit chemistry."""
+        if residue_id in self._excluded_retained_residue_ids:
+            return None
+        residue = self.context.source.constitution.residue_or_ligand(residue_id)
+        if residue is None or (residue.component_id == "ACE" and residue.is_hetero):
+            return None
+        cap = self.context.linked_peptide_cap(residue_id)
+        if cap is None:
+            return None
+        if residue_id in self._cap_preparation_by_residue:
+            return self._cap_preparation_by_residue[residue_id]
+
+        template = self.component_library.get(cap.component_id)
+        selected = cap
+        if cap.component_id == "NME":
+            if template is not None:
+                return None
+        elif template is None or template != build_default_component_library().get(
+            "ACE"
+        ):
+            return None
+        elif cap.refusal is None:
+            structure = self.context.source
+            try:
+                RetainedTemplateBinding(
+                    structure, residue, template, self.component_library
+                )
+            except ValueError as error:
+                selected = LinkedPeptideCap(
+                    residue_id, cap.component_id, refusal=str(error)
+                )
+        self._cap_preparation_by_residue[residue_id] = selected
+        return selected
 
     def fixed_hydrogen_context(
         self, residue_id: ResidueId
