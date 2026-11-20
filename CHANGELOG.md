@@ -179,6 +179,9 @@
 
 ### Fixed
 
+- complete linked NME caps that use the legacy Amber `CH3` and `HH31` through
+  `HH33` atom names. Keep existing atom identities and reject competing names
+  for the same methyl position
 - complete hydrogens on existing linked NME caps with methyl atom `C`, and
   interpret chain ACE as an acetyl cap instead of reporting a missing carbonyl H.
   This also supports NME retained with a typed covalent link under `KEEP`.

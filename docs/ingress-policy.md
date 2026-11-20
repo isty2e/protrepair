@@ -275,10 +275,16 @@ support alone is not evidence that a component occupies a polymer chain slot.
 
 Existing peptide caps supply context only at their open ends: `ACE.C` can
 link to the next backbone N, and `NME.N` can link to the preceding carbonyl
-C. `NME.C` is a methyl carbon, not an outgoing peptide site. A cap's closed
-end cannot promote a neighboring `HETATM` residue into the chain.
+C. The NME methyl carbon (`C` or `CH3`) is not an outgoing peptide site.
+A cap's closed end cannot promote a neighboring `HETATM` residue into the chain.
 
-Hydrogen completion supports linked NME with methyl atom `C` in a chain
+On linked NME with a methyl atom named `CH3`, newly placed hydrogens use the
+legacy names `H` on the amide nitrogen and `HH31`, `HH32`, and `HH33` on
+the methyl carbon. Existing methyl hydrogens may use `H1` through `H3` or
+`HH31` through `HH33`, but two names cannot occupy the same methyl position.
+Existing atom names are unchanged.
+
+Hydrogen completion supports linked NME with methyl atom `C` or `CH3` in a chain
 or under `LigandPolicy.KEEP` with a typed covalent link or an already
 resolved bond. It adds one amide H and three methyl H when all four are
 missing, without changing existing H/D/T. A bare retained `CONECT` does
