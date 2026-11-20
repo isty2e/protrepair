@@ -199,6 +199,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             bonds=bonds,
         )
         mmcif_document = raw_structure.make_mmcif_document()
+        _quote_mmcif_asym_ids(mmcif_document, raw_structure[0])
         _set_mmcif_connection_orders(mmcif_document, bonds)
         _restore_mmcif_atom_attributes(mmcif_document, structure)
         return mmcif_document.as_string()
@@ -432,6 +433,27 @@ def _normalize_pdb_altlocs(raw_structure: gemmi.Structure) -> None:
     for connection in raw_structure.connections:
         connection.partner1.altloc = "\0"
         connection.partner2.altloc = "\0"
+
+
+def _quote_mmcif_asym_ids(document: gemmi.cif.Document, model: gemmi.Model) -> None:
+    """Repair unquoted declarations; Gemmi already quotes subchain references."""
+
+    quoted_by_id: dict[str, str] = {}
+    for subchain in model.subchains():
+        subchain_id = subchain.subchain_id()
+        if not subchain_id:
+            continue
+        token = gemmi.cif.quote(subchain_id)
+        if token != subchain_id:
+            quoted_by_id[subchain_id] = token
+
+    if not quoted_by_id:
+        return
+
+    identifiers = document.sole_block().find_values("_struct_asym.id")
+    for row_index, identifier in enumerate(identifiers):
+        if identifier in quoted_by_id:
+            identifiers[row_index] = quoted_by_id[identifier]
 
 
 def _set_mmcif_connection_orders(
