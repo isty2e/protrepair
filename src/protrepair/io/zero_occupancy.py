@@ -383,6 +383,20 @@ def project_zero_occupancy_omissions(
                 observation=observation,
                 zero_occupancy_omissions=atom_omissions,
                 zero_occupancy_residue_omissions=residue_omissions,
+                pdb_adjacent_cap_links=(
+                    ()
+                    if observation is None
+                    else tuple(
+                        link
+                        for link in ingress.pdb_adjacent_cap_links
+                        if link.bond_in(
+                            observation.constitution,
+                            observation.geometry,
+                            observation.topology,
+                        )
+                        is not None
+                    )
+                ),
             ),
         ),
     )

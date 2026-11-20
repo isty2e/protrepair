@@ -170,7 +170,10 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             raw_structure,
             structure,
             file_format=file_format,
-            bonds=pdb_typed_connection_topology_bonds_for_egress(structure),
+            bonds=(
+                *pdb_typed_connection_topology_bonds_for_egress(structure),
+                *_realized_pdb_cap_links_for_egress(structure),
+            ),
         )
         _normalize_pdb_altlocs(raw_structure)
         pdb_text, serial_by_atom_ref = _project_public_pdb_records(
@@ -201,6 +204,25 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         return mmcif_document.as_string()
 
     raise UnsupportedFileFormatError(f"unsupported file format: {file_format}")
+
+
+def _realized_pdb_cap_links_for_egress(
+    structure: ProteinStructure,
+) -> tuple[TopologyBond, ...]:
+    """Retain realized cap chemistry if archival PDB ordering loses the source path."""
+    return tuple(
+        bond
+        for link in structure.provenance.ingress.pdb_adjacent_cap_links
+        if (
+            bond := link.bond_in(
+                structure.constitution, structure.geometry, structure.topology
+            )
+        )
+        is not None
+        and bond.relationship_type is BondRelationshipType.COVALENT
+        and bond.order == 1
+        and not bond.aromatic
+    )
 
 
 def _validate_pdb_output(

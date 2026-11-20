@@ -145,6 +145,14 @@ class SourceBondMetadata:
         object.__setattr__(self, "source_id", source_id)
         object.__setattr__(self, "reported_distance_angstrom", reported_distance)
 
+    def is_bare_pdb_conect(self) -> bool:
+        """Return whether the source declared adjacency without type or order."""
+        return (
+            self.record_type is SourceBondRecordType.PDB_CONECT
+            and self.reported_relationship_type is BondRelationshipType.UNKNOWN
+            and self.reported_order is None
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class TopologyBond:

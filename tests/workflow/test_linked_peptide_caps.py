@@ -410,7 +410,7 @@ def test_standalone_retained_nme_keeps_its_five_h_path():
     assert _h_outcome(result).is_satisfied()
 
 
-def test_bare_conect_does_not_admit_a_retained_cap():
+def test_adjacent_retained_cap_uses_bare_conect_only_during_h_preparation():
     pdb = _PDB.replace("ATOM     13", "HETATM   13").replace(
         "ATOM     14", "HETATM   14"
     )
@@ -418,11 +418,18 @@ def test_bare_conect_does_not_admit_a_retained_cap():
     source = read_structure_string(
         pdb, FileFormat.PDB, policy=_KEEP.structure_normalization_policy()
     )
+    original = _nme_bond(source, AtomRef(_ALA, "C"))
+    assert (
+        original is not None
+        and original.relationship_type is BondRelationshipType.UNKNOWN
+    )
+    assert original.order is None
     result = process_structure(source, ingress=_KEEP, requested_goals=_GOALS)
-    assert not _hydrogen_names(result.structure)
-    assert not _h_outcome(result).is_satisfied()
+    assert len(_hydrogen_names(result.structure)) == 4
+    assert _h_outcome(result).is_satisfied()
     bond = _nme_bond(result.structure, AtomRef(_ALA, "C"))
-    assert bond is not None and bond.relationship_type is BondRelationshipType.UNKNOWN
+    assert bond is not None and bond.relationship_type is BondRelationshipType.COVALENT
+    assert bond.order == 1
 
 
 @pytest.mark.parametrize("explicit", [False, True])

@@ -106,7 +106,15 @@ def observe_linked_peptide_cap(
             or neighbor.component_id in PEPTIDE_CAP_COMPONENT_IDS
         ):
             raise ValueError("the cap has no ordinary polymer partner")
-        realized = _checked_link(link)
+        evidence = structure.provenance.ingress.pdb_adjacent_cap_link_for(residue_id)
+        qualified_pdb_link = (
+            evidence is not None
+            and evidence.bond_in(
+                structure.constitution, structure.geometry, structure.topology
+            )
+            == link
+        )
+        realized = _checked_link(link, qualified_pdb_link=qualified_pdb_link)
         _check_partner(structure, partner, neighbor, link)
 
         require_source_cap_atoms(structure, residue, partner)
@@ -179,8 +187,11 @@ def _external_refs(
     return (first, second) if first.residue_id == residue_id else (second, first)
 
 
-def _checked_link(bond: TopologyBond) -> TopologyBond:
+def _checked_link(bond: TopologyBond, *, qualified_pdb_link: bool) -> TopologyBond:
     metadata = bond.source_metadata
+    if qualified_pdb_link and bond.relationship_type is BondRelationshipType.UNKNOWN:
+        _check_order(bond, 1)
+        return bond.with_resolved_chemistry(TopologyBond(*bond.endpoint_pair()))
     if bond.relationship_type is not BondRelationshipType.COVALENT:
         raise ValueError("the cap's external edge is not a typed covalent link")
     _check_order(bond, 1)

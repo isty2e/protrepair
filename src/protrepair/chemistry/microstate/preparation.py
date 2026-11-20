@@ -39,7 +39,7 @@ from protrepair.chemistry.retained_non_polymer.template_binding import (
     RetainedTemplateBinding,
 )
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import AtomSite
+from protrepair.structure.constitution import AtomSite, ResidueSite
 from protrepair.structure.disulfide import (
     disulfide_atom_ref_pair,
     disulfide_bonded_cysteine_residue_ids,
@@ -48,6 +48,7 @@ from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.topology import (
     BondRelationshipType,
+    StructureTopology,
     TopologyBond,
 )
 
@@ -654,8 +655,18 @@ class AminoAcidPreparation:
         """Return stock linked-cap preparation, subordinate to explicit chemistry."""
         if residue_id in self._excluded_retained_residue_ids:
             return None
-        residue = self.context.source.constitution.residue_or_ligand(residue_id)
-        if residue is None or (residue.component_id == "ACE" and residue.is_hetero):
+        structure = self.context.source
+        residue = structure.constitution.residue_or_ligand(residue_id)
+        if residue is None:
+            return None
+        pdb_attachment = structure.provenance.ingress.pdb_adjacent_cap_link_for(
+            residue_id
+        )
+        if (
+            residue.component_id == "ACE"
+            and residue.is_hetero
+            and pdb_attachment is None
+        ):
             return None
         cap = self.context.linked_peptide_cap(residue_id)
         if cap is None:
@@ -672,18 +683,86 @@ class AminoAcidPreparation:
             "ACE"
         ):
             return None
-        elif cap.refusal is None:
-            structure = self.context.source
+        if cap.refusal is None:
             try:
-                RetainedTemplateBinding(
-                    structure, residue, template, self.component_library
-                )
+                if pdb_attachment is not None:
+                    self._validate_pdb_cap_partner(cap, residue, template)
+                elif template is not None:
+                    RetainedTemplateBinding(
+                        structure, residue, template, self.component_library
+                    )
             except ValueError as error:
                 selected = LinkedPeptideCap(
                     residue_id, cap.component_id, refusal=str(error)
                 )
         self._cap_preparation_by_residue[residue_id] = selected
         return selected
+
+    def _validate_pdb_cap_partner(
+        self,
+        cap: LinkedPeptideCap,
+        residue: ResidueSite,
+        template: ResidueTemplate | None,
+    ) -> None:
+        """Check linked partner valence in the proposed graph before publication."""
+        context = self.context
+        source = context.source
+        constitution = source.constitution
+        if cap.heavy_bond_updates:
+            bonds = {bond.endpoint_pair(): bond for bond in source.topology.bonds}
+            bonds.update(
+                (bond.endpoint_pair(), bond) for bond in cap.heavy_bond_updates
+            )
+            staged = ProteinStructure.from_payload(
+                constitution=constitution,
+                geometry=source.geometry,
+                topology=StructureTopology(
+                    constitution=constitution,
+                    atom_topologies=source.topology.atom_topologies,
+                    bonds=tuple(bonds.values()),
+                ),
+                polymer_blueprint=source.polymer_blueprint,
+                provenance=source.provenance,
+            )
+            context = PolymerMicrostateContext(staged)
+
+        partner = cap.partner
+        assert partner is not None
+        if template is not None:
+            binding = RetainedTemplateBinding(
+                context.source, residue, template, self.component_library
+            )
+            if binding.external_bonds != ((AtomRef(residue.residue_id, "C"), partner),):
+                raise ValueError(
+                    "the stock acyl template did not bind the proposed attachment"
+                )
+
+        neighbor = constitution.residue_or_ligand(partner.residue_id)
+        assert neighbor is not None
+        backbone_template = self.component_library.get(neighbor.component_id)
+        if backbone_template is None:
+            raise ValueError("the cap partner has no supported backbone template")
+        kind = (
+            PolymerChemicalSite.BACKBONE_N
+            if partner.atom_name == "N"
+            else PolymerChemicalSite.BACKBONE_C
+        )
+        site = context.backbone_site(partner.residue_id, backbone_template, kind)
+        resolution = context.resolve(partner.residue_id, site)
+        graph = resolution.graph
+        if site.linkage is not PeptideLinkage.LINKED or graph is None:
+            detail = "; ".join(resolution.details) or "backbone linkage is unresolved"
+            raise ValueError(
+                f"the cap partner's linked chemistry is incompatible: {detail}"
+            )
+        parents = context.hydrogen_attachments(partner.residue_id, site, resolution)
+        if (
+            sum(parent == partner.atom_name for parent in parents.values())
+            > graph.atom(partner.atom_name).hydrogens
+        ):
+            raise ValueError(
+                "the cap partner carries excess H/D/T for a linked backbone"
+            )
 
     def fixed_hydrogen_context(
         self, residue_id: ResidueId

@@ -1,5 +1,6 @@
 """gemmi-backed canonical structure ingress for coordinate formats."""
 
+import itertools
 import re
 from collections import Counter
 from collections.abc import Iterator
@@ -25,12 +26,14 @@ from protrepair.io.source_identity import (
     normalize_insertion_code,
 )
 from protrepair.io.source_peptide import SourcePolymerLabels
+from protrepair.io.source_peptide_caps import PdbCapSourceContext
 from protrepair.io.structure_ingress import (
     SourceAtomAnnotation,
     normalize_raw_structure,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
@@ -151,20 +154,51 @@ def _normalize_structure_text(
     )
     source_orders_by_id: dict[str, int | None] = {}
     source_labels_by_residue: dict[ResidueId, frozenset[SourcePolymerLabels]] = {}
+    pdb_cap_source = None
     if file_format is FileFormat.PDB:
         raw_structure = gemmi.read_pdb_string(contents)
-        # Validate serials even without CONECT, independently of atom attributes.
-        atom_identity_by_serial = _first_model_unambiguous_pdb_atom_identities(contents)
-        pdb_conect_source_connections = _pdb_conect_source_connections(
-            contents, atom_identity_by_serial=atom_identity_by_serial
-        )
-        source_element_by_atom_identity, source_annotations, peptide_break_after = (
-            _pdb_source_atom_attributes(
-                contents,
-                prove_zero_occupancy=prove_zero_occupancy,
-                prove_positive_occupancy=prove_whole_residue_omissions,
+        observe_cap_paths = (
+            policy.keeps_ligands()
+            and len(raw_structure) != 0
+            and any(
+                residue.het_flag == "H" and residue.name in PEPTIDE_CAP_COMPONENT_IDS
+                for chain in raw_structure[0]
+                if policy.selects_chain(normalize_chain_id(chain.name))
+                for residue in chain
             )
         )
+        # Validate serials even without CONECT, independently of atom attributes.
+        atom_identity_by_serial = _first_model_unambiguous_pdb_atom_identities(contents)
+        (
+            pdb_conect_source_connections,
+            first_model_conect_pairs,
+            unbound_conect_atoms,
+        ) = _pdb_conect_source_connections(
+            contents,
+            atom_identity_by_serial=atom_identity_by_serial,
+            observe_cap_paths=observe_cap_paths,
+        )
+        (
+            source_element_by_atom_identity,
+            source_annotations,
+            peptide_break_after,
+            adjacent_slots,
+        ) = _pdb_source_atom_attributes(
+            contents,
+            prove_zero_occupancy=prove_zero_occupancy,
+            prove_positive_occupancy=prove_whole_residue_omissions,
+            observe_cap_paths=observe_cap_paths,
+        )
+        if observe_cap_paths:
+            pdb_cap_source = PdbCapSourceContext(
+                adjacent_slots,
+                first_model_conect_pairs,
+                unbound_conect_atoms.union(
+                    identity
+                    for identity, annotations in source_annotations.items()
+                    if len(annotations) != 1
+                ),
+            )
     else:
         source_document = gemmi.cif.Document()
         raw_structure = gemmi.read_structure_string(
@@ -206,6 +240,7 @@ def _normalize_structure_text(
         source_annotations_by_atom_identity=source_annotations,
         source_peptide_break_after=peptide_break_after,
         source_labels_by_residue=source_labels_by_residue,
+        pdb_cap_source=pdb_cap_source,
     )
 
 
@@ -381,30 +416,60 @@ def _pdb_conect_source_connections(
     contents: str,
     *,
     atom_identity_by_serial: dict[int, SourceAtomIdentity],
-) -> tuple[SourceConnection, ...]:
-    """Return boundary-normalized connections declared by PDB CONECT."""
+    observe_cap_paths: bool,
+) -> tuple[
+    tuple[SourceConnection, ...],
+    frozenset[tuple[SourceAtomIdentity, SourceAtomIdentity]],
+    frozenset[SourceAtomIdentity],
+]:
+    """Decode CONECT and retain model and serial facts for cap qualification."""
 
     connections_by_pair: dict[
         tuple[SourceAtomIdentity, SourceAtomIdentity], SourceConnection
     ] = {}
     directed_counts: Counter[tuple[int, int]] = Counter()
     seen_rows: set[tuple[int, tuple[int, ...]]] = set()
+    unbound_atoms: set[SourceAtomIdentity] = set()
+    first_model_serial_pairs: set[tuple[int, int]] = set()
+    explicit_model_count = 0
+    in_later_model = False
     for line in contents.splitlines():
+        if observe_cap_paths:
+            if line.startswith("MODEL"):
+                explicit_model_count += 1
+                in_later_model = explicit_model_count > 1
+            elif line.startswith("ENDMDL"):
+                in_later_model = False
         if not line.startswith("CONECT"):
             continue
 
-        serials = _pdb_conect_serials(line)
-        if len(serials) < 2:
+        source, targets = _pdb_conect_serials(
+            line, observe_blank_source=observe_cap_paths
+        )
+        if not targets:
             continue
 
-        if serials[0] not in atom_identity_by_serial:
+        if observe_cap_paths and (
+            source is None
+            or source not in atom_identity_by_serial
+            or any(target not in atom_identity_by_serial for target in targets)
+        ):
+            unbound_atoms.update(
+                atom_identity_by_serial[serial]
+                for serial in (source, *targets)
+                if serial is not None and serial in atom_identity_by_serial
+            )
+        if source is None or source not in atom_identity_by_serial:
             continue
-        row = (serials[0], tuple(sorted(serials[1:])))
+        if observe_cap_paths and not in_later_model:
+            first_model_serial_pairs.update((source, target) for target in targets)
+        row = (source, tuple(sorted(targets)))
         if row in seen_rows:
             continue
         seen_rows.add(row)
-        directed_counts.update((serials[0], target) for target in serials[1:])
+        directed_counts.update((source, target) for target in targets)
 
+    first_model_pairs: set[tuple[SourceAtomIdentity, SourceAtomIdentity]] = set()
     for (source_serial, target_serial), multiplicity in directed_counts.items():
         source_identity = atom_identity_by_serial[source_serial]
         target_identity = atom_identity_by_serial.get(target_serial)
@@ -427,12 +492,18 @@ def _pdb_conect_source_connections(
             ),
         )
         pair = connection.endpoint_pair()
+        if (source_serial, target_serial) in first_model_serial_pairs:
+            first_model_pairs.add(pair)
         existing = connections_by_pair.get(pair)
         connections_by_pair[pair] = (
             connection if existing is None else existing.merge(connection)
         )
 
-    return tuple(connections_by_pair.values())
+    return (
+        tuple(connections_by_pair.values()),
+        frozenset(first_model_pairs),
+        frozenset(unbound_atoms),
+    )
 
 
 def _first_model_unambiguous_pdb_atom_identities(
@@ -467,10 +538,12 @@ def _pdb_source_atom_attributes(
     *,
     prove_zero_occupancy: bool,
     prove_positive_occupancy: bool,
+    observe_cap_paths: bool,
 ) -> tuple[
     dict[SourceAtomIdentity, str],
     dict[SourceAtomIdentity, list[SourceAtomAnnotation]],
     frozenset[ResidueId],
+    frozenset[tuple[ResidueId, ResidueId]],
 ]:
     """Read source atom annotations and TER boundaries before projection."""
 
@@ -478,15 +551,23 @@ def _pdb_source_atom_attributes(
     source_annotations: dict[SourceAtomIdentity, list[SourceAtomAnnotation]] = {}
     peptide_break_after: set[ResidueId] = set()
     previous_residue: ResidueId | None = None
+    source_slots: list[tuple[ResidueId, str, str]] = []
+    previous_slot: tuple[ResidueId, str, str] | None = None
     for line in _first_model_pdb_coordinate_records(contents):
         if line[:6].strip() == "TER":
             if previous_residue is not None:
                 peptide_break_after.add(previous_residue)
+            previous_slot = None
             continue
         identity = pdb_atom_identity(line)
         if identity is None:
             continue
         previous_residue = identity.atom_ref.residue_id
+        if observe_cap_paths:
+            slot = (previous_residue, identity.component_id, line[72:76].strip())
+            if slot != previous_slot:
+                source_slots.append(slot)
+                previous_slot = slot
         token = line[78:80].strip()
         if not token:
             charge = None
@@ -521,7 +602,25 @@ def _pdb_source_atom_attributes(
             source_symbol,
         )
 
-    return source_elements, source_annotations, frozenset(peptide_break_after)
+    slot_counts = Counter(residue_id for residue_id, _, _ in source_slots)
+    adjacent_slots = frozenset(
+        (first, second)
+        for (first, _, first_segment), (
+            second,
+            _,
+            second_segment,
+        ) in itertools.pairwise(source_slots)
+        if first.immediately_precedes(second)
+        and first not in peptide_break_after
+        and first_segment == second_segment
+        and slot_counts[first] == slot_counts[second] == 1
+    )
+    return (
+        source_elements,
+        source_annotations,
+        frozenset(peptide_break_after),
+        adjacent_slots,
+    )
 
 
 def _mmcif_source_atom_attributes(
@@ -835,22 +934,33 @@ def _pdb_atom_serial_and_identity(
     return None if identity is None else (serial, identity)
 
 
-def _pdb_conect_serials(line: str) -> tuple[int, ...]:
-    """Return serial numbers encoded in one fixed-width PDB CONECT line."""
+def _pdb_conect_serials(
+    line: str, *, observe_blank_source: bool
+) -> tuple[int | None, tuple[int, ...]]:
+    """Decode CONECT, optionally retaining targets of a blank source field."""
 
-    serials: list[int] = []
+    source = None
+    targets: list[int] = []
     # Accept RDKit's extended fifth/sixth neighbor fields through column 41.
     for offset in range(6, min(len(line), 41), 5):
         field = line[offset : offset + 5]
         if not field.strip():
-            if offset == 6:
-                return ()
+            if offset == 6 and not observe_blank_source:
+                return None, ()
             continue
         try:
-            serials.append(decode_pdb_integer(field.ljust(5), width=5))
+            serial = decode_pdb_integer(field.ljust(5), width=5)
         except ValueError as error:
+            # A blank source row was ignored by the decoder. Its parseable
+            # targets are useful as a veto, but it still cannot declare a bond.
+            if offset != 6 and source is None:
+                continue
             raise StructureNormalizationError(
                 f"invalid PDB CONECT serial {field!r}: {error}"
             ) from error
+        if offset == 6:
+            source = serial
+        else:
+            targets.append(serial)
 
-    return tuple(serials)
+    return source, tuple(targets)

@@ -4,6 +4,10 @@
 
 ### Added
 
+- prepare existing ACE and NME caps retained with `LigandPolicy.KEEP` from
+  PDB `CONECT` attachments corroborated by source order and compatible
+  chemistry. Preserve the declared connectivity and existing H/D/T; export
+  resolved attachments as PDB `LINK` records without changing `DROP`
 - opt in to treating explicitly zero-occupancy coordinates on eligible
   standard polymer side chains as missing during PDB/mmCIF ingress. Keep
   withheld source coordinates in ingress provenance and use existing

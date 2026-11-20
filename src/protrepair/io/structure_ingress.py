@@ -39,6 +39,7 @@ from protrepair.io.source_peptide import (
     source_polymer_successions,
     source_sequence_inferred_polymer_topology_bonds,
 )
+from protrepair.io.source_peptide_caps import PdbCapSourceContext
 from protrepair.io.zero_occupancy import (
     project_zero_occupancy_omissions,
     zero_occupancy_residue_omissions,
@@ -321,6 +322,7 @@ def normalize_raw_structure(
     source_peptide_break_after: frozenset[ResidueId] = frozenset(),
     source_labels_by_residue: Mapping[ResidueId, frozenset[SourcePolymerLabels]]
     | None = None,
+    pdb_cap_source: PdbCapSourceContext | None = None,
 ) -> ProteinStructure:
     """Normalize one first model from format-boundary-projected source facts.
 
@@ -349,6 +351,8 @@ def normalize_raw_structure(
         did not retain that boundary.
     source_labels_by_residue : Mapping or None, default=None
         All declared atom-row polymer labels for each first-model source slot.
+    pdb_cap_source : PdbCapSourceContext or None, default=None
+        Raw PDB adjacency and serial ambiguity facts for retained cap selection.
 
     Returns
     -------
@@ -548,6 +552,17 @@ def normalize_raw_structure(
         atom_topologies=atom_topologies,
         bonds=topology_bonds,
     )
+    observation = StructureObservation.from_source_facets(
+        constitution=constitution,
+        geometry=geometry,
+        topology=topology,
+        excluded_coordination_connections=_excluded_coordination_connections(
+            source_connections,
+            excluded_source_endpoints,
+            constitution=constitution,
+            geometry=geometry,
+        ),
+    )
     selected = ProteinStructure.from_payload(
         constitution=constitution,
         geometry=geometry,
@@ -556,18 +571,13 @@ def normalize_raw_structure(
             ingress=StructureIngress(
                 source_format=file_format,
                 source_name=source_name,
-                observation=StructureObservation.from_source_facets(
-                    constitution=constitution,
-                    geometry=geometry,
-                    topology=topology,
-                    excluded_coordination_connections=(
-                        _excluded_coordination_connections(
-                            source_connections,
-                            excluded_source_endpoints,
-                            constitution=constitution,
-                            geometry=geometry,
-                        )
-                    ),
+                observation=observation,
+                pdb_adjacent_cap_links=(
+                    ()
+                    if pdb_cap_source is None
+                    else pdb_cap_source.links_for(
+                        observation, projected_source_connections
+                    )
                 ),
             )
         ),

@@ -281,8 +281,18 @@ end cannot promote a neighboring `HETATM` residue into the chain.
 Hydrogen completion supports linked NME with methyl atom `C` in a chain
 or under `LigandPolicy.KEEP` with a typed covalent link or an already
 resolved bond. It adds one amide H and three methyl H when all four are
-missing, without changing existing H/D/T. A bare retained `CONECT` does
-not establish the cap's chemistry or change `DROP` behavior.
+missing, without changing existing H/D/T.
+
+Under `KEEP`, hydrogen preparation can also resolve a PDB `CONECT` attachment
+from retained ACE or NME to a polymer backbone. The declared atoms must be
+the selected endpoints, in consecutive source slots in the same chain
+segment without an intervening `TER`. The source C-N distance must be
+greater than zero and at most 1.8 angstroms. The attachment must agree with
+the cap and backbone chemistry and have no competing source declaration.
+A `CONECT` record inside a later model cannot establish first-model chemistry.
+`CONECT` does not itself report a single bond. Reading the file retains the
+declaration without resolving its chemistry; hydrogen preparation resolves
+it only after validation. This does not change residue roles or `DROP`.
 
 ## Egress Projection
 
@@ -296,3 +306,10 @@ reconstructing their original spelling.
 
 This preserves the conventional PDB spelling of SEP, TPO, PTR, and MSE without
 moving those residues back into the ligand ontology.
+
+Exported PDB files write a `LINK` alongside `CONECT` for retained cap
+attachments that hydrogen preparation resolved from the qualified source
+records above. This preserves the resolved attachment when PDB export puts
+retained residues after the polymer. An unresolved attachment is not promoted
+on export; rewriting the source before preparation may lose the original slot
+order needed to resolve it.
