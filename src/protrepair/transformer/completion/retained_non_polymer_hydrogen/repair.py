@@ -101,6 +101,10 @@ from protrepair.transformer.completion.hydrogen.domain import (
     HydrogenCompletionEnvironment,
     HydrogenResidueSite,
 )
+from protrepair.transformer.completion.hydrogen.linked_caps import (
+    place_linked_cap_hydrogens,
+    publish_linked_cap_topology,
+)
 from protrepair.transformer.completion.hydrogen.microstate import (
     place_amino_acid_microstate_hydrogens,
 )
@@ -317,6 +321,51 @@ def _execute_retained_non_polymer_hydrogen_stage(
         component_library,
         excluded_retained_residue_ids=frozenset(chemistry_evidence_by_residue_id),
     )
+    cap_ids = frozenset(
+        ligand.residue_id
+        for ligand in structure.constitution.ligands
+        if ligand.residue_id in target_residue_ids
+        and preparation.linked_peptide_cap(ligand.residue_id) is not None
+    )
+    if cap_ids:
+        cap_repairs: list[RepairEvent] = []
+        cap_issues: list[ValidationIssue] = []
+        for residue_id in sorted(cap_ids):
+            preparation = preparation.for_inputs(structure, component_library)
+            cap = preparation.linked_peptide_cap(residue_id)
+            assert cap is not None
+            graph = publish_linked_cap_topology(structure, cap)
+            structure = graph.structure
+            cap_repairs.extend(graph.repairs)
+            cap_issues.extend(graph.issues)
+            if topology_only or cap.refusal is not None:
+                continue
+            preparation = preparation.for_inputs(structure, component_library)
+            cap = preparation.linked_peptide_cap(residue_id)
+            assert cap is not None
+            placed = place_linked_cap_hydrogens(structure, cap, component_library)
+            structure = placed.structure
+            cap_repairs.extend(placed.repairs)
+            cap_issues.extend(placed.issues)
+        remaining = target_residue_ids - cap_ids
+        other = (
+            _execute_retained_non_polymer_hydrogen_stage(
+                structure,
+                component_library=component_library,
+                target_residue_ids=remaining,
+                chemistry_evidence_by_residue_id=chemistry_evidence_by_residue_id,
+                allow_retained_non_polymer_rdkit_fallback=allow_retained_non_polymer_rdkit_fallback,
+                topology_only=topology_only,
+            )
+            if remaining
+            else TransformationResult(structure, (), ())
+        )
+        return TransformationResult(
+            other.structure,
+            (*cap_repairs, *other.repairs),
+            (*cap_issues, *other.issues),
+        )
+
     amino_acids = frozenset(
         residue_id
         for residue_id in target_residue_ids

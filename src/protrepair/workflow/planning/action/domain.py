@@ -289,7 +289,7 @@ class WorkflowCompletionReadView:
             return False
 
         return any(
-            retained_fact.requires_hydrogen_completion()
+            retained_fact.requires_hydrogen_completion(for_hydrogen_goal=True)
             for retained_fact in (
                 self.chemistry_readiness_facts.retained_non_polymer_facts
             )

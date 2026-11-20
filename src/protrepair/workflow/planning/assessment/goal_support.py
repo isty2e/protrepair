@@ -99,6 +99,7 @@ def blocked_requested_goal_projections(
                 for capability in supporting_capabilities
                 for blocker in _blockers_for_capability(
                     capability=capability,
+                    goal=goal,
                     state_deficit=state_deficit,
                     planning_context=planning_context,
                 )
@@ -135,6 +136,7 @@ def _supporting_capabilities(
 def _blockers_for_capability(
     *,
     capability: WorkflowActionCapability,
+    goal: WorkflowGoal,
     state_deficit: WorkflowStateDeficit,
     planning_context: WorkflowPlanningContext,
 ) -> tuple[WorkflowBlocker, ...]:
@@ -153,6 +155,7 @@ def _blockers_for_capability(
             _blockers_for_deficit_family(
                 deficit_family=deficit_family,
                 state_deficit=state_deficit,
+                hydrogen_goal=isinstance(goal.value, HydrogenCoverageState),
             )
         )
 
@@ -163,6 +166,7 @@ def _blockers_for_deficit_family(
     *,
     deficit_family: WorkflowCapabilityDeficitFamily,
     state_deficit: WorkflowStateDeficit,
+    hydrogen_goal: bool,
 ) -> tuple[WorkflowBlocker, ...]:
     """Return blockers projected from one specific deficit family."""
 
@@ -178,16 +182,16 @@ def _blockers_for_deficit_family(
         )
 
     if deficit_family is WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS:
+        readiness = state_deficit.chemistry_readiness
         return tuple(
             WorkflowBlocker.unsupported_component(
                 deficit_family=deficit_family,
                 scope=ResidueSetScope(residue_ids=(residue_id,)),
             )
-            for residue_id in dict.fromkeys(
-                (
-                    *state_deficit.chemistry_readiness.unsupported_component_residue_ids,
-                    *state_deficit.chemistry_readiness.hydrogen_blocked_residue_ids,
-                )
+            for residue_id in (
+                readiness.hydrogen_blocked_residue_ids
+                if hydrogen_goal
+                else readiness.unsupported_component_residue_ids
             )
         )
 
@@ -494,7 +498,10 @@ def _whole_structure_hydrogen_goal_observed_state(
 ) -> HydrogenCoverageState | None:
     """Return one whole-structure hydrogen state over retained components."""
 
-    if not chemistry_readiness_facts.component_support_state.is_fully_supported():
+    if any(
+        not fact.supports_hydrogen_verification()
+        for fact in chemistry_readiness_facts.residue_facts
+    ):
         return None
     if any(
         not retained_fact.supports_hydrogen_verification()

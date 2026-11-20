@@ -4,9 +4,19 @@ from protrepair.errors import ResidueNotFoundError
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import AtomRef
-from protrepair.structure.topology import is_covalent_like_relationship
+from protrepair.structure.topology import (
+    BondRelationshipType,
+    is_covalent_like_relationship,
+)
 
 PEPTIDE_CN_DISTANCE_MAX_ANGSTROM = 1.8
+PEPTIDE_CAP_COMPONENT_IDS = frozenset(("ACE", "NME"))
+
+
+def peptide_ports_allow_link(carbonyl_component: str, amide_component: str) -> bool:
+    """Exclude the closed side of a known cap from a directed C--N link."""
+
+    return carbonyl_component != "NME" and amide_component != "ACE"
 
 
 def are_peptide_adjacent(
@@ -17,7 +27,13 @@ def are_peptide_adjacent(
 ) -> bool:
     """Return whether two residues can support one peptide-bond torsion."""
 
-    if not left_residue.has_atom_site("C") or not right_residue.has_atom_site("N"):
+    if (
+        not peptide_ports_allow_link(
+            left_residue.component_id, right_residue.component_id
+        )
+        or not left_residue.has_atom_site("C")
+        or not right_residue.has_atom_site("N")
+    ):
         return False
 
     peptide_cn_distance = _peptide_cn_distance(
@@ -30,6 +46,13 @@ def are_peptide_adjacent(
         or peptide_cn_distance > PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
     ):
         return False
+
+    if PEPTIDE_CAP_COMPONENT_IDS.intersection(
+        (left_residue.component_id, right_residue.component_id)
+    ):
+        return _has_topology_peptide_bond(
+            left_residue, right_residue, structure=structure, require_single=True
+        )
 
     if _are_consecutive_polymer_residue_slots(
         left_residue, right_residue, structure=structure
@@ -73,6 +96,7 @@ def _has_topology_peptide_bond(
     right_residue: ResidueSite,
     *,
     structure: ProteinStructure,
+    require_single: bool = False,
 ) -> bool:
     """Return whether topology explicitly carries a covalent C-N peptide edge."""
 
@@ -86,7 +110,17 @@ def _has_topology_peptide_bond(
         return False
 
     bond = structure.topology.bond_between(left_carbon, right_nitrogen)
-    return bond is not None and is_covalent_like_relationship(bond)
+    if bond is None:
+        return False
+    if not require_single:
+        return is_covalent_like_relationship(bond)
+    return (
+        bond.relationship_type is BondRelationshipType.COVALENT
+        and bond.order == 1
+        and not bond.aromatic
+        and structure.constitution.atom_site_at(left_carbon).element == "C"
+        and structure.constitution.atom_site_at(right_nitrogen).element == "N"
+    )
 
 
 def _are_consecutive_polymer_residue_slots(

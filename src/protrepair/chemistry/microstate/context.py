@@ -18,12 +18,17 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateResolution,
     MicrostateResolutionStatus,
 )
+from protrepair.chemistry.peptide_caps import (
+    LinkedPeptideCap,
+    observe_linked_peptide_cap,
+)
 from protrepair.chemistry.retained_non_polymer.template_binding import (
     is_resolved_acyl_amide_link,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
     BondProvenance,
@@ -64,6 +69,9 @@ class AminoAcidMicrostateContext:
         tuple[ResidueId, int, int],
         tuple[PolymerMicrostateSite, MicrostateResolution, dict[str, str]],
     ] = field(default_factory=dict, init=False, repr=False, compare=False, hash=False)
+    _linked_cap_memo: dict[ResidueId, LinkedPeptideCap | None] = field(
+        default_factory=dict, init=False, repr=False, compare=False, hash=False
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, ProteinStructure):
@@ -84,6 +92,17 @@ class AminoAcidMicrostateContext:
                 }
             ),
         )
+
+    def linked_peptide_cap(self, residue_id: ResidueId) -> LinkedPeptideCap | None:
+        """Interpret occupied stock cap chemistry on the current carrier."""
+        residue = self.source.constitution.residue_or_ligand(residue_id)
+        if residue is None or residue.component_id not in PEPTIDE_CAP_COMPONENT_IDS:
+            return None
+        if residue_id not in self._linked_cap_memo:
+            self._linked_cap_memo[residue_id] = observe_linked_peptide_cap(
+                self.source, residue
+            )
+        return self._linked_cap_memo[residue_id]
 
     def external_heavy_bonds(self, atom_ref: AtomRef) -> tuple[TopologyBond, ...]:
         """Read inter-residue heavy relationships from this snapshot's adjacency.
@@ -458,6 +477,18 @@ class AminoAcidMicrostateContext:
     ) -> bool:
         constitution = self.source.constitution
         partner = constitution.atom_ref_at(other)
+        partner_residue = constitution.residue_site_at(
+            constitution.residue_index(partner.residue_id)
+        )
+        if partner_residue.component_id in PEPTIDE_CAP_COMPONENT_IDS and not (
+            partner_residue.component_id == "ACE" and partner_residue.is_hetero
+        ):
+            cap = self.linked_peptide_cap(partner.residue_id)
+            return (
+                cap is not None
+                and cap.partner == constitution.atom_ref_at(index)
+                and cap.link_is_realized()
+            )
         polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
         return constitution.residue_index(partner.residue_id).value < polymer_count or (
             kind is PolymerChemicalSite.BACKBONE_N

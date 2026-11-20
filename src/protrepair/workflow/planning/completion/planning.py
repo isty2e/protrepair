@@ -4,9 +4,10 @@ from protrepair.chemistry import ComponentLibrary, build_default_component_libra
 from protrepair.scope import WholeStructureScope
 from protrepair.scope.observed_atom_scope_lowering import OBSERVED_ATOM_SCOPE_LOWERING
 from protrepair.state import ComponentSupportState, StructureProjectionStateFacts
+from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.domain import AtomScopeStateFacts
+from protrepair.state.structure_residue import ResidueCompletionStateFacts
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.continuous.readiness import (
@@ -101,13 +102,14 @@ def _workflow_completion_partitions(
 
     residue_ids_by_kind: dict[WorkflowCompletionPartitionKind, list[ResidueId]] = {}
     partition_order: list[WorkflowCompletionPartitionKind] = []
+    observation = StructureChemistryObservation(
+        structure, component_library=component_library
+    )
     for residue in structure.constitution.iter_residues(include_ligands=False):
         partition_kind = _workflow_completion_partition_kind(
-            residue,
-            source_structure=structure,
+            observation.residue_completion_facts(residue.residue_id),
             requests_heavy_atom_completion=requests_heavy_atom_completion,
             requests_hydrogen_population=requests_hydrogen_population,
-            component_library=component_library,
         )
         if partition_kind is None:
             continue
@@ -126,50 +128,40 @@ def _workflow_completion_partitions(
 
 
 def _workflow_completion_partition_kind(
-    residue: ResidueSite,
+    residue_facts: ResidueCompletionStateFacts,
     *,
-    source_structure: ProteinStructure,
     requests_heavy_atom_completion: bool,
     requests_hydrogen_population: bool,
-    component_library: ComponentLibrary,
 ) -> WorkflowCompletionPartitionKind | None:
     """Return canonical completion semantics for one observed residue."""
 
-    residue_facts = StructureProjectionStateFacts.from_projection(
-        context_structure=source_structure,
-        residues=(residue,),
-        component_library=component_library,
-    )
+    cap = residue_facts.chemistry_readiness_facts.linked_cap
     if (
-        residue_facts.component_support_fact.value
+        requests_hydrogen_population
+        and not requests_heavy_atom_completion
+        and cap is not None
+    ):
+        if cap.refusal is not None:
+            return WorkflowCompletionPartitionKind.UNSUPPORTED_STOP
+        return (
+            None
+            if cap.hydrogens_are_complete()
+            else WorkflowCompletionPartitionKind.HYDROGEN_ONLY
+        )
+    if (
+        residue_facts.component_support_state
         is ComponentSupportState.UNSUPPORTED_COMPONENTS_PRESENT
     ):
         return WorkflowCompletionPartitionKind.UNSUPPORTED_STOP
-    if (
-        requests_hydrogen_population
-        and residue_facts.hydrogen_coverage_fact.value is not None
-        and residue_facts.hydrogen_coverage_fact.value.needs_hydrogenation()
-        and (
-            residue_facts.backbone_heavy_atom_completeness_fact.value.requires_completion()
-            or (
-                residue_facts.sidechain_heavy_atom_completeness_fact.value.requires_completion()
-            )
-        )
-    ):
-        return WorkflowCompletionPartitionKind.HEAVY_THEN_HYDROGEN
-    if (
-        requests_hydrogen_population
-        and residue_facts.hydrogen_coverage_fact.value is not None
-        and residue_facts.hydrogen_coverage_fact.value.needs_hydrogenation()
-    ):
+    needs_heavy = (
+        residue_facts.requires_backbone_completion()
+        or residue_facts.requires_sidechain_completion()
+    )
+    if requests_hydrogen_population and residue_facts.needs_hydrogenation():
+        if needs_heavy:
+            return WorkflowCompletionPartitionKind.HEAVY_THEN_HYDROGEN
         return WorkflowCompletionPartitionKind.HYDROGEN_ONLY
-
-    if requests_heavy_atom_completion and (
-        residue_facts.backbone_heavy_atom_completeness_fact.value.requires_completion()
-        or (
-            residue_facts.sidechain_heavy_atom_completeness_fact.value.requires_completion()
-        )
-    ):
+    if requests_heavy_atom_completion and needs_heavy:
         return WorkflowCompletionPartitionKind.HEAVY_ONLY
 
     return None

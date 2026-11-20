@@ -16,6 +16,9 @@ from protrepair.workflow.actions.retained_non_polymer_topology import (
 )
 from protrepair.workflow.planning.action.domain import WorkflowActionDomain
 from protrepair.workflow.planning.action.proposals import WorkflowActionProposal
+from protrepair.workflow.planning.completion.transformer_candidates import (
+    polymer_cap_hydrogen_target_residue_ids,
+)
 from protrepair.workflow.planning.default_action_registry.capabilities import (
     DISULFIDE_HYDROGEN_NORMALIZATION_CAPABILITY,
     DISULFIDE_TOPOLOGY_RESOLUTION_CAPABILITY,
@@ -46,8 +49,10 @@ def retained_non_polymer_topology_resolution_proposals(
     selected = tuple(
         fact.residue_id
         for fact in domain.chemistry_readiness_facts.retained_non_polymer_facts
-        if (whole_structure or fact.residue_id in required)
-        and fact.requires_topology_resolution()
+        if (
+            whole_structure or (fact.linked_cap is None and fact.residue_id in required)
+        )
+        and fact.requires_topology_resolution(for_hydrogen_goal=whole_structure)
     )
     if not selected:
         return ()
@@ -100,19 +105,32 @@ def polymer_hydrogen_topology_resolution_proposals(
         domain.requested_goals.requests_whole_structure_hydrogen_population()
     )
     required = domain.explicit_repair.prerequisite_residue_ids()
+    cap_targets = polymer_cap_hydrogen_target_residue_ids(
+        domain.chemistry_readiness_facts,
+        whole_structure=whole_structure,
+        required_residue_ids=required,
+    )
+    pending_caps = [
+        fact.residue_id
+        for fact in domain.chemistry_readiness_facts.residue_facts
+        if fact.residue_id in cap_targets
+        and fact.linked_cap is not None
+        and fact.linked_cap.heavy_bond_updates
+    ]
     candidates = tuple(
         fact.residue_id
         for fact in domain.chemistry_readiness_facts.residue_facts
         if (whole_structure or fact.residue_id in required)
+        and fact.linked_cap is None
         and fact.hydrogen_coverage_state is HydrogenCoverageState.COMPLETE
         and not fact.requires_microstate_realization()
         and fact.hydrogen_topology_availability_state
         is TopologyAvailabilityState.ABSENT
     )
-    if not candidates:
+    if not (candidates or pending_caps):
         return ()
     prepared = domain.observed_preparation
-    selected = []
+    selected = pending_caps
     for residue_id in candidates:
         try:
             if prepared.fixed_hydrogen_topology_updates(residue_id):
