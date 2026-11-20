@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.constitution import AtomSite, ResidueSite
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
 from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
@@ -16,6 +16,7 @@ from protrepair.structure.topology import (
 )
 
 _METHYL_H = ("H1", "H2", "H3")
+_LEGACY_METHYL_H = ("HH31", "HH32", "HH33")
 _AMIDE_H = frozenset(("H", "HN", "HN1", "HN2"))
 _TYPED_LINKS = frozenset(
     (SourceBondRecordType.PDB_LINK, SourceBondRecordType.MMCIF_STRUCT_CONN)
@@ -25,7 +26,11 @@ _Snapshot = ProteinStructure | StructureObservation
 
 @dataclass(frozen=True, slots=True)
 class LinkedPeptideCap:
-    """An occupied cap's link and H requirements in one snapshot."""
+    """An occupied cap's link and H requirements in one snapshot.
+
+    The methyl reference preserves the name in the bound scaffold. It is
+    absent when the cap could not be bound.
+    """
 
     residue_id: ResidueId
     component_id: str
@@ -35,6 +40,7 @@ class LinkedPeptideCap:
     missing_hydrogen_parents: tuple[tuple[str, str], ...] = ()
     existing_hydrogen_parents: tuple[tuple[str, str], ...] = ()
     refusal: str | None = None
+    methyl_atom: AtomRef | None = None
 
     def link_is_realized(self) -> bool:
         """Check current graph readiness independently of H placement."""
@@ -126,9 +132,14 @@ def observe_linked_peptide_cap(
         ):
             raise ValueError("the cap partner has excluded coordination evidence")
 
-        existing, local_heavy, local_hydrogen = _cap_inventory(structure, residue)
+        methyl = _cap_methyl_atom(residue)
+        existing, local_heavy, local_hydrogen = _cap_inventory(
+            structure, residue, methyl
+        )
         if original is not None and observation is not None:
-            _cap_inventory(observation, original)
+            if _cap_methyl_atom(original) != methyl:
+                raise ValueError("the linked cap's original methyl identity changed")
+            _cap_inventory(observation, original, methyl)
         heavy_updates = (*local_heavy, *((realized,) if realized != link else ()))
         return LinkedPeptideCap(
             residue_id,
@@ -136,8 +147,11 @@ def observe_linked_peptide_cap(
             partner=partner,
             heavy_bond_updates=heavy_updates,
             hydrogen_bond_updates=local_hydrogen,
-            missing_hydrogen_parents=_missing_hydrogen_parents(residue, dict(existing)),
+            missing_hydrogen_parents=_missing_hydrogen_parents(
+                residue, methyl, dict(existing)
+            ),
             existing_hydrogen_parents=existing,
+            methyl_atom=methyl,
         )
     except ValueError as error:
         return LinkedPeptideCap(residue_id, residue.component_id, refusal=str(error))
@@ -328,23 +342,36 @@ def _check_source_atoms(
             )
 
 
+def _cap_methyl_atom(residue: ResidueSite) -> AtomRef:
+    scaffold = {
+        atom.name: atom.element for atom in residue.atom_sites if not atom.is_hydrogen()
+    }
+    if residue.component_id == "NME":
+        for name in ("C", "CH3"):
+            if scaffold == {"N": "N", name: "C"}:
+                return AtomRef(residue.residue_id, name)
+    elif scaffold == {"C": "C", "CH3": "C", "O": "O"}:
+        return AtomRef(residue.residue_id, "CH3")
+    raise ValueError("the linked cap lacks its stock heavy scaffold")
+
+
+def _cap_hydrogen_slot(atom: AtomSite, *, is_nme: bool) -> str:
+    slot = PolymerMicrostateSite.hydrogen_slot_name(atom)
+    if is_nme and slot in _LEGACY_METHYL_H:
+        return _METHYL_H[_LEGACY_METHYL_H.index(slot)]
+    return slot
+
+
 def _cap_inventory(
-    snapshot: _Snapshot, residue: ResidueSite
+    snapshot: _Snapshot, residue: ResidueSite, methyl: AtomRef
 ) -> tuple[
     tuple[tuple[str, str], ...], tuple[TopologyBond, ...], tuple[TopologyBond, ...]
 ]:
     is_nme = residue.component_id == "NME"
-    methyl = "C" if is_nme else "CH3"
-    scaffold = {"C": "C", "N": "N"} if is_nme else {"C": "C", "CH3": "C", "O": "O"}
-    if {
-        atom.name: atom.element for atom in residue.atom_sites if not atom.is_hydrogen()
-    } != scaffold:
-        raise ValueError("the linked cap lacks its stock heavy scaffold")
-
     constitution = snapshot.constitution
     topology = snapshot.topology
     expected: dict[tuple[str, str], int] = (
-        {("C", "N"): 1} if is_nme else {("C", "CH3"): 1, ("C", "O"): 2}
+        {(methyl.atom_name, "N"): 1} if is_nme else {("C", "CH3"): 1, ("C", "O"): 2}
     )
     hydrogens: dict[str, str] = {}
     used_methyl_slots: set[str] = set()
@@ -354,9 +381,9 @@ def _cap_inventory(
             raise ValueError("the linked cap must be neutral")
         if not atom.is_hydrogen():
             continue
-        slot = PolymerMicrostateSite.hydrogen_slot_name(atom)
+        slot = _cap_hydrogen_slot(atom, is_nme=is_nme)
         if slot in _METHYL_H and slot not in used_methyl_slots:
-            parent = methyl
+            parent = methyl.atom_name
             used_methyl_slots.add(slot)
         elif is_nme and slot in _AMIDE_H and "N" not in hydrogens.values():
             parent = "N"
@@ -402,16 +429,21 @@ def _cap_inventory(
 
 
 def _missing_hydrogen_parents(
-    residue: ResidueSite, hydrogens: Mapping[str, str]
+    residue: ResidueSite, methyl: AtomRef, hydrogens: Mapping[str, str]
 ) -> tuple[tuple[str, str], ...]:
     is_nme = residue.component_id == "NME"
-    methyl = "C" if is_nme else "CH3"
+    legacy = is_nme and methyl.atom_name == "CH3"
     taken = {
-        PolymerMicrostateSite.hydrogen_slot_name(atom)
+        _cap_hydrogen_slot(atom, is_nme=is_nme)
         for atom in residue.atom_sites
-        if hydrogens.get(atom.name) == methyl
+        if hydrogens.get(atom.name) == methyl.atom_name
     }
-    missing = tuple((name, methyl) for name in _METHYL_H if name not in taken)
+    names = _LEGACY_METHYL_H if legacy else _METHYL_H
+    missing = tuple(
+        (name, methyl.atom_name)
+        for slot, name in zip(_METHYL_H, names, strict=True)
+        if slot not in taken
+    )
     if is_nme and "N" not in hydrogens.values():
-        return (*missing, ("HN2", "N"))
+        return (*missing, ("H" if legacy else "HN2", "N"))
     return missing

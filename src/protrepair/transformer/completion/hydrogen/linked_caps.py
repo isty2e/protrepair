@@ -218,13 +218,14 @@ def _linked_nme_positions(
             "linked NME hydrogen placement requires operational RDKit"
         )
     partner = cap.partner
-    assert partner is not None
+    methyl_ref = cap.methyl_atom
+    assert partner is not None and methyl_ref is not None
     # The calculation contains just the admitted amide and its real heavy frame.
-    refs = tuple(
-        AtomRef(partner.residue_id, name) for name in ("CA", "C", "O")
-    ) + tuple(
-        AtomRef(cap.residue_id, name)
-        for name in ("N", "C", *(name for name, _ in cap.existing_hydrogen_parents))
+    refs = (
+        *(AtomRef(partner.residue_id, name) for name in ("CA", "C", "O")),
+        AtomRef(cap.residue_id, "N"),
+        methyl_ref,
+        *(AtomRef(cap.residue_id, name) for name, _ in cap.existing_hydrogen_parents),
     )
     constitution = structure.constitution
     source_indices = tuple(constitution.atom_index(ref) for ref in refs)
@@ -251,7 +252,7 @@ def _linked_nme_positions(
 
     molecule = chem.RWMol()
     conformer = chem.Conformer(len(refs))
-    owners: dict[str, int] = {"N": 3, "C": 4}
+    owners: dict[str, int] = {"N": 3, methyl_ref.atom_name: 4}
     for offset, (index, position) in enumerate(
         zip(source_indices, positions, strict=True)
     ):
