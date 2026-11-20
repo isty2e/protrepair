@@ -9,7 +9,10 @@ from protrepair.structure.endpoint import StructureEndpoint
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
-from protrepair.structure.source_connection import SourceAtomIdentity
+from protrepair.structure.source_connection import (
+    PdbAdjacentCapLink,
+    SourceAtomIdentity,
+)
 
 
 class FileFormat(str, Enum):
@@ -158,14 +161,18 @@ class StructureIngress:
         Whole source residues withheld from the observation. Empty and None
         distinguish applied without omissions and not applied independently
         of the side-chain policy.
+    pdb_adjacent_cap_links : tuple of PdbAdjacentCapLink, default=()
+        Selected bare CONECT attachments corroborated by source PDB slot order.
+        These are source observations, not realized peptide bonds.
 
     Raises
     ------
     TypeError
-        The source format, observation or omissions have noncanonical types.
+        The source format, observation, omissions or cap links have noncanonical types.
     ValueError
         Omission history has no source observation, or an omitted atom appears
         in the observation or more than once in the history.
+        A cap link does not match a unique retained cap in the PDB observation.
     """
 
     source_format: FileFormat
@@ -177,6 +184,9 @@ class StructureIngress:
     zero_occupancy_residue_omissions: (
         tuple[ZeroOccupancyResidueOmission, ...] | None
     ) = field(default=None, kw_only=True, repr=False)
+    pdb_adjacent_cap_links: tuple[PdbAdjacentCapLink, ...] = field(
+        default=(), kw_only=True, repr=False
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_format, FileFormat):
@@ -208,6 +218,28 @@ class StructureIngress:
             raise TypeError("residue omission history must be a tuple of omissions")
 
         observation = self.observation
+        cap_links = self.pdb_adjacent_cap_links
+        if not isinstance(cap_links, tuple) or any(
+            not isinstance(link, PdbAdjacentCapLink) for link in cap_links
+        ):
+            raise TypeError(
+                "PDB cap links must be a tuple of PdbAdjacentCapLink values"
+            )
+        if cap_links and (
+            self.source_format is not FileFormat.PDB
+            or observation is None
+            or len({link.cap_residue_id for link in cap_links}) != len(cap_links)
+            or any(
+                link.bond_in(
+                    observation.constitution, observation.geometry, observation.topology
+                )
+                is None
+                for link in cap_links
+            )
+        ):
+            raise ValueError(
+                "PDB cap links must identify distinct observed retained attachments"
+            )
         if (
             omissions is not None or residue_omissions is not None
         ) and observation is None:
@@ -252,6 +284,30 @@ class StructureIngress:
             source_name = source_name.strip() or None
 
         object.__setattr__(self, "source_name", source_name)
+
+    def pdb_adjacent_cap_link_for(
+        self, residue_id: ResidueId
+    ) -> PdbAdjacentCapLink | None:
+        """Return the source evidence for a retained cap occurrence.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Retained cap to look up in the original observation.
+
+        Returns
+        -------
+        PdbAdjacentCapLink or None
+            Original attachment evidence, if available. Rebind it before use.
+        """
+        return next(
+            (
+                link
+                for link in self.pdb_adjacent_cap_links
+                if link.cap_residue_id == residue_id
+            ),
+            None,
+        )
 
 
 @dataclass(frozen=True, slots=True)

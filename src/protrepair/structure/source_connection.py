@@ -12,6 +12,7 @@ from protrepair.structure.topology import (
     BondRelationshipType,
     SourceBondMetadata,
     SourceBondRecordType,
+    StructureTopology,
     TopologyBond,
     is_covalent_like_relationship,
 )
@@ -303,3 +304,104 @@ class SourceConnection:
             provenance=BondProvenance.SOURCE_EXPLICIT,
             source_metadata=self.source_metadata,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PdbAdjacentCapLink:
+    """A bare CONECT pair corroborated by consecutive source PDB slots.
+
+    Parameters
+    ----------
+    carbon, nitrogen : SourceAtomIdentity
+        The selected C and N endpoints in source residue order. Exactly one
+        belongs to the open port of a retained ACE or NME.
+
+    Raises
+    ------
+    TypeError
+        An endpoint is not a SourceAtomIdentity.
+    ValueError
+        The endpoints do not describe a directed adjacent cap attachment.
+    """
+
+    carbon: SourceAtomIdentity
+    nitrogen: SourceAtomIdentity
+
+    def __post_init__(self) -> None:
+        carbon, nitrogen = self.carbon, self.nitrogen
+        if not isinstance(carbon, SourceAtomIdentity) or not isinstance(
+            nitrogen, SourceAtomIdentity
+        ):
+            raise TypeError(
+                "PDB cap attachment endpoints must be SourceAtomIdentity values"
+            )
+        if (
+            (carbon.atom_ref.atom_name, nitrogen.atom_ref.atom_name) != ("C", "N")
+            or not carbon.atom_ref.residue_id.immediately_precedes(
+                nitrogen.atom_ref.residue_id
+            )
+            or not (
+                (
+                    carbon.component_id == "ACE"
+                    and nitrogen.component_id not in ("ACE", "NME")
+                )
+                or (
+                    nitrogen.component_id == "NME"
+                    and carbon.component_id not in ("ACE", "NME")
+                )
+            )
+        ):
+            raise ValueError(
+                "a PDB cap attachment requires consecutive open peptide ports"
+            )
+
+    @property
+    def cap_residue_id(self) -> ResidueId:
+        """Return the retained residue owning the attachment."""
+        cap = self.carbon if self.carbon.component_id == "ACE" else self.nitrogen
+        return cap.atom_ref.residue_id
+
+    def bond_in(
+        self,
+        constitution: StructureConstitution,
+        geometry: StructureGeometry,
+        topology: StructureTopology,
+    ) -> TopologyBond | None:
+        """Rebind the original declaration to an aligned structure snapshot.
+
+        Parameters
+        ----------
+        constitution, geometry, topology : StructureConstitution, StructureGeometry, StructureTopology
+            Aligned facets containing the selected endpoints and source bond.
+
+        Returns
+        -------
+        TopologyBond or None
+            The surviving source-backed edge, regardless of effective order,
+            or None if the endpoint identity, role, or declaration changed.
+        """
+        carbon = self.carbon.resolve_index(constitution, geometry)
+        nitrogen = self.nitrogen.resolve_index(constitution, geometry)
+        if carbon is None or nitrogen is None:
+            return None
+        for endpoint, index, element in (
+            (self.carbon, carbon, "C"),
+            (self.nitrogen, nitrogen, "N"),
+        ):
+            residue = constitution.residue_or_ligand(endpoint.atom_ref.residue_id)
+            assert residue is not None
+            if (
+                residue.is_hetero != (residue.residue_id == self.cap_residue_id)
+                or constitution.atom_site_at(index).element != element
+            ):
+                return None
+
+        bond = topology.bond_between(carbon, nitrogen)
+        if (
+            bond is None
+            or bond.provenance is not BondProvenance.SOURCE_EXPLICIT
+            or bond.source_metadata is None
+            or not bond.source_metadata.is_bare_pdb_conect()
+        ):
+            return None
+        return bond
