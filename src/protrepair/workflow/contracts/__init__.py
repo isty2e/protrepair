@@ -61,13 +61,21 @@ from protrepair.workflow.contracts.result import (
     WorkflowPhaseStatus,
 )
 from protrepair.workflow.contracts.span_policy import ExternalSpanGapSelectionPolicy
+from protrepair.workflow.contracts.span_report import (
+    ExternalSpanReconstructionOutcome,
+    ExternalSpanReconstructionReport,
+    ExternalSpanReconstructionStatus,
+)
 
 __all__ = [
     "DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO",
     "AnalysisBundle",
     "DisabledHistidineProtonationRequest",
     "ExternalSpanGapSelectionPolicy",
+    "ExternalSpanReconstructionOutcome",
+    "ExternalSpanReconstructionReport",
     "ExternalSpanReconstructionSpec",
+    "ExternalSpanReconstructionStatus",
     "HistidineProtonationRequest",
     "HydrogenLengthRepairOutcome",
     "HydrogenLengthRepairStatus",

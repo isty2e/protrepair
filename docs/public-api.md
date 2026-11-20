@@ -185,6 +185,17 @@ are not target states:
 `build_alphafold_span_reconstruction_specs()` when a UniProt alignment and an
 `AlphaFoldStructureArtifact` already identify the missing coverage gaps.
 
+When the workflow requests at least two spans, one donor per distinct scope,
+and no goals or other transforms, it tries pending spans in request order. A
+refusal leaves the span absent but does not stop later requests. Each attempt
+uses the current structure and the existing search budget. Requests that
+offer competing donors for the same scope, or combine spans with other work
+such as terminal H length repair, keep the ordinary branching search.
+
+If a refusal is on the returned branch, `issues` includes its
+`SPAN_RECONSTRUCTION_FAILED` error. In a span-only run, `has_errors()` can
+therefore be true even if the workflow reconstructed all later spans.
+
 Import `PackingMode`, `PackingScope`, and `PackingSpec` from the same
 `protrepair.workflow.contracts` facade when configuring reference or committed
 side-chain packing.
@@ -262,6 +273,7 @@ Such requests report `UNSUPPORTED`; use a whole-structure H goal instead.
 | `issues` | Structured warnings and errors |
 | `analyses` | Optional `AnalysisBundle` |
 | `requested_goal_report` | Per-goal outcomes; `process_structure()` returns an empty report when no goals were requested |
+| `external_span_reconstruction_report` | Per-donor request outcomes, or `None` when no spans were requested |
 | `branch_report` | Retained candidates, selected node, and search stop reason |
 | `relaxation_executions` | Observed native FF returns from batches along the selected ancestry, including sibling calls |
 
@@ -282,6 +294,24 @@ When terminal and frontier candidates remain together, the same configured
 quality ordering compares them all. A frontier candidate can therefore win
 despite pending preparation, including missing H. Any unmet requested goals
 remain visible in its goal report; the exhaustion warning is not a success verdict.
+
+The span report has one outcome per normalized request, in order, with a
+zero-based `request_index`. Exact duplicate specifications share one outcome.
+Each row lists the target positions still missing from the returned structure.
+
+| Span status | Meaning |
+| --- | --- |
+| `APPLIED` | This request filled the target on the selected branch. |
+| `ALREADY_PRESENT` | The target was complete at input and is still present. |
+| `PRESENT_WITHOUT_THIS_REQUEST` | The target is complete, but this request did not fill it on the selected branch. |
+| `NOT_RETAINED` | A trial succeeded, but the returned target is incomplete. |
+| `FAILED` | The returned target is incomplete and every executed trial refused. |
+| `NOT_ATTEMPTED` | The returned target is incomplete and no trial ran. |
+
+The counts and `last_failure` include trials from branches that were not
+selected. A refusal in the report is not necessarily an error in `issues`;
+it describes what happened in that trial, not whether reconstruction is
+possible under different conditions.
 
 Native execution records describe returned calls, not successful repairs or
 adopted coordinates. Each batch along the selected ancestry contributes all

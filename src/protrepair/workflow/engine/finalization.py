@@ -43,6 +43,7 @@ from protrepair.workflow.contracts.result import (
 from protrepair.workflow.engine.hydrogen import project_hydrogen_issues
 from protrepair.workflow.engine.hydrogen_lengths import WorkflowHydrogenLengthPlan
 from protrepair.workflow.engine.runtime import WorkflowBranch
+from protrepair.workflow.engine.span_reporting import SpanReconstructionEvidence
 
 
 def finalize_workflow_result(
@@ -55,6 +56,7 @@ def finalize_workflow_result(
     preliminary_issues: tuple[ValidationIssue, ...] = (),
     repair_refinement: RepairRefinementSpec | None = None,
     hydrogen_length_plan: WorkflowHydrogenLengthPlan | None = None,
+    span_reconstruction_evidence: SpanReconstructionEvidence | None = None,
     retained_non_polymer_chemistry_evidence: tuple[
         RetainedNonPolymerChemistryEvidence, ...
     ] = (),
@@ -81,6 +83,8 @@ def finalize_workflow_result(
     hydrogen_length_plan : WorkflowHydrogenLengthPlan or None
         Input-bound observation and optional repair to run once on the
         selected candidate, before final diagnostics.
+    span_reconstruction_evidence : SpanReconstructionEvidence or None
+        Execution and ancestry evidence for explicit span requests.
     retained_non_polymer_chemistry_evidence : tuple
         Explicit chemistry used for final current-state diagnostics.
 
@@ -164,6 +168,13 @@ def finalize_workflow_result(
             ),
         ),
     )
+    if span_reconstruction_evidence is not None:
+        result = replace(
+            result,
+            external_span_reconstruction_report=span_reconstruction_evidence.report_for(
+                result.structure, selected_node=branch_report.preferred_node_id
+            ),
+        )
     return _attach_requested_analyses(
         result,
         requested_analyses=requested_analyses,

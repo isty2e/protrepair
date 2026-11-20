@@ -31,6 +31,12 @@ from protrepair.transformer.local.projection import (
     LocalContinuousExecutionResidueProjection,
 )
 from protrepair.workflow.actions.bonded_geometry import BondedGeometryFeedback
+from protrepair.workflow.actions.external_span_reconstruction import (
+    ExternalSpanReconstructionTransformer,
+)
+from protrepair.workflow.contracts.external_reference import (
+    ExternalSpanReconstructionSpec,
+)
 from protrepair.workflow.contracts.planning import (
     WorkflowPlanningContext,
     WorkflowPlanningPhase,
@@ -164,6 +170,7 @@ class WorkflowPlanningOutcome:
         *,
         structure_planning_signature: StructurePlanningSignature,
         candidate_proposals: list[WorkflowActionProposal],
+        ordered_span_requests: tuple[ExternalSpanReconstructionSpec, ...] = (),
         blockers: tuple[WorkflowBlocker, ...] = (),
         unsupported_requested_goals: tuple[
             WorkflowGoal,
@@ -184,6 +191,8 @@ class WorkflowPlanningOutcome:
             Current assessed signature.
         candidate_proposals : list[WorkflowActionProposal]
             Already ranked proposals; order and duplicates remain meaningful.
+        ordered_span_requests : tuple[ExternalSpanReconstructionSpec, ...]
+            Nonempty only for an ordered span-only run, in normalized request order.
         blockers : tuple[WorkflowBlocker, ...]
             Current goal obstacles.
         unsupported_requested_goals : tuple[WorkflowGoal, ...]
@@ -203,7 +212,9 @@ class WorkflowPlanningOutcome:
 
         return cls(
             structure_planning_signature=structure_planning_signature,
-            proposals=cls._current_proposal_batch(candidate_proposals),
+            proposals=cls._current_proposal_batch(
+                candidate_proposals, ordered_span_requests=ordered_span_requests
+            ),
             blockers=blockers,
             unsupported_requested_goals=unsupported_requested_goals,
             blocked_requested_goals=blocked_requested_goals,
@@ -214,6 +225,8 @@ class WorkflowPlanningOutcome:
     @staticmethod
     def _current_proposal_batch(
         candidate_proposals: list[WorkflowActionProposal],
+        *,
+        ordered_span_requests: tuple[ExternalSpanReconstructionSpec, ...],
     ) -> tuple[WorkflowActionProposal, ...]:
         """Return the current frontier proposal batch from ordered candidates."""
 
@@ -221,11 +234,34 @@ class WorkflowPlanningOutcome:
             return ()
 
         first_family = candidate_proposals[0].transformer.proposal_family()
-        return tuple(
+        batch = tuple(
             proposal
             for proposal in candidate_proposals
             if proposal.transformer.proposal_family() is first_family
         )
+        if (
+            not ordered_span_requests
+            or first_family is not ExternalSpanReconstructionTransformer
+        ):
+            return batch
+
+        # Narrow the admitted family, never the pending requests before attempt filtering.
+        request_indices = {
+            id(spec): index for index, spec in enumerate(ordered_span_requests)
+        }
+        first_span = batch[0]
+        earliest_index = len(ordered_span_requests)
+        for proposal in batch:
+            transformer = proposal.transformer
+            if not isinstance(transformer, ExternalSpanReconstructionTransformer):
+                return batch
+            index = request_indices.get(id(transformer.reconstruction))
+            if index is None:
+                return batch
+            if index < earliest_index:
+                first_span = proposal
+                earliest_index = index
+        return (first_span,)
 
     @property
     def transformers(self) -> tuple[WorkflowStateAction, ...]:
@@ -537,6 +573,7 @@ def plan_workflow_actions(
     ]
     | None = None,
     chemistry_observation: StructureChemistryObservation | None = None,
+    terminal_repair_requested: bool = False,
 ) -> WorkflowPlanningOutcome:
     """Plan from current facts without transferring proposal-time authority.
 
@@ -561,6 +598,8 @@ def plan_workflow_actions(
     chemistry_observation : StructureChemistryObservation or None
         Observation bound to the exact carrier, library, canonical evidence and
         default observation policy. None derives one independently.
+    terminal_repair_requested : bool
+        A post-selection repair makes this a mixed workflow.
 
     Returns
     -------
@@ -752,9 +791,17 @@ def plan_workflow_actions(
         domain=action_domain,
     )
 
+    ordered_span_requests = (
+        transform_requests.external_span_reconstructions
+        if requested_goals.is_empty()
+        and not terminal_repair_requested
+        and transform_requests.requests_only_distinct_external_spans()
+        else ()
+    )
     return WorkflowPlanningOutcome.from_candidates(
         structure_planning_signature=structure_planning_signature,
         candidate_proposals=list(ranked_candidate_proposals),
+        ordered_span_requests=ordered_span_requests,
         blockers=blockers,
         unsupported_requested_goals=unsupported_goal_set,
         blocked_requested_goals=blocked_requested_goals,

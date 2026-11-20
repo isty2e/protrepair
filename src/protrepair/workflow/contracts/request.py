@@ -24,6 +24,7 @@ from protrepair.state import (
 from protrepair.state.bonded_geometry import BONDED_GEOMETRY_SCOPE_TYPES
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.completion.hydrogen.protonation import (
+    DisabledHistidineProtonationRequest,
     HistidineProtonationRequest,
     normalize_histidine_protonation_request,
 )
@@ -553,6 +554,25 @@ class WorkflowTransformRequests:
         """Return whether explicit absent-span reconstruction was requested."""
 
         return bool(self.external_span_reconstructions)
+
+    def requests_only_distinct_external_spans(self) -> bool:
+        """Identify two or more span requests without alternatives or other transforms."""
+
+        spans = self.external_span_reconstructions
+        if len(spans) < 2:
+            return False
+
+        return (
+            not self.requests_reference_sidechain_packing()
+            and not self.requests_committed_sidechain_packing()
+            and not self.requests_backbone_window_refinement()
+            and self.repair_refinement is None
+            and isinstance(
+                self.histidine_protonation_request(),
+                DisabledHistidineProtonationRequest,
+            )
+            and len({span.scope for span in spans}) == len(spans)
+        )
 
     def histidine_protonation_request(self) -> HistidineProtonationRequest:
         """Return the normalized histidine protonation request."""

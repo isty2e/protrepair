@@ -115,6 +115,9 @@ def process_canonical_structure(
             validated_retained_non_polymer_chemistry_evidence
         ),
         initial_issues=initial_microstate_issues,
+        terminal_repair_requested=(
+            hydrogen_lengths is not None and hydrogen_lengths.repair
+        ),
     )
     packing_reference_issues = (
         () if packing_reference is None else packing_reference.packing_result.issues
@@ -122,6 +125,7 @@ def process_canonical_structure(
     return finalize_workflow_result(
         branches=runtime_result.branches,
         stop_reason=runtime_result.stop_reason,
+        span_reconstruction_evidence=runtime_result.span_reconstruction_evidence,
         planning_context=active_planning_context,
         component_library=component_library,
         requested_analyses=normalized_analyses,
