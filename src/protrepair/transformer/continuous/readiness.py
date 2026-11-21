@@ -42,7 +42,7 @@ from protrepair.state.hydrogen_expectation import (
     StructureHydrogenExpectationModel,
 )
 from protrepair.state.scoped import CarrierScopedState
-from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
@@ -416,7 +416,13 @@ def derive_atom_scope_continuous_relaxation_facts(
     projected_ligands: list[ResidueSite] = []
     for residue_id in referenced_residue_ids:
         residue = snapshot.structure.constitution.residue_or_ligand(residue_id)
-        if residue is not None and residue.is_hetero:
+        if (
+            residue is not None
+            and snapshot.structure.constitution.role_at(
+                snapshot.structure.constitution.residue_index(residue_id)
+            )
+            is ResidueRole.LIGAND
+        ):
             projected_ligands.append(residue)
     structure_facts = StructureProjectionStateFacts.from_projection(
         context_structure=snapshot.structure,
@@ -532,9 +538,9 @@ def _derive_execution_region_readiness_facts(
         if not (residue_site := continuous_region.residue_site(residue_index)).is_hetero
     )
     continuous_region_ligands = tuple(
-        residue_site
+        continuous_region.residue_site(residue_index)
         for residue_index in continuous_region.included_residue_indices
-        if (residue_site := continuous_region.residue_site(residue_index)).is_hetero
+        if snapshot.structure.constitution.role_at(residue_index) is ResidueRole.LIGAND
     )
     (
         continuous_region_coverage_facts,

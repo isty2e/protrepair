@@ -52,6 +52,7 @@ class ValidationIssueKind(str, Enum):
     RETAINED_NON_POLYMER_FALLBACK_BLOCKED = "retained_non_polymer_fallback_blocked"
     UNSUPPORTED_COMPONENT = "unsupported_component"
     STERIC_CLASH = "steric_clash"
+    RETAINED_WATER_REPAIR_REFUSED = "retained_water_repair_refused"
     HYDROGEN_LENGTH_OUTLIER = "hydrogen_length_outlier"
     HYDROGEN_PARENT_POSITION_CONFLICT = "hydrogen_parent_position_conflict"
 

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.diagnostics.water_contacts import stationary_water_refusal
 from protrepair.scope import ResidueSetScope, WholeStructureScope
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.base import (
@@ -95,15 +96,23 @@ class CommittedPackingTransformer(WorkflowStructureTransformer):
     ) -> ProjectedCodomainState[ProteinStructure]:
         """Transform one packing projected domain into its codomain."""
 
-        del context, carrier
+        del carrier
         packing_result = execute_committed_workflow_packing(
             projected_domain.state,
             self.packing_spec,
         )
+        parent = projected_domain.state
+        merged = packing_result.packed_structure.with_ligand_facets_from(parent)
+        refusal = stationary_water_refusal(
+            parent,
+            merged,
+            run_input=context.original_structure,
+            component_library=context.component_library,
+        )
         return ProjectedCodomainState(
             scope=self.scope,
-            state=packing_result.packed_structure.with_ligand_facets_from(
-                projected_domain.state
-            ),
-            issues=packing_result.issues,
+            state=merged if refusal is None else parent,
+            issues=packing_result.issues
+            if refusal is None
+            else (*packing_result.issues, refusal),
         )

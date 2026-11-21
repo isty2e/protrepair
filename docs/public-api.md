@@ -161,7 +161,8 @@ execution:
 | --- | --- | --- |
 | `occupancy_policy` | `OccupancyPolicy.HIGHEST` | Select alternate atom cohorts |
 | `mutation_policy` | `MutationPolicy.HIGHEST_OCCUPANCY` | Resolve residue variants |
-| `ligand_policy` | `LigandPolicy.DROP` | Drop, keep, or reject retained non-polymers |
+| `ligand_policy` | `LigandPolicy.DROP` | Drop, keep, or reject non-water non-polymers when no retention rules are supplied |
+| `non_polymer_retention` | `None` | Select whole waters and other non-polymers using [ordered retention rules](ingress-policy.md#keeping-selected-waters-cofactors-and-ions) |
 | `retained_non_polymer_chemistry_overrides` | empty | Supply explicit retained-component chemistry |
 | `omit_zero_occupancy_sidechain_heavy_atoms` | `False` | Treat eligible, explicitly zero side-chain coordinates as missing without requesting repair |
 | `omit_zero_occupancy_polymer_residues` | `False` | Treat verified all-zero internal singleton residues as missing without requesting reconstruction |

@@ -10,6 +10,10 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 )
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import ValidationIssueKind
+from protrepair.diagnostics.water_contacts import (
+    stationary_water_refusal,
+    stationary_water_run,
+)
 from protrepair.state import BondedGeometryState
 from protrepair.state.bonded_geometry import BondedGeometrySelection
 from protrepair.state.chemistry_observation import StructureChemistryObservation
@@ -774,10 +778,20 @@ def execute_workflow_transformer(
 ) -> TransformationResult:
     """Execute one workflow transformer through transformer-owned behavior."""
 
-    outcome = transformer.execute(
-        result,
-        context=execution_context,
-    )
+    if result.structure.constitution.waters:
+        with stationary_water_run(execution_context.original_structure):
+            outcome = transformer.execute(result, context=execution_context)
+    else:
+        outcome = transformer.execute(result, context=execution_context)
+    if outcome.structure is not result.structure:
+        refusal = stationary_water_refusal(
+            result.structure,
+            outcome.structure,
+            run_input=execution_context.original_structure,
+            component_library=execution_context.component_library,
+        )
+        if refusal is not None:
+            outcome = result.with_appended_issues((refusal,))
     issues = _retained_execution_issues(outcome.issues)
     return (
         outcome

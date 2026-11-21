@@ -303,7 +303,7 @@ def parser_extra_heavy_proximity_bond_count_for_structure(
     """Return whole-structure extra heavy-heavy parser proximity bond count."""
 
     return measure_rdkit_no_conect_extra_heavy_proximity_bond_count(
-        structure,
+        structure.without_waters(),
         component_library=component_library,
         known_bond_lookup=known_bond_lookup,
         pdb_block_projector=pdb_block_projector,

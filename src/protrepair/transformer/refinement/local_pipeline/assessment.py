@@ -61,7 +61,10 @@ def execute_and_assess_refinement_candidate_batch(
     if (
         not shortcut_taken
         and batch.original_start is not None
-        and not _has_parent_improvement(assessed_batch)
+        and (
+            request.context.source_snapshot.structure.constitution.waters
+            or not _has_parent_improvement(assessed_batch)
+        )
     ):
         rescue_batch, rescue_backend_ms, rescue_assessment_ms, _ = (
             _execute_and_assess_primary_candidates(
@@ -126,7 +129,10 @@ def _execute_and_assess_primary_candidates(
         before_metrics=before_metrics,
     )
     assessment_runtime_ms += (perf_counter() - start) * 1000.0
-    if discrete_parser_preconditioning_short_circuits(discrete_assessment):
+    if (
+        not request.context.source_snapshot.structure.constitution.waters
+        and discrete_parser_preconditioning_short_circuits(discrete_assessment)
+    ):
         return (
             AssessedRefinementBatch(
                 evaluated_proposals=(discrete_assessment,),

@@ -4,6 +4,9 @@
 
 ### Added
 
+- select waters, ions and cofactors with ordered non-polymer retention rules. Keep
+  selected waters stationary during protein repair and withhold candidates that
+  introduce or worsen a clash at a water contact
 - report the outcome of each external span request, including unattempted
   requests, unselected grafts and trial failures
 - prepare existing ACE and NME caps retained with `LigandPolicy.KEEP` from

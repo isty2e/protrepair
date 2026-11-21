@@ -3,7 +3,6 @@
 import itertools
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
-from enum import Enum
 from math import isfinite
 
 from protrepair.chemistry.component.defaults import build_default_component_library
@@ -49,6 +48,7 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import (
     AtomSite,
     ChainSite,
+    ResidueRole,
     ResidueSite,
     StructureConstitution,
 )
@@ -76,14 +76,6 @@ from protrepair.structure.topology import (
     StructureTopology,
     TopologyBond,
 )
-
-
-class _CanonicalResidueRole(str, Enum):
-    """Ingress-normalized role of one source residue slot."""
-
-    POLYMER = "polymer"
-    RETAINED_NON_POLYMER = "retained_non_polymer"
-    WATER = "water"
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,6 +361,7 @@ def normalize_raw_structure(
 
     chains: list[tuple[str, list[_NormalizedResiduePayload]]] = []
     ligands: list[_NormalizedResiduePayload] = []
+    waters: list[_NormalizedResiduePayload] = []
 
     omit_sidechains = policy.omit_zero_occupancy_sidechain_heavy_atoms
     omit_residues = policy.omit_zero_occupancy_polymer_residues
@@ -440,7 +433,7 @@ def normalize_raw_structure(
             entity_type_by_id=entity_type_by_id,
             source_peptide_link_pairs=source_peptide_link_pairs,
         )
-        polymer_residues, chain_ligands, excluded_endpoints = _normalize_chain_residues(
+        polymer_residues, non_polymer, excluded_endpoints = _normalize_chain_residues(
             raw_chain,
             chain_id,
             policy,
@@ -452,7 +445,11 @@ def normalize_raw_structure(
         excluded_source_endpoints.update(excluded_endpoints)
         if polymer_residues:
             chains.append((chain_id, polymer_residues))
-        ligands.extend(chain_ligands)
+        for payload in non_polymer:
+            if residue_role_by_id[payload.residue_id] is ResidueRole.WATER:
+                waters.append(payload)
+            else:
+                ligands.append(payload)
 
     component_library = build_default_component_library()
     chains = [
@@ -484,6 +481,7 @@ def normalize_raw_structure(
             for chain_id, residues in chains
         ),
         ligands=tuple(residue_payload.constitution for residue_payload in ligands),
+        waters=tuple(payload.constitution for payload in waters),
     )
     normalized_residue_payloads = (
         *(
@@ -492,6 +490,7 @@ def normalize_raw_structure(
             for residue_payload in residue_payloads
         ),
         *ligands,
+        *waters,
     )
     geometry = _structure_geometry_from_payloads(
         constitution=constitution,
@@ -561,6 +560,7 @@ def normalize_raw_structure(
             excluded_source_endpoints,
             constitution=constitution,
             geometry=geometry,
+            include_dropped_metals=policy.non_polymer_retention is not None,
         ),
     )
     selected = ProteinStructure.from_payload(
@@ -761,8 +761,18 @@ def apply_structure_normalization_policy(
         selected_chain_ids = tuple(
             chain_id.strip() for chain_id in policy.selected_chain_ids
         )
+        non_polymer_chains = {
+            water.residue_id.chain_id for water in structure.constitution.waters
+        }
+        if policy.non_polymer_retention is not None:
+            non_polymer_chains.update(
+                site.residue_id.chain_id for site in structure.constitution.ligands
+            )
         selected_constitution = structure.constitution.with_chains(
-            structure.constitution.chain(chain_id) for chain_id in selected_chain_ids
+            structure.constitution.chain(chain_id)
+            for chain_id in selected_chain_ids
+            if structure.constitution.has_chain(chain_id)
+            or chain_id not in non_polymer_chains
         )
 
     selected_ligand_candidates = tuple(
@@ -778,7 +788,20 @@ def apply_structure_normalization_policy(
             f"{rejected_ligand.residue_id.display_token()}"
         )
 
-    if policy.drops_ligands() or policy.rejects_ligands():
+    selected_waters: tuple[ResidueSite, ...] = ()
+    if policy.non_polymer_retention is not None:
+        selected_ligands = tuple(
+            site
+            for site in selected_ligand_candidates
+            if policy.non_polymer_retention.keeps(ResidueRole.LIGAND, site)
+        )
+        selected_waters = tuple(
+            site
+            for site in structure.constitution.waters
+            if policy.selects_chain(site.residue_id.chain_id)
+            and policy.non_polymer_retention.keeps(ResidueRole.WATER, site)
+        )
+    elif policy.drops_ligands() or policy.rejects_ligands():
         selected_ligands = ()
     else:
         selected_ligands = selected_ligand_candidates
@@ -803,17 +826,16 @@ def apply_structure_normalization_policy(
     if (
         selected_constitution == structure.constitution
         and selected_ligands == structure.constitution.ligands
+        and selected_waters == structure.constitution.waters
     ):
         return structure
 
-    selected_structure_constitution = selected_constitution.with_ligands(
-        selected_ligands
+    selected_structure_constitution = replace(
+        selected_constitution, ligands=selected_ligands, waters=selected_waters
     )
     selected_residue_ids = {
         residue_site.residue_id
-        for residue_site in selected_structure_constitution.iter_residues(
-            include_ligands=True
-        )
+        for residue_site in selected_structure_constitution.residue_slots
     }
     selected_geometry = StructureGeometry(
         constitution=selected_structure_constitution,
@@ -920,18 +942,18 @@ def _entity_type_by_id(
 
 def _canonical_role_for_entity_type(
     entity_type: gemmi.EntityType,
-) -> _CanonicalResidueRole | None:
+) -> ResidueRole | None:
     """Project one explicit source entity type into a canonical residue role."""
 
     if entity_type is gemmi.EntityType.Polymer:
-        return _CanonicalResidueRole.POLYMER
+        return ResidueRole.POLYMER
     if entity_type in {
         gemmi.EntityType.NonPolymer,
         gemmi.EntityType.Branched,
     }:
-        return _CanonicalResidueRole.RETAINED_NON_POLYMER
+        return ResidueRole.LIGAND
     if entity_type is gemmi.EntityType.Water:
-        return _CanonicalResidueRole.WATER
+        return ResidueRole.WATER
     return None
 
 
@@ -939,7 +961,7 @@ def _explicit_entity_role(
     raw_residue: gemmi.Residue,
     *,
     entity_type_by_id: Mapping[str, gemmi.EntityType],
-) -> _CanonicalResidueRole | None:
+) -> ResidueRole | None:
     """Return a role only when the residue references a declared source entity."""
 
     entity_id = raw_residue.entity_id.strip()
@@ -1036,7 +1058,7 @@ def _canonical_residue_roles_for_chain(
     *,
     entity_type_by_id: Mapping[str, gemmi.EntityType],
     source_peptide_link_pairs: frozenset[tuple[ResidueId, ResidueId]],
-) -> dict[ResidueId, _CanonicalResidueRole]:
+) -> dict[ResidueId, ResidueRole]:
     """Resolve one canonical role per residue slot before payload normalization."""
 
     raw_residues_by_id: dict[ResidueId, list[gemmi.Residue]] = {}
@@ -1070,7 +1092,7 @@ def _canonical_residue_roles_for_chain(
         )
     )
 
-    role_by_id: dict[ResidueId, _CanonicalResidueRole] = {}
+    role_by_id: dict[ResidueId, ResidueRole] = {}
     polymer_candidate_ids: set[ResidueId] = set()
     for residue_id, raw_residues in raw_residues_by_id.items():
         water_flags = tuple(_is_water_residue(residue) for residue in raw_residues)
@@ -1080,7 +1102,7 @@ def _canonical_residue_roles_for_chain(
                     "structure normalization rejected mixed water and non-water "
                     f"variants at {residue_id.display_token()}"
                 )
-            role_by_id[residue_id] = _CanonicalResidueRole.WATER
+            role_by_id[residue_id] = ResidueRole.WATER
             continue
 
         explicit_roles = {
@@ -1119,7 +1141,7 @@ def _canonical_residue_roles_for_chain(
                     f"ambiguity at {residue_id.display_token()}: "
                     f"{', '.join(sorted(unsupported_het_components))}"
                 )
-            role_by_id[residue_id] = _CanonicalResidueRole.POLYMER
+            role_by_id[residue_id] = ResidueRole.POLYMER
             continue
 
         supported_component_flags = tuple(
@@ -1135,12 +1157,12 @@ def _canonical_residue_roles_for_chain(
                 f"ambiguity at {residue_id.display_token()}"
             )
 
-        role_by_id[residue_id] = _CanonicalResidueRole.RETAINED_NON_POLYMER
+        role_by_id[residue_id] = ResidueRole.LIGAND
 
     polymer_ids = {
         residue_id
         for residue_id, role in role_by_id.items()
-        if role is _CanonicalResidueRole.POLYMER
+        if role is ResidueRole.POLYMER
     }
     for residue_id_1, residue_id_2 in source_peptide_link_pairs:
         if (
@@ -1167,12 +1189,9 @@ def _canonical_residue_roles_for_chain(
         polymer_ids.update(promoted_ids)
         unresolved_candidate_ids.difference_update(promoted_ids)
 
+    role_by_id.update((residue_id, ResidueRole.POLYMER) for residue_id in polymer_ids)
     role_by_id.update(
-        (residue_id, _CanonicalResidueRole.POLYMER) for residue_id in polymer_ids
-    )
-    role_by_id.update(
-        (residue_id, _CanonicalResidueRole.RETAINED_NON_POLYMER)
-        for residue_id in unresolved_candidate_ids
+        (residue_id, ResidueRole.LIGAND) for residue_id in unresolved_candidate_ids
     )
     return role_by_id
 
@@ -1182,7 +1201,7 @@ def _normalize_chain_residues(
     chain_id: str,
     policy: StructureNormalizationPolicy,
     *,
-    residue_role_by_id: Mapping[ResidueId, _CanonicalResidueRole],
+    residue_role_by_id: Mapping[ResidueId, ResidueRole],
     source_element_by_atom_identity: Mapping[SourceAtomIdentity, str],
     source_annotations: Mapping[SourceAtomIdentity, Iterator[SourceAtomAnnotation]]
     | None,
@@ -1204,7 +1223,7 @@ def _normalize_chain_residues(
     for raw_residue in raw_chain:
         residue_id = _raw_residue_id(raw_residue, chain_id)
         role = residue_role_by_id[residue_id]
-        if role is _CanonicalResidueRole.WATER:
+        if role is ResidueRole.WATER and policy.non_polymer_retention is None:
             excluded_endpoints.update(
                 _referenced_source_endpoints(
                     raw_residue, chain_id, coordination_endpoints_by_residue
@@ -1212,16 +1231,16 @@ def _normalize_chain_residues(
             )
             continue
 
-        is_hetero = role is _CanonicalResidueRole.RETAINED_NON_POLYMER
+        is_hetero = role is not ResidueRole.POLYMER
         if is_hetero:
-            if policy.drops_ligands():
+            if policy.non_polymer_retention is None and policy.drops_ligands():
                 excluded_endpoints.update(
                     _referenced_source_endpoints(
                         raw_residue, chain_id, coordination_endpoints_by_residue
                     )
                 )
                 continue
-            if policy.rejects_ligands():
+            if policy.non_polymer_retention is None and policy.rejects_ligands():
                 raise StructureNormalizationError(
                     "structure normalization rejected unexpected ligand "
                     f"{raw_residue.name} at {residue_id.display_token()}"
@@ -1252,6 +1271,24 @@ def _normalize_chain_residues(
     selected_residue_order = (
         sorted(residue_order) if contains_het_encoded_polymer else residue_order
     )
+    non_polymer = []
+    for residue_id in ligand_order:
+        payload = _select_residue_variant(
+            grouped_ligands[residue_id], policy.mutation_policy
+        )
+        if policy.non_polymer_retention is None or policy.non_polymer_retention.keeps(
+            residue_role_by_id[residue_id], payload.constitution
+        ):
+            non_polymer.append(payload)
+        else:
+            for endpoint in coordination_endpoints_by_residue.get(residue_id, ()):
+                atom = payload.geometry.atoms_by_name.get(endpoint.atom_ref.atom_name)
+                if (
+                    endpoint.component_id == payload.component_id
+                    and atom is not None
+                    and atom.altloc == endpoint.altloc
+                ):
+                    excluded_endpoints.add(endpoint)
     return (
         [
             _select_residue_variant(
@@ -1260,13 +1297,7 @@ def _normalize_chain_residues(
             )
             for residue_id in selected_residue_order
         ],
-        [
-            _select_residue_variant(
-                grouped_ligands[residue_id],
-                policy.mutation_policy,
-            )
-            for residue_id in ligand_order
-        ],
+        non_polymer,
         excluded_endpoints,
     )
 
@@ -1300,6 +1331,7 @@ def _excluded_coordination_connections(
     *,
     constitution: StructureConstitution,
     geometry: StructureGeometry,
+    include_dropped_metals: bool,
 ) -> tuple[SourceConnection, ...]:
     """Capture typed declarations crossing the actual source selection boundary."""
     excluded_connections: list[SourceConnection] = []
@@ -1318,9 +1350,9 @@ def _excluded_coordination_connections(
             if excluded.resolve_index(constitution, geometry) is not None:
                 continue
             index = retained.resolve_index(constitution, geometry)
-            if (
-                index is not None
-                and gemmi.Element(constitution.atom_site_at(index).element).is_metal
+            if index is not None and (
+                include_dropped_metals
+                or gemmi.Element(constitution.atom_site_at(index).element).is_metal
             ):
                 excluded_connections.append(connection)
                 break

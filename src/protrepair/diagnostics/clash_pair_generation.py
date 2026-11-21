@@ -19,6 +19,7 @@ class ContactDomain(str, Enum):
     """Closed contact-domain classifications used by clash pair policies."""
 
     POLYMER = "polymer"
+    WATER = "water"
     RETAINED_NON_POLYMER = "retained_non_polymer"
     UNKNOWN = "unknown"
     NOT_APPLICABLE = "not_applicable"
@@ -37,6 +38,8 @@ class ContactDomain(str, Enum):
             return cls.RETAINED_NON_POLYMER
         if normalized_value == "polymer":
             return cls.POLYMER
+        if normalized_value == "water":
+            return cls.WATER
         if normalized_value == "unknown":
             return cls.UNKNOWN
         if normalized_value in {"not_applicable", "not_applicable_chemistry", "none"}:

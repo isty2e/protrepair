@@ -46,7 +46,9 @@ def template_resolved_topology_bonds(
     """Return template-resolved topology bonds for materialized residue atoms."""
 
     bonds: list[TopologyBond] = []
-    for residue_index, residue_site in enumerate(constitution.residue_slots):
+    for residue_index, residue_site in enumerate(
+        constitution.iter_residues(include_ligands=True)
+    ):
         bonds.extend(
             _template_resolved_topology_bonds_for_residue(
                 constitution,
@@ -69,7 +71,7 @@ def template_resolved_topology_bonds_for_new_atoms(
 
     bonds: list[TopologyBond] = []
     for residue_index, target_residue_site in enumerate(
-        target_constitution.residue_slots
+        target_constitution.iter_residues(include_ligands=True)
     ):
         source_residue_site = source_constitution.residue_or_ligand(
             target_residue_site.residue_id
@@ -108,7 +110,7 @@ def template_resolved_hydrogen_topology_bonds_for_new_atoms(
 
     bonds: list[TopologyBond] = []
     for residue_index, target_residue_site in enumerate(
-        target_constitution.residue_slots
+        target_constitution.iter_residues(include_ligands=True)
     ):
         source_residue_site = source_constitution.residue_or_ligand(
             target_residue_site.residue_id

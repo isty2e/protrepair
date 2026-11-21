@@ -183,7 +183,7 @@ class LocalRefinementRequest:
                 polar_chemistry=observation.polar_contact_chemistry,
             ),
             pdb_block_projector=prepare_rdkit_no_conect_pdb_block_projector(
-                context.source_snapshot.structure
+                context.source_snapshot.structure.without_waters()
             ),
             allow_retained_non_polymer_rdkit_fallback=(
                 allow_retained_non_polymer_rdkit_fallback

@@ -172,11 +172,12 @@ class PeptideCapTransformer:
         if not plan.boundaries:
             return CappedRelaxationProblem(plan, problem, problem)
         region = problem.region
-        source = region.snapshot.structure
+        source = region.snapshot.structure.without_waters()
         constitution = source.constitution
         chain_id = "CAP"
         while any(
-            site.residue_id.chain_id == chain_id for site in constitution.residue_slots
+            site.residue_id.chain_id == chain_id
+            for site in region.snapshot.structure.constitution.residue_slots
         ):
             chain_id += "_"
         sites = []

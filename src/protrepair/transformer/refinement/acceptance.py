@@ -328,7 +328,7 @@ def measure_refinement_acceptance_metrics(
         residue_ids=focus_residue_ids,
     )
     rdkit_readability_metrics = measure_rdkit_no_conect_sanitize_readability_metrics(
-        structure,
+        structure.without_waters(),
         component_library=component_library,
         pdb_block_projector=pdb_block_projector,
     )

@@ -7,7 +7,15 @@ import pytest
 
 from protrepair.diagnostics import IssueSeverity, ValidationIssue, ValidationIssueKind
 from protrepair.errors import ModelInvariantError, RefinementError
-from protrepair.io import read_structure
+from protrepair.geometry import Vec3
+from protrepair.io import (
+    FileFormat,
+    NonPolymerRetentionPolicy,
+    RetentionAction,
+    read_structure,
+    read_structure_string,
+)
+from protrepair.io.ingress_policy import StructureNormalizationPolicy
 from protrepair.scope import AtomSetScope, ResidueSetScope
 from protrepair.structure import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -563,6 +571,106 @@ def test_local_selection_retains_unselected_and_rejected_native_returns(
     assert result.relaxation_executions == records
     assert profile.execution_candidate_count == len(candidates)
     assert profile.continuous_backend_candidate_count == len(candidates)
+
+
+@pytest.mark.parametrize("has_clear_alternative", (True, False))
+def test_water_admission_runs_after_dependent_h_materialization(
+    monkeypatch, has_clear_alternative
+):
+    original_rows = Path("tests/fixtures/pdb/1aho.pdb").read_text().splitlines()
+    ala = [
+        row
+        for row in original_rows
+        if row.startswith("ATOM  ") and row[17:20] == "ALA" and int(row[22:26]) == 20
+    ]
+    water = (
+        "HETATM  999  O   HOH W   1      90.000   0.000   0.000  1.00 13.00           O"
+    )
+    raw = "\n".join((*ala, "TER", water, "END", ""))
+    policy = NonPolymerRetentionPolicy(RetentionAction.KEEP, RetentionAction.DROP)
+    source = add_hydrogens(
+        read_structure_string(
+            raw,
+            FileFormat.PDB,
+            policy=StructureNormalizationPolicy(non_polymer_retention=policy),
+        )
+    ).structure
+    rid = ResidueId("A", 20)
+    ri = source.constitution.residue_index(rid)
+    atoms = source.constitution.atom_indices_for_residue_index(ri)
+    context = ProteinTransformationContext.from_snapshot_atom_input(
+        ProteinStructureSnapshot.from_structure(source),
+        AtomInput(tuple(atoms), AtomInputBasis.RESIDUEWISE, ResidueSetScope((rid,))),
+    )
+    request = LocalRefinementRequest.from_context(
+        context,
+        spec=ContinuousRelaxationSettings(
+            profile=ContinuousRelaxationProfile.RDKIT_UFF, context_radius_angstrom=0
+        ),
+        component_library=None,
+        restraint_library=None,
+    )
+    first = RefinementExecutionCandidate(context, RefinementCandidateLineage(), source)
+    second = replace(first)
+    batch = RefinementExecutionBatch((first, second))
+    monkeypatch.setattr(runtime, "build_refinement_execution_batch", lambda req: batch)
+
+    def execute(self, *, request):
+        result = RegionTransformationResult(
+            source,
+            StructureDelta(source.constitution, source.constitution),
+            (),
+            "first" if self is first else "second",
+        )
+        return SpeculativeExecution(self, result)
+
+    def assess(candidate, *, request, before_metrics):
+        return EvaluatedSpeculativeProposal(
+            candidate,
+            AssessedRefinementResult(
+                candidate.outcome,
+                before_metrics,
+                _metrics(1 if candidate.proposal is first else 2),
+                RefinementAcceptanceVerdict.ACCEPTED,
+            ),
+        )
+
+    seen = []
+
+    def dependent(result, **kwargs):
+        seen.append(result.backend_name)
+        x = 0.25 if has_clear_alternative and result.backend_name == "second" else 90.0
+        geom = source.residue_geometry(ri)
+        moved = geom.with_atom_geometry(
+            "HB1", geom.atom_geometry("HB1").with_position(Vec3(x, 0, 0))
+        )
+        return replace(
+            result,
+            refined_structure=source.with_updated_residue_geometries(((rid, moved),)),
+        )
+
+    monkeypatch.setattr(RefinementExecutionCandidate, "execute", execute)
+    monkeypatch.setattr(assessment, "assess_refinement_candidate", assess)
+    monkeypatch.setattr(
+        assessment,
+        "measure_refinement_acceptance_metrics_for_scope",
+        lambda *a, **k: _metrics(5),
+    )
+    monkeypatch.setattr(
+        assessment, "revalidate_dependent_hydrogens_after_refinement", dependent
+    )
+    result = runtime.execute_local_refinement_pipeline(request)
+    assert seen == ["first", "second"]
+    if has_clear_alternative:
+        assert result.backend_name == "second"
+        assert result.refined_structure.residue_geometry(ri).position("HB1").x == 0.25
+    else:
+        assert result.refined_structure is source
+        assert not result.delta.moved_atoms
+        assert any(
+            i.kind is ValidationIssueKind.RETAINED_WATER_REPAIR_REFUSED
+            for i in result.issues
+        )
 
 
 def test_region_return_metadata_does_not_change_structure_value_semantics(

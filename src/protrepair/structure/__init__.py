@@ -9,6 +9,7 @@ from protrepair.structure.aggregate import ProteinStructure, ResidueFacetPayload
 from protrepair.structure.constitution import (
     AtomSite,
     ChainSite,
+    ResidueRole,
     ResidueSite,
     StructureConstitution,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "ResidueFacetPayload",
     "ResidueGeometry",
     "ResidueId",
+    "ResidueRole",
     "ResidueSite",
     "SourceBondMetadata",
     "SourceBondRecordType",

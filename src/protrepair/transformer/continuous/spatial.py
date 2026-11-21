@@ -3,6 +3,7 @@
 from collections import defaultdict
 from math import floor
 
+from protrepair.structure.constitution import ResidueRole
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
@@ -55,7 +56,10 @@ def radius_context_residue_indices(
     context_residue_index_set: set[ResidueIndex] = set()
     for residue_slot_index in range(len(constitution.residue_slots)):
         residue_index = ResidueIndex(residue_slot_index)
-        if residue_index in selected_residue_index_set:
+        if (
+            residue_index in selected_residue_index_set
+            or constitution.role_at(residue_index) is ResidueRole.WATER
+        ):
             continue
 
         for atom_index in constitution.atom_indices_for_residue_index(residue_index):
@@ -91,7 +95,10 @@ def _radius_context_residue_indices_by_scan(
     context_residue_index_set: set[ResidueIndex] = set()
     for residue_slot_index in range(len(constitution.residue_slots)):
         residue_index = ResidueIndex(residue_slot_index)
-        if residue_index in selected_residue_index_set:
+        if (
+            residue_index in selected_residue_index_set
+            or constitution.role_at(residue_index) is ResidueRole.WATER
+        ):
             continue
 
         for atom_index in constitution.atom_indices_for_residue_index(residue_index):

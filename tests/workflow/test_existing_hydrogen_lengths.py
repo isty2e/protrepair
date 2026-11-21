@@ -20,7 +20,14 @@ from protrepair.diagnostics.parser_readability import (
     probe_rdkit_no_conect_parser_readability,
 )
 from protrepair.geometry import Vec3
-from protrepair.io import read_structure, write_structure_string
+from protrepair.io import (
+    NonPolymerRetentionPolicy,
+    RetentionAction,
+    read_structure,
+    read_structure_string,
+    write_structure_string,
+)
+from protrepair.io.ingress_policy import StructureNormalizationPolicy
 from protrepair.scope import AtomSetScope, WholeStructureScope
 from protrepair.state import ClashPresenceState, ClashState, HydrogenCoverageState
 from protrepair.structure import AtomRef, FileFormat, ResidueId
@@ -96,6 +103,43 @@ def test_workflow_measures_by_default_and_grades_with_a_reference(tmp_path):
         if i.kind is ValidationIssueKind.HYDROGEN_LENGTH_OUTLIER
     )
     assert issue.residue_impacts[0].atom_names == ("HG", "SG")
+
+
+@pytest.mark.parametrize(
+    "water_x, expected",
+    (
+        (2.88, HydrogenLengthRepairStatus.REJECTED),
+        (12.0, HydrogenLengthRepairStatus.REPAIRED),
+    ),
+)
+def test_terminal_radial_repair_compares_retained_water(water_x, expected):
+    dry = structure_with_thiol(1.0)
+    source_rows = [
+        r
+        for r in write_structure_string(dry, FileFormat.PDB).splitlines()
+        if r.startswith("ATOM  ")
+    ]
+    water = f"HETATM    8  O   HOH W   1    {water_x:8.3f}   0.000   0.000  1.00 12.00           O"
+    policy = NonPolymerRetentionPolicy(RetentionAction.KEEP, RetentionAction.DROP)
+    wet = read_structure_string(
+        "\n".join((*source_rows, "TER", water, "END", "")),
+        FileFormat.PDB,
+        policy=StructureNormalizationPolicy(non_polymer_retention=policy),
+    )
+    result = process_structure(
+        wet,
+        ingress=StructureIngressOptions(non_polymer_retention=policy),
+        hydrogen_lengths=nuclear_repair(),
+    )
+    row = repair_row(result)
+    assert row.status is expected
+    if expected is HydrogenLengthRepairStatus.REJECTED:
+        assert result.structure.geometry == wet.geometry
+        assert not any(
+            event.kind is RepairEventKind.HYDROGEN_LENGTH_ADJUSTED
+            for event in result.repairs
+        )
+        assert row.detail and "water" in row.detail
 
 
 def test_default_workflow_reports_parent_conflict_without_rebinding_or_moving():

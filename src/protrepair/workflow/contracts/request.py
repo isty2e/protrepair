@@ -4,6 +4,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias, TypeVar, overload
 
+from protrepair.io.ingress_policy import NonPolymerRetentionPolicy
 from protrepair.scope import (
     ResidueBoundaryScope,
     ResidueBoundarySide,
@@ -256,6 +257,8 @@ class StructureIngressOptions:
         How to select between residue variants at one position.
     ligand_policy : LigandPolicy, default=LigandPolicy.DROP
         How to treat non-water ligands.
+    non_polymer_retention : NonPolymerRetentionPolicy or None, default=None
+        Select water and other non-polymers instead of applying legacy defaults.
     retained_non_polymer_chemistry_overrides : iterable of RetainedNonPolymerChemistryOverride
         Explicit chemistry to use for the named retained residues.
     omit_zero_occupancy_sidechain_heavy_atoms : bool, default=False
@@ -276,6 +279,9 @@ class StructureIngressOptions:
     occupancy_policy: OccupancyPolicy = OccupancyPolicy.HIGHEST
     mutation_policy: MutationPolicy = MutationPolicy.HIGHEST_OCCUPANCY
     ligand_policy: LigandPolicy = LigandPolicy.DROP
+    non_polymer_retention: NonPolymerRetentionPolicy | None = field(
+        default=None, kw_only=True
+    )
     retained_non_polymer_chemistry_overrides: tuple[
         RetainedNonPolymerChemistryOverride,
         ...,
@@ -294,10 +300,12 @@ class StructureIngressOptions:
         *,
         omit_zero_occupancy_sidechain_heavy_atoms: bool = False,
         omit_zero_occupancy_polymer_residues: bool = False,
+        non_polymer_retention: NonPolymerRetentionPolicy | None = None,
     ) -> None:
         object.__setattr__(self, "occupancy_policy", occupancy_policy)
         object.__setattr__(self, "mutation_policy", mutation_policy)
         object.__setattr__(self, "ligand_policy", ligand_policy)
+        object.__setattr__(self, "non_polymer_retention", non_polymer_retention)
         object.__setattr__(
             self,
             "omit_zero_occupancy_sidechain_heavy_atoms",
@@ -322,6 +330,13 @@ class StructureIngressOptions:
             raise TypeError("ingress mutation_policy must be a MutationPolicy value")
         if not isinstance(self.ligand_policy, LigandPolicy):
             raise TypeError("ingress ligand_policy must be a LigandPolicy value")
+        if self.non_polymer_retention is not None:
+            if not isinstance(self.non_polymer_retention, NonPolymerRetentionPolicy):
+                raise TypeError(
+                    "non_polymer_retention must be a NonPolymerRetentionPolicy"
+                )
+            if self.ligand_policy is not LigandPolicy.DROP:
+                raise ValueError("non_polymer_retention replaces ligand_policy")
         if not isinstance(self.omit_zero_occupancy_sidechain_heavy_atoms, bool):
             raise TypeError("omit_zero_occupancy_sidechain_heavy_atoms must be a bool")
         if not isinstance(self.omit_zero_occupancy_polymer_residues, bool):
@@ -357,7 +372,10 @@ class StructureIngressOptions:
             StructureNormalizationPolicy,
         )
 
-        if self.ligand_policy is LigandPolicy.KEEP:
+        if (
+            self.non_polymer_retention is not None
+            or self.ligand_policy is LigandPolicy.KEEP
+        ):
             ligand_handling = LigandHandling.KEEP
         elif self.ligand_policy is LigandPolicy.REJECT:
             ligand_handling = LigandHandling.REJECT
@@ -367,6 +385,7 @@ class StructureIngressOptions:
             occupancy_policy=self.occupancy_policy,
             mutation_policy=self.mutation_policy,
             ligand_handling=ligand_handling,
+            non_polymer_retention=self.non_polymer_retention,
             omit_zero_occupancy_sidechain_heavy_atoms=self.omit_zero_occupancy_sidechain_heavy_atoms,
             omit_zero_occupancy_polymer_residues=self.omit_zero_occupancy_polymer_residues,
         )

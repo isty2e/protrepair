@@ -26,7 +26,7 @@ from protrepair.chemistry.retained_non_polymer.template_binding import (
     is_resolved_acyl_amide_link,
 )
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import AtomSite
+from protrepair.structure.constitution import AtomSite, ResidueRole
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.slots import AtomIndex
@@ -429,8 +429,7 @@ class AminoAcidMicrostateContext:
             raise TypeError("chain-end assumption must be a boolean")
         constitution = self.source.constitution
         residue_index = constitution.residue_index(residue_id)
-        polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
-        if residue_index.value >= polymer_count:
+        if constitution.role_at(residue_index) is not ResidueRole.POLYMER:
             raise ValueError("backbone binding requires a polymer residue")
         name, partner_name = (
             ("N", "C") if kind is PolymerChemicalSite.BACKBONE_N else ("C", "N")
@@ -489,8 +488,9 @@ class AminoAcidMicrostateContext:
                 and cap.partner == constitution.atom_ref_at(index)
                 and cap.link_is_realized()
             )
-        polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
-        return constitution.residue_index(partner.residue_id).value < polymer_count or (
+        return constitution.role_at(
+            constitution.residue_index(partner.residue_id)
+        ) is ResidueRole.POLYMER or (
             kind is PolymerChemicalSite.BACKBONE_N
             and is_resolved_acyl_amide_link(
                 self.source, partner, constitution.atom_ref_at(index)
@@ -1176,7 +1176,7 @@ class PolymerMicrostateContext(AminoAcidMicrostateContext):
         """
         constitution = self.source.constitution
         index = constitution.residue_index(residue_id)
-        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+        if constitution.role_at(index) is not ResidueRole.POLYMER:
             return MicrostateResolution(
                 MicrostateResolutionStatus.UNSUPPORTED,
                 details=("polymer microstates require a polymer residue",),
@@ -1214,7 +1214,7 @@ class PolymerMicrostateContext(AminoAcidMicrostateContext):
         """
         constitution = self.source.constitution
         index = constitution.residue_index(residue_id)
-        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+        if constitution.role_at(index) is not ResidueRole.POLYMER:
             raise ValueError("polymer H topology requires a polymer residue")
         return AminoAcidMicrostateContext.hydrogen_topology_updates(
             self, residue_id, site

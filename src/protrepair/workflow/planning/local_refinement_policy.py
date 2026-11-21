@@ -268,7 +268,7 @@ def _parser_failing_residue_ids_for_domain(
     return tuple(
         sorted(
             rdkit_no_conect_parser_failing_residue_ids(
-                domain.structure,
+                domain.structure.without_waters(),
                 component_library=domain.component_library,
             ),
             key=lambda residue_id: residue_id.display_token(),

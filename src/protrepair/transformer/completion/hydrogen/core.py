@@ -74,6 +74,7 @@ from protrepair.transformer.completion.hydrogen.topology import (
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
+from protrepair.transformer.completion.targets import require_non_water_hydrogen_targets
 from protrepair.transformer.polymer_microstate import apply_polymer_microstate_patches
 from protrepair.transformer.result import TransformationResult
 
@@ -126,6 +127,7 @@ def materialize_hydrogens_core(
     RdkitUnavailableError
         Required native H placement is unavailable.
     """
+    require_non_water_hydrogen_targets(structure.constitution, target_residue_ids)
     if type(rebuild_existing) is not bool:
         raise TypeError("hydrogen rebuilding must be a bool")
     library = component_library or build_default_component_library()
@@ -136,6 +138,7 @@ def materialize_hydrogens_core(
         for residue in chain.residues
         if target_residue_ids is None or residue.residue_id in target_residue_ids
     )
+    water_baseline = structure
     rebuilding = frozenset(
         residue_id
         for residue_id in targets
@@ -307,7 +310,7 @@ def materialize_hydrogens_core(
         structure,
         tuple(repairs),
         tuple(issues),
-    )
+    ).checked_against_stationary_waters(water_baseline, library)
 
 
 def _fixed_hydrogens(

@@ -15,6 +15,7 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 from protrepair.diagnostics.source_microstate import (
     diagnose_source_microstate_contradictions,
 )
+from protrepair.diagnostics.water_contacts import stationary_water_run
 from protrepair.errors import RdkitUnavailableError
 from protrepair.io import read_structure
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
@@ -61,14 +62,6 @@ def process_canonical_structure(
         if transform_requests is None
         else transform_requests
     )
-    active_planning_context = (
-        _default_workflow_planning_context(
-            ingress=active_ingress,
-            transform_requests=active_transform_requests,
-        )
-        if planning_context is None
-        else planning_context
-    )
     normalized_analyses = normalize_analysis_kinds(analyses)
 
     component_library = build_default_component_library()
@@ -76,6 +69,15 @@ def process_canonical_structure(
     normalized_structure = apply_structure_normalization_policy(
         structure,
         policy=normalization_policy,
+    )
+    active_planning_context = (
+        _default_workflow_planning_context(
+            ingress=active_ingress,
+            transform_requests=active_transform_requests,
+            has_retained_ligands=bool(normalized_structure.constitution.ligands),
+        )
+        if planning_context is None
+        else planning_context
     )
     hydrogen_length_plan = WorkflowHydrogenLengthPlan.for_input(
         normalized_structure, hydrogen_lengths
@@ -90,50 +92,53 @@ def process_canonical_structure(
             active_ingress.retained_non_polymer_chemistry_overrides,
         )
     )
-    packing_reference = (
-        None
-        if active_transform_requests.reference_sidechain_packing is None
-        else prepare_workflow_packing_reference(
-            normalized_structure,
-            active_transform_requests.reference_sidechain_packing,
+    with stationary_water_run(normalized_structure):
+        packing_reference = (
+            None
+            if active_transform_requests.reference_sidechain_packing is None
+            else prepare_workflow_packing_reference(
+                normalized_structure,
+                active_transform_requests.reference_sidechain_packing,
+            )
         )
-    )
-    runtime_result = execute_iterative_workflow(
-        normalized_structure,
-        requested_goals=requested_goal_set,
-        transform_requests=active_transform_requests,
-        planning_context=active_planning_context,
-        component_library=component_library,
-        reference_structure=(
-            None if packing_reference is None else packing_reference.reference_structure
-        ),
-        orphan_fragment_policy=active_transform_requests.orphan_fragment_policy,
-        histidine_protonation=(
-            active_transform_requests.histidine_protonation_request()
-        ),
-        retained_non_polymer_chemistry_evidence=(
-            validated_retained_non_polymer_chemistry_evidence
-        ),
-        initial_issues=initial_microstate_issues,
-        terminal_repair_requested=(
-            hydrogen_lengths is not None and hydrogen_lengths.repair
-        ),
-    )
-    packing_reference_issues = (
-        () if packing_reference is None else packing_reference.packing_result.issues
-    )
-    return finalize_workflow_result(
-        branches=runtime_result.branches,
-        stop_reason=runtime_result.stop_reason,
-        span_reconstruction_evidence=runtime_result.span_reconstruction_evidence,
-        planning_context=active_planning_context,
-        component_library=component_library,
-        requested_analyses=normalized_analyses,
-        preliminary_issues=packing_reference_issues,
-        repair_refinement=active_transform_requests.repair_refinement,
-        hydrogen_length_plan=hydrogen_length_plan,
-        retained_non_polymer_chemistry_evidence=validated_retained_non_polymer_chemistry_evidence,
-    )
+        runtime_result = execute_iterative_workflow(
+            normalized_structure,
+            requested_goals=requested_goal_set,
+            transform_requests=active_transform_requests,
+            planning_context=active_planning_context,
+            component_library=component_library,
+            reference_structure=(
+                None
+                if packing_reference is None
+                else packing_reference.reference_structure
+            ),
+            orphan_fragment_policy=active_transform_requests.orphan_fragment_policy,
+            histidine_protonation=(
+                active_transform_requests.histidine_protonation_request()
+            ),
+            retained_non_polymer_chemistry_evidence=(
+                validated_retained_non_polymer_chemistry_evidence
+            ),
+            initial_issues=initial_microstate_issues,
+            terminal_repair_requested=(
+                hydrogen_lengths is not None and hydrogen_lengths.repair
+            ),
+        )
+        packing_reference_issues = (
+            () if packing_reference is None else packing_reference.packing_result.issues
+        )
+        return finalize_workflow_result(
+            branches=runtime_result.branches,
+            stop_reason=runtime_result.stop_reason,
+            span_reconstruction_evidence=runtime_result.span_reconstruction_evidence,
+            planning_context=active_planning_context,
+            component_library=component_library,
+            requested_analyses=normalized_analyses,
+            preliminary_issues=packing_reference_issues,
+            repair_refinement=active_transform_requests.repair_refinement,
+            hydrogen_length_plan=hydrogen_length_plan,
+            retained_non_polymer_chemistry_evidence=validated_retained_non_polymer_chemistry_evidence,
+        )
 
 
 def process_structure_source(
@@ -209,13 +214,18 @@ def _default_workflow_planning_context(
     *,
     ingress: StructureIngressOptions,
     transform_requests: WorkflowTransformRequests,
+    has_retained_ligands: bool,
 ) -> WorkflowPlanningContext:
     """Build the default explicit planning context from boundary inputs."""
 
     return WorkflowPlanningContext(
         ligand_context_mode=(
             WorkflowLigandContextMode.CONSIDER_IF_PRESENT
-            if ingress.ligand_policy is LigandPolicy.KEEP
+            if (
+                has_retained_ligands
+                if ingress.non_polymer_retention is not None
+                else ingress.ligand_policy is LigandPolicy.KEEP
+            )
             else WorkflowLigandContextMode.IGNORE
         ),
         span_donor_availability=(

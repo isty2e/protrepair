@@ -148,7 +148,12 @@ def _with_backbone_window_rejection_context(
     if result.moved_atom_count() != 0:
         return result
     if not any(
-        issue.kind is ValidationIssueKind.REFINEMENT_REJECTED for issue in result.issues
+        issue.kind
+        in {
+            ValidationIssueKind.REFINEMENT_REJECTED,
+            ValidationIssueKind.RETAINED_WATER_REPAIR_REFUSED,
+        }
+        for issue in result.issues
     ):
         return result
 
@@ -161,7 +166,10 @@ def _with_backbone_window_rejection_context(
 
 
 def _with_backbone_window_issue_message(issue: ValidationIssue) -> ValidationIssue:
-    if issue.kind is not ValidationIssueKind.REFINEMENT_REJECTED:
+    if issue.kind not in {
+        ValidationIssueKind.REFINEMENT_REJECTED,
+        ValidationIssueKind.RETAINED_WATER_REPAIR_REFUSED,
+    }:
         return issue
 
     prefix = "backbone-window refinement was not sufficient: "

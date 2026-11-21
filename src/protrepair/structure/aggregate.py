@@ -2,7 +2,7 @@
 polymer blueprint, and provenance."""
 
 from collections.abc import Collection, Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TypeVar
 
 from typing_extensions import Self
@@ -11,6 +11,7 @@ from protrepair.errors import ModelInvariantError, ResidueNotFoundError
 from protrepair.structure.constitution import (
     AtomSite,
     ChainSite,
+    ResidueRole,
     ResidueSite,
     StructureConstitution,
 )
@@ -341,8 +342,11 @@ class ProteinStructure:
         """Return a copy containing only selected chains in the given order."""
 
         normalized_chain_ids = tuple(chain_id.strip() for chain_id in chain_ids)
+        water_chains = {site.residue_id.chain_id for site in self.constitution.waters}
         selected_chain_sites = tuple(
-            self.constitution.chain(chain_id) for chain_id in normalized_chain_ids
+            self.constitution.chain(chain_id)
+            for chain_id in normalized_chain_ids
+            if self.constitution.has_chain(chain_id) or chain_id not in water_chains
         )
         selected_chain_id_set = frozenset(normalized_chain_ids)
         selected_ligands = tuple(
@@ -350,13 +354,20 @@ class ProteinStructure:
             for ligand_site in self.constitution.ligands
             if ligand_site.residue_id.chain_id in selected_chain_id_set
         )
-        selected_structure_constitution = self.constitution.with_chains(
-            selected_chain_sites
-        ).with_ligands(selected_ligands)
+        selected_structure_constitution = replace(
+            self.constitution,
+            chains=selected_chain_sites,
+            ligands=selected_ligands,
+            waters=tuple(
+                site
+                for site in self.constitution.waters
+                if site.residue_id.chain_id in selected_chain_id_set
+            ),
+        )
+        entries = _residue_entries_by_index(self)
         selected_entries = tuple(
-            residue_entry
-            for residue_entry in _residue_entries_by_index(self)
-            if residue_entry.residue_id.chain_id in selected_chain_id_set
+            entries[self.constitution.residue_index(site.residue_id).value]
+            for site in selected_structure_constitution.residue_slots
         )
         return _structure_from_residue_entries(
             structure_type=type(self),
@@ -372,6 +383,31 @@ class ProteinStructure:
                 source_constitution=self.constitution,
                 target_constitution=selected_structure_constitution,
             ),
+        )
+
+    def without_waters(self) -> Self:
+        """Project non-water calculation inputs, preserving their canonical indices."""
+        if not self.constitution.waters:
+            return self
+        constitution = replace(self.constitution, waters=())
+        count = len(constitution.atom_slots)
+        return type(self).from_payload(
+            constitution=constitution,
+            geometry=StructureGeometry(
+                constitution=constitution,
+                atom_geometries=self.geometry.atom_geometries[:count],
+            ),
+            topology=StructureTopology(
+                constitution=constitution,
+                atom_topologies=self.topology.atom_topologies[:count],
+                bonds=tuple(
+                    bond
+                    for bond in self.topology.bonds
+                    if all(i.value < count for i in bond.endpoint_pair())
+                ),
+            ),
+            provenance=self.provenance,
+            polymer_blueprint=self.polymer_blueprint,
         )
 
     def with_ligand_facets(
@@ -407,10 +443,14 @@ class ProteinStructure:
             )
 
         updated_constitution = self.constitution.with_ligands(normalized_ligand_sites)
+        original_entries = _residue_entries_by_index(self)
         polymer_entries = tuple(
             residue_entry
-            for residue_entry in _residue_entries_by_index(self)
-            if not residue_entry.is_hetero
+            for residue_entry in original_entries
+            if self.constitution.role_at(
+                self.constitution.residue_index(residue_entry.residue_site.residue_id)
+            )
+            is ResidueRole.POLYMER
         )
         updated_entries_by_index = (
             *polymer_entries,
@@ -430,6 +470,12 @@ class ProteinStructure:
                     normalized_ligand_formal_charge_payloads,
                     strict=True,
                 )
+            ),
+            *(
+                original_entries[
+                    self.constitution.residue_index(water.residue_id).value
+                ]
+                for water in self.constitution.waters
             ),
         )
 
@@ -639,7 +685,17 @@ class ProteinStructure:
         )
         assert current_residue_site is not None
 
-        if not current_residue_site.is_hetero:
+        target_residue_index = self.constitution.residue_index(residue_site.residue_id)
+        role = self.constitution.role_at(target_residue_index)
+        if role is ResidueRole.WATER:
+            updated_constitution = replace(
+                self.constitution,
+                waters=tuple(
+                    residue_site if site.residue_id == residue_site.residue_id else site
+                    for site in self.constitution.waters
+                ),
+            )
+        elif role is ResidueRole.POLYMER:
             updated_constitution = self.constitution.with_updated_chain(
                 self.constitution.chain(
                     residue_site.residue_id.chain_id
@@ -656,7 +712,6 @@ class ProteinStructure:
             )
 
         updated_entries_by_index = list(_residue_entries_by_index(self))
-        target_residue_index = self.constitution.residue_index(residue_site.residue_id)
         updated_entries_by_index[target_residue_index.value] = ResidueFacetPayload(
             residue_site=residue_site,
             residue_geometry=residue_geometry,
@@ -744,6 +799,14 @@ class ProteinStructure:
         updated_constitution = self.constitution.with_chains(
             updated_chain_sites
         ).with_ligands(updated_ligand_sites)
+        if self.constitution.waters:
+            updated_constitution = replace(
+                updated_constitution,
+                waters=tuple(
+                    ligand_sites_by_id.get(site.residue_id, site)
+                    for site in self.constitution.waters
+                ),
+            )
 
         updated_entries_by_index = list(_residue_entries_by_index(self))
         for residue_id, residue_entry in normalized_residue_entries_by_id.items():
@@ -977,7 +1040,10 @@ class ProteinStructure:
             _residue_entries_by_index(self),
             strict=True,
         ):
-            if stripped_residue_site.residue_id not in selected_residue_ids:
+            if (
+                stripped_residue_site.residue_id not in selected_residue_ids
+                or stripped_residue_site is current_payload.residue_site
+            ):
                 updated_entries_by_index.append(current_payload)
                 continue
 

@@ -12,17 +12,25 @@ from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.diagnostics.source_coordination import (
     diagnose_source_coordination_omissions,
 )
-from protrepair.errors import ModelInvariantError
+from protrepair.errors import ModelInvariantError, RefinementError
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, read_structure_string, write_structure_string
-from protrepair.io.ingress_policy import StructureNormalizationPolicy
+from protrepair.io.ingress_policy import (
+    NonPolymerRetentionPolicy,
+    RetentionAction,
+    StructureNormalizationPolicy,
+)
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
+from protrepair.scope import ResidueSetScope
 from protrepair.structure.constitution import AtomSite, ResidueSite
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import BondRelationshipType
+from protrepair.transformer.atom_input import AtomInput, AtomInputBasis
+from protrepair.transformer.continuous.domain import ContinuousRelaxationRegion
 from protrepair.workflow.contracts import LigandPolicy
 
 
@@ -79,6 +87,85 @@ def _text(raw: gemmi.Structure, file_format: FileFormat) -> str:
         raw.make_pdb_string()
         if file_format is FileFormat.PDB
         else raw.make_mmcif_document().as_string()
+    )
+
+
+@pytest.mark.parametrize("file_format", (FileFormat.PDB, FileFormat.MMCIF))
+def test_typed_coordination_with_retained_water_survives_and_records_dropped_metal(
+    file_format,
+):
+    raw = _raw_site(donor_chain="W")
+    _add_polymer_anchor(raw)
+    text = _text(raw, file_format)
+    both = NonPolymerRetentionPolicy(RetentionAction.KEEP, RetentionAction.KEEP)
+    no_metal = StructureNormalizationPolicy(
+        non_polymer_retention=replace(both, other_default=RetentionAction.DROP)
+    )
+    source = read_structure_string(
+        text,
+        file_format,
+        policy=StructureNormalizationPolicy(non_polymer_retention=both),
+    )
+    assert len(source.constitution.waters) == 1
+    assert len(source.topology.bonds) == 1
+    assert (
+        source.topology.bonds[0].relationship_type
+        is BondRelationshipType.METAL_COORDINATION
+    )
+    for filtered in (
+        read_structure_string(text, file_format, policy=no_metal),
+        apply_structure_normalization_policy(source, policy=no_metal),
+    ):
+        assert not filtered.topology.bonds
+        assert filtered.constitution.waters == source.constitution.waters
+        obs = filtered.provenance.ingress.observation
+        assert obs is not None
+        missing = obs.unrepresented_coordination_connections(
+            filtered.constitution, filtered.geometry
+        )
+        assert len(missing) == 1
+        assert {p.component_id for p in missing[0].endpoint_pair()} == {"ZN", "HOH"}
+        assert diagnose_source_coordination_omissions(filtered) == ()
+
+
+def test_local_force_field_excludes_water_and_refuses_an_incident_coordination_link():
+    raw = _raw_site(donor_chain="W")
+    _add_polymer_anchor(raw)
+    policy = StructureNormalizationPolicy(
+        non_polymer_retention=NonPolymerRetentionPolicy(
+            RetentionAction.KEEP, RetentionAction.KEEP
+        )
+    )
+    source = read_structure_string(
+        _text(raw, FileFormat.MMCIF), FileFormat.MMCIF, policy=policy
+    )
+    snapshot = ProteinStructureSnapshot.from_structure(source)
+
+    def atoms(rid):
+        return AtomInput(
+            tuple(
+                source.constitution.atom_indices_for_residue_index(
+                    source.constitution.residue_index(rid)
+                )
+            ),
+            AtomInputBasis.RESIDUEWISE,
+            ResidueSetScope((rid,)),
+        )
+
+    with pytest.raises(RefinementError, match="retained water"):
+        ContinuousRelaxationRegion.from_inputs(
+            snapshot, atoms(ResidueId("A", 1)), context_radius_angstrom=0.0
+        )
+    with pytest.raises(RefinementError, match="retained water"):
+        ContinuousRelaxationRegion.from_inputs(
+            snapshot, atoms(ResidueId("W", 2)), context_radius_angstrom=0.0
+        )
+    region = ContinuousRelaxationRegion.from_inputs(
+        snapshot, atoms(ResidueId("A", 10)), context_radius_angstrom=1.0
+    )
+    assert (
+        source.constitution.residue_index(ResidueId("W", 2))
+        not in region.included_residue_indices
     )
 
 

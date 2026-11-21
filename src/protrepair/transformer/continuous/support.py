@@ -17,7 +17,7 @@ from protrepair.state.retained_non_polymer_chemistry import (
     resolve_retained_non_polymer_chemistry,
 )
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
@@ -87,12 +87,18 @@ def resolve_local_bond_planning_support(
 ) -> LocalBondPlanningSupportResolution:
     """Resolve local bond-planning support for one included residue."""
 
+    constitution = snapshot.structure.constitution
+    role = constitution.role_at(residue_index)
+    if role is ResidueRole.WATER:
+        return LocalBondPlanningSupportResolution(
+            mode=LocalBondPlanningSupportMode.UNSUPPORTED,
+            blocker_message="stationary retained water is outside the local force field",
+        )
     if component_library.get(residue_site.component_id) is not None:
         return LocalBondPlanningSupportResolution(
             mode=LocalBondPlanningSupportMode.TEMPLATE
         )
 
-    constitution = snapshot.structure.constitution
     movable_atom_index_set = set(movable_atom_indices)
     residue_has_movable_atom = any(
         constitution.atom_index_in_residue(residue_index, atom_site.name)
@@ -129,7 +135,7 @@ def resolve_local_bond_planning_support(
             mode=LocalBondPlanningSupportMode.TEMPLATE_LESS_PASSIVE_CONTEXT
         )
 
-    if not residue_site.is_hetero:
+    if role is not ResidueRole.LIGAND:
         return LocalBondPlanningSupportResolution(
             mode=LocalBondPlanningSupportMode.UNSUPPORTED
         )

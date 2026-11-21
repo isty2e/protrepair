@@ -12,11 +12,12 @@ from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryResolution,
 )
 from protrepair.structure.constitution import AtomSite as ConstitutionAtomSite
-from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
+from protrepair.structure.topology import BondRelationshipType
 from protrepair.transformer.atom_input import AtomInput
 from protrepair.transformer.continuous.bonds import (
     PlannedBond,
@@ -91,7 +92,6 @@ class ContinuousRelaxationRegion:
         # partners as fixed context, without expanding motion or spatial shells.
         # A shared omitted residue must not become two overlapping caps; proline
         # N also needs its intact ring rather than an NME replacement.
-        polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
         while True:
             omitted: dict[ResidueIndex, set[str]] = {}
             additions: set[ResidueIndex] = set()
@@ -118,8 +118,8 @@ class ContinuousRelaxationRegion:
                     names != {"C", "N"}
                     or bond.order != 1
                     or bond.aromatic
-                    or first.value >= polymer_count
-                    or second.value >= polymer_count
+                    or constitution.role_at(first) is not ResidueRole.POLYMER
+                    or constitution.role_at(second) is not ResidueRole.POLYMER
                 ):
                     additions.add(outside_residue)
                     continue
@@ -137,6 +137,31 @@ class ContinuousRelaxationRegion:
             if not additions:
                 break
             included_residue_index_set.update(additions)
+        if constitution.waters:
+            if any(
+                constitution.role_at(index) is ResidueRole.WATER
+                for index in included_residue_index_set
+            ):
+                raise RefinementError(
+                    "local refinement cannot include a retained water in its native region"
+                )
+            for bond in snapshot.structure.topology.bonds:
+                if bond.relationship_type is BondRelationshipType.HYDROGEN_BOND:
+                    continue
+                left, right = (
+                    constitution.residue_index_for_atom_index(i)
+                    for i in bond.endpoint_pair()
+                )
+                if (
+                    left in included_residue_index_set
+                    and constitution.role_at(right) is ResidueRole.WATER
+                ) or (
+                    right in included_residue_index_set
+                    and constitution.role_at(left) is ResidueRole.WATER
+                ):
+                    raise RefinementError(
+                        "local refinement cannot cut a declared link to retained water"
+                    )
         included_residue_indices = tuple(
             ResidueIndex(residue_index)
             for residue_index, residue_site in enumerate(

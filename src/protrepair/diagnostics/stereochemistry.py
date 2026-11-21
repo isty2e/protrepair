@@ -15,7 +15,7 @@ from protrepair.chemistry.standard.components import (
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import ResidueIndex
@@ -199,7 +199,6 @@ def _focused_polymer_residue_entries(
     """Return selected polymer residues in canonical structure order."""
 
     constitution = structure.constitution
-    polymer_residue_count = len(constitution.residue_slots) - len(constitution.ligands)
     indexed_residues = []
     for residue_id in frozenset(residue_ids):
         residue = constitution.residue_or_ligand(residue_id)
@@ -207,7 +206,7 @@ def _focused_polymer_residue_entries(
             continue
 
         residue_index = constitution.residue_index(residue_id)
-        if residue_index.value >= polymer_residue_count:
+        if constitution.role_at(residue_index) is not ResidueRole.POLYMER:
             continue
 
         indexed_residues.append((residue_index, residue))

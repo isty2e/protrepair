@@ -16,7 +16,7 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateSelectionBasis,
 )
 from protrepair.structure.aggregate import ProteinStructure, ResidueFacetPayload
-from protrepair.structure.constitution import AtomSite
+from protrepair.structure.constitution import AtomSite, ResidueRole
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import (
@@ -286,7 +286,7 @@ class PolymerMicrostatePatch(AminoAcidMicrostatePatch):
     ) -> None:
         constitution = self.source.constitution
         index = constitution.residue_index(self.residue_id)
-        if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+        if constitution.role_at(index) is not ResidueRole.POLYMER:
             raise ValueError("polymer microstate patches require a polymer residue")
         AminoAcidMicrostatePatch.__post_init__(
             self, override, applied_choice, preferences, context
@@ -316,9 +316,9 @@ def apply_polymer_microstate_patches(
         A patch is retained, stale, overlapping or physically incompatible.
     """
     constitution = structure.constitution
-    polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
     if any(
-        constitution.residue_index(patch.residue_id).value >= polymer_count
+        constitution.role_at(constitution.residue_index(patch.residue_id))
+        is not ResidueRole.POLYMER
         for patch in patches
     ):
         raise ValueError("polymer microstate patches require a polymer residue")

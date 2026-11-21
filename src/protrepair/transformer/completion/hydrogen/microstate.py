@@ -22,6 +22,7 @@ from protrepair.chemistry.microstate.resolution import (
 )
 from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import GeometryPlacementError, Vec3
+from protrepair.structure.constitution import ResidueRole
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.transformer.polymer_microstate import (
@@ -93,7 +94,7 @@ def place_polymer_microstate_hydrogens(
     """
     constitution = context.source.constitution
     index = constitution.residue_index(residue_id)
-    if index.value >= len(constitution.residue_slots) - len(constitution.ligands):
+    if constitution.role_at(index) is not ResidueRole.POLYMER:
         raise ValueError("polymer microstate placement requires a polymer residue")
     placements, applied, repositioned = _place_site_hydrogens(
         context,

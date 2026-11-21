@@ -4,8 +4,10 @@ from dataclasses import dataclass, replace
 
 from typing_extensions import Self
 
+from protrepair.chemistry import ComponentLibrary
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity
+from protrepair.diagnostics.water_contacts import stationary_water_refusal
 from protrepair.structure.aggregate import ProteinStructure
 
 
@@ -20,6 +22,17 @@ class TransformationResult:
     def __post_init__(self) -> None:
         object.__setattr__(self, "repairs", tuple(self.repairs))
         object.__setattr__(self, "issues", tuple(self.issues))
+
+    def checked_against_stationary_waters(
+        self, parent: ProteinStructure, component_library: ComponentLibrary
+    ) -> Self:
+        """Withhold this operation's edits and success events if a water contact regresses."""
+        refusal = stationary_water_refusal(
+            parent, self.structure, component_library=component_library
+        )
+        if refusal is None:
+            return self
+        return replace(self, structure=parent, repairs=(), issues=(refusal,))
 
     def has_errors(self) -> bool:
         """Return whether any validation issue is error-severity."""
