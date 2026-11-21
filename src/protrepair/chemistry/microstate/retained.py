@@ -23,6 +23,7 @@ from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
 from protrepair.geometry import Vec3
+from protrepair.structure.constitution import ResidueRole
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.peptide import PEPTIDE_CN_DISTANCE_MAX_ANGSTROM
 from protrepair.structure.topology import BondRelationshipType, TopologyBond
@@ -187,7 +188,7 @@ class RetainedAminoAcidContext(AminoAcidMicrostateContext):
         """
         constitution = self.source.constitution
         index = constitution.residue_index(residue_id)
-        if index.value < len(constitution.residue_slots) - len(constitution.ligands):
+        if constitution.role_at(index) is not ResidueRole.LIGAND:
             raise ValueError(
                 "retained amino-acid chemistry requires retained membership"
             )
@@ -347,7 +348,7 @@ class RetainedAminoAcidContext(AminoAcidMicrostateContext):
         """
         constitution = self.source.constitution
         index = constitution.residue_index(residue_id)
-        if index.value < len(constitution.residue_slots) - len(constitution.ligands):
+        if constitution.role_at(index) is not ResidueRole.LIGAND:
             raise ValueError("retained amino-acid sites require retained membership")
         if (
             not template.can_add_hydrogens()

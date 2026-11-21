@@ -69,7 +69,7 @@ from protrepair.state.topology import (
     residue_bond_topology_availability_state,
 )
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import BondRelationshipType
@@ -408,9 +408,20 @@ class StructureChemistryObservation:
                 "chemistry projection requires distinct residue identities"
             )
         selected = tuple(self._residue(residue_id) for residue_id in residue_ids)
+        constitution = self.context_structure.constitution
         return self._projection_facts(
-            residues=tuple(residue for residue in selected if not residue.is_hetero),
-            ligands=tuple(residue for residue in selected if residue.is_hetero),
+            residues=tuple(
+                residue
+                for residue in selected
+                if constitution.role_at(constitution.residue_index(residue.residue_id))
+                is ResidueRole.POLYMER
+            ),
+            ligands=tuple(
+                residue
+                for residue in selected
+                if constitution.role_at(constitution.residue_index(residue.residue_id))
+                is ResidueRole.LIGAND
+            ),
             blueprint_coverages=(),
         )
 

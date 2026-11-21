@@ -33,7 +33,11 @@ from protrepair.geometry.placement_vector import normalized_vector_or_none
 from protrepair.geometry.polyhedra import TetrahedralCenter
 from protrepair.geometry.vector import Vec3
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ResidueSite, StructureConstitution
+from protrepair.structure.constitution import (
+    ResidueRole,
+    ResidueSite,
+    StructureConstitution,
+)
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import (
@@ -205,12 +209,12 @@ class CysteineMichaelAdductBinding:
         bond, carbon, sulfur = attachments[0]
         constitution = structure.constitution
         partner = constitution.residue_or_ligand(sulfur.residue_id)
-        polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
         if (
             sulfur.atom_name != "SG"
             or partner is None
             or partner.component_id != "CYS"
-            or constitution.residue_index(sulfur.residue_id).value >= polymer_count
+            or constitution.role_at(constitution.residue_index(sulfur.residue_id))
+            is not ResidueRole.POLYMER
             or bond.relationship_type is not BondRelationshipType.COVALENT
             or bond.order not in (None, 1)
             or bond.aromatic

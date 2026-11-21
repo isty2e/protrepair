@@ -10,7 +10,13 @@ from protrepair import process_structure
 from protrepair.analysis import HydrogenLengthConvention
 from protrepair.diagnostics import IssueSeverity, RepairEventKind, ValidationIssueKind
 from protrepair.diagnostics.events import ValidationIssue
-from protrepair.io import FileFormat, read_structure_string
+from protrepair.io import (
+    FileFormat,
+    NonPolymerRetentionPolicy,
+    RetentionAction,
+    read_structure_string,
+)
+from protrepair.io.ingress_policy import StructureNormalizationPolicy
 from protrepair.scope import AbsentResidueSpanScope, WholeStructureScope
 from protrepair.state import BackboneHeavyAtomCompletenessState
 from protrepair.structure import AtomRef, ProteinStructure, ResidueId
@@ -22,6 +28,7 @@ from protrepair.workflow.contracts import (
     HydrogenLengthRequest,
     OrphanFragmentPolicy,
     ProcessResult,
+    StructureIngressOptions,
     WorkflowPlanningContext,
     WorkflowSpanDonorAvailability,
     WorkflowTransformRequests,
@@ -87,6 +94,47 @@ def _report(result: ProcessResult) -> ExternalSpanReconstructionReport:
     report = result.external_span_reconstruction_report
     assert report is not None
     return report
+
+
+@pytest.mark.parametrize("near", [False, True])
+def test_span_insertion_checks_retained_water_before_recording_success(
+    donor_rows, near
+):
+    fragment = tuple(r for r in donor_rows if 3 <= int(r[22:26]) <= 7)
+    donor = _read_rows(fragment)
+    source_rows = tuple(r for r in fragment if int(r[22:26]) != 5)
+    cb = next(r for r in fragment if int(r[22:26]) == 5 and r[12:16].strip() == "CB")
+    xyz = cb[30:54] if near else f"{90.0:8.3f}{90.0:8.3f}{90.0:8.3f}"
+    water = "HETATM  999  O   HOH W   1    " + xyz + "  1.00 11.00           O"
+    retention = NonPolymerRetentionPolicy(RetentionAction.KEEP, RetentionAction.DROP)
+    source = read_structure_string(
+        "\n".join((*source_rows, "TER", water, "END", "")),
+        FileFormat.PDB,
+        policy=StructureNormalizationPolicy(non_polymer_retention=retention),
+    )
+    target = ResidueId("A", 5)
+    result = process_structure(
+        source,
+        ingress=StructureIngressOptions(non_polymer_retention=retention),
+        transform_requests=WorkflowTransformRequests(
+            external_span_reconstructions=(_span_request(donor, target),)
+        ),
+    )
+    assert result.structure.constitution.waters == source.constitution.waters
+    (outcome,) = _report(result).outcomes
+    assert outcome.status is (
+        ExternalSpanReconstructionStatus.FAILED
+        if near
+        else ExternalSpanReconstructionStatus.APPLIED
+    )
+    assert (result.structure.constitution.residue_or_ligand(target) is None) == near
+    if near:
+        assert any(
+            issue.kind is ValidationIssueKind.SPAN_RECONSTRUCTION_FAILED
+            and "water" in issue.message
+            for issue in result.issues
+        )
+        assert not result.repairs
 
 
 def _budget(limit: int) -> WorkflowPlanningContext:

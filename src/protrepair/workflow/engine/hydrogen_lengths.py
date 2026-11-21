@@ -35,6 +35,7 @@ from protrepair.diagnostics.parser_readability import (
     RDKitNoConectParserReadabilityProbe,
     probe_rdkit_no_conect_parser_readability,
 )
+from protrepair.diagnostics.water_contacts import stationary_water_refusal
 from protrepair.errors import ModelInvariantError, RdkitUnavailableError
 from protrepair.geometry import Vec3
 from protrepair.scope import AtomSetScope
@@ -300,6 +301,15 @@ class WorkflowHydrogenLengthPlan:
         rejection = _endpoint_rejection(
             structure, candidate, candidate_rows, ready, before, component_library
         )
+        if rejection is None:
+            refusal = stationary_water_refusal(
+                structure,
+                candidate,
+                run_input=self.source,
+                component_library=component_library,
+            )
+            if refusal is not None:
+                rejection = refusal.message
         if rejection is not None:
             return (
                 structure,

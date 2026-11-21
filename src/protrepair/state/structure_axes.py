@@ -103,6 +103,7 @@ class ParserCompatibilityProfile(str, Enum):
     """Parser profile used for an observational compatibility fact."""
 
     RDKIT_NO_CONECT_SANITIZE = "rdkit_no_conect_sanitize"
+    NON_WATER_RDKIT_NO_CONECT_SANITIZE = "non_water_rdkit_no_conect_sanitize"
 
 
 class ParserCompatibilityState(str, Enum):

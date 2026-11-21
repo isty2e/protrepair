@@ -48,7 +48,12 @@ from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import Vec3
 from protrepair.io import read_structure, read_structure_string, write_structure_string
 from protrepair.io.gemmi_writer import pdb_atom_serial_by_atom_ref
-from protrepair.io.ingress_policy import LigandHandling, StructureNormalizationPolicy
+from protrepair.io.ingress_policy import (
+    LigandHandling,
+    NonPolymerRetentionPolicy,
+    RetentionAction,
+    StructureNormalizationPolicy,
+)
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.state import (
     HydrogenCoverageState,
@@ -251,6 +256,49 @@ def test_add_retained_non_polymer_hydrogens_hydrogenates_supported_ligands() -> 
         for repair in result.repairs
     )
     assert not result.issues
+
+
+@pytest.mark.parametrize("near", (True, False))
+def test_ligand_hydrogen_completion_checks_stationary_water_before_bond_publication(
+    near,
+):
+    rows = """HETATM    1  C1  LIG L   1       4.000   0.000   0.000  1.00 12.00           C
+HETATM    2  O1  LIG L   1       5.200   0.000   0.000  1.00 12.00           O
+HETATM    3  N1  LIG L   1       4.000   1.200   0.000  1.00 12.00           N
+"""
+    library = build_retained_non_polymer_component_library()
+    dry = read_structure_string(rows + "END\n", FileFormat.PDB)
+    control = add_retained_non_polymer_hydrogens(
+        dry, component_library=library, allow_retained_non_polymer_rdkit_fallback=False
+    )
+    rid = ResidueId("L", 1)
+    x, y, z = (
+        control.structure.residue_geometry(
+            control.structure.constitution.residue_index(rid)
+        ).position("H1")
+        if near
+        else (90.0, 90.0, 90.0)
+    )
+    water = f"HETATM    4  O   HOH W   1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00 12.00           O"
+    policy = StructureNormalizationPolicy(
+        non_polymer_retention=NonPolymerRetentionPolicy(
+            RetentionAction.KEEP, RetentionAction.KEEP
+        )
+    )
+    wet = read_structure_string(rows + water + "\nEND\n", FileFormat.PDB, policy=policy)
+    result = add_retained_non_polymer_hydrogens(
+        wet, component_library=library, allow_retained_non_polymer_rdkit_fallback=False
+    )
+    assert result.structure.constitution.waters == wet.constitution.waters
+    if near:
+        assert result.structure is wet and not result.repairs
+        assert result.structure.topology == wet.topology
+        assert any(
+            i.kind is ValidationIssueKind.RETAINED_WATER_REPAIR_REFUSED
+            for i in result.issues
+        )
+    else:
+        assert result.structure.constitution.ligands[0].has_atom_site("H1")
 
 
 def test_template_backed_retained_non_polymer_completion_preserves_source_h() -> None:

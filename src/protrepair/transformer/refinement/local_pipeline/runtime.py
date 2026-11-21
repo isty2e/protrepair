@@ -1,13 +1,15 @@
 """Runtime orchestration for the local refinement pipeline."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 
 from protrepair.chemistry import ComponentLibrary, RestraintLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
+from protrepair.diagnostics.water_contacts import stationary_water_refusal
 from protrepair.state.chemistry_observation import StructureChemistryObservation
+from protrepair.transformer.artifacts.patch import StructureDelta
 from protrepair.transformer.context import ProteinTransformationContext
 from protrepair.transformer.continuous.settings import ContinuousRelaxationSettings
 from protrepair.transformer.refinement.local_pipeline.assessment import (
@@ -217,10 +219,41 @@ def execute_local_refinement_pipeline_profiled(
     selection_runtime_ms = (perf_counter() - start) * 1000.0
 
     start = perf_counter()
-    result = materialize_selected_refinement_candidate(
-        selected_candidate,
-        request=request,
-    )
+    parent = request.context.source_snapshot.structure
+    remaining = assessed_batch
+    first_refusal = None
+    while True:
+        result = materialize_selected_refinement_candidate(
+            selected_candidate, request=request
+        )
+        refusal = stationary_water_refusal(
+            parent,
+            result.refined_structure,
+            component_library=request.component_library,
+        )
+        if refusal is None:
+            if first_refusal is not None and result.refined_structure is parent:
+                result = replace(result, issues=(*result.issues, first_refusal))
+            break
+        if first_refusal is None:
+            first_refusal = refusal
+        rejected = selected_candidate.require_candidate()
+        alternatives = tuple(
+            p for p in remaining.evaluated_proposals if p is not rejected
+        )
+        if not alternatives:
+            result = replace(
+                result,
+                refined_structure=parent,
+                delta=StructureDelta(
+                    before_constitution=parent.constitution,
+                    after_constitution=parent.constitution,
+                ),
+                issues=(first_refusal,),
+            )
+            break
+        remaining = replace(remaining, evaluated_proposals=alternatives)
+        selected_candidate = select_refinement_candidate(remaining)
     result = LocalRefinementResult.from_selection(
         result, relaxation_executions=assessed_batch.relaxation_executions
     )

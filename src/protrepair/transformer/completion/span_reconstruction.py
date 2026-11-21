@@ -22,6 +22,7 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateSelectionBasis,
 )
 from protrepair.diagnostics.peptide_geometry import PeptideJunctionGeometry
+from protrepair.diagnostics.water_contacts import stationary_water_refusal
 from protrepair.errors import ProtrepairError
 from protrepair.geometry import Vec3
 from protrepair.scope import AbsentResidueSpanScope
@@ -377,6 +378,11 @@ class ReconstructedSpanCandidate:
                 raise SpanChemistryConflictError(
                     "adopted donor chemistry conflicts with the source site"
                 )
+        refusal = stationary_water_refusal(
+            source, inserted, component_library=component_library
+        )
+        if refusal is not None:
+            raise SpanChemistryConflictError(refusal.message)
         return inserted
 
 

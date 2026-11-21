@@ -52,7 +52,7 @@ class StructureParserCompatibilityFacts:
         """Derive parser-profile compatibility facts from one structure."""
 
         metrics = measure_rdkit_no_conect_sanitize_readability_metrics(
-            structure,
+            structure.without_waters(),
             component_library=component_library,
         )
         if metrics.sanitize_readable is True:
@@ -64,7 +64,11 @@ class StructureParserCompatibilityFacts:
 
         return cls(
             carrier=structure,
-            profile=ParserCompatibilityProfile.RDKIT_NO_CONECT_SANITIZE,
+            profile=(
+                ParserCompatibilityProfile.NON_WATER_RDKIT_NO_CONECT_SANITIZE
+                if structure.constitution.waters
+                else ParserCompatibilityProfile.RDKIT_NO_CONECT_SANITIZE
+            ),
             compatibility_state=compatibility_state,
             extra_proximity_bond_count=metrics.extra_proximity_bond_count,
             extra_heavy_proximity_bond_count=metrics.extra_heavy_proximity_bond_count,

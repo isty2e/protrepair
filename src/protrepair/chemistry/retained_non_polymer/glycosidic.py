@@ -30,7 +30,7 @@ from protrepair.geometry.placement_vector import (
     normalized_vector_or_none,
 )
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import BondRelationshipType, TopologyBond
@@ -250,11 +250,10 @@ class GlycosidicTemplateBinding:
         donor_roles.require_donor(donor.atom_name)
 
         if acceptor_site.component_id == "ASN":
-            polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
             if (
                 acceptor.atom_name != "ND2"
-                or constitution.residue_index(acceptor.residue_id).value
-                >= polymer_count
+                or constitution.role_at(constitution.residue_index(acceptor.residue_id))
+                is not ResidueRole.POLYMER
             ):
                 raise ValueError("N-glycosylation requires polymer ASN ND2")
             self._require_asparagine_amide(acceptor_site, acceptor_template)

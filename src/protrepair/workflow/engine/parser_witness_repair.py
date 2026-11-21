@@ -62,10 +62,10 @@ def execute_bounded_parser_witness_repair_loop(
     )
     budget = DEFAULT_PARSER_WITNESS_REPAIR_BUDGET
     active_pdb_block_projector = prepare_rdkit_no_conect_pdb_block_projector(
-        active_result.structure
+        active_result.structure.without_waters()
     )
     active_parser_probe = probe_rdkit_no_conect_parser_readability(
-        active_result.structure,
+        active_result.structure.without_waters(),
         component_library=execution_context.component_library,
         pdb_block_projector=active_pdb_block_projector,
     )
@@ -108,7 +108,7 @@ def execute_bounded_parser_witness_repair_loop(
                 candidate=candidate,
             )
             candidate_parser_probe = probe_rdkit_no_conect_parser_readability(
-                candidate_result.structure,
+                candidate_result.structure.without_waters(),
                 component_library=execution_context.component_library,
                 pdb_block_projector=active_pdb_block_projector,
             )
@@ -121,7 +121,7 @@ def execute_bounded_parser_witness_repair_loop(
             active_result = candidate_result
             active_parser_probe = candidate_parser_probe
             active_pdb_block_projector = prepare_rdkit_no_conect_pdb_block_projector(
-                active_result.structure
+                active_result.structure.without_waters()
             )
             before_clusters = active_parser_probe.extra_proximity_bond_clusters()
             adopted_transformers.append(transformer)

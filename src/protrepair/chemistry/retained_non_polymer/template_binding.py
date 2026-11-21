@@ -24,7 +24,7 @@ from protrepair.chemistry.retained_non_polymer.michael_adduct import (
 )
 from protrepair.errors import UnsupportedCoordinationChemistryError
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ResidueSite
+from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.labels import AtomRef
 from protrepair.structure.topology import (
     BondRelationshipType,
@@ -385,13 +385,13 @@ class RetainedTemplateBinding:
         if not carbonyl_names:
             return
         constitution = structure.constitution
-        polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
         if not any(
             carbonyl.atom_name == "C"
             and carbonyl.atom_name in carbonyl_names
             and nitrogen.atom_name == "N"
             and bond.relationship_type is BondRelationshipType.COVALENT
-            and constitution.residue_index(nitrogen.residue_id).value < polymer_count
+            and constitution.role_at(constitution.residue_index(nitrogen.residue_id))
+            is ResidueRole.POLYMER
             and constitution.atom_site_at(constitution.atom_index(nitrogen)).element
             == "N"
             for bond, carbonyl, nitrogen in context.attachments

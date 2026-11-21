@@ -7,7 +7,7 @@ from protrepair.chemistry.component.topology import (
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.diagnostics.kinds import RepairEventKind
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import ChainSite
+from protrepair.structure.constitution import ChainSite, StructureConstitution
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.slots import ChainIndex, ResidueIndex
@@ -177,7 +177,7 @@ def augment_c_terminal_oxt(
         structure=augmented_structure,
         repairs=tuple(repairs),
         issues=tuple(issues),
-    )
+    ).checked_against_stationary_waters(structure, library)
 
 
 def _chain_snapshot(
@@ -192,9 +192,9 @@ def _chain_snapshot(
         chain_id=chain_id,
         residues=tuple(residue.residue_site for residue in chain_residues),
     )
-    chain_structure_constitution = source_structure.constitution.with_chains(
-        (chain_constitution,)
-    ).with_ligands(())
+    chain_structure_constitution = StructureConstitution(
+        chains=(chain_constitution,), ligands=(), waters=()
+    )
     chain_geometry = StructureGeometry(
         constitution=chain_structure_constitution,
         atom_geometries=tuple(

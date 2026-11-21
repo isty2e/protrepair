@@ -12,6 +12,7 @@ from typing_extensions import Self
 from protrepair.chemistry.standard.components import build_standard_component_library
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
+from protrepair.diagnostics.water_contacts import stationary_water_refusal
 from protrepair.errors import (
     PackingError,
     ProtrepairError,
@@ -181,6 +182,14 @@ class FasprPackingBackend:
             executable_path=runtime_assets.executable_path,
             timeout_seconds=self.timeout_seconds,
         )
+        refusal = stationary_water_refusal(plan.structure, packed_structure)
+        if refusal is not None:
+            return PackingResult(
+                packed_structure=plan.structure,
+                changed_residue_ids=(),
+                issues=(*issues, refusal),
+                backend_name="faspr",
+            )
         changed_residue_ids = plan.changed_residue_ids_after(packed_structure)
         issues = (*issues, *infer_packing_issues(plan, packed_structure))
         return PackingResult(
@@ -939,7 +948,7 @@ def _assert_faspr_output_size(path: Path) -> None:
 def _polymer_only_structure(structure: ProteinStructure) -> ProteinStructure:
     """Return one structure restricted to polymer constitution payload."""
 
-    polymer_only_constitution = structure.constitution.with_ligands(())
+    polymer_only_constitution = replace(structure.constitution, ligands=(), waters=())
     polymer_geometry = StructureGeometry(
         constitution=polymer_only_constitution,
         atom_geometries=tuple(
@@ -997,12 +1006,20 @@ def _merge_packed_polymer_with_original_ligands(
 ) -> ProteinStructure:
     """Return one packed polymer structure with original ligands restored."""
 
-    updated_constitution = _packed_constitution_with_preserved_hydrogens(
-        packed_core=packed_core,
-        original_structure=original_structure,
-    ).with_ligands(original_structure.constitution.ligands)
+    updated_constitution = replace(
+        _packed_constitution_with_preserved_hydrogens(
+            packed_core=packed_core,
+            original_structure=original_structure,
+        ),
+        ligands=original_structure.constitution.ligands,
+        waters=original_structure.constitution.waters,
+    )
     ligand_residue_id_set = frozenset(
-        ligand.residue_id for ligand in original_structure.constitution.ligands
+        site.residue_id
+        for site in (
+            *original_structure.constitution.ligands,
+            *original_structure.constitution.waters,
+        )
     )
     updated_geometry = StructureGeometry(
         constitution=updated_constitution,

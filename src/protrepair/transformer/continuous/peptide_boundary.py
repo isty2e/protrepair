@@ -8,6 +8,7 @@ from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemi
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.errors import RefinementError
+from protrepair.structure.constitution import ResidueRole
 from protrepair.structure.labels import AtomRef
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import BondRelationshipType
@@ -88,7 +89,6 @@ class PeptideBoundaryPlan:
         source = region.snapshot.structure
         constitution = source.constitution
         included = frozenset(region.included_atom_indices())
-        polymer_count = len(constitution.residue_slots) - len(constitution.ligands)
         neighbors: dict[AtomIndex, list[tuple[AtomIndex, PlannedBond]]] = defaultdict(
             list
         )
@@ -127,7 +127,9 @@ class PeptideBoundaryPlan:
                 for other, bond in neighbors[index]
                 if other not in included
             ]
-            if residue_index.value >= polymer_count or ref.atom_name not in {"N", "C"}:
+            if constitution.role_at(
+                residue_index
+            ) is not ResidueRole.POLYMER or ref.atom_name not in {"N", "C"}:
                 if outside:
                     raise RefinementError(f"non-peptide calculation cut at {ref}")
                 continue
@@ -153,8 +155,10 @@ class PeptideBoundaryPlan:
                     partner is None
                     or partner.residue_id == ref.residue_id
                     or {partner.atom_name, ref.atom_name} != {"C", "N"}
-                    or constitution.residue_index_for_atom_index(other).value
-                    >= polymer_count
+                    or constitution.role_at(
+                        constitution.residue_index_for_atom_index(other)
+                    )
+                    is not ResidueRole.POLYMER
                     or bond.order != 1
                     or bond.aromatic
                 ):

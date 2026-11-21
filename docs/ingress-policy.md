@@ -228,14 +228,55 @@ Each source residue slot receives one canonical role before
 - retained non-polymer
 - water
 
-The chain/ligand partition and `ResidueSite.is_hetero` are projections of this
+The polymer, ligand and water collections and `ResidueSite.is_hetero` reflect this
 decision. Completion, topology, diagnostics, and ligand handling must not
 reclassify residues independently.
 
 For structures built through the Python API, `StructureConstitution` takes
-membership in `chains` or `ligands` as the role and normalizes `is_hetero`
+membership in `chains`, `ligands` or `waters` as the role and normalizes `is_hetero`
 accordingly. Supplied member objects are not mutated. This does not classify
 components chemically or infer missing connections.
+
+### Keeping Selected Waters, Cofactors and Ions
+
+By default both readers and workflows discard water. Direct readers keep other
+non-polymers by default; workflows drop them. To change either default or select
+individual sites, pass the same retention policy to the reader or workflow:
+
+```python
+from protrepair.io import NonPolymerRetentionPolicy, ResidueRole, RetentionAction, RetentionRule
+from protrepair.io.ingress_policy import StructureNormalizationPolicy
+from protrepair.structure import ResidueId
+from protrepair.workflow.contracts import StructureIngressOptions
+
+keep, drop = RetentionAction.KEEP, RetentionAction.DROP
+retention = NonPolymerRetentionPolicy(
+    water_default=drop, other_default=drop,
+    rules=(
+        RetentionRule(keep, role=ResidueRole.WATER, chain_ids=("A",)),
+        RetentionRule(drop, role=ResidueRole.WATER, residue_ids=(ResidueId("A", 301),)),
+        RetentionRule(keep, component_ids=("HEM", "ZN")),
+    ),
+)
+reader_policy = StructureNormalizationPolicy(non_polymer_retention=retention)
+workflow_ingress = StructureIngressOptions(non_polymer_retention=retention)
+```
+
+This example keeps chain A waters except A:301, plus heme and zinc. Rules see
+the residue selected after alternate-location and component selection. All
+selectors on a rule must match; the last matching rule wins. A final
+`REJECT` stops the read. A rule cannot change polymer membership.
+
+Kept waters have their own `constitution.waters` collection. Reading an
+export again requires the retention policy again. If mmCIF identifies water
+by entity but PDB cannot identify it by component name, use mmCIF for output.
+
+During repair, retained waters stay at their input coordinates and outside
+the protein force field. A candidate that introduces a water clash or
+increases penetration for the same atom pair relative to the input or the
+preceding structure is withheld. The comparison allows 0.000001 angstrom
+of numerical noise. Improving a different pair cannot offset the clash.
+This stationary check does not jointly refine water or prepare solvent boxes.
 
 ### Evidence Precedence
 

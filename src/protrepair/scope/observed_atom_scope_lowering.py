@@ -143,13 +143,11 @@ OBSERVED_ATOM_SCOPE_LOWERING = ObservedAtomScopeLowering()
 def structure_ordered_atom_refs(
     snapshot: ProteinStructureSnapshot,
 ) -> tuple[AtomRef, ...]:
-    """Return atom refs in canonical structure order including ligands."""
+    """Return atom refs in canonical structure order, including ligands and retained waters."""
 
     return tuple(
         AtomRef(residue_id=residue.residue_id, atom_name=atom_site.name)
-        for residue in snapshot.structure.constitution.iter_residues(
-            include_ligands=True
-        )
+        for residue in snapshot.structure.constitution.residue_slots
         for atom_site in residue.atom_sites
     )
 

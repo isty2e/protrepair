@@ -160,7 +160,7 @@ def add_hydrogens(
         component_library=library,
         target_residue_ids=target_residue_ids,
         fixed_hydrogen_atom_refs=fixed_ligand_hydrogens,
-    )
+    ).checked_against_stationary_waters(structure, library)
 
 
 def _apply_hydrogen_cleanup_stage(

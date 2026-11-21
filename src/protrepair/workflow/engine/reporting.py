@@ -788,7 +788,7 @@ def _parser_compatibility_blocking_scopes(
         return ()
 
     parser_witness_clusters = rdkit_no_conect_extra_proximity_bond_clusters(
-        structure,
+        structure.without_waters(),
         component_library=component_library,
     )
     if not parser_witness_clusters:

@@ -523,10 +523,10 @@ class ParserWitnessPreUntangleTransformer(
             context.source_snapshot.structure
         ):
             pdb_block_projector = prepare_rdkit_no_conect_pdb_block_projector(
-                context.source_snapshot.structure,
+                context.source_snapshot.structure.without_waters(),
             )
         parser_witness_clusters = rdkit_no_conect_extra_proximity_bond_clusters(
-            context.source_snapshot.structure,
+            context.source_snapshot.structure.without_waters(),
             component_library=self._component_library,
             pdb_block_projector=pdb_block_projector,
         )
@@ -541,7 +541,7 @@ class ParserWitnessPreUntangleTransformer(
             len(cluster.bonds) for cluster in parser_witness_clusters
         )
         known_bond_lookup = prepare_rdkit_no_conect_known_bond_lookup(
-            context.source_snapshot.structure,
+            context.source_snapshot.structure.without_waters(),
             component_library=self._component_library,
         )
         contact_basis_cache = _ParserWitnessContactBasisCache(
@@ -773,7 +773,7 @@ def _eligible_parser_witness_clusters(
 
     return _eligible_parser_witness_clusters_from_candidates(
         rdkit_no_conect_extra_proximity_bond_clusters(
-            structure,
+            structure.without_waters(),
             component_library=component_library,
         ),
         atom_input,

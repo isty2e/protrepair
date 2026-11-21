@@ -117,7 +117,7 @@ class PolarContactChemistry:
                 return
             connect(left, right, bond)
 
-        for residue in constitution.residue_slots:
+        for residue in constitution.iter_residues(include_ligands=True):
             template = component_library.get(residue.component_id)
             if template is None:
                 continue
@@ -191,6 +191,36 @@ class PolarContactChemistry:
         for unresolved in unresolved_pairs:
             unavailable.update(unresolved)
 
+        # A selected water with one neutral oxygen needs no component-name
+        # template. This is a contact interpretation, never a topology write.
+        water_oxygens: set[AtomRef] = set()
+        for water in constitution.waters:
+            named = refs_by_residue[water.residue_id]
+            oxygens = [ref for ref in named.values() if self._atoms[ref].element == "O"]
+            if len(oxygens) != 1 or len(named) > 3:
+                unavailable.update(named.values())
+                continue
+            oxygen = oxygens[0]
+            if any(
+                ref in unavailable
+                or self._charges[ref] not in (None, 0)
+                or (ref != oxygen and not self._atoms[ref].is_hydrogen())
+                or any(
+                    other.residue_id != water.residue_id
+                    or bond.order != 1
+                    or bond.aromatic
+                    or (oxygen not in (ref, other))
+                    for other, bond in neighbors[ref].items()
+                )
+                for ref in named.values()
+            ):
+                unavailable.update(named.values())
+                continue
+            water_oxygens.add(oxygen)
+            for ref in named.values():
+                if ref != oxygen:
+                    project(ref, oxygen, _Bond(1))
+
         self._neighbors = neighbors
         self._unavailable = frozenset(unavailable)
         self._anchors: dict[ResidueId, Mapping[str, str]] = {}
@@ -215,7 +245,8 @@ class PolarContactChemistry:
             self._acceptors[residue.residue_id] = frozenset(
                 site.name
                 for site in residue.atom_sites
-                if self._is_acceptor(named_refs[site.name])
+                if named_refs[site.name] in water_oxygens
+                or self._is_acceptor(named_refs[site.name])
             )
 
     def hydrogen_anchors(self, residue_id: ResidueId) -> Mapping[str, str]:

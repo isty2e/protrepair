@@ -116,6 +116,7 @@ from protrepair.transformer.completion.retained_non_polymer_hydrogen import (
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
+from protrepair.transformer.completion.targets import require_non_water_hydrogen_targets
 from protrepair.transformer.polymer_microstate import (
     apply_amino_acid_microstate_patches,
 )
@@ -279,6 +280,7 @@ def add_retained_non_polymer_hydrogens(
         if component_library is None
         else component_library
     )
+    require_non_water_hydrogen_targets(structure.constitution, target_residue_ids)
     active_target_residue_ids = (
         frozenset(ligand.residue_id for ligand in structure.constitution.ligands)
         if target_residue_ids is None
@@ -299,7 +301,7 @@ def add_retained_non_polymer_hydrogens(
         allow_retained_non_polymer_rdkit_fallback=(
             allow_retained_non_polymer_rdkit_fallback
         ),
-    )
+    ).checked_against_stationary_waters(structure, library)
 
 
 def _execute_retained_non_polymer_hydrogen_stage(

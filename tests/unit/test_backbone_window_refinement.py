@@ -128,8 +128,16 @@ def test_backbone_window_executor_uses_backbone_atom_input(
     assert captured_contexts[0].atom_input.realizes_residue_backbones()
 
 
+@pytest.mark.parametrize(
+    "reason",
+    (
+        ValidationIssueKind.REFINEMENT_REJECTED,
+        ValidationIssueKind.RETAINED_WATER_REPAIR_REFUSED,
+    ),
+)
 def test_backbone_window_executor_contextualizes_operator_rejection(
     monkeypatch: pytest.MonkeyPatch,
+    reason: ValidationIssueKind,
 ) -> None:
     """Backbone-window no-op rejection should name the insufficient operator."""
 
@@ -157,7 +165,7 @@ def test_backbone_window_executor_contextualizes_operator_rejection(
             ),
             issues=(
                 ValidationIssue(
-                    kind=ValidationIssueKind.REFINEMENT_REJECTED,
+                    kind=reason,
                     severity=IssueSeverity.INFO,
                     message="selected-region quality regressed",
                 ),
@@ -182,7 +190,7 @@ def test_backbone_window_executor_contextualizes_operator_rejection(
     )
 
     assert result.moved_atom_count() == 0
-    assert result.issues[0].kind is ValidationIssueKind.REFINEMENT_REJECTED
+    assert result.issues[0].kind is reason
     assert result.issues[0].message.startswith(
         "backbone-window refinement was not sufficient: "
     )

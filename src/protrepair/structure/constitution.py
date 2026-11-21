@@ -2,6 +2,7 @@
 
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
+from enum import Enum
 
 from protrepair.errors import (
     AtomNotFoundError,
@@ -320,6 +321,14 @@ class ChainSite:
         )
 
 
+class ResidueRole(str, Enum):
+    """Membership of a selected residue in the canonical structure."""
+
+    POLYMER = "polymer"
+    LIGAND = "ligand"
+    WATER = "water"
+
+
 @dataclass(frozen=True, slots=True)
 class StructureConstitution:
     """One structure-level constitution over chains and retained components.
@@ -329,7 +338,9 @@ class StructureConstitution:
     chains : tuple[ChainSite, ...]
         Polymer chains. Their residues receive ``is_hetero=False``.
     ligands : tuple[ResidueSite, ...]
-        Retained components. Their residues receive ``is_hetero=True``.
+        Retained non-water non-polymers.
+    waters : tuple[ResidueSite, ...], default=()
+        Retained water sites, indexed after ligands. Both use hetero records.
 
     Notes
     -----
@@ -339,6 +350,7 @@ class StructureConstitution:
 
     chains: tuple[ChainSite, ...]
     ligands: tuple[ResidueSite, ...]
+    waters: tuple[ResidueSite, ...] = field(default=(), kw_only=True)
     residue_slots: tuple[ResidueSite, ...] = field(init=False, repr=False)
     atom_slots: tuple[AtomSite, ...] = field(init=False, repr=False)
     address_space_key: StructureAddressSpaceKey = field(init=False, repr=False)
@@ -381,6 +393,10 @@ class StructureConstitution:
             residue if residue.is_hetero else replace(residue, is_hetero=True)
             for residue in self.ligands
         )
+        waters = tuple(
+            residue if residue.is_hetero else replace(residue, is_hetero=True)
+            for residue in self.waters
+        )
         chain_ids = tuple(chain.chain_id for chain in chains)
 
         if len(chain_ids) != len(set(chain_ids)):
@@ -389,7 +405,9 @@ class StructureConstitution:
             )
 
         residue_slots = (
-            tuple(residue for chain in chains for residue in chain.residues) + ligands
+            tuple(residue for chain in chains for residue in chain.residues)
+            + ligands
+            + waters
         )
         residue_ids = tuple(residue.residue_id for residue in residue_slots)
         if len(residue_ids) != len(set(residue_ids)):
@@ -434,6 +452,7 @@ class StructureConstitution:
 
         object.__setattr__(self, "chains", chains)
         object.__setattr__(self, "ligands", ligands)
+        object.__setattr__(self, "waters", waters)
         object.__setattr__(self, "residue_slots", residue_slots)
         object.__setattr__(self, "atom_slots", tuple(atom_slots))
         object.__setattr__(
@@ -603,10 +622,7 @@ class StructureConstitution:
     def with_chains(self, chains: Iterable[ChainSite]) -> "StructureConstitution":
         """Return a copy with an explicit chain replacement."""
 
-        return type(self)(
-            chains=tuple(chains),
-            ligands=self.ligands,
-        )
+        return replace(self, chains=tuple(chains))
 
     def with_ligands(
         self,
@@ -614,10 +630,18 @@ class StructureConstitution:
     ) -> "StructureConstitution":
         """Return a copy with an explicit ligand replacement."""
 
-        return type(self)(
-            chains=self.chains,
-            ligands=tuple(ligands),
-        )
+        return replace(self, ligands=tuple(ligands))
+
+    def role_at(self, residue_index: ResidueIndex) -> ResidueRole:
+        """Return the membership of a canonical residue slot."""
+        after_ligands = len(self.residue_slots) - len(self.waters)
+        if not 0 <= residue_index.value < len(self.residue_slots):
+            raise IndexError(residue_index.value)
+        if residue_index.value >= after_ligands:
+            return ResidueRole.WATER
+        if residue_index.value >= after_ligands - len(self.ligands):
+            return ResidueRole.LIGAND
+        return ResidueRole.POLYMER
 
     def with_updated_chain(self, chain: ChainSite) -> "StructureConstitution":
         """Return a copy with one chain replaced by identifier."""

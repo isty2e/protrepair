@@ -237,7 +237,7 @@ def _active_parser_witness_clusters(
         return clusters
 
     return rdkit_no_conect_extra_proximity_bond_clusters(
-        structure,
+        structure.without_waters(),
         component_library=component_library,
     )
 

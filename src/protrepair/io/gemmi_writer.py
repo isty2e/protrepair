@@ -31,7 +31,7 @@ from protrepair.io.pdb_records import (
     pdb_text_field_fits,
 )
 from protrepair.structure.aggregate import ProteinStructure
-from protrepair.structure.constitution import AtomSite, ResidueSite
+from protrepair.structure.constitution import AtomSite, ResidueRole, ResidueSite
 from protrepair.structure.disulfide import disulfide_atom_ref_pair
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
 from protrepair.structure.labels import AtomRef
@@ -233,7 +233,15 @@ def _validate_pdb_output(
         raise StructureSerializationError(
             "PDB atom serial capacity exceeded; use mmCIF"
         )
-    for residue in structure.constitution.iter_residues(include_ligands=True):
+    for water in structure.constitution.waters:
+        emitted = gemmi.Residue()
+        emitted.name = water.component_id
+        if not emitted.is_water():
+            raise StructureSerializationError(
+                f"PDB cannot preserve the water role of {water.component_id} "
+                f"at {water.residue_id.display_token()}; use mmCIF"
+            )
+    for residue in structure.constitution.residue_slots:
         label = residue.residue_id.display_token()
         _require_pdb_field(residue.residue_id.chain_id, 2, f"chain ID at {label}")
         _require_pdb_field(residue.component_id, 3, f"component ID at {label}")
@@ -614,15 +622,16 @@ def build_gemmi_structure(
                 residue_site.residue_id
             )
             residue_geometry = structure.residue_geometry(residue_index)
-            raw_chain.add_residue(
-                build_gemmi_residue(
-                    residue_site,
-                    residue_geometry=residue_geometry,
-                    formal_charge_by_atom_name=(
-                        structure.residue_formal_charge_by_atom_name(residue_index)
-                    ),
-                )
+            projected = build_gemmi_residue(
+                residue_site,
+                residue_geometry=residue_geometry,
+                formal_charge_by_atom_name=(
+                    structure.residue_formal_charge_by_atom_name(residue_index)
+                ),
             )
+            if structure.constitution.role_at(residue_index) is ResidueRole.WATER:
+                projected.entity_type = gemmi.EntityType.Water
+            raw_chain.add_residue(projected)
 
         model.add_chain(raw_chain)
 
@@ -1143,7 +1152,7 @@ def residues_by_chain_id(
     }
     polymer_chain_ids = tuple(chain.chain_id for chain in structure.constitution.chains)
 
-    for ligand in structure.constitution.ligands:
+    for ligand in (*structure.constitution.ligands, *structure.constitution.waters):
         chain_id = ligand.residue_id.chain_id
         if chain_id not in grouped_residues:
             grouped_residues[chain_id] = []

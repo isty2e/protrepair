@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 
 from protrepair.diagnostics.clashes import detect_clashes_from_context
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
+from protrepair.diagnostics.water_contacts import stationary_water_refusal
 from protrepair.errors import RefinementError
 from protrepair.scope import AtomSetScope
 from protrepair.state.bonded_geometry import BondedGeometryObservation, BondedTerm
@@ -145,6 +146,22 @@ class BondedGeometryRepairTransformer(WorkflowStructureTransformer):
             )
 
         endpoint = trial.refined_structure
+        if parent.constitution.waters:
+            refusal = stationary_water_refusal(
+                parent,
+                endpoint,
+                run_input=context.original_structure,
+                component_library=context.component_library,
+            )
+            if refusal is not None:
+                return _TrialCodomain(
+                    scope=self.scope,
+                    state=parent,
+                    issues=(refusal,),
+                    relaxation_executions=execution,
+                    feedback=BondedGeometryFeedback(refusal.message),
+                )
+
         changed = self._verified_moves(parent, endpoint)
         if changed is None or any(
             frozenset(record.movable_scope.atom_refs) != frozenset(self.scope.atom_refs)
