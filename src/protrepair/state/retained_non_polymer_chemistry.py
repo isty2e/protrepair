@@ -24,6 +24,7 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_heavy_atom_elements,
     retained_non_polymer_evidence_heavy_bond_definitions,
     retained_non_polymer_evidence_hydrogen_bond_definitions,
+    retained_orthophosphate_hydrogen_parents,
 )
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
@@ -39,6 +40,9 @@ from protrepair.chemistry.retained_non_polymer.covalent_context import (
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
+)
+from protrepair.chemistry.retained_non_polymer.orthophosphate import (
+    DepositedOrthophosphate,
 )
 from protrepair.chemistry.retained_non_polymer.template_binding import (
     RetainedTemplateBinding,
@@ -64,6 +68,7 @@ class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
 
     TEMPLATE = "template"
     EXTERNAL_OVERRIDE = "external_override"
+    DEPOSITED_CCD_MODEL = "deposited_ccd_model"
     COORDINATION_PREPARATION = "coordination_preparation"
     ATOMIC_INVENTORY = "atomic_inventory"
     AMINO_ACID_PREPARATION = "amino_acid_preparation"
@@ -762,6 +767,7 @@ def _resolve_retained_non_polymer_chemistry_source(
 
     if evidence is not None:
         try:
+            retained_orthophosphate_hydrogen_parents(evidence, structure)
             external_bonds = retained_non_polymer_evidence_external_bonds(
                 evidence, structure
             )
@@ -810,6 +816,8 @@ def _resolve_retained_non_polymer_chemistry_source(
             source=(
                 RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION
                 if preparation is not None
+                else RetainedNonPolymerChemistryEvidenceSource.DEPOSITED_CCD_MODEL
+                if isinstance(evidence, DepositedOrthophosphate)
                 else RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
             ),
             expected_heavy_atom_names=evidence.heavy_atom_names,

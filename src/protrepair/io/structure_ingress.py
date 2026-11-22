@@ -555,6 +555,7 @@ def normalize_raw_structure(
         constitution=constitution,
         geometry=geometry,
         topology=topology,
+        source_connections=projected_source_connections,
         excluded_coordination_connections=_excluded_coordination_connections(
             source_connections,
             excluded_source_endpoints,

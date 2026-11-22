@@ -159,7 +159,10 @@ def resolve_local_bond_planning_support(
         coordination_bonds=chemistry_resolution.coordination_bonds,
     )
     allowed_sources = (
-        {RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE}
+        {
+            RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE,
+            RetainedNonPolymerChemistryEvidenceSource.DEPOSITED_CCD_MODEL,
+        }
         if explicit_evidence is not None
         else {RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION}
     )

@@ -4,6 +4,8 @@
 
 ### Added
 
+- prepare retained inorganic phosphate using the deposited PO4, PI or 2HP
+  model when requested, with per-site chemistry overrides taking precedence
 - select waters, ions and cofactors with ordered non-polymer retention rules. Keep
   selected waters stationary during protein repair and withhold candidates that
   introduce or worsen a clash at a water contact
