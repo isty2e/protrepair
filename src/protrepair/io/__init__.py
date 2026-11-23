@@ -8,6 +8,9 @@ from protrepair.io.ingress_policy import (
     RetentionRule,
 )
 from protrepair.io.rdkit import to_rdkit_molecule
+from protrepair.io.retained_component_definitions import (
+    read_retained_component_definitions,
+)
 from protrepair.structure.constitution import ResidueRole
 from protrepair.structure.provenance import FileFormat
 
@@ -17,6 +20,7 @@ __all__ = [
     "ResidueRole",
     "RetentionAction",
     "RetentionRule",
+    "read_retained_component_definitions",
     "read_structure",
     "read_structure_string",
     "to_rdkit_molecule",

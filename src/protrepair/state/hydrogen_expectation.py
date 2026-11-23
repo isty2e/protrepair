@@ -8,7 +8,7 @@ from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
     evidence_by_residue_id,
 )
 from protrepair.state.polymer_reference_hydrogen import (
@@ -52,7 +52,7 @@ class StructureHydrogenExpectationModel:
         ResidueId,
         RetainedNonPolymerChemistryResolution,
     ]
-    _retained_evidence: tuple[RetainedNonPolymerChemistryEvidence, ...]
+    _retained_evidence: tuple[SelectedRetainedChemistry, ...]
     _allow_rdkit_fallback: bool
 
     def __init__(
@@ -62,7 +62,7 @@ class StructureHydrogenExpectationModel:
         component_library: ComponentLibrary,
         allow_retained_non_polymer_rdkit_fallback: bool = True,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence, ...
+            SelectedRetainedChemistry, ...
         ] = (),
     ) -> None:
         evidence_map = evidence_by_residue_id(retained_non_polymer_chemistry_evidence)
@@ -140,7 +140,7 @@ class StructureHydrogenExpectationModel:
         *,
         component_library: ComponentLibrary,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence, ...
+            SelectedRetainedChemistry, ...
         ] = (),
         allow_retained_non_polymer_rdkit_fallback: bool = True,
     ) -> bool:

@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.errors import RefinementError
 from protrepair.state.retained_non_polymer_chemistry import (
@@ -25,7 +25,7 @@ def continuous_bond_realizability_error(
     context_radius_angstrom: float = 6.0,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = (),
     retained_non_polymer_chemistry_resolution_by_residue_id: Mapping[
@@ -65,7 +65,7 @@ def continuous_region_bond_realizability_error(
     component_library: ComponentLibrary,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = (),
     retained_non_polymer_chemistry_resolution_by_residue_id: Mapping[
@@ -108,7 +108,7 @@ def continuous_bond_graph_is_realizable(
     context_radius_angstrom: float = 6.0,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = (),
     retained_non_polymer_chemistry_resolution_by_residue_id: Mapping[

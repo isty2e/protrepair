@@ -1,0 +1,217 @@
+data_AQ4
+_chem_comp.id AQ4
+_chem_comp.pdbx_formal_charge 0
+
+loop_
+_chem_comp_atom.comp_id
+_chem_comp_atom.atom_id
+_chem_comp_atom.type_symbol
+_chem_comp_atom.charge
+_chem_comp_atom.pdbx_aromatic_flag
+_chem_comp_atom.pdbx_stereo_config
+AQ4 C1 C 0 N N
+AQ4 C2 C 0 N N
+AQ4 C3 C 0 Y N
+AQ4 C4 C 0 Y N
+AQ4 C5 C 0 Y N
+AQ4 N1 N 0 N N
+AQ4 C6 C 0 Y N
+AQ4 C7 C 0 Y N
+AQ4 C8 C 0 Y N
+AQ4 C9 C 0 Y N
+AQ4 O1 O 0 N N
+AQ4 C10 C 0 N N
+AQ4 C11 C 0 N N
+AQ4 O2 O 0 N N
+AQ4 C12 C 0 N N
+AQ4 C13 C 0 Y N
+AQ4 O3 O 0 N N
+AQ4 C14 C 0 N N
+AQ4 C15 C 0 N N
+AQ4 O4 O 0 N N
+AQ4 C16 C 0 N N
+AQ4 C17 C 0 Y N
+AQ4 C18 C 0 Y N
+AQ4 N2 N 0 Y N
+AQ4 C19 C 0 Y N
+AQ4 N3 N 0 Y N
+AQ4 C20 C 0 Y N
+AQ4 C21 C 0 Y N
+AQ4 C22 C 0 Y N
+AQ4 H1 H 0 N N
+AQ4 H2 H 0 N N
+AQ4 H3 H 0 N N
+AQ4 H4 H 0 N N
+AQ4 H5 H 0 N N
+AQ4 H6 H 0 N N
+AQ4 H7 H 0 N N
+AQ4 H8 H 0 N N
+AQ4 H9 H 0 N N
+AQ4 H10 H 0 N N
+AQ4 H11 H 0 N N
+AQ4 H12 H 0 N N
+AQ4 H13 H 0 N N
+AQ4 H14 H 0 N N
+AQ4 H15 H 0 N N
+AQ4 H16 H 0 N N
+AQ4 H17 H 0 N N
+AQ4 H18 H 0 N N
+AQ4 H19 H 0 N N
+AQ4 H20 H 0 N N
+AQ4 H21 H 0 N N
+AQ4 H22 H 0 N N
+AQ4 H23 H 0 N N
+
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+_chem_comp_bond.pdbx_aromatic_flag
+_chem_comp_bond.pdbx_stereo_config
+AQ4 O2 C11 SING N N
+AQ4 O2 C12 SING N N
+AQ4 C11 C10 SING N N
+AQ4 C10 O1 SING N N
+AQ4 O1 C9 SING N N
+AQ4 C15 C14 SING N N
+AQ4 C15 O4 SING N N
+AQ4 C9 C8 DOUB Y N
+AQ4 C9 C13 SING Y N
+AQ4 C14 O3 SING N N
+AQ4 C8 C7 SING Y N
+AQ4 O3 C13 SING N N
+AQ4 C13 C17 DOUB Y N
+AQ4 N1 C5 SING N N
+AQ4 N1 C6 SING N N
+AQ4 C16 O4 SING N N
+AQ4 C20 C5 DOUB Y N
+AQ4 C20 C21 SING Y N
+AQ4 C5 C4 SING Y N
+AQ4 C21 C22 DOUB Y N
+AQ4 C4 C3 DOUB Y N
+AQ4 C22 C3 SING Y N
+AQ4 C3 C2 SING N N
+AQ4 C2 C1 TRIP N N
+AQ4 C7 C6 DOUB Y N
+AQ4 C7 C18 SING Y N
+AQ4 C6 N3 SING Y N
+AQ4 C17 C18 SING Y N
+AQ4 C18 N2 DOUB Y N
+AQ4 N3 C19 DOUB Y N
+AQ4 N2 C19 SING Y N
+AQ4 C1 H1 SING N N
+AQ4 C4 H2 SING N N
+AQ4 N1 H3 SING N N
+AQ4 C8 H4 SING N N
+AQ4 C10 H5 SING N N
+AQ4 C10 H6 SING N N
+AQ4 C11 H7 SING N N
+AQ4 C11 H8 SING N N
+AQ4 C12 H9 SING N N
+AQ4 C12 H10 SING N N
+AQ4 C12 H11 SING N N
+AQ4 C14 H12 SING N N
+AQ4 C14 H13 SING N N
+AQ4 C15 H14 SING N N
+AQ4 C15 H15 SING N N
+AQ4 C16 H16 SING N N
+AQ4 C16 H17 SING N N
+AQ4 C16 H18 SING N N
+AQ4 C17 H19 SING N N
+AQ4 C19 H20 SING N N
+AQ4 C20 H21 SING N N
+AQ4 C21 H22 SING N N
+AQ4 C22 H23 SING N N
+
+data_LAC
+_chem_comp.id LAC
+_chem_comp.pdbx_formal_charge 0
+
+loop_
+_chem_comp_atom.comp_id
+_chem_comp_atom.atom_id
+_chem_comp_atom.type_symbol
+_chem_comp_atom.charge
+_chem_comp_atom.pdbx_aromatic_flag
+_chem_comp_atom.pdbx_stereo_config
+_chem_comp_atom.pdbx_model_Cartn_x_ideal
+_chem_comp_atom.pdbx_model_Cartn_y_ideal
+_chem_comp_atom.pdbx_model_Cartn_z_ideal
+LAC C C 0 N N -0.123 -0.059 -0.715
+LAC CA C 0 N R 0.185 -0.428 0.713
+LAC CB C 0 N N 1.353 0.421 1.218
+LAC O O 0 N N -1.216 0.365 -1.006
+LAC OHN O 0 N N -0.964 -0.188 1.526
+LAC OXT O 0 N N 0.815 -0.202 -1.663
+LAC HA H 0 N N 0.454 -1.483 0.765
+LAC HB1 H 0 N N 1.577 0.154 2.251
+LAC HB2 H 0 N N 2.230 0.239 0.597
+LAC HB3 H 0 N N 1.084 1.476 1.165
+LAC H H 0 N N -1.168 0.753 1.451
+LAC HXT H 0 N N 0.617 0.034 -2.579
+
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+_chem_comp_bond.pdbx_aromatic_flag
+_chem_comp_bond.pdbx_stereo_config
+LAC C CA SING N N
+LAC C O DOUB N N
+LAC C OXT SING N N
+LAC CA CB SING N N
+LAC CA OHN SING N N
+LAC CA HA SING N N
+LAC CB HB1 SING N N
+LAC CB HB2 SING N N
+LAC CB HB3 SING N N
+LAC OHN H SING N N
+LAC OXT HXT SING N N
+
+data_FUM
+_chem_comp.id FUM
+_chem_comp.pdbx_formal_charge 0
+
+loop_
+_chem_comp_atom.comp_id
+_chem_comp_atom.atom_id
+_chem_comp_atom.type_symbol
+_chem_comp_atom.charge
+_chem_comp_atom.pdbx_aromatic_flag
+_chem_comp_atom.pdbx_stereo_config
+_chem_comp_atom.pdbx_model_Cartn_x_ideal
+_chem_comp_atom.pdbx_model_Cartn_y_ideal
+_chem_comp_atom.pdbx_model_Cartn_z_ideal
+FUM OXT O 0 N N 2.924 -0.826 0.000
+FUM C C 0 N N 1.902 0.052 -0.000
+FUM O O 0 N N 2.126 1.245 -0.000
+FUM C4 C 0 N N 0.510 -0.437 0.000
+FUM C5 C 0 N N -0.510 0.437 -0.000
+FUM C6 C 0 N N -1.902 -0.052 0.000
+FUM O7 O 0 N N -2.126 -1.245 0.000
+FUM O8 O 0 N N -2.924 0.826 -0.000
+FUM HXT H 0 N N 3.819 -0.458 0.000
+FUM H4 H 0 N N 0.310 -1.499 0.000
+FUM H5 H 0 N N -0.310 1.499 -0.000
+FUM HO8 H 0 N N -3.819 0.458 -0.000
+
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+_chem_comp_bond.pdbx_aromatic_flag
+_chem_comp_bond.pdbx_stereo_config
+FUM OXT C SING N N
+FUM OXT HXT SING N N
+FUM C O DOUB N N
+FUM C C4 SING N N
+FUM C4 C5 DOUB N E
+FUM C4 H4 SING N N
+FUM C5 C6 SING N N
+FUM C5 H5 SING N N
+FUM C6 O7 DOUB N N
+FUM C6 O8 SING N N
+FUM O8 HO8 SING N N

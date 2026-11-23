@@ -15,17 +15,39 @@ ProtRepair resolves retained-ligand chemistry in this order:
 4. RDKit fallback inference for components without a full active chemical
    reference, when fallback is allowed
 
-Existing hydrogen names are preferred when they are compatible with the
-resolved chemistry. Explicit overrides are validated against the retained
-heavy-atom set before workflow execution. Invalid SMILES/evidence mappings or
-mismatched overrides raise `ValueError`; they do not silently fall through to
-another chemistry source.
+A named SMILES override must match the retained heavy atoms before workflow
+execution. Invalid SMILES or atom mappings raise `ValueError`. A named
+dictionary assignment has separate file, address and chemistry checks.
 
 Retained templates include their declared H on atoms named `N` or `OXT`.
 Those names do not make a cofactor part of a polymer backbone. Polymer H
 preparation applies its own backbone and terminal rules; retained preparation
 uses the selected component state and its existing connection checks. This is
 dictionary-backed preparation, not pKa prediction.
+
+### Named Component Dictionaries
+
+A caller-supplied PDBx CCD definition describes one connected, closed-shell
+covalent molecule with at least two heavy atoms and its full hydrogen inventory.
+The reader checks named elements, charges, bond orders, aromaticity and declared
+R/S and E/Z stereo. An absent atom-charge column defaults to zero; an unknown
+atom charge is an error. Ideal coordinates are not placement targets.
+Supply a local file; ProtRepair does not fetch dictionaries.
+
+Assign the definition to one retained occurrence using the
+[ingress API](public-api.md#ingress-options). A missing target or a different
+component at that address is a request error. Once the address matches, an
+incompatible heavy scaffold, source or current attachment, observed H/D/T, charge
+or pose leaves that site unprepared. The issue identifies the selected chemistry
+and the cause. Other sites can still be prepared. A declared external chemical
+partner rules out the isolated model even if ingress excluded the partner.
+
+On a compatible site the hydrogen-completion goal adds the missing dictionary
+H names and publishes the corresponding bonds and charges. Observed H/D/T
+keep their coordinates and names. The repair event identifies model-assigned H
+and their parents. A complete H count alone does not establish that the selected
+graph was accepted. Supplying a graph does not make the ligand movable in a
+force field. Reapply the assignment when processing an exported structure.
 
 ### Retained Amino Acids
 

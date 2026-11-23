@@ -6,7 +6,7 @@ from enum import Enum
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
     evidence_by_residue_id,
 )
 from protrepair.diagnostics import ValidationIssueKind
@@ -75,7 +75,7 @@ def apply_repair_stage_local_refinement(
     component_library: ComponentLibrary,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = (),
     prerequisite_policy: RepairStageRefinementPrerequisitePolicy = (
@@ -275,7 +275,7 @@ def _apply_local_refinement_prerequisites(
     component_library: ComponentLibrary,
     allow_retained_non_polymer_rdkit_fallback: bool,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ],
 ) -> tuple[TransformationResult, StructureChemistryObservation]:
@@ -423,7 +423,7 @@ def _local_refinement_prerequisite_targets(
     component_library: ComponentLibrary,
     allow_retained_non_polymer_rdkit_fallback: bool,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ],
     chemistry_observation: StructureChemistryObservation,
@@ -527,7 +527,7 @@ def _strict_policy_blocks_retained_non_polymer_hydrogen_prerequisite(
     component_library: ComponentLibrary,
     explicit_evidence_by_residue_id: Mapping[
         ResidueId,
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
     ],
     allow_retained_non_polymer_rdkit_fallback: bool,
 ) -> bool:

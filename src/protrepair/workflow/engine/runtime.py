@@ -6,7 +6,7 @@ from functools import partial
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import ValidationIssueKind
@@ -99,9 +99,7 @@ class WorkflowPlanningSession:
     transform_requests: WorkflowTransformRequests
     component_library: ComponentLibrary
     planning_context: WorkflowPlanningContext
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ]
+    retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...]
     terminal_repair_requested: bool = False
     _outcomes_by_state: dict[
         int,
@@ -200,9 +198,7 @@ class WorkflowBranchEvaluator:
     planning_context: WorkflowPlanningContext
     already_satisfied_requested_goals: tuple[WorkflowGoal, ...]
     repair_refinement: RepairRefinementSpec | None = None
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ] = ()
+    retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = ()
     _evaluations_by_result_depth: dict[
         tuple[int, int],
         tuple[TransformationResult, WorkflowBranchEvaluation],
@@ -403,9 +399,7 @@ def execute_iterative_workflow(
     reference_structure: ProteinStructure | None,
     orphan_fragment_policy: OrphanFragmentPolicy,
     histidine_protonation: HistidineProtonationRequest,
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ] = (),
+    retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
     initial_issues: tuple[ValidationIssue, ...] = (),
     terminal_repair_requested: bool = False,
 ) -> WorkflowRuntimeResult:

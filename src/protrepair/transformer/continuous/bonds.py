@@ -203,8 +203,21 @@ def plan_continuous_region_bonds(
         residue_site = region.residue_site(residue_index)
         template = component_library.get(residue_site.component_id)
         residue_geometry = region.residue_geometry(residue_index)
+        support_resolution = support_by_residue_index[residue_index]
+        if (
+            support_resolution.mode
+            is LocalBondPlanningSupportMode.NAMED_GRAPH_PASSIVE_CONTEXT
+        ):
+            bond_set.update(
+                _residue_local_bonds(
+                    constitution,
+                    residue_index,
+                    residue_site,
+                    support_resolution.fallback_bond_definitions,
+                )
+            )
+            continue
         if template is None:
-            support_resolution = support_by_residue_index[residue_index]
             if (
                 support_resolution.mode
                 is LocalBondPlanningSupportMode.NONBONDING_PASSIVE_CONTEXT

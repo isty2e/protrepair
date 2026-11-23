@@ -1,0 +1,120 @@
+"""Named, isolated chemistry supplied for an explicitly selected retained site."""
+
+from collections import defaultdict
+from collections.abc import Mapping
+from dataclasses import dataclass
+
+from protrepair.structure.labels import ResidueId
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentAtom:
+    """One named CCD atom, including its authored charge and stereo."""
+
+    name: str
+    element: str
+    charge: int
+    aromatic: bool | None
+    stereo: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentBond:
+    """One canonical endpoint pair and its declared chemical attributes."""
+
+    first: str
+    second: str
+    order: str
+    aromatic: bool | None
+    stereo: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedComponentDefinition:
+    """Immutable named chemistry read from a local PDBx component dictionary."""
+
+    component_id: str
+    atoms: tuple[ComponentAtom, ...]
+    bonds: tuple[ComponentBond, ...]
+
+    @property
+    def heavy_atom_names(self) -> tuple[str, ...]:
+        """Return the heavy atom names in the native graph's order."""
+        return tuple(a.name for a in self.atoms if a.element != "H")
+
+    def hydrogen_slots(self) -> dict[str, tuple[str, ...]]:
+        """Group dictionary H names by their bonded heavy atom."""
+        hydrogen = {a.name for a in self.atoms if a.element == "H"}
+        slots: defaultdict[str, list[str]] = defaultdict(list)
+        for bond in self.bonds:
+            if bond.first in hydrogen:
+                slots[bond.second].append(bond.first)
+            elif bond.second in hydrogen:
+                slots[bond.first].append(bond.second)
+        return {parent: tuple(sorted(names)) for parent, names in slots.items()}
+
+    def occupied_slots(self, parents: Mapping[str, str]) -> dict[str, str]:
+        """Map observed H names to distinct dictionary slots on their verified parents."""
+        slots = self.hydrogen_slots()
+        names = {h: p for p, group in slots.items() for h in group}
+        assignment: dict[str, str] = {}
+        occupied: set[str] = set()
+        for name, parent in parents.items():
+            slot = self.slot_for_name(name, names)
+            if slot is not None:
+                if names[slot] != parent or slot in occupied:
+                    raise ValueError(
+                        f"conflicting observed H/D/T for dictionary slot {slot}"
+                    )
+                assignment[name] = slot
+                occupied.add(slot)
+        for name, parent in sorted(parents.items()):
+            if name not in assignment:
+                available = next(
+                    (s for s in slots.get(parent, ()) if s not in occupied), None
+                )
+                if available is None:
+                    raise ValueError(f"no dictionary H slot for {name} on {parent}")
+                assignment[name] = available
+                occupied.add(available)
+        return assignment
+
+    @staticmethod
+    def slot_for_name(name: str, names: Mapping[str, str]) -> str | None:
+        """Recognize a dictionary H name or its deposited isotope spelling."""
+        if name in names:
+            return name
+        alias = "H" + name[1:]
+        return alias if name.startswith(("D", "T")) and alias in names else None
+
+    def for_residue(self, residue_id: ResidueId) -> "RetainedComponentAssignment":
+        """Select this definition for one retained residue.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Exact normalized chain, residue number and insertion code.
+
+        Returns
+        -------
+        RetainedComponentAssignment
+            Chemistry selection for this site; retention is configured separately.
+        """
+        return RetainedComponentAssignment(residue_id, self)
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedComponentAssignment:
+    """A named chemical graph selected at one canonical residue address."""
+
+    residue_id: ResidueId
+    definition: RetainedComponentDefinition
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.residue_id, ResidueId):
+            raise TypeError("residue_id must be a ResidueId")
+
+    @property
+    def heavy_atom_names(self) -> tuple[str, ...]:
+        """Return the heavy atom correspondence of this selection."""
+        return self.definition.heavy_atom_names

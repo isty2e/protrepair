@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.transformer.completion.hydrogen.protonation import (
@@ -34,7 +34,7 @@ class TransformerExecutionContext:
     allow_retained_non_polymer_rdkit_fallback : bool
         Whether retained-component preparation may infer chemistry.
     retained_non_polymer_chemistry_evidence : tuple
-        RetainedNonPolymerChemistryEvidence values for explicit interpretation.
+        SelectedRetainedChemistry values for explicit interpretation.
     polymer_preparation : AminoAcidPreparation or None
         Optional non-semantic seed. Consumers rebind it to their exact current
         snapshot, library and requests; it is not proposal-time authority.
@@ -49,7 +49,7 @@ class TransformerExecutionContext:
     )
     allow_retained_non_polymer_rdkit_fallback: bool = True
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = ()
     polymer_preparation: AminoAcidPreparation | None = field(

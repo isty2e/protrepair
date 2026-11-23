@@ -2,7 +2,7 @@
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.diagnostics.geometry import (
     detect_heavy_geometry,
@@ -229,9 +229,7 @@ def evaluate_requested_goal_report(
     ] = (),
     already_satisfied_requested_goals: tuple[WorkflowGoal, ...] = (),
     chemistry_observation: StructureChemistryObservation | None = None,
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ] = (),
+    retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
 ) -> RequestedGoalReport:
     """Evaluate requested-goal outcomes against one final structure.
 
@@ -472,9 +470,7 @@ def evaluate_workflow_branch_quality_score(
     search_depth: int = 0,
     chemistry_observation: StructureChemistryObservation | None = None,
     repair_refinement: RepairRefinementSpec | None = None,
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ] = (),
+    retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
 ) -> WorkflowBranchQualityScore:
     """Return the canonical branch score projection for one workflow result.
 

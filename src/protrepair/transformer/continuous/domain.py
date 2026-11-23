@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.errors import RefinementError
 from protrepair.state.retained_non_polymer_chemistry import (
@@ -229,7 +229,7 @@ class ContinuousRelaxationRegion:
         *,
         allow_retained_non_polymer_rdkit_fallback: bool = True,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence,
+            SelectedRetainedChemistry,
             ...,
         ] = (),
         retained_non_polymer_chemistry_resolution_by_residue_id: Mapping[
@@ -290,7 +290,7 @@ class ContinuousRelaxationRegion:
         *,
         allow_retained_non_polymer_rdkit_fallback: bool = True,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence,
+            SelectedRetainedChemistry,
             ...,
         ] = (),
         retained_non_polymer_chemistry_resolution_by_residue_id: Mapping[
@@ -341,7 +341,7 @@ class ContinuousRelaxationProblem:
         component_library: ComponentLibrary,
         allow_retained_non_polymer_rdkit_fallback: bool = True,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence,
+            SelectedRetainedChemistry,
             ...,
         ] = (),
         retained_non_polymer_chemistry_resolution_by_residue_id: Mapping[

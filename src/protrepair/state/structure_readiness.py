@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.relation.blueprint import (
     StructureBlueprintCoverage,
@@ -108,9 +108,7 @@ def derive_structure_coverage_and_chemistry_readiness_facts(
     structure: ProteinStructure,
     *,
     component_library: ComponentLibrary | None = None,
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ] = (),
+    retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
 ) -> tuple[StructureCoverageFacts, StructureChemistryReadinessFacts]:
     """Derive split workflow facts from one shared structure observation."""
     from protrepair.state.chemistry_observation import StructureChemistryObservation
@@ -128,9 +126,7 @@ def derive_projection_coverage_and_chemistry_readiness_facts(
     residues: tuple[ResidueSite, ...],
     ligands: tuple[ResidueSite, ...] = (),
     component_library: ComponentLibrary | None = None,
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ] = (),
+    retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
     hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     chemistry_observation: "StructureChemistryObservation | None" = None,

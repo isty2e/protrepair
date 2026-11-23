@@ -10,7 +10,7 @@ from protrepair.chemistry import (
     build_default_restraint_library,
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.diagnostics.clashes import (
     ClashDetectionBasis,
@@ -73,7 +73,7 @@ class LocalRefinementRequest:
     chemistry_observation: StructureChemistryObservation
     allow_retained_non_polymer_rdkit_fallback: bool = True
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = ()
     pdb_block_projector: RDKitNoConectPDBBlockProjector | None = None
@@ -96,7 +96,7 @@ class LocalRefinementRequest:
         restraint_library: RestraintLibrary | None,
         allow_retained_non_polymer_rdkit_fallback: bool = True,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence,
+            SelectedRetainedChemistry,
             ...,
         ] = (),
         chemistry_observation: StructureChemistryObservation | None = None,

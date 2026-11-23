@@ -170,6 +170,46 @@ execution:
 
 Exact normalization precedence is defined in the [ingress policy](ingress-policy.md).
 
+To prepare a ligand from a local PDBx Chemical Component Dictionary (CCD)
+file, look up its component ID and assign the definition to its residue ID.
+For example, AQ4 occurs at chain A, residue 999 in 1M17:
+
+```python
+from protrepair import process_structure
+from protrepair.io import read_retained_component_definitions
+from protrepair.scope import WholeStructureScope
+from protrepair.state import HydrogenCoverageState
+from protrepair.structure import ResidueId
+from protrepair.workflow.contracts import (
+    LigandPolicy,
+    StructureIngressOptions,
+    requested_process_goal,
+)
+
+aq4 = read_retained_component_definitions("AQ4.cif")["AQ4"]
+result = process_structure(
+    "1M17.cif",
+    ingress=StructureIngressOptions(
+        ligand_policy=LigandPolicy.KEEP,
+        retained_non_polymer_chemistry_overrides=[aq4.for_residue(ResidueId("A", 999))],
+    ),
+    requested_goals=[
+        requested_process_goal(
+            scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE
+        )
+    ],
+)
+```
+
+To assign several copies, pass `[aq4.for_residue(rid) for rid in sites]` with the
+exact residue IDs, including any insertion codes. Find those IDs in
+`structure.constitution.ligands` after reading with the same retention and
+chain settings. Other copies keep their usual chemistry. To read several files,
+use `read_retained_component_definitions(*paths)`; duplicate component IDs in
+one lookup are an error. A site can have either a dictionary assignment or a
+named SMILES override, but not both. See the [retained-ligand policy](retained-ligand-policy.md#named-component-dictionaries)
+for supported chemistry and refusal conditions.
+
 To prepare retained phosphate under a hydrogen-completion goal, set
 `StructureIngressOptions(ligand_policy=LigandPolicy.KEEP, use_ccd_orthophosphate_models=True)`.
 The [PO4](https://www.rcsb.org/ligand/PO4) model assigns charge -3 and no

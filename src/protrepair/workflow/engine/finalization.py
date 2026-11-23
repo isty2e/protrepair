@@ -6,7 +6,7 @@ from protrepair.analysis.kinds import AnalysisKind
 from protrepair.analysis.runtime import build_analysis_bundle
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.diagnostics.events import EventScope, ValidationIssue
 from protrepair.diagnostics.geometry import detect_heavy_geometry
@@ -57,9 +57,7 @@ def finalize_workflow_result(
     repair_refinement: RepairRefinementSpec | None = None,
     hydrogen_length_plan: WorkflowHydrogenLengthPlan | None = None,
     span_reconstruction_evidence: SpanReconstructionEvidence | None = None,
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ] = (),
+    retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
 ) -> ProcessResult:
     """Select the preferred assessed branch and attach final diagnostics.
 

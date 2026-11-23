@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.diagnostics import ClashPolicy, has_clashes_in_residue_projection
 from protrepair.errors import RefinementError
@@ -332,7 +332,7 @@ def derive_atom_scope_continuous_relaxation_facts(
     context_radius_angstrom: float = 6.0,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = (),
     hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
@@ -520,7 +520,7 @@ def _derive_execution_region_readiness_facts(
     context_radius_angstrom: float = 6.0,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = (),
     chemistry_observation: StructureChemistryObservation,

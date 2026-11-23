@@ -7,7 +7,7 @@ from protrepair.chemistry import (
     build_default_component_library,
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
     evidence_by_residue_id,
 )
 from protrepair.diagnostics.events import ValidationIssue
@@ -564,7 +564,7 @@ def plan_workflow_actions(
     planner_memory: WorkflowPlannerMemory | None = None,
     planning_context: WorkflowPlanningContext | None = None,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = (),
     action_registry: tuple[
@@ -592,7 +592,7 @@ def plan_workflow_actions(
     planning_context : WorkflowPlanningContext or None
         Search and donor constraints, or defaults inferred from the request.
     retained_non_polymer_chemistry_evidence : tuple
-        Explicit RetainedNonPolymerChemistryEvidence values.
+        Explicit SelectedRetainedChemistry values.
     action_registry : tuple or None
         Available WorkflowActionRegistryEntry families, or the default registry.
     chemistry_observation : StructureChemistryObservation or None
