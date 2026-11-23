@@ -373,6 +373,8 @@ def project_zero_occupancy_omissions(
             source_connections=observation.unresolved_non_polymer_links,
             unresolved_polymer_endpoints=observation.unresolved_polymer_endpoints,
             unverified_polymer_ports=observation.unverified_polymer_ports,
+            deposited_peptide_boundaries=observation.deposited_peptide_boundaries,
+            unresolved_conect_ports=observation.unresolved_conect_ports,
         )
     return ProteinStructure.from_payload(
         constitution=constitution,

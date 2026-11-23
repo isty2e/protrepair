@@ -13,6 +13,13 @@ from protrepair.errors import (
     StructureInputTooLargeError,
     StructureNormalizationError,
 )
+from protrepair.io.deposited_peptide import (
+    MmcifSequenceSlot,
+    PdbSequenceSlot,
+    mmcif_peptide_boundaries,
+    pdb_peptide_boundaries,
+    pdb_seqres_sequences,
+)
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
@@ -35,6 +42,7 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.provenance import FileFormat
+from protrepair.structure.sequence_boundary import DepositedPeptideBoundary
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
     BondRelationshipType,
@@ -155,8 +163,10 @@ def _normalize_structure_text(
     source_orders_by_id: dict[str, int | None] = {}
     source_labels_by_residue: dict[ResidueId, frozenset[SourcePolymerLabels]] = {}
     pdb_cap_source = None
+    unresolved_conect_ports: frozenset[AtomRef] = frozenset()
     if file_format is FileFormat.PDB:
         raw_structure = gemmi.read_pdb_string(contents)
+        sequences = pdb_seqres_sequences(contents)
         observe_cap_paths = (
             policy.keeps_ligands()
             and len(raw_structure) != 0
@@ -168,26 +178,36 @@ def _normalize_structure_text(
             )
         )
         # Validate serials even without CONECT, independently of atom attributes.
-        atom_identity_by_serial = _first_model_unambiguous_pdb_atom_identities(contents)
+        atom_identity_by_serial, duplicate_ports = _first_model_pdb_atom_identities(
+            contents
+        )
         (
             pdb_conect_source_connections,
             first_model_conect_pairs,
             unbound_conect_atoms,
+            unresolved_conect_ports,
         ) = _pdb_conect_source_connections(
             contents,
             atom_identity_by_serial=atom_identity_by_serial,
             observe_cap_paths=observe_cap_paths,
+            observe_sequence_ports=bool(sequences),
+            duplicate_ports=duplicate_ports,
         )
         (
             source_element_by_atom_identity,
             source_annotations,
             peptide_break_after,
             adjacent_slots,
+            sequence_slots,
         ) = _pdb_source_atom_attributes(
             contents,
             prove_zero_occupancy=prove_zero_occupancy,
             prove_positive_occupancy=prove_whole_residue_omissions,
             observe_cap_paths=observe_cap_paths,
+            read_sequence_slots=bool(sequences),
+        )
+        sequence_boundaries = pdb_peptide_boundaries(
+            sequences, sequence_slots, peptide_break_after
         )
         if observe_cap_paths:
             pdb_cap_source = PdbCapSourceContext(
@@ -212,8 +232,10 @@ def _normalize_structure_text(
             source_element_by_atom_identity,
             source_annotations,
             source_labels_by_residue,
+            sequence_boundaries,
         ) = _mmcif_source_atom_attributes(
             source_document,
+            selected_model=raw_structure[0].num if len(raw_structure) else None,
             prove_zero_occupancy=prove_zero_occupancy,
             prove_whole_residue_omissions=prove_whole_residue_omissions,
         )
@@ -240,6 +262,8 @@ def _normalize_structure_text(
         source_annotations_by_atom_identity=source_annotations,
         source_peptide_break_after=peptide_break_after,
         source_labels_by_residue=source_labels_by_residue,
+        deposited_peptide_boundaries=sequence_boundaries,
+        unresolved_conect_ports=unresolved_conect_ports,
         pdb_cap_source=pdb_cap_source,
     )
 
@@ -417,10 +441,13 @@ def _pdb_conect_source_connections(
     *,
     atom_identity_by_serial: dict[int, SourceAtomIdentity],
     observe_cap_paths: bool,
+    observe_sequence_ports: bool,
+    duplicate_ports: dict[int, tuple[AtomRef, ...]],
 ) -> tuple[
     tuple[SourceConnection, ...],
     frozenset[tuple[SourceAtomIdentity, SourceAtomIdentity]],
     frozenset[SourceAtomIdentity],
+    frozenset[AtomRef],
 ]:
     """Decode CONECT and retain model and serial facts for cap qualification."""
 
@@ -431,10 +458,11 @@ def _pdb_conect_source_connections(
     seen_rows: set[tuple[int, tuple[int, ...]]] = set()
     unbound_atoms: set[SourceAtomIdentity] = set()
     first_model_serial_pairs: set[tuple[int, int]] = set()
+    unresolved_ports: set[AtomRef] = set()
     explicit_model_count = 0
     in_later_model = False
     for line in contents.splitlines():
-        if observe_cap_paths:
+        if observe_cap_paths or observe_sequence_ports:
             if line.startswith("MODEL"):
                 explicit_model_count += 1
                 in_later_model = explicit_model_count > 1
@@ -444,22 +472,36 @@ def _pdb_conect_source_connections(
             continue
 
         source, targets = _pdb_conect_serials(
-            line, observe_blank_source=observe_cap_paths
+            line, observe_blank_source=observe_cap_paths or observe_sequence_ports
         )
-        if not targets:
-            continue
-
-        if observe_cap_paths and (
+        unbound_serial = (observe_cap_paths or observe_sequence_ports) and (
             source is None
             or source not in atom_identity_by_serial
             or any(target not in atom_identity_by_serial for target in targets)
+        )
+        if unbound_serial or (
+            observe_sequence_ports and (not targets or source in targets)
         ):
-            unbound_atoms.update(
+            identifiable = tuple(
                 atom_identity_by_serial[serial]
                 for serial in (source, *targets)
                 if serial is not None and serial in atom_identity_by_serial
             )
-        if source is None or source not in atom_identity_by_serial:
+            if observe_cap_paths and targets and unbound_serial:
+                unbound_atoms.update(identifiable)
+            if observe_sequence_ports and not in_later_model:
+                unresolved_ports.update(
+                    atom.atom_ref
+                    for atom in identifiable
+                    if atom.atom_ref.atom_name in {"C", "N"}
+                )
+                unresolved_ports.update(
+                    ref
+                    for serial in (source, *targets)
+                    if serial is not None
+                    for ref in duplicate_ports.get(serial, ())
+                )
+        if not targets or source is None or source not in atom_identity_by_serial:
             continue
         if observe_cap_paths and not in_later_model:
             first_model_serial_pairs.update((source, target) for target in targets)
@@ -503,13 +545,14 @@ def _pdb_conect_source_connections(
         tuple(connections_by_pair.values()),
         frozenset(first_model_pairs),
         frozenset(unbound_atoms),
+        frozenset(unresolved_ports),
     )
 
 
-def _first_model_unambiguous_pdb_atom_identities(
+def _first_model_pdb_atom_identities(
     contents: str,
-) -> dict[int, SourceAtomIdentity]:
-    """Return source atom identities that unambiguously belong to model one.
+) -> tuple[dict[int, SourceAtomIdentity], dict[int, tuple[AtomRef, ...]]]:
+    """Separate usable first-model serials from possible ports on duplicate serials.
 
     CONECT is lowered onto the canonical first-model structure, so serial reuse
     in later MODEL sections does not make a first-model serial ambiguous. After
@@ -526,10 +569,15 @@ def _first_model_unambiguous_pdb_atom_identities(
         serial, identity = atom_serial_and_identity
         records_by_serial.setdefault(serial, []).append(identity)
 
-    return {
+    unique = {
         serial: records[0]
         for serial, records in records_by_serial.items()
         if len(records) == 1
+    }
+    return unique, {
+        serial: tuple(r.atom_ref for r in records if r.atom_ref.atom_name in {"C", "N"})
+        for serial, records in records_by_serial.items()
+        if len(records) > 1
     }
 
 
@@ -539,11 +587,13 @@ def _pdb_source_atom_attributes(
     prove_zero_occupancy: bool,
     prove_positive_occupancy: bool,
     observe_cap_paths: bool,
+    read_sequence_slots: bool,
 ) -> tuple[
     dict[SourceAtomIdentity, str],
     dict[SourceAtomIdentity, list[SourceAtomAnnotation]],
     frozenset[ResidueId],
     frozenset[tuple[ResidueId, ResidueId]],
+    list[PdbSequenceSlot],
 ]:
     """Read source atom annotations and TER boundaries before projection."""
 
@@ -553,16 +603,38 @@ def _pdb_source_atom_attributes(
     previous_residue: ResidueId | None = None
     source_slots: list[tuple[ResidueId, str, str]] = []
     previous_slot: tuple[ResidueId, str, str] | None = None
+    sequence_slots: list[PdbSequenceSlot] = []
+    sequence_key: tuple[ResidueId, str, str, bool] | None = None
+    unaddressable_chains: set[str] = set()
     for line in _first_model_pdb_coordinate_records(contents):
         if line[:6].strip() == "TER":
             if previous_residue is not None:
                 peptide_break_after.add(previous_residue)
             previous_slot = None
+            sequence_key = None
             continue
         identity = pdb_atom_identity(line)
         if identity is None:
+            if read_sequence_slots:
+                unaddressable_chains.add(normalize_chain_id(line[20:22]))
             continue
         previous_residue = identity.atom_ref.residue_id
+        if read_sequence_slots:
+            key = (
+                previous_residue,
+                identity.component_id,
+                line[72:76].strip(),
+                line.startswith("HETATM"),
+            )
+            if key != sequence_key:
+                sequence_slots.append(PdbSequenceSlot(*key))
+                sequence_key = key
+            if sequence_slots[-1].hetero and identity.atom_ref.atom_name in {
+                "N",
+                "CA",
+                "C",
+            }:
+                sequence_slots[-1].backbone_names.add(identity.atom_ref.atom_name)
         if observe_cap_paths:
             slot = (previous_residue, identity.component_id, line[72:76].strip())
             if slot != previous_slot:
@@ -620,28 +692,35 @@ def _pdb_source_atom_attributes(
         source_annotations,
         frozenset(peptide_break_after),
         adjacent_slots,
+        [
+            slot
+            for slot in sequence_slots
+            if slot.residue_id.chain_id not in unaddressable_chains
+        ],
     )
 
 
 def _mmcif_source_atom_attributes(
     document: gemmi.cif.Document,
     *,
+    selected_model: int | None,
     prove_zero_occupancy: bool,
     prove_whole_residue_omissions: bool,
 ) -> tuple[
     dict[SourceAtomIdentity, str],
     dict[SourceAtomIdentity, list[SourceAtomAnnotation]],
     dict[ResidueId, frozenset[SourcePolymerLabels]],
+    tuple[DepositedPeptideBoundary, ...],
 ]:
     """Read first-model atom annotations and uncollapsed polymer labels."""
 
     if len(document) == 0:
-        return {}, {}, {}
+        return {}, {}, {}, ()
 
     block = document[0]
     type_symbols = tuple(block.find_values("_atom_site.type_symbol"))
     if not type_symbols:
-        return {}, {}, {}
+        return {}, {}, {}, ()
 
     row_count = len(type_symbols)
     charge_tokens = _coalesced_mmcif_column(
@@ -717,16 +796,36 @@ def _mmcif_source_atom_attributes(
         ),
         "",
     )
+    label_components = (
+        block.find_values("_atom_site.label_comp_id")
+        if selected_model is not None and block.find_values("_entity_poly_seq.mon_id")
+        else None
+    )
+    if label_components and block.find_values("_atom_site.pdbx_PDB_model_num"):
+        try:
+            if int(first_model_number) != selected_model:
+                label_components = None
+        except ValueError:
+            label_components = None
+    sequence_slots: list[MmcifSequenceSlot] = []
+    unaddressable_chains: set[str] = set()
 
     source_elements: dict[SourceAtomIdentity, str] = {}
     source_annotations: dict[SourceAtomIdentity, list[SourceAtomAnnotation]] = {}
     source_labels: dict[ResidueId, set[SourcePolymerLabels]] = {}
     for row_index, source_symbol in enumerate(type_symbols):
         normalized_source_symbol = _non_null_cif_value(source_symbol).upper()
-        if (
-            first_model_number
-            and _non_null_cif_value(model_numbers[row_index]) != first_model_number
-        ):
+        model = _non_null_cif_value(model_numbers[row_index])
+        if first_model_number and model != first_model_number:
+            if label_components:
+                try:
+                    ambiguous_model = int(model) == selected_model
+                except ValueError:
+                    ambiguous_model = True
+                if ambiguous_model:
+                    unaddressable_chains.add(
+                        normalize_chain_id(_non_null_cif_value(chain_ids[row_index]))
+                    )
             continue
 
         atom_name = _non_null_cif_value(atom_names[row_index])
@@ -734,10 +833,14 @@ def _mmcif_source_atom_attributes(
         chain_id = _non_null_cif_value(chain_ids[row_index])
         sequence_number = _non_null_cif_value(sequence_numbers[row_index])
         if not atom_name or not component_id or not sequence_number:
+            if label_components:
+                unaddressable_chains.add(normalize_chain_id(chain_id))
             continue
         try:
             seq_num = int(sequence_number)
         except ValueError:
+            if label_components:
+                unaddressable_chains.add(normalize_chain_id(chain_id))
             continue
 
         residue_id = ResidueId(
@@ -757,10 +860,18 @@ def _mmcif_source_atom_attributes(
                 _non_null_cif_value(column[row_index])
                 for column in source_label_columns
             )
+            labels = SourcePolymerLabels(subchain_id, entity_id, position_token)
             if subchain_id or entity_id or position_token:
-                source_labels.setdefault(residue_id, set()).add(
-                    SourcePolymerLabels(subchain_id, entity_id, position_token)
+                source_labels.setdefault(residue_id, set()).add(labels)
+            if label_components:
+                row = MmcifSequenceSlot(
+                    residue_id,
+                    component_id,
+                    _non_null_cif_value(label_components[row_index]),
+                    labels,
                 )
+                if not sequence_slots or sequence_slots[-1] != row:
+                    sequence_slots.append(row)
 
         token = _non_null_cif_value(charge_tokens[row_index])
         try:
@@ -796,6 +907,11 @@ def _mmcif_source_atom_attributes(
         source_elements,
         source_annotations,
         {residue_id: frozenset(labels) for residue_id, labels in source_labels.items()},
+        mmcif_peptide_boundaries(
+            block, sequence_slots, unaddressable_chains=frozenset(unaddressable_chains)
+        )
+        if sequence_slots
+        else (),
     )
 
 
