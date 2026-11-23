@@ -385,6 +385,12 @@ mode for each generated H anchor:
 Existing source-explicit retained-ligand H bonds remain authoritative when the
 same endpoint pair is regenerated during hydrogen completion.
 
+When a polymer cysteine's sulfur is neither crosslinked nor metal-coordinated,
+an explicit `SG` charge of `-1` prevents hydrogen completion from adding `HG`.
+If the input already has H, D or T on that sulfur, completion keeps the atom
+and the charge and reports the contradiction. A blank or zero sulfur charge
+keeps the usual thiol preparation.
+
 ### Disulfide Chemistry
 
 A canonical `COVALENT` or `DISULFIDE` bond between two CYS `SG` atoms defines

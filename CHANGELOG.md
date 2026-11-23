@@ -198,6 +198,10 @@
 
 ### Fixed
 
+- preserve an explicit `SG=-1` when adding hydrogens to an unlinked polymer
+  cysteine. If the input also places H, D or T on that sulfur, keep both
+  declarations and report the conflict
+
 - write readable mmCIF for PDB inputs with blank chain IDs by quoting subchain
   declarations without renaming the chains
 

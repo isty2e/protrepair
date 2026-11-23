@@ -1,6 +1,12 @@
 """Diagnostic projection of unresolved fixed polymer H inventories."""
 
-from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from protrepair.chemistry.microstate.context import input_declares_thiolate
+from protrepair.chemistry.microstate.preparation import (
+    AminoAcidPreparation,
+    AminoAcidSitePreparation,
+)
+from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.chemistry.peptide_caps import LinkedPeptideCap
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
@@ -16,6 +22,40 @@ def linked_cap_issue(cap: LinkedPeptideCap, detail: str) -> ValidationIssue:
         residue_id=cap.residue_id,
         component_id=cap.component_id,
         message=f"Linked cap hydrogenation unavailable: {detail}",
+    )
+
+
+def declared_thiolate_conflict(
+    target: AminoAcidSitePreparation,
+) -> ValidationIssue | None:
+    """Report a conflicting sulfur assignment even if no hydrogen needs adding.
+
+    Parameters
+    ----------
+    target : AminoAcidSitePreparation
+        Site bound to the structure being diagnosed.
+
+    Returns
+    -------
+    ValidationIssue or None
+        The contradiction on a declared cysteine thiolate, if present.
+    """
+    if (
+        target.resolution.status is not MicrostateResolutionStatus.CONFLICT
+        or target.site.kind is not PolymerChemicalSite.SIDECHAIN
+        or target.site.template.component_id != "CYS"
+        or not input_declares_thiolate(target.context.source, target.residue_id)
+    ):
+        return None
+    detail = "; ".join(target.resolution.details)
+    reason = f": {detail}" if detail else ""
+    return ValidationIssue.for_residue(
+        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+        severity=IssueSeverity.WARNING,
+        residue_id=target.residue_id,
+        component_id="CYS",
+        atom_names=("SG",),
+        message=f"Cysteine SG has charge -1 but its site evidence is incompatible with a thiolate{reason}; left unchanged.",
     )
 
 

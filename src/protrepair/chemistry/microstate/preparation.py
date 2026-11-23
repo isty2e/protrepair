@@ -1147,8 +1147,8 @@ def pras_polymer_microstate_sites(
         Catalogued side-chain sites plus backbone N/C sites. Unbonded outer
         chain ends receive a marked free-terminal preparation assumption; current
         external relationships and original evidence cannot be overridden by it.
-        CYS uses a microstate site here only with a current or original typed
-        coordination context; ordinary CYS retains its fixed-template path.
+        Uncrosslinked CYS uses a coupled site for a declared thiolate or typed
+        coordination. Unannotated, uncoordinated CYS keeps its fixed template.
         No pKa prediction or biological completeness claim is made.
 
     Raises
@@ -1159,49 +1159,13 @@ def pras_polymer_microstate_sites(
         The residue is not polymer.
     """
     sites = []
-    if (
-        standard_microstate_candidates(
-            template.component_id, PolymerChemicalSite.SIDECHAIN, PeptideLinkage.UNKNOWN
-        )
-        is not None
+    if standard_microstate_candidates(
+        template.component_id, PolymerChemicalSite.SIDECHAIN, PeptideLinkage.UNKNOWN
+    ) is not None and (
+        template.component_id != "CYS"
+        or context.has_coupled_cysteine_sulfur(residue_id)
     ):
-        residue = context.source.constitution.residue_or_ligand(residue_id)
-        covalent_sulfur = (
-            template.component_id == "CYS"
-            and residue is not None
-            and residue.has_atom_site("SG")
-            and any(
-                bond.relationship_type
-                not in (
-                    BondRelationshipType.HYDROGEN_BOND,
-                    BondRelationshipType.METAL_COORDINATION,
-                )
-                for bond in context.external_heavy_bonds(AtomRef(residue_id, "SG"))
-            )
-        )
-        coordinated_sulfur = template.component_id != "CYS" or (
-            residue is not None
-            and residue.has_atom_site("SG")
-            and (
-                any(
-                    bond.relationship_type is BondRelationshipType.METAL_COORDINATION
-                    for bond in context.external_heavy_bonds(AtomRef(residue_id, "SG"))
-                )
-                or (
-                    (observation := context.source.provenance.ingress.observation)
-                    is not None
-                    and any(
-                        bond.relationship_type
-                        is BondRelationshipType.METAL_COORDINATION
-                        for bond in observation.bonds_for_atom(
-                            AtomRef(residue_id, "SG")
-                        )
-                    )
-                )
-            )
-        )
-        if not covalent_sulfur and coordinated_sulfur:
-            sites.append(PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN))
+        sites.append(PolymerMicrostateSite(template, PolymerChemicalSite.SIDECHAIN))
     sites.extend(
         context.backbone_site(residue_id, template, kind, assume_free_chain_ends=True)
         for kind in (PolymerChemicalSite.BACKBONE_N, PolymerChemicalSite.BACKBONE_C)

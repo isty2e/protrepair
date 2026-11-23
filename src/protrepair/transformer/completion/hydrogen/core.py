@@ -30,7 +30,10 @@ from protrepair.diagnostics.kinds import (
     RepairEventKind,
     ValidationIssueKind,
 )
-from protrepair.diagnostics.polymer_hydrogen import unresolved_fixed_hydrogen_issue
+from protrepair.diagnostics.polymer_hydrogen import (
+    declared_thiolate_conflict,
+    unresolved_fixed_hydrogen_issue,
+)
 from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.geometry.placement_vector import normalized_vector_or_none
 from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
@@ -711,6 +714,8 @@ def _heavy_anchors_changed(
 
 
 def _site_failure(target: AminoAcidSitePreparation, reason: str) -> ValidationIssue:
+    if (conflict := declared_thiolate_conflict(target)) is not None:
+        return conflict
     return ValidationIssue.for_residue(
         kind=(
             ValidationIssueKind.CHEMISTRY_CONTRADICTION

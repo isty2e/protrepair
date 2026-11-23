@@ -37,6 +37,29 @@ from protrepair.structure.topology import (
 )
 
 
+def input_declares_thiolate(structure: ProteinStructure, residue_id: ResidueId) -> bool:
+    """Read SG=-1 from the original input, or the supplied canonical graph.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Current carrier; an available original observation takes precedence.
+    residue_id : ResidueId
+        Cysteine occurrence being assessed.
+
+    Returns
+    -------
+    bool
+        True for an explicit sulfur charge, never from the absence of HG.
+    """
+    sulfur = AtomRef(residue_id, "SG")
+    observation = structure.provenance.ingress.observation
+    if observation is not None:
+        return observation.formal_charge(sulfur) == -1
+    index = structure.constitution.resolve_atom_index(sulfur)
+    return index is not None and structure.topology.formal_charge(index) == -1
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class AminoAcidMicrostateContext:
     """Bind source evidence, applied choices and current bonds to one snapshot.
@@ -1137,6 +1160,91 @@ class PolymerMicrostateContext(AminoAcidMicrostateContext):
     source : ProteinStructure
         Immutable snapshot containing the queried polymer residues.
     """
+
+    def has_coupled_cysteine_sulfur(self, residue_id: ResidueId) -> bool:
+        """Check sulfur evidence before assigning the fixed template's HG.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Cysteine occurrence being prepared.
+
+        Returns
+        -------
+        bool
+            A present, non-crosslinked SG is coordinated or declared anionic.
+        """
+        sulfur = AtomRef(residue_id, "SG")
+        index = self.source.constitution.resolve_atom_index(sulfur)
+        if index is None:
+            return False
+        external = self.external_heavy_bonds(sulfur)
+        if any(
+            bond.relationship_type
+            not in (
+                BondRelationshipType.HYDROGEN_BOND,
+                BondRelationshipType.METAL_COORDINATION,
+            )
+            for bond in external
+        ):
+            return False
+        if any(
+            bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+            for bond in external
+        ):
+            return True
+        observation = self.source.provenance.ingress.observation
+        return input_declares_thiolate(self.source, residue_id) or (
+            observation is not None
+            and any(
+                bond.relationship_type is BondRelationshipType.METAL_COORDINATION
+                for bond in observation.bonds_for_atom(sulfur)
+            )
+        )
+
+    def site_requirements(
+        self, residue_id: ResidueId, site: PolymerMicrostateSite
+    ) -> MicrostateConstraints:
+        """Keep supplied sulfur chemistry when original observations are unavailable.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Present polymer occurrence.
+        site : PolymerMicrostateSite
+            Bound site and its linkage.
+
+        Returns
+        -------
+        MicrostateConstraints
+            Physical donor requirements, or the supplied uncrosslinked thiolate
+            charge and lower bound on attached H/D/T.
+
+        Raises
+        ------
+        ValueError
+            An incident relationship or H attachment cannot be interpreted.
+        """
+        physical = self.coordination_requirements(residue_id, site)
+        if (
+            self.source.provenance.ingress.observation is not None
+            or site.kind is not PolymerChemicalSite.SIDECHAIN
+            or site.template.component_id != "CYS"
+        ):
+            return physical
+        sulfur = AtomRef(residue_id, "SG")
+        if not input_declares_thiolate(self.source, residue_id) or any(
+            bond.relationship_type is not BondRelationshipType.HYDROGEN_BOND
+            for bond in self.external_heavy_bonds(sulfur)
+        ):
+            return physical
+        count = sum(
+            parent == "SG"
+            for parent in self.hydrogen_parents(residue_id, site).values()
+        )
+        return MicrostateConstraints(
+            charges=(("SG", -1),), minimum_hydrogens=(("SG", count),)
+        )
 
     def resolve(
         self,
