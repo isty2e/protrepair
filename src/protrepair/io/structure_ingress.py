@@ -68,6 +68,7 @@ from protrepair.structure.provenance import (
     StructureIngress,
     StructureProvenance,
 )
+from protrepair.structure.sequence_boundary import DepositedPeptideBoundary
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
@@ -315,6 +316,8 @@ def normalize_raw_structure(
     source_labels_by_residue: Mapping[ResidueId, frozenset[SourcePolymerLabels]]
     | None = None,
     pdb_cap_source: PdbCapSourceContext | None = None,
+    deposited_peptide_boundaries: tuple[DepositedPeptideBoundary, ...] = (),
+    unresolved_conect_ports: frozenset[AtomRef] = frozenset(),
 ) -> ProteinStructure:
     """Normalize one first model from format-boundary-projected source facts.
 
@@ -345,6 +348,10 @@ def normalize_raw_structure(
         All declared atom-row polymer labels for each first-model source slot.
     pdb_cap_source : PdbCapSourceContext or None, default=None
         Raw PDB adjacency and serial ambiguity facts for retained cap selection.
+    deposited_peptide_boundaries : tuple[DepositedPeptideBoundary, ...], default=()
+        Positive source sequence facts computed before retention or omission.
+    unresolved_conect_ports : frozenset[AtomRef], default=frozenset()
+        Possible endpoints on undecodable CONECT rows in sequence-bearing PDB.
 
     Returns
     -------
@@ -416,6 +423,7 @@ def normalize_raw_structure(
                     endpoint.atom_ref.residue_id, []
                 ).append(endpoint)
     excluded_source_endpoints: set[SourceAtomIdentity] = set()
+    reordered_polymer_chains: set[str] = set()
     for raw_chain in model:
         chain_id = normalize_chain_id(raw_chain.name)
         if not policy.selects_chain(chain_id):
@@ -433,16 +441,20 @@ def normalize_raw_structure(
             entity_type_by_id=entity_type_by_id,
             source_peptide_link_pairs=source_peptide_link_pairs,
         )
-        polymer_residues, non_polymer, excluded_endpoints = _normalize_chain_residues(
-            raw_chain,
-            chain_id,
-            policy,
-            residue_role_by_id=residue_role_by_id,
-            source_element_by_atom_identity=normalized_source_elements,
-            source_annotations=source_annotations,
-            coordination_endpoints_by_residue=coordination_endpoints_by_residue,
+        polymer_residues, non_polymer, excluded_endpoints, source_order_preserved = (
+            _normalize_chain_residues(
+                raw_chain,
+                chain_id,
+                policy,
+                residue_role_by_id=residue_role_by_id,
+                source_element_by_atom_identity=normalized_source_elements,
+                source_annotations=source_annotations,
+                coordination_endpoints_by_residue=coordination_endpoints_by_residue,
+            )
         )
         excluded_source_endpoints.update(excluded_endpoints)
+        if not source_order_preserved:
+            reordered_polymer_chains.add(chain_id)
         if polymer_residues:
             chains.append((chain_id, polymer_residues))
         for payload in non_polymer:
@@ -557,6 +569,12 @@ def normalize_raw_structure(
         topology=topology,
         source_connections=projected_source_connections,
         unverified_polymer_ports=unverified_ports,
+        deposited_peptide_boundaries=tuple(
+            fact
+            for fact in deposited_peptide_boundaries
+            if fact.port.residue_id.chain_id not in reordered_polymer_chains
+        ),
+        unresolved_conect_ports=unresolved_conect_ports,
         excluded_coordination_connections=_excluded_coordination_connections(
             source_connections,
             excluded_source_endpoints,
@@ -1212,8 +1230,9 @@ def _normalize_chain_residues(
     list[_NormalizedResiduePayload],
     list[_NormalizedResiduePayload],
     set[SourceAtomIdentity],
+    bool,
 ]:
-    """Materialize selected residues and record excluded source endpoints."""
+    """Select residues and report omitted endpoints and polymer reordering."""
 
     grouped_residues: dict[ResidueId, list[_NormalizedResiduePayload]] = {}
     residue_order: list[ResidueId] = []
@@ -1301,6 +1320,7 @@ def _normalize_chain_residues(
         ],
         non_polymer,
         excluded_endpoints,
+        selected_residue_order == residue_order,
     )
 
 

@@ -27,6 +27,7 @@ from protrepair.sources import (
 from protrepair.state import HydrogenCoverageState
 from protrepair.structure import AtomRef, ProteinStructure, ResidueId, StructureIngress
 from protrepair.structure.peptide import are_peptide_adjacent
+from protrepair.structure.sequence_boundary import PeptideSequenceBoundary
 from protrepair.transformer.completion.span_reconstruction import (
     ReconstructedSpanCandidate,
     SpanChemistryConflictError,
@@ -112,6 +113,32 @@ def test_whole_zero_records_are_absent_but_keep_their_identity(file_format):
         assert before.geometry.position(
             before.constitution.atom_index(ref)
         ) == source.geometry.position(source.constitution.atom_index(ref))
+
+
+@pytest.mark.parametrize("file_format", tuple(FileFormat))
+def test_omitted_coordinates_do_not_become_missing_sequence_positions(file_format):
+    if file_format is FileFormat.MMCIF:
+        raw = gemmi.read_pdb_string(
+            _coordinate_text(
+                ["SEQRES   1 A    4  ILE PHE VAL THR", *_rows()], FileFormat.PDB
+            )
+        )
+        raw.setup_entities()
+        raw.assign_label_seq_id()
+        selected = read_structure_string(
+            raw.make_mmcif_document().as_string(), file_format, policy=OMIT_WHOLE
+        )
+        right_kind = PeptideSequenceBoundary.MISSING_CONTINUATION
+    else:
+        selected = _read(["SEQRES   1 A    3  ILE PHE VAL", *_rows()], file_format)
+        right_kind = PeptideSequenceBoundary.CONSTRUCT_END
+    assert selected.constitution.chain("A").residue_ids() == (LEFT, RIGHT)
+    obs = selected.provenance.ingress.observation
+    assert obs is not None
+    assert {f.port: f.kind for f in obs.deposited_peptide_boundaries} == {
+        AtomRef(LEFT, "N"): PeptideSequenceBoundary.CONSTRUCT_END,
+        AtomRef(RIGHT, "C"): right_kind,
+    }
 
 
 def test_workflow_second_pass_does_not_repair_an_ingress_gap(tmp_path):

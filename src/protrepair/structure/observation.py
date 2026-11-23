@@ -12,6 +12,7 @@ from protrepair.structure.constitution import (
 )
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.sequence_boundary import DepositedPeptideBoundary
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
     BondProvenance,
@@ -46,6 +47,12 @@ class StructureObservation:
         Selected polymer endpoints whose declared external partner was excluded.
     unverified_polymer_ports : frozenset[AtomRef]
         Outer backbone ports whose position in a declared sequence is unverified.
+    deposited_peptide_boundaries : tuple[DepositedPeptideBoundary, ...]
+        Declared ends and obligatory coordinate gaps at selected polymer residues.
+        An absent entry makes neither claim. These facts do not establish vacancy.
+    unresolved_conect_ports : frozenset[AtomRef]
+        Sequence boundaries touched by a PDB CONECT row with an unbound serial.
+        Such a row does not establish a topology bond.
 
     Raises
     ------
@@ -67,11 +74,32 @@ class StructureObservation:
     unverified_polymer_ports: frozenset[AtomRef] = field(
         default=frozenset(), kw_only=True
     )
+    deposited_peptide_boundaries: tuple[DepositedPeptideBoundary, ...] = field(
+        default=(), kw_only=True
+    )
+    unresolved_conect_ports: frozenset[AtomRef] = field(
+        default=frozenset(), kw_only=True
+    )
     _bonds_by_residue: Mapping[ResidueId, tuple[TopologyBond, ...]] = field(
         init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
+        boundaries = tuple(self.deposited_peptide_boundaries)
+        unresolved_ports = frozenset(self.unresolved_conect_ports)
+        ports: set[AtomRef] = set()
+        for fact in boundaries:
+            if not fact.identifies_polymer_in(self.constitution) or fact.port in ports:
+                raise ModelInvariantError(
+                    "sequence boundary must identify one original polymer port"
+                )
+            ports.add(fact.port)
+        if not unresolved_ports.issubset(ports):
+            raise ModelInvariantError(
+                "undecodable CONECT evidence must identify deposited boundaries"
+            )
+        object.__setattr__(self, "deposited_peptide_boundaries", boundaries)
+        object.__setattr__(self, "unresolved_conect_ports", unresolved_ports)
         if not self.geometry.is_aligned_to(self.constitution):
             raise ModelInvariantError(
                 "observation geometry must match its constitution"
@@ -159,6 +187,8 @@ class StructureObservation:
         source_connections: tuple[SourceConnection, ...] = (),
         unverified_polymer_ports: frozenset[AtomRef] = frozenset(),
         unresolved_polymer_endpoints: frozenset[AtomRef] = frozenset(),
+        deposited_peptide_boundaries: tuple[DepositedPeptideBoundary, ...] = (),
+        unresolved_conect_ports: frozenset[AtomRef] = frozenset(),
     ) -> "StructureObservation":
         """Capture source facts before any chemistry-changing transformation.
 
@@ -179,6 +209,10 @@ class StructureObservation:
             Terminal ports that a declared sequence does not confirm.
         unresolved_polymer_endpoints : frozenset[AtomRef]
             Off-graph polymer endpoint evidence carried through a projection.
+        deposited_peptide_boundaries : tuple[DepositedPeptideBoundary, ...]
+            Original sequence facts; only surviving polymer identities are kept.
+        unresolved_conect_ports : frozenset[AtomRef]
+            Possible endpoints of unbound PDB declarations before selection.
 
         Returns
         -------
@@ -217,12 +251,21 @@ class StructureObservation:
             ),
         )
         excluded = frozenset(excluded_coordination_connections)
+        boundaries = tuple(
+            fact
+            for fact in deposited_peptide_boundaries
+            if fact.identifies_polymer_in(constitution)
+        )
         return cls(
             constitution=constitution,
             geometry=geometry,
             topology=source_topology,
             excluded_coordination_connections=excluded_coordination_connections,
             unverified_polymer_ports=unverified_polymer_ports,
+            deposited_peptide_boundaries=boundaries,
+            unresolved_conect_ports=unresolved_conect_ports.intersection(
+                f.port for f in boundaries
+            ),
             unresolved_polymer_endpoints=unresolved_polymer_endpoints
             | frozenset(
                 endpoint.atom_ref

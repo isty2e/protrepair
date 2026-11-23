@@ -219,6 +219,26 @@ structures may have no observation. Output files describe the current structure,
 not the original snapshot. Reading an exported file starts a new observation;
 PDB and mmCIF output do not archive the processing history.
 
+### Deposited Peptide Boundaries
+
+`observation.deposited_peptide_boundaries` distinguishes an end of the declared
+construct from a peptide N or C where the declared sequence continues through
+missing coordinates. In mmCIF the residue must have a consistent position in its
+deposited polypeptide instance. In PDB every alignment of the observed residues
+to the chain's complete SEQRES must agree. A numbering jump, a TER record, or a
+coordinate removed by a retention or occupancy policy does not establish a gap.
+An unclassified port has no entry.
+
+PDB SEQRES has no residue addresses. For a repeated segment, a file with
+explicit mmCIF sequence positions can therefore establish a gap that its PDB
+counterpart cannot. REMARK 465 is not used for this classification.
+
+These entries describe the input sequence, not the current bonds or terminal
+chemistry. For example, a port at a sequence gap can still have a declared
+attachment. If a PDB CONECT row mentions that port but its partner cannot be
+identified, the observation records it in `unresolved_conect_ports`. Neither
+observation adds atoms or changes how termini are repaired.
+
 ## Canonical Residue Roles
 
 Each source residue slot receives one canonical role before
