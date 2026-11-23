@@ -1,7 +1,7 @@
 """RDKit-backed inference for retained non-polymer chemistry evidence."""
 
 from collections.abc import Mapping
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import TYPE_CHECKING
 
 try:
@@ -17,6 +17,9 @@ from protrepair.chemistry.inference.rdkit_graph import (
     has_declared_stereochemistry,
     native_bond_projection_from_molecule,
     require_compatible_named_pose_stereochemistry,
+)
+from protrepair.chemistry.inference.rdkit_hydrogen_geometry import (
+    named_pose_hydrogen_bond_lengths,
 )
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
@@ -136,7 +139,12 @@ def retained_orthophosphate_hydrogen_parents(
             for name, atom in atoms.items()
             if atom.GetAtomicNum() == 8 and atom.GetTotalNumHs()
         },
-    ).hydrogen_parents(structure)
+    ).hydrogen_parents(
+        structure,
+        prepare_lengths=partial(
+            named_pose_hydrogen_bond_lengths, mol, evidence.heavy_atom_names
+        ),
+    )
 
 
 def retained_non_polymer_evidence_external_bonds(

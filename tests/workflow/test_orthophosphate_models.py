@@ -8,6 +8,7 @@ from tests.support.request_builders import whole_structure_requested_goals
 
 from protrepair.api import process_structure
 from protrepair.diagnostics.kinds import RepairEventKind
+from protrepair.geometry import Vec3
 from protrepair.io import read_structure_string, write_structure_string
 from protrepair.io.ingress_policy import (
     NonPolymerRetentionPolicy,
@@ -34,6 +35,7 @@ def _site(
     *,
     observed: str | None = None,
     missing: str | None = None,
+    positions: dict[str, tuple[float, float, float]] | None = None,
 ) -> str:
     atoms = [
         ("P", "P", 0, 0, 0),
@@ -44,6 +46,11 @@ def _site(
     ]
     if observed:
         atoms.append((observed, observed[0], -1.87, -0.9, 0.9))
+    if positions:
+        atoms = [
+            (name, element, *positions.get(name, (x, y, z)))
+            for name, element, x, y, z in atoms
+        ]
     return "".join(
         f"HETATM{n * 10 + i:5} {name:4} {component:>3} A{n:4}    "
         f"{x + n * 15:8.3f}{y:8.3f}{z:8.3f}{0.75:6.2f}{12.5:6.2f}          {element:>2}\n"
@@ -155,6 +162,111 @@ def test_original_isotope_and_its_scalars_survive_mixed_completion(isotope: str)
         if event.kind is RepairEventKind.HYDROGENS_ADDED
     ]
     assert len(added) == 1 and set(added[0].atom_names) == set(parents) - {name}
+
+
+@pytest.mark.parametrize("use_ccd", [False, True], ids=["site-override", "ccd"])
+@pytest.mark.parametrize(
+    ("component", "smiles", "name", "expected"),
+    [
+        ("PI", "P(=O)([O-])([O-])O", "H1", ["O4"]),
+        ("2HP", "P(=O)([O-])(O)O", "D1", ["O3", "O4"]),
+    ],
+)
+def test_observed_h_without_a_named_or_bonded_parent(
+    use_ccd: bool, component: str, smiles: str, name: str, expected: list[str]
+):
+    original = _source(_site(component, observed=name))
+    override = RetainedNonPolymerChemistryOverride(
+        _PARENT, smiles, ("P", "O1", "O2", "O3", "O4")
+    )
+    options = replace(
+        _KEEP,
+        use_ccd_orthophosphate_models=use_ccd,
+        retained_non_polymer_chemistry_overrides=() if use_ccd else (override,),
+    )
+    result = process_structure(original, ingress=options, requested_goals=_GOALS)
+
+    parents = _parents(result.structure, _PARENT)
+    assert parents[name] == "O4" and sorted(parents.values()) == expected
+    ref = AtomRef(_PARENT, name)
+    assert original.constitution.resolve_atom_site(
+        ref
+    ) == result.structure.constitution.resolve_atom_site(ref)
+    assert original.geometry.atom_geometry(
+        original.constitution.atom_index(ref)
+    ) == result.structure.geometry.atom_geometry(
+        result.structure.constitution.atom_index(ref)
+    )
+    assert (
+        result.requested_goal_report is not None
+        and result.requested_goal_report.outcomes[0].is_satisfied()
+    )
+    assert not any(
+        name in event.atom_names
+        for event in result.repairs
+        if event.kind is RepairEventKind.HYDROGENS_ADDED
+    )
+    assert not process_structure(
+        result.structure, ingress=options, requested_goals=_GOALS
+    ).repairs
+
+
+@pytest.mark.parametrize(
+    "component,positions,extra_records",
+    [
+        ("2HP", {"O3": (-0.9, -0.9, -1.1), "H1": (-1.5, -0.9, 0)}, ""),
+        ("PI", {"H1": (-6, -0.9, 0.9)}, ""),
+        ("PI", {"H1": (-1.87, 0.9, -0.9)}, ""),
+        ("PI", {"H1": (-0.31, -0.31, 0.31)}, ""),
+        ("PI", {}, "CONECT   15   14\n"),
+        (
+            "2HP",
+            {},
+            "HETATM   16 D2   2HP A   1      14.100  -1.870   0.900  0.75 12.50           D\n",
+        ),
+    ],
+    ids=[
+        "two-compatible-oxygens",
+        "detached",
+        "wrong-oxygen",
+        "nearer-phosphorus",
+        "conflicting-declared-bond",
+        "two-isotopes-on-one-oxygen",
+    ],
+)
+def test_ambiguous_or_incompatible_observed_h_is_not_assigned(
+    component: str, positions: dict[str, tuple[float, float, float]], extra_records: str
+):
+    original = _source(
+        _site(component, observed="H1", positions=positions) + extra_records
+    )
+    result = process_structure(
+        original,
+        ingress=replace(_KEEP, use_ccd_orthophosphate_models=True),
+        requested_goals=_GOALS,
+    )
+    assert (
+        result.requested_goal_report is not None
+        and not result.requested_goal_report.outcomes[0].is_satisfied()
+    )
+    assert result.structure.topology == original.topology and not result.repairs
+    assert any(issue.residue_id == _PARENT for issue in result.issues)
+
+
+def test_geometry_cannot_rebind_observed_deuterium_to_a_different_source_oxygen():
+    original = _source(_site("2HP", observed="D1"))
+    geometry = original.residue_geometry(original.constitution.residue_index(_PARENT))
+    moved = geometry.atom_geometry("D1").with_position(Vec3(13.13, 0.9, -0.9))
+    current = original.with_updated_residue_geometries(
+        ((_PARENT, geometry.with_atom_geometry("D1", moved)),)
+    )
+    result = process_structure(
+        current,
+        ingress=replace(_KEEP, use_ccd_orthophosphate_models=True),
+        requested_goals=_GOALS,
+    )
+    assert not result.repairs and result.structure.geometry == current.geometry
+    assert any("reparent" in issue.message for issue in result.issues)
 
 
 def test_per_site_override_wins_without_changing_other_sites_or_relabelling():

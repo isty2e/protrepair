@@ -178,7 +178,10 @@ on O4; [2HP](https://www.rcsb.org/ligand/2HP) assigns charge -1 and an H on
 each of O3 and O4. These assignments use the deposited atom names, not the
 order of the coordinate records. Added H and their model-assigned parents
 appear in the hydrogen-addition repair event. Compatible observed H/D/T keep
-their names and coordinates.
+their names and coordinates. If neither the atom name nor a recorded bond
+identifies the parent, the repair uses the coordinates only when one
+model-allowed oxygen fits the O-H distance and is the unique nearest heavy
+atom in the phosphate.
 
 A site-specific override takes precedence over the CCD model. Both must agree
 with the observed atoms and their attachments. A phosphate linked to a metal

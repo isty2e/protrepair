@@ -1,11 +1,16 @@
 """Named, isolated orthophosphate models from the wwPDB Chemical Component Dictionary."""
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
+from math import isfinite
 from types import MappingProxyType
 
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
+)
+from protrepair.chemistry.retained_non_polymer.hydrogen_correspondence import (
+    source_hydrogen_bond_length_is_compatible,
 )
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import (
@@ -13,6 +18,7 @@ from protrepair.structure.constitution import (
     ResidueSite,
     StructureConstitution,
 )
+from protrepair.structure.geometry import ResidueGeometry, StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import BondRelationshipType, StructureTopology
 
@@ -134,13 +140,21 @@ class SelectedOrthophosphateGraph:
     bond_orders: dict[frozenset[str], int]
     hydrogen_capacity: dict[str, int]
 
-    def hydrogen_parents(self, structure: ProteinStructure) -> dict[str, str]:
+    def hydrogen_parents(
+        self,
+        structure: ProteinStructure,
+        *,
+        prepare_lengths: Callable[[ResidueGeometry], tuple[tuple[str, float], ...]],
+    ) -> dict[str, str]:
         """Check current and original chemistry before binding observed hydrogen slots.
 
         Parameters
         ----------
         structure : ProteinStructure
             Current carrier with its original observation, when available.
+        prepare_lengths : callable
+            Measure model O-H lengths on the snapshot's heavy coordinates
+            only when an observed isotope lacks both a named and a bonded parent.
 
         Returns
         -------
@@ -154,13 +168,21 @@ class SelectedOrthophosphateGraph:
             parent sites conflict with the selected model.
         """
         _require_source_isolation(structure, self.residue_id)
-        current = self._snapshot_parents(structure.constitution, structure.topology)
+        current = self._snapshot_parents(
+            structure.constitution,
+            structure.topology,
+            structure.geometry,
+            prepare_lengths,
+        )
         observation = structure.provenance.ingress.observation
         if observation is None:
             return current
 
         original = self._snapshot_parents(
-            observation.constitution, observation.topology
+            observation.constitution,
+            observation.topology,
+            observation.geometry,
+            prepare_lengths,
         )
         for name, parent in original.items():
             ref = AtomRef(self.residue_id, name)
@@ -173,7 +195,11 @@ class SelectedOrthophosphateGraph:
         return current
 
     def _snapshot_parents(
-        self, constitution: StructureConstitution, topology: StructureTopology
+        self,
+        constitution: StructureConstitution,
+        topology: StructureTopology,
+        geometry: StructureGeometry,
+        prepare_lengths: Callable[[ResidueGeometry], tuple[tuple[str, float], ...]],
     ) -> dict[str, str]:
         residue = constitution.residue_or_ligand(self.residue_id)
         if (
@@ -193,6 +219,7 @@ class SelectedOrthophosphateGraph:
             )
 
         parents: dict[str, str] = {}
+        unassigned: list[str] = []
         for atom in residue.atom_sites:
             index = constitution.atom_index(AtomRef(self.residue_id, atom.name))
             if topology.formal_charge(index) not in (
@@ -242,6 +269,9 @@ class SelectedOrthophosphateGraph:
                 named = atom.name[1:] if atom.name[:1] in ("H", "D", "T") else ""
                 if self.elements.get(named) == "O":
                     attachments.add(named)
+                if not attachments and self.hydrogen_capacity:
+                    unassigned.append(atom.name)
+                    continue
                 if len(attachments) != 1 or not attachments.issubset(
                     self.hydrogen_capacity
                 ):
@@ -249,6 +279,14 @@ class SelectedOrthophosphateGraph:
                         f"selected {self.component_id} graph cannot preserve the oxygen parent of {atom.name}"
                     )
                 parents[atom.name] = attachments.pop()
+        if unassigned:
+            pose = geometry.residue_geometry(
+                constitution=constitution,
+                residue_index=constitution.residue_index(self.residue_id),
+            )
+            lengths = prepare_lengths(pose)
+            for name in unassigned:
+                parents[name] = self._geometric_parent(name, pose, lengths)
         if any(
             count > self.hydrogen_capacity[parent]
             for parent, count in Counter(parents.values()).items()
@@ -257,3 +295,24 @@ class SelectedOrthophosphateGraph:
                 f"selected {self.component_id} graph cannot preserve all source H/D/T at their oxygen parents"
             )
         return parents
+
+    def _geometric_parent(
+        self, name: str, pose: ResidueGeometry, lengths: tuple[tuple[str, float], ...]
+    ) -> str:
+        position = pose.position(name)
+        distances = {
+            atom: position.distance_to(pose.position(atom)) for atom in self.elements
+        }
+        compatible = {
+            parent
+            for parent, length in lengths
+            if parent in self.hydrogen_capacity
+            and source_hydrogen_bond_length_is_compatible(distances[parent], length)
+        }
+        if len(compatible) == 1 and all(isfinite(d) for d in distances.values()):
+            closest = min(distances.values())
+            if compatible == {atom for atom, d in distances.items() if d == closest}:
+                return compatible.pop()
+        raise ValueError(
+            f"selected {self.component_id} graph has no unambiguous, distance-compatible oxygen parent for {name}"
+        )

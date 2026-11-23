@@ -15,8 +15,10 @@ from protrepair.chemistry.inference.rdkit_graph import (
     native_bond_projection_from_molecule,
     require_compatible_named_pose_stereochemistry,
 )
+from protrepair.chemistry.inference.rdkit_hydrogen_geometry import (
+    named_pose_hydrogen_bond_lengths,
+)
 from protrepair.errors import RdkitUnavailableError
-from protrepair.geometry import Vec3
 from protrepair.structure.geometry import ResidueGeometry
 
 if TYPE_CHECKING:
@@ -206,41 +208,7 @@ def component_reference_hydrogen_bond_lengths(
                 projected.RemoveAtom(index)
         heavy = projected.GetMol()
         names = tuple(name for name in names if name not in omitted_heavy_names)
-    conformer = chem.Conformer(len(names))
-    conformer.Set3D(True)
-    for index, name in enumerate(names):
-        if not geometry.has_atom(name):
-            raise ValueError(f"reference correspondence has no coordinate for {name}")
-        position = geometry.position(name)
-        if not all(isfinite(value) for value in position):
-            raise ValueError(
-                "reference correspondence requires finite heavy coordinates"
-            )
-        conformer.SetAtomPosition(index, tuple(position))
-    heavy.AddConformer(conformer)
-    try:
-        prepared = chem.AddHs(heavy, addCoords=True)
-    except RuntimeError as error:
-        raise ValueError(f"reference H preparation failed: {error}") from error
-    positions = prepared.GetConformer()
-    if any(
-        tuple(positions.GetAtomPosition(index)) != tuple(geometry.position(name))
-        for index, name in enumerate(names)
-    ):
-        raise ValueError("reference H preparation moved fixed heavy coordinates")
-    lengths = []
-    for atom in prepared.GetAtoms():
-        if atom.GetAtomicNum() != 1:
-            continue
-        neighbors = tuple(atom.GetNeighbors())
-        if len(neighbors) != 1 or neighbors[0].GetIdx() >= len(names):
-            raise ValueError("temporary H requires one reference heavy parent")
-        parent = names[neighbors[0].GetIdx()]
-        position = Vec3.from_iterable(positions.GetAtomPosition(atom.GetIdx()))
-        distance = position.distance_to(geometry.position(parent))
-        if not isfinite(distance) or distance <= 0:
-            raise ValueError("reference H preparation produced an invalid bond length")
-        lengths.append((parent, distance))
+    lengths = named_pose_hydrogen_bond_lengths(heavy, names, geometry)
     if Counter(parent for parent, _ in lengths) != Counter(
         component.hydrogen_anchor_atom_name(atom.atom_name)
         for atom in component.hydrogen_atoms()
@@ -248,7 +216,7 @@ def component_reference_hydrogen_bond_lengths(
         not in omitted_heavy_names
     ):
         raise ValueError("prepared H parents do not match the reference inventory")
-    return tuple(lengths)
+    return lengths
 
 
 def _component_heavy_pose_molecule(
