@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from protrepair.chemistry.retained_non_polymer.definition import (
-    RetainedComponentDefinition,
+    NamedComponentGraph,
 )
 from protrepair.errors import RdkitUnavailableError
 
@@ -19,13 +19,17 @@ except ImportError:  # pragma: no cover
     rdCIPLabeler = None
 
 
-def component_heavy_molecule(definition: RetainedComponentDefinition) -> "Mol":
+def component_heavy_molecule(
+    definition: NamedComponentGraph, *, cip_limit: int = 0
+) -> "Mol":
     """Project the named dictionary to a native heavy graph.
 
     Parameters
     ----------
-    definition : RetainedComponentDefinition
+    definition : NamedComponentGraph
         Explicit atom, bond, charge, hydrogen and stereo inventory.
+    cip_limit : int
+        Per-call CIP recursion limit; zero retains the native dictionary default.
 
     Returns
     -------
@@ -41,11 +45,11 @@ def component_heavy_molecule(definition: RetainedComponentDefinition) -> "Mol":
     """
     if Chem is None:
         raise RdkitUnavailableError("reading named component chemistry requires RDKit")
-    return Chem.Mol(_validated_heavy_graph(definition))
+    return Chem.Mol(_validated_heavy_graph(definition, cip_limit))
 
 
 @lru_cache(maxsize=128)
-def _validated_heavy_graph(definition: RetainedComponentDefinition) -> "Mol":
+def _validated_heavy_graph(definition: NamedComponentGraph, cip_limit: int) -> "Mol":
     assert Chem is not None
     mol = Chem.RWMol()
     indices = {}
@@ -104,11 +108,13 @@ def _validated_heavy_graph(definition: RetainedComponentDefinition) -> "Mol":
         atom.SetNoImplicit(True)
         atom.SetNumExplicitHs(len(counts.get(name, ())))
     Chem.SanitizeMol(heavy)
-    _set_declared_stereo(heavy, definition)
+    _set_declared_stereo(heavy, definition, cip_limit)
     return heavy
 
 
-def _set_declared_stereo(mol: "Mol", definition: RetainedComponentDefinition) -> None:
+def _set_declared_stereo(
+    mol: "Mol", definition: NamedComponentGraph, cip_limit: int
+) -> None:
     assert Chem is not None and rdCIPLabeler is not None
     indices = {name: i for i, name in enumerate(definition.heavy_atom_names)}
     atoms = []
@@ -153,7 +159,7 @@ def _set_declared_stereo(mol: "Mol", definition: RetainedComponentDefinition) ->
         for item, _, _ in (*atoms, *bonds):
             item.ClearProp("_CIPCode")
         assert rdCIPLabeler is not None
-        rdCIPLabeler.AssignCIPLabels(mol)
+        rdCIPLabeler.AssignCIPLabels(mol, maxRecursiveIterations=cip_limit)
 
     for _ in range(len(atoms) + len(bonds) + 1):
         assign_cip()
@@ -186,7 +192,7 @@ def _set_declared_stereo(mol: "Mol", definition: RetainedComponentDefinition) ->
     checked = Chem.Mol(mol)
     for item in (*checked.GetAtoms(), *checked.GetBonds()):
         item.ClearProp("_CIPCode")
-    rdCIPLabeler.AssignCIPLabels(checked)
+    rdCIPLabeler.AssignCIPLabels(checked, maxRecursiveIterations=cip_limit)
     for atom, label, name in atoms:
         verified = checked.GetAtomWithIdx(atom.GetIdx())
         if (

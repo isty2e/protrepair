@@ -9,6 +9,7 @@ from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_heavy_atom_elements,
 )
+from protrepair.chemistry.inference.smiles_correspondence import bind_smiles_assignment
 from protrepair.chemistry.retained_non_polymer.definition import (
     RetainedComponentAssignment,
 )
@@ -25,7 +26,7 @@ from protrepair.diagnostics.water_contacts import stationary_water_run
 from protrepair.errors import RdkitUnavailableError
 from protrepair.io import read_structure
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
-from protrepair.sources.chemistry import RetainedChemistryOverride
+from protrepair.sources.chemistry import RetainedChemistryOverride, SmilesAssignment
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.workflow.contracts.hydrogen_lengths import HydrogenLengthRequest
 from protrepair.workflow.contracts.planning import (
@@ -260,6 +261,11 @@ def _validated_retained_non_polymer_chemistry_evidence(
     validated_evidence: list[SelectedRetainedChemistry] = []
     for override in overrides:
         ligand = ligands_by_residue_id.get(override.residue_id)
+        if isinstance(override, SmilesAssignment):
+            validated_evidence.append(
+                bind_smiles_assignment(structure, override.residue_id, override.smiles)
+            )
+            continue
         if isinstance(override, RetainedComponentAssignment):
             expected = override.definition.component_id
             if ligand is None:

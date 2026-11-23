@@ -9,6 +9,7 @@ import gemmi
 
 from protrepair.chemistry.inference.ccd_graph import component_heavy_molecule
 from protrepair.chemistry.retained_non_polymer.definition import (
+    NAMED_COMPONENT_ELEMENTS,
     ComponentAtom,
     ComponentBond,
     RetainedComponentDefinition,
@@ -121,20 +122,7 @@ def _read_definition(
         name, element = _text(row[1]), _text(row[2])
         if _text(row[0]) != component or not name or name in atoms:
             raise ValueError(f"invalid or duplicate atom ID {name!r} / component ID")
-        if element not in {
-            "H",
-            "B",
-            "C",
-            "N",
-            "O",
-            "F",
-            "SI",
-            "P",
-            "S",
-            "CL",
-            "BR",
-            "I",
-        }:
+        if element not in NAMED_COMPONENT_ELEMENTS:
             raise ValueError(f"unsupported element or isotope {element!r} at {name}")
         charge = _charge(row[3], f"charge at {name}") if row.has(3) else 0
         aromatic = _column_value(row, 4, ("Y", "N"), f"{name} aromaticity")

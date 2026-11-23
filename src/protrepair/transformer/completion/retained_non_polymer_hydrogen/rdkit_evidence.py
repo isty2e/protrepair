@@ -32,10 +32,10 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_hydrogen_bond_definitions,
 )
 from protrepair.chemistry.retained_non_polymer.definition import (
-    RetainedComponentAssignment,
+    NamedGraphAssignment,
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    SelectedRetainedChemistry,
+    BoundRetainedChemistry,
 )
 from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import GeometryPlacementError, Vec3
@@ -74,7 +74,7 @@ class EvidenceHydrogenationResult:
 def hydrogenate_retained_non_polymer_payload_with_evidence(
     payload: CompletionResiduePayload,
     *,
-    evidence: SelectedRetainedChemistry,
+    evidence: BoundRetainedChemistry,
 ) -> CompletionResiduePayload:
     """Hydrogenate one retained non-polymer payload from evidence chemistry."""
 
@@ -87,7 +87,7 @@ def hydrogenate_retained_non_polymer_payload_with_evidence(
 def hydrogenate_retained_non_polymer_payload_with_evidence_result(
     payload: CompletionResiduePayload,
     *,
-    evidence: SelectedRetainedChemistry,
+    evidence: BoundRetainedChemistry,
     bond_order_constraints: Mapping[tuple[str, str], int] | None = None,
     coordination_partner_positions: Mapping[str, Vec3] | None = None,
 ) -> EvidenceHydrogenationResult:
@@ -97,7 +97,7 @@ def hydrogenate_retained_non_polymer_payload_with_evidence_result(
     ----------
     payload : CompletionResiduePayload
         Current heavy scaffold and source scalar/charge evidence.
-    evidence : SelectedRetainedChemistry
+    evidence : BoundRetainedChemistry
         Selected molecular graph and canonical atom correspondence.
     bond_order_constraints : Mapping[tuple[str, str], int] or None
         Reported local heavy orders for a compatible integral resonance form.
@@ -151,7 +151,7 @@ def hydrogenate_retained_non_polymer_payload_with_evidence_result(
                 hydrogenated_molecule=hydrogenated_molecule,
                 hydrogen_atom_names=(
                     retained_non_polymer_evidence_expected_hydrogen_atom_names(evidence)
-                    if isinstance(evidence, RetainedComponentAssignment)
+                    if isinstance(evidence, NamedGraphAssignment)
                     else _evidence_hydrogen_atom_names(hydrogenated_molecule)
                 ),
             )
@@ -284,7 +284,7 @@ def place_coordinated_template_hydrogens(
 def _validate_evidence_alignment(
     payload: CompletionResiduePayload,
     *,
-    evidence: SelectedRetainedChemistry,
+    evidence: BoundRetainedChemistry,
 ) -> None:
     """Raise when one evidence cannot be projected onto the current payload."""
 
@@ -325,7 +325,7 @@ def _validate_evidence_alignment(
 
 
 def _validate_evidence_bond_geometry(
-    payload: CompletionResiduePayload, *, evidence: SelectedRetainedChemistry
+    payload: CompletionResiduePayload, *, evidence: BoundRetainedChemistry
 ) -> None:
     require_evidence_bond_geometry(
         payload.residue_geometry,
@@ -338,7 +338,7 @@ def _validate_evidence_bond_geometry(
 def _rdkit_pose_molecule(
     payload: CompletionResiduePayload,
     *,
-    evidence: SelectedRetainedChemistry,
+    evidence: BoundRetainedChemistry,
 ) -> "Mol":
     """Return one heavy-atom RDKit pose aligned to the current payload."""
 

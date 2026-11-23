@@ -37,9 +37,12 @@ from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
 from protrepair.chemistry.retained_non_polymer.definition import (
-    RetainedComponentAssignment,
+    MatchedSmiles,
+    NamedGraphAssignment,
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
+    BoundRetainedChemistry,
+    RefusedSmiles,
     SelectedRetainedChemistry,
     evidence_by_residue_id,
 )
@@ -74,6 +77,7 @@ from protrepair.errors import (
 )
 from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.state.retained_non_polymer_chemistry import (
+    RetainedNonPolymerChemistryEvidenceSource,
     RetainedNonPolymerChemistryFailure,
     RetainedNonPolymerChemistryFailureKind,
     RetainedNonPolymerChemistryResolution,
@@ -441,6 +445,21 @@ def _execute_retained_non_polymer_hydrogen_stage(
             evidence_external_bonds = ()
             evidence_coordination_bonds = ()
             evidence = chemistry_evidence_by_residue_id.get(ligand.residue_id)
+            if isinstance(evidence, RefusedSmiles):
+                issues.append(
+                    unresolved_retained_hydrogen_issue(
+                        ligand.residue_id,
+                        ligand.component_id,
+                        RetainedNonPolymerChemistryFailure(
+                            RetainedNonPolymerChemistryFailureKind(
+                                evidence.cause.value
+                            ),
+                            evidence.detail,
+                            RetainedNonPolymerChemistryEvidenceSource.SMILES_CORRESPONDENCE,
+                        ),
+                    )
+                )
+                continue
             template = component_library.get(ligand.component_id)
             coordination_preparation = None
             if evidence is None:
@@ -746,13 +765,22 @@ def _execute_retained_non_polymer_hydrogen_stage(
         if plan.residue_id not in changed_payload_ids
     )
     if graph_only_residue_ids and updated_structure is not structure:
-        repairs.extend(
-            _retained_topology_resolution_repairs(
-                structure,
-                updated_structure,
-                residue_ids=graph_only_residue_ids,
+        for event in _retained_topology_resolution_repairs(
+            structure,
+            updated_structure,
+            residue_ids=graph_only_residue_ids,
+        ):
+            assignment = (
+                chemistry_evidence_by_residue_id.get(event.residue_id)
+                if event.residue_id is not None
+                else None
             )
-        )
+            if isinstance(assignment, MatchedSmiles):
+                event = replace(
+                    event,
+                    details="Bond orders and formal charges from caller SMILES; unconstrained localization is model-assigned",
+                )
+            repairs.append(event)
     if hydrogenated_payloads:
         updated_structure, cleanup_issues = cleanup_residual_hydrogen_clashes(
             updated_structure,
@@ -1227,7 +1255,7 @@ def _hydrogenate_retained_non_polymer_payload(
     *,
     component_library: ComponentLibrary,
     polar_chemistry: PolarContactChemistry,
-    chemistry_evidence: SelectedRetainedChemistry | None = None,
+    chemistry_evidence: BoundRetainedChemistry | None = None,
     coordination_preparation: CoordinatedComponentPreparation | None = None,
     source_payload: CompletionResiduePayload | None = None,
     source_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
@@ -1273,7 +1301,7 @@ def _hydrogenate_retained_non_polymer_payload(
         reconciliation = _reconcile_source_hydrogens(
             hydrogenated_payload,
             dictionary_assignment=chemistry_evidence
-            if isinstance(chemistry_evidence, RetainedComponentAssignment)
+            if isinstance(chemistry_evidence, NamedGraphAssignment)
             else None,
             source_payload=source_payload,
             source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
@@ -1329,15 +1357,15 @@ def _hydrogenate_retained_non_polymer_payload(
         )
         details = None
         if added_atom_names and isinstance(
-            chemistry_evidence, (DepositedOrthophosphate, RetainedComponentAssignment)
+            chemistry_evidence, (DepositedOrthophosphate, NamedGraphAssignment)
         ):
             parents = _hydrogen_anchor_by_name(projected_bonds, hydrogenated_payload)
             assignments = ", ".join(
                 f"{name} on {parents[name]}" for name in added_atom_names
             )
             source = (
-                f"caller CCD {chemistry_evidence.definition.component_id}"
-                if isinstance(chemistry_evidence, RetainedComponentAssignment)
+                chemistry_evidence.model_label
+                if isinstance(chemistry_evidence, NamedGraphAssignment)
                 else f"CCD {chemistry_evidence.component_id}"
             )
             details = f"Model-assigned from {source}: {assignments}"
@@ -1826,7 +1854,7 @@ def _reconcile_source_hydrogens(
     hydrogenated_payload: CompletionResiduePayload,
     *,
     source_payload: CompletionResiduePayload | None,
-    dictionary_assignment: RetainedComponentAssignment | None = None,
+    dictionary_assignment: NamedGraphAssignment | None = None,
     source_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
     source_explicit_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
     generated_hydrogen_anchor_by_name: Mapping[str, str] | None = None,

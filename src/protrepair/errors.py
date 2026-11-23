@@ -45,6 +45,10 @@ class RdkitUnavailableError(ProtrepairError):
     """Raised when a required RDKit backend cannot be imported."""
 
 
+class PoseStereoConflictError(ProtrepairError, ValueError):
+    """A measured pose has stereo opposite to the declared molecular graph."""
+
+
 class RdkitProjectionError(ProtrepairError):
     """Raised when canonical chemistry cannot be faithfully projected to RDKit."""
 

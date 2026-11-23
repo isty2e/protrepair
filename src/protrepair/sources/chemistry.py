@@ -41,8 +41,34 @@ class RetainedNonPolymerChemistryOverride:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class SmilesAssignment:
+    """Specify chemistry for one site without an ordered list of atom names.
+
+    Parameters
+    ----------
+    residue_id : ResidueId
+        Exact address of a ligand kept by the ingress policy.
+    smiles : str
+        Molecular graph, including the intended protonation and any declared
+        stereochemistry. The workflow binds it to the normalized input.
+    """
+
+    residue_id: ResidueId
+    smiles: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.residue_id, ResidueId):
+            raise TypeError("residue_id must be a ResidueId")
+        if not isinstance(self.smiles, str):
+            raise TypeError("smiles must be a string")
+        if not self.smiles.strip():
+            raise ValueError("SMILES must not be blank")
+        object.__setattr__(self, "smiles", self.smiles.strip())
+
+
 RetainedChemistryOverride = (
-    RetainedNonPolymerChemistryOverride | RetainedComponentAssignment
+    RetainedNonPolymerChemistryOverride | RetainedComponentAssignment | SmilesAssignment
 )
 _Override = TypeVar("_Override", bound=RetainedChemistryOverride)
 

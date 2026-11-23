@@ -17,6 +17,7 @@ from protrepair.sources.alphafold_retrieval import (
 )
 from protrepair.sources.chemistry import (
     RetainedNonPolymerChemistryOverride,
+    SmilesAssignment,
     override_by_residue_id,
 )
 from protrepair.sources.projection import align_observed_chain_to_uniprot_record
@@ -46,6 +47,7 @@ __all__ = [
     "AlphaFoldStructureFetchOutcome",
     "ObservedChainSequence",
     "RetainedNonPolymerChemistryOverride",
+    "SmilesAssignment",
     "UniProtSequenceFamily",
     "UniProtSequenceFamilyFetchOutcome",
     "UniProtSequenceFamilyFetchResult",

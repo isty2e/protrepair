@@ -13,7 +13,11 @@ from protrepair.chemistry.component.graph import (
     BondDefinition,
     CoordinationBondDefinition,
 )
-from protrepair.errors import BondOrderConstraintError, RdkitUnavailableError
+from protrepair.errors import (
+    BondOrderConstraintError,
+    PoseStereoConflictError,
+    RdkitUnavailableError,
+)
 from protrepair.structure.geometry import ResidueGeometry
 
 if TYPE_CHECKING:
@@ -162,7 +166,7 @@ def require_compatible_pose_stereochemistry(molecule: "Mol") -> None:
             and actual.GetChiralTag()
             and expected.GetChiralTag() != actual.GetChiralTag()
         ):
-            raise ValueError(
+            raise PoseStereoConflictError(
                 "declared atom stereochemistry contradicts source geometry"
             )
     for expected, actual in zip(molecule.GetBonds(), observed.GetBonds(), strict=True):
@@ -173,7 +177,7 @@ def require_compatible_pose_stereochemistry(molecule: "Mol") -> None:
             not in (chem.BondStereo.STEREONONE, chem.BondStereo.STEREOANY)
             and expected.GetStereo() != actual.GetStereo()
         ):
-            raise ValueError(
+            raise PoseStereoConflictError(
                 "declared bond stereochemistry contradicts source geometry"
             )
 

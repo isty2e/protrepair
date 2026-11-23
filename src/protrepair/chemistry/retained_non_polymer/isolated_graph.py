@@ -25,7 +25,7 @@ NamedPoseValidator = Callable[
 ]
 
 
-def _require_source_isolation(
+def require_source_isolation(
     structure: ProteinStructure, residue_id: ResidueId, model: str
 ) -> None:
     """Require a selected isolated graph to account for its source partners.
@@ -92,6 +92,7 @@ class SelectedIsolatedGraph:
 
     named_slots: dict[str, str] | None = None
     aromatic_pairs: frozenset[frozenset[str]] = field(default_factory=frozenset)
+    reported_heavy_orders_only: bool = field(default=False, kw_only=True)
 
     def hydrogen_parents(
         self,
@@ -122,7 +123,7 @@ class SelectedIsolatedGraph:
             The scaffold, isotope inventory, charges, attachments or named
             parent sites conflict with the selected model.
         """
-        _require_source_isolation(
+        require_source_isolation(
             structure,
             self.residue_id,
             "orthophosphate" if self.named_slots is None else self.component_id,
@@ -224,6 +225,10 @@ class SelectedIsolatedGraph:
                         raise ValueError(
                             f"unexpected bond at {atom.name} in selected {self.component_id}"
                         )
+                    if self.reported_heavy_orders_only:
+                        # The pose validator checks all reported orders together,
+                        # including Kekule compatibility. Template orders are replaceable.
+                        continue
                     order = self.bond_orders[pair]
                     aromatic = pair in self.aromatic_pairs
                 if (bond.aromatic and not aromatic) or bond.order not in (

@@ -358,7 +358,7 @@ class StructureIngressOptions:
             if not isinstance(override, RetainedChemistryOverride):
                 raise TypeError(
                     "ingress retained_non_polymer_chemistry_overrides must contain "
-                    "RetainedNonPolymerChemistryOverride or retained CCD assignment values"
+                    "RetainedNonPolymerChemistryOverride, SmilesAssignment or retained CCD assignment values"
                 )
             if override.residue_id in seen_override_residue_ids:
                 raise ValueError(

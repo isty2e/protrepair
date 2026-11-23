@@ -3,8 +3,9 @@
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.definition import (
-    RetainedComponentAssignment,
+    NamedGraphAssignment,
 )
+from protrepair.chemistry.retained_non_polymer.evidence import RefusedSmiles
 from protrepair.chemistry.retained_non_polymer.orthophosphate import (
     is_orthophosphate_component,
 )
@@ -84,7 +85,7 @@ def project_hydrogen_issues(
         else {
             item.residue_id
             for item in chemistry_observation.retained_non_polymer_chemistry_evidence
-            if isinstance(item, RetainedComponentAssignment)
+            if isinstance(item, (NamedGraphAssignment, RefusedSmiles))
         }
     )
     snapshot: ProteinStructureSnapshot | None = None
@@ -190,6 +191,7 @@ def project_hydrogen_issues(
                 fact.residue_id
             ).unresolved_hydrogen_requirement
             is not None
+            or fact.residue_id in assigned
             or (
                 fact.residue_id
                 in observation.retained_non_polymer_evidence_by_residue_id
