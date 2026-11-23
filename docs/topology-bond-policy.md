@@ -187,9 +187,10 @@ state-specific geometry restraints.
 The policy follows the H counts in
 [PRAS's placement routines](https://github.com/osita-sunday-nnyigide/Pras_Server/blob/master/Pras_Server/MissingHydrogenAtoms.py)
 and its [histidine convention](https://www.protein-science.com/protonation/).
-It is not an environmental pKa prediction. A predictor can supply site-level
-preferences to the same resolver; explicit source replacement remains a separate
-choice.
+It is not an environmental pKa prediction. To use a predictor's output, pass a
+[site protonation request](how-to.md#set-the-protonation-of-one-site). The
+resolver checks the requested charge and any parent H counts against the
+source; a conflicting request cannot replace deposited evidence.
 
 The internal `transformer.polymer_microstate` application takes complete H
 placements and updates H atoms, charges, and bonds together. It preserves heavy
@@ -384,6 +385,12 @@ mode for each generated H anchor:
 
 Existing source-explicit retained-ligand H bonds remain authoritative when the
 same endpoint pair is regenerated during hydrogen completion.
+
+When a polymer cysteine's sulfur is neither crosslinked nor metal-coordinated,
+an explicit `SG` charge of `-1` prevents hydrogen completion from adding `HG`.
+If the input already has H, D or T on that sulfur, completion keeps the atom
+and the charge and reports the contradiction. A blank or zero sulfur charge
+keeps the usual thiol preparation.
 
 ### Disulfide Chemistry
 

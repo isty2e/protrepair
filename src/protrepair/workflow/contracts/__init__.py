@@ -7,6 +7,9 @@ from protrepair.analysis.results import (
     SecondaryStructureAnalysis,
     SecondaryStructureAssignment,
 )
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from protrepair.chemistry.microstate.resolution import SiteProtonationReason
+from protrepair.chemistry.microstate.selection import SiteProtonation
 from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
 from protrepair.transformer.completion.hydrogen.protonation import (
     DEFAULT_PRAS_HISTIDINE_PROTONATION_RATIO,
@@ -60,6 +63,11 @@ from protrepair.workflow.contracts.result import (
     WorkflowPhaseReport,
     WorkflowPhaseStatus,
 )
+from protrepair.workflow.contracts.site_protonation import (
+    SiteProtonationOutcome,
+    SiteProtonationReport,
+    SiteProtonationStatus,
+)
 from protrepair.workflow.contracts.span_policy import ExternalSpanGapSelectionPolicy
 from protrepair.workflow.contracts.span_report import (
     ExternalSpanReconstructionOutcome,
@@ -88,6 +96,7 @@ __all__ = [
     "PackingMode",
     "PackingScope",
     "PackingSpec",
+    "PolymerChemicalSite",
     "PrasRatioHistidineProtonationRequest",
     "ProcessResult",
     "RamachandranAnalysis",
@@ -101,6 +110,11 @@ __all__ = [
     "RetainedNonPolymerChemistryOverride",
     "SecondaryStructureAnalysis",
     "SecondaryStructureAssignment",
+    "SiteProtonation",
+    "SiteProtonationOutcome",
+    "SiteProtonationReason",
+    "SiteProtonationReport",
+    "SiteProtonationStatus",
     "StructureIngressOptions",
     "WorkflowBranchOutcome",
     "WorkflowBranchReport",

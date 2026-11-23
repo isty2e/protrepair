@@ -1,6 +1,13 @@
 """Workflow reporting evaluators over terminal structures and planner context."""
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
+from protrepair.chemistry.microstate.bound_protonation import (
+    BoundSiteProtonations,
+    active_site_protonations,
+    site_protonation_run,
+)
+from protrepair.chemistry.microstate.context import PolymerMicrostateContext
+from protrepair.chemistry.microstate.requested_sites import RequestedSiteAssessment
 from protrepair.chemistry.retained_non_polymer.evidence import (
     SelectedRetainedChemistry,
 )
@@ -80,6 +87,7 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
         "_cached_outcomes",
         "_component_library",
         "_planning_context",
+        "_site_binding",
         "_structure",
     )
 
@@ -87,6 +95,7 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
     _cached_outcomes: tuple[WorkflowPhaseOutcome, ...] | None
     _component_library: ComponentLibrary | None
     _planning_context: WorkflowPlanningContext
+    _site_binding: BoundSiteProtonations | None
     _structure: ProteinStructure
 
     def __init__(
@@ -100,6 +109,7 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
         object.__setattr__(self, "_outcomes", ())
         object.__setattr__(self, "_structure", structure)
         object.__setattr__(self, "_planning_context", planning_context)
+        object.__setattr__(self, "_site_binding", active_site_protonations())
         object.__setattr__(self, "_component_library", component_library)
         object.__setattr__(self, "_blockers", tuple(blockers))
         object.__setattr__(self, "_cached_outcomes", None)
@@ -112,12 +122,13 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
         if cached_outcomes is not None:
             return cached_outcomes
 
-        resolved_outcomes = evaluate_workflow_phase_outcomes(
-            self._structure,
-            planning_context=self._planning_context,
-            component_library=self._component_library,
-            blockers=self._blockers,
-        )
+        with site_protonation_run(self._site_binding):
+            resolved_outcomes = evaluate_workflow_phase_outcomes(
+                self._structure,
+                planning_context=self._planning_context,
+                component_library=self._component_library,
+                blockers=self._blockers,
+            )
         object.__setattr__(self, "_cached_outcomes", resolved_outcomes)
         return resolved_outcomes
 
@@ -575,8 +586,20 @@ def evaluate_workflow_branch_quality_score(
         preparation=observation.hydrogen_expectation_model.polymer_preparation,
         chemistry_observation=observation,
     )
+    binding = active_site_protonations()
+    realized_sites = None
+    if binding is not None:
+        site_context = PolymerMicrostateContext(result.structure)
+        realized_sites = sum(
+            RequestedSiteAssessment.observe(
+                binding, site_context, active_component_library, request
+            ).realized
+            is not None
+            for request in binding.requests.values()
+        )
     return WorkflowBranchQualityScore.from_requested_goal_report(
         requested_goal_report,
+        realized_site_count=realized_sites,
         error_count=sum(issue.severity is IssueSeverity.ERROR for issue in issues),
         warning_count=sum(issue.severity is IssueSeverity.WARNING for issue in issues),
         issue_count=len(issues),

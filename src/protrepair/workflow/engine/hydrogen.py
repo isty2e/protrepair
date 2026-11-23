@@ -1,6 +1,8 @@
 """Current H-preparation diagnostics for workflow assessment and output."""
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.bound_protonation import active_site_protonations
+from protrepair.chemistry.microstate.context import input_declares_thiolate
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.definition import (
     NamedGraphAssignment,
@@ -12,6 +14,7 @@ from protrepair.chemistry.retained_non_polymer.orthophosphate import (
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.diagnostics.polymer_hydrogen import (
+    declared_thiolate_conflict,
     linked_cap_issue,
     unresolved_fixed_hydrogen_issue,
 )
@@ -46,7 +49,8 @@ def project_hydrogen_issues(
     result : TransformationResult
         Current structure and accumulated diagnostics.
     requested_goal_report : RequestedGoalReport or None
-        Current H goals; satisfied goals require no further warning.
+        Current H goals. A complete inventory can still contain contradictory
+        input chemistry.
     component_library : ComponentLibrary
         Active chemistry definitions.
     repair_refinement : RepairRefinementSpec or None
@@ -89,28 +93,56 @@ def project_hydrogen_issues(
         }
     )
     snapshot: ProteinStructureSnapshot | None = None
-    if requested_goal_report is not None:
-        for outcome in requested_goal_report.outcomes:
-            if outcome.requested_goal.value is not HydrogenCoverageState.COMPLETE or (
-                outcome.is_satisfied() and not assigned
-            ):
-                continue
-            scope = outcome.requested_goal.scope
-            if isinstance(scope, WholeStructureScope):
-                selected.update(
-                    r.residue_id
-                    for r in structure.constitution.iter_residues(include_ligands=True)
-                    if not outcome.is_satisfied() or r.residue_id in assigned
-                )
-            elif OBSERVED_ATOM_SCOPE_LOWERING.supports(scope):
-                if snapshot is None:
-                    snapshot = ProteinStructureSnapshot.from_structure(structure)
-                lowered = OBSERVED_ATOM_SCOPE_LOWERING.lower(scope, carrier=snapshot)
-                selected.update(
-                    ref.residue_id
-                    for ref in lowered.atom_refs
-                    if not outcome.is_satisfied() or ref.residue_id in assigned
-                )
+    hydrogen_goals = (
+        ()
+        if requested_goal_report is None
+        else tuple(
+            outcome
+            for outcome in requested_goal_report.outcomes
+            if outcome.requested_goal.value is HydrogenCoverageState.COMPLETE
+        )
+    )
+    check_when_complete = set(assigned)
+    if hydrogen_goals and (binding := active_site_protonations()) is not None:
+        # A complete name count can still hide an incompatible fixed H/D inventory.
+        check_when_complete.update(
+            request.residue_id
+            for request in binding.requests.values()
+            if binding.identity_failure(structure, request) is None
+        )
+    thiolates = (
+        {
+            residue.residue_id
+            for residue in structure.constitution.iter_residues()
+            if residue.component_id == "CYS"
+            and input_declares_thiolate(structure, residue.residue_id)
+        }
+        if hydrogen_goals or repair_refinement is not None
+        else set()
+    )
+    check_thiolates: set[ResidueId] = set()
+    for outcome in hydrogen_goals:
+        if outcome.is_satisfied() and not (check_when_complete or thiolates):
+            continue
+        scope = outcome.requested_goal.scope
+        if isinstance(scope, WholeStructureScope):
+            in_scope = {
+                r.residue_id
+                for r in structure.constitution.iter_residues(include_ligands=True)
+            }
+        elif OBSERVED_ATOM_SCOPE_LOWERING.supports(scope):
+            if snapshot is None:
+                snapshot = ProteinStructureSnapshot.from_structure(structure)
+            lowered = OBSERVED_ATOM_SCOPE_LOWERING.lower(scope, carrier=snapshot)
+            in_scope = {ref.residue_id for ref in lowered.atom_refs}
+        else:
+            continue
+        check_thiolates.update(thiolates.intersection(in_scope))
+        selected.update(
+            check_when_complete.intersection(in_scope)
+            if outcome.is_satisfied()
+            else in_scope
+        )
 
     if repair_refinement is not None:
         if snapshot is None:
@@ -128,7 +160,8 @@ def project_hydrogen_issues(
         except ValueError:
             # Missing prerequisites can prevent region projection before H work.
             selected.update(scope_spec.referenced_residue_ids())
-    if not selected:
+    check_thiolates.update(thiolates.intersection(selected))
+    if not selected and not check_thiolates:
         return retained
 
     observation = (
@@ -206,4 +239,19 @@ def project_hydrogen_issues(
         and (cap := preparation.linked_peptide_cap(residue.residue_id)) is not None
         and cap.refusal is not None
     )
-    return retained + polymer_issues + retained_issues + refused_retained_caps
+    sulfur_issues = tuple(
+        issue
+        for residue_id in sorted(check_thiolates)
+        for target in preparation.targets_for(residue_id)
+        if (issue := declared_thiolate_conflict(target)) is not None
+    )
+    if sulfur_issues:
+        current_sulfur = frozenset(sulfur_issues)
+        retained = tuple(issue for issue in retained if issue not in current_sulfur)
+    return (
+        retained
+        + polymer_issues
+        + retained_issues
+        + refused_retained_caps
+        + sulfur_issues
+    )

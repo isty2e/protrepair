@@ -1,6 +1,6 @@
 """Evidence intersection and explicit authority for local microstate graphs."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from protrepair.chemistry.component.graph import BondDefinition
@@ -111,7 +111,7 @@ class MicrostateConstraints:
         Returns
         -------
         bool
-            True when all four constraint collections are empty.
+            True when no charge, hydrogen or bond constraint is present.
         """
         return not (
             self.charges or self.hydrogens or self.minimum_hydrogens or self.bonds
@@ -161,6 +161,8 @@ class MicrostateSelectionBasis(str, Enum):
     EVIDENCE = "evidence"
     OVERRIDE = "override"
     DEFAULT = "default"
+    REQUESTED = "requested"
+    COMMITTED_REQUEST = "committed_request"
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,15 +178,16 @@ class AppliedMicrostateChoice:
     graph : MicrostateGraph
         Complete selected site, including its chemical boundary valence.
     basis : MicrostateSelectionBasis
-        OVERRIDE grants explicit replacement authority. DEFAULT is only a
-        source-compatible preference. EVIDENCE remains in the original observation.
+        OVERRIDE can replace source evidence. DEFAULT and COMMITTED_REQUEST
+        are conditional preferences; the latter retains the caller's proton
+        distribution without fixing its resonance drawing.
 
     Raises
     ------
     TypeError
         Identity or graph has a noncanonical type.
     ValueError
-        The component identity is noncanonical, or the basis is EVIDENCE.
+        The component identity is noncanonical, or the basis records no applied choice.
     """
 
     residue_id: ResidueId
@@ -214,6 +217,8 @@ class AppliedMicrostateChoice:
             raise TypeError("applied microstate choices require a canonical basis")
         if self.basis is MicrostateSelectionBasis.EVIDENCE:
             raise ValueError("observed chemistry belongs to original evidence")
+        if self.basis is MicrostateSelectionBasis.REQUESTED:
+            raise ValueError("a protonation assessment is not an applied choice")
 
     def constraints(self) -> MicrostateConstraints:
         """Project graph constraints; the basis determines their authority.
@@ -221,8 +226,11 @@ class AppliedMicrostateChoice:
         Returns
         -------
         MicrostateConstraints
-            Exact H counts, charges and integral site bonds.
+            A committed caller class supplies parent H counts without pinning
+            its resonance drawing. Other choices retain their original constraints.
         """
+        if self.basis is MicrostateSelectionBasis.COMMITTED_REQUEST:
+            return MicrostateConstraints(hydrogens=self.graph.protonation_key()[1])
         return MicrostateConstraints(
             charges=tuple((atom.name, atom.charge) for atom in self.graph.atoms),
             hydrogens=tuple((atom.name, atom.hydrogens) for atom in self.graph.atoms),
@@ -269,6 +277,23 @@ class MicrostateResolutionStatus(str, Enum):
     UNSUPPORTED = "unsupported"
 
 
+class SiteProtonationReason(str, Enum):
+    """Specific evidence or input condition preventing a requested site state."""
+
+    ABSENT_AT_INPUT = "absent_at_input"
+    NON_POLYMER = "non_polymer"
+    UNSUPPORTED_COMPONENT = "unsupported_component"
+    SUPERSEDED_IDENTITY = "superseded_identity"
+    OUTSIDE_CATALOG = "outside_catalog"
+    PHYSICAL_CONSTRAINT = "physical_constraint"
+    SOURCE_CONFLICT = "source_conflict"
+    INSUFFICIENT_PROVENANCE = "insufficient_provenance"
+    UNVERIFIED_BOUNDARY = "unverified_boundary"
+    EXCLUDED_PARTNER = "excluded_partner"
+    MISSING_HEAVY_ATOMS = "missing_heavy_atoms"
+    CHANGED_HYDROGEN_ANCHOR = "changed_hydrogen_anchor"
+
+
 @dataclass(frozen=True, slots=True)
 class MicrostateResolution:
     """Expose a graph only when one protonation state is resolved.
@@ -288,6 +313,8 @@ class MicrostateResolution:
     observed_hydrogens : tuple[ObservedHydrogenAttachment, ...]
         Interpreted original H identities and parents for this site. They remain
         source evidence even when an explicit override requests a different count.
+    reason : SiteProtonationReason or None
+        More specific cause when a named site request cannot be satisfied.
 
     Raises
     ------
@@ -304,12 +331,23 @@ class MicrostateResolution:
     superseded_source: MicrostateConstraints = MicrostateConstraints()
     details: tuple[str, ...] = ()
     observed_hydrogens: tuple[ObservedHydrogenAttachment, ...] = ()
+    reason: SiteProtonationReason | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, MicrostateResolutionStatus) or not isinstance(
             self.basis, MicrostateSelectionBasis
         ):
             raise TypeError("microstate resolution requires canonical enum values")
+        if self.reason is not None:
+            if not isinstance(self.reason, SiteProtonationReason):
+                raise TypeError("site refusal reason must use a canonical reason")
+            if self.status in (
+                MicrostateResolutionStatus.RESOLVED,
+                MicrostateResolutionStatus.AMBIGUOUS,
+            ):
+                raise ValueError(
+                    "a compatible chemical class cannot carry a refusal reason"
+                )
         if self.candidates:
             object.__setattr__(
                 self, "candidates", MicrostateSite(self.candidates).candidates
@@ -405,6 +443,86 @@ class MicrostateSite:
             raise ValueError("microstate site candidates must share one skeleton")
         object.__setattr__(self, "candidates", tuple(dict.fromkeys(self.candidates)))
 
+    def resolve_protonation(
+        self,
+        source: MicrostateConstraints,
+        *,
+        site_charge: int,
+        parent_hydrogens: tuple[tuple[str, int], ...] = (),
+        requirements: MicrostateConstraints | None = None,
+        original_requirements: MicrostateConstraints | None = None,
+    ) -> MicrostateResolution:
+        """Resolve a mandatory request without replacing evidence or breaking ties.
+
+        Parameters
+        ----------
+        source : MicrostateConstraints
+            Original atom-level declarations and lower bounds on attached H/D/T.
+        site_charge : int
+            Charge of the whole site, not a charge on one resonance atom.
+        parent_hydrogens : tuple[tuple[str, int], ...]
+            Exact counts on named parents. Omitted parents remain unconstrained.
+        requirements : MicrostateConstraints or None
+            Physical constraints on this skeleton, such as an occupied donor.
+        original_requirements : MicrostateConstraints or None
+            Donor requirements from the original structure, before any repair.
+
+        Returns
+        -------
+        MicrostateResolution
+            All compatible drawings. A graph is selected only if they describe
+            one protonation class. An uncatalogued request is unsupported;
+            contradictory evidence or physical requirements produce a conflict.
+
+        Raises
+        ------
+        TypeError
+            A charge or count is not an integer.
+        ValueError
+            A parent name is repeated or noncanonical, or a count is negative.
+        """
+        if type(site_charge) is not int:
+            raise TypeError("a protonation request requires an integer site charge")
+        parents = MicrostateConstraints(hydrogens=parent_hydrogens)
+        basis = MicrostateSelectionBasis.REQUESTED
+        matches = tuple(
+            graph
+            for graph in self.candidates
+            if graph.protonation_key()[0] == site_charge
+            and parents.violations(graph).is_empty()
+        )
+        if not matches:
+            return MicrostateResolution(
+                MicrostateResolutionStatus.UNSUPPORTED,
+                basis=basis,
+                details=("requested protonation is not in the site catalog",),
+                reason=SiteProtonationReason.OUTSIDE_CATALOG,
+            )
+        feasible = tuple(
+            graph
+            for graph in matches
+            if all(
+                req is None or req.violations(graph).is_empty()
+                for req in (requirements, original_requirements)
+            )
+        )
+        if not feasible:
+            return MicrostateResolution(
+                MicrostateResolutionStatus.CONFLICT,
+                basis=basis,
+                details=("requested protonation conflicts with physical requirements",),
+                reason=SiteProtonationReason.PHYSICAL_CONSTRAINT,
+            )
+        candidates = tuple(g for g in feasible if source.violations(g).is_empty())
+        if not candidates:
+            return MicrostateResolution(
+                MicrostateResolutionStatus.CONFLICT,
+                basis=basis,
+                details=("requested protonation conflicts with source evidence",),
+                reason=SiteProtonationReason.SOURCE_CONFLICT,
+            )
+        return _classify_candidates(source, candidates, basis)
+
     def resolve(
         self,
         source: MicrostateConstraints,
@@ -483,16 +601,23 @@ class MicrostateSite:
                 MicrostateResolutionStatus.CONFLICT,
                 basis=basis,
             )
-        state_count = len({graph.protonation_key() for graph in candidates})
-        if state_count > 1:
-            return MicrostateResolution(
-                MicrostateResolutionStatus.AMBIGUOUS,
-                candidates,
-                basis,
-            )
+        return _classify_candidates(source, candidates, basis)
+
+
+def _classify_candidates(
+    source: MicrostateConstraints,
+    candidates: tuple[MicrostateGraph, ...],
+    basis: MicrostateSelectionBasis,
+) -> MicrostateResolution:
+    if len({graph.protonation_key() for graph in candidates}) > 1:
         return MicrostateResolution(
-            MicrostateResolutionStatus.RESOLVED,
+            MicrostateResolutionStatus.AMBIGUOUS,
             candidates,
             basis,
-            source.violations(candidates[0]),
         )
+    return MicrostateResolution(
+        MicrostateResolutionStatus.RESOLVED,
+        candidates,
+        basis,
+        source.violations(candidates[0]),
+    )

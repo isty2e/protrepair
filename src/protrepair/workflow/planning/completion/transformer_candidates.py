@@ -300,18 +300,19 @@ def plan_hydrogen_completion_transformers(
         if any(target.requires_terminal_oxygen() for target in targets):
             selected.discard(fact.residue_id)
             continue
+        ordinary_targets = preparation.ordinary_hydrogen_targets_for(fact.residue_id)
         if any(
             target.resolution.graph is not None and not target.is_realized()
-            for target in targets
+            for target in ordinary_targets
         ):
             selected.add(fact.residue_id)
         if fact.residue_id in selected:
             fixed = preparation.fixed_hydrogen_context(fact.residue_id)
+            # Residue-wide coverage also counts H reserved for another writer.
             if (
-                fixed is not None
-                and fixed.unresolved_parent_names
-                and not preparation.has_pending_hydrogen_updates(fact.residue_id)
-            ):
+                len(ordinary_targets) != len(targets)
+                or (fixed is not None and fixed.unresolved_parent_names)
+            ) and not preparation.has_pending_hydrogen_updates(fact.residue_id):
                 selected.discard(fact.residue_id)
     # Defer the partner only if the cap write is allowed by this request.
     selected.difference_update(

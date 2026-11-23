@@ -178,9 +178,13 @@ class SourceConnection:
         return self.source_metadata.record_type is not SourceBondRecordType.PDB_SSBOND
 
     def lone_retained_endpoint(
-        self, constitution: StructureConstitution, geometry: StructureGeometry
+        self,
+        constitution: StructureConstitution,
+        geometry: StructureGeometry,
+        *,
+        role: ResidueRole = ResidueRole.LIGAND,
     ) -> SourceAtomIdentity | None:
-        """Return the kept non-water non-polymer endpoint of an unrepresented link.
+        """Return a lone selected endpoint of the requested residue role.
 
         Parameters
         ----------
@@ -188,6 +192,8 @@ class SourceConnection:
             Selected source atoms and their residue roles.
         geometry : StructureGeometry
             Alternate location of each selected atom.
+        role : ResidueRole
+            Canonical role of the selected endpoint; defaults to ligand.
 
         Returns
         -------
@@ -212,10 +218,7 @@ class SourceConnection:
                 present.append(
                     (endpoint, constitution.residue_index_for_atom_index(index))
                 )
-        if (
-            len(present) == 1
-            and constitution.role_at(present[0][1]) is ResidueRole.LIGAND
-        ):
+        if len(present) == 1 and constitution.role_at(present[0][1]) is role:
             return present[0][0]
         return None
 

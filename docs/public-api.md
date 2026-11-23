@@ -261,8 +261,13 @@ are not target states:
 - external span reconstruction specifications
 - reference or committed side-chain packing
 - backbone-window and repair refinement specifications
-- histidine protonation
+- chain-wide histidine protonation and [per-site protonation requests](how-to.md#set-the-protonation-of-one-site)
 - retained non-polymer RDKit fallback permission
+
+`site_protonations` accepts one `SiteProtonation` per residue and chemical
+site. Inspect `result.site_protonation_report.outcomes` in request order:
+`assessment` describes chemical compatibility and `status` describes what
+happened on the returned branch.
 
 `ExternalSpanReconstructionSpec` pairs one canonical
 `AbsentResidueSpanScope` with a contiguous donor residue span. Use
@@ -285,7 +290,7 @@ Import `PackingMode`, `PackingScope`, and `PackingSpec` from the same
 side-chain packing.
 
 Default construction requests no optional packing, refinement, external span,
-or histidine operation. RDKit fallback remains enabled for retained components
+or protonation request. RDKit fallback remains enabled for retained components
 without a full active chemical reference. It cannot force geometric inference
 for a known reference without admitted preparation.
 

@@ -4,6 +4,8 @@
 
 ### Added
 
+- request a source-compatible protonation state for an individual standard
+  polymer site and check whether the returned structure realizes it
 - assign SMILES to one retained residue without an ordered list of atom names;
   leave the residue unprepared when the input cannot distinguish different chemistry
 - assign a local PDBx component dictionary to a retained ligand by residue ID
@@ -153,9 +155,8 @@
   source evidence or a compatible saved choice, those sites receive no HG,
   retain unknown SG charge and produce warnings. The H-inventory goal can still
   be satisfied, but local refinement including unresolved sites is refused.
-  Supply source SG formal charge or attached H to select their chemistry;
-  there is no public CYS protonation selector. Ordinary CYS placement and metal
-  charge/force-field support are unchanged
+  A source SG formal charge or attached H constrains the choice. This
+  preparation convention does not change metal charge or force-field support
 - prepare registered coordinated components even with organic RDKit fallback
   disabled, when no active template or override applies; first choose
   source-compatible ligand states by the documented preferences, then publish
@@ -197,6 +198,10 @@
   limit can reject chemically equivalent inputs; see the retained-ligand policy
 
 ### Fixed
+
+- preserve an explicit `SG=-1` when adding hydrogens to an unlinked polymer
+  cysteine. If the input also places H, D or T on that sulfur, keep both
+  declarations and report the conflict
 
 - write readable mmCIF for PDB inputs with blank chain IDs by quoting subchain
   declarations without renaming the chains

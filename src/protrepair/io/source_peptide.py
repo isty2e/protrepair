@@ -10,9 +10,10 @@ import gemmi
 from protrepair.chemistry.microstate.graph import MicrostateAtom
 from protrepair.errors import StructureNormalizationError
 from protrepair.io.source_identity import normalize_chain_id, normalize_insertion_code
+from protrepair.relation.sequence_alignment import sequence_requires_observed_end
 from protrepair.structure.constitution import StructureConstitution
 from protrepair.structure.geometry import StructureGeometry
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.peptide import (
     PEPTIDE_CN_DISTANCE_MAX_ANGSTROM,
     peptide_ports_allow_link,
@@ -79,7 +80,7 @@ class SourcePolymerSuccession:
     verified_source_path: bool
 
 
-def source_polymer_successions(
+def source_polymer_paths(
     source: gemmi.Structure,
     *,
     file_format: FileFormat,
@@ -88,7 +89,7 @@ def source_polymer_successions(
     verify_source_paths: bool = False,
     source_labels_by_residue: Mapping[ResidueId, frozenset[SourcePolymerLabels]]
     | None = None,
-) -> tuple[SourcePolymerSuccession, ...]:
+) -> tuple[tuple[SourcePolymerSuccession, ...], frozenset[AtomRef]]:
     """Resolve sequence neighbors independently of their coordinate inventory.
 
     Parameters
@@ -105,12 +106,12 @@ def source_polymer_successions(
         Check for unique, directly observed succession and validate any
         declared sequence before the neighbors can authorize omission.
     source_labels_by_residue : Mapping or None, default=None
-        Labels from the original atom rows, checked only for path verification.
+        Labels from original atom rows, checked for declared ends and omission paths.
 
     Returns
     -------
-    tuple of SourcePolymerSuccession
-        Candidate neighbors before checking actual or available peptide atoms.
+    tuple
+        Candidate successions and outer ports not certified by a declared sequence.
 
     Raises
     ------
@@ -119,12 +120,18 @@ def source_polymer_successions(
     """
 
     successions: list[SourcePolymerSuccession] = []
+    unverified_ports: set[AtomRef] = set()
     chains_by_id = {chain.chain_id: chain for chain in constitution.chains}
     source_labels = {} if source_labels_by_residue is None else source_labels_by_residue
-    sequences = {
-        subchain: tuple(entity.full_sequence)
+    entity_sequences = {
+        entity.name: tuple(entity.full_sequence)
         for entity in source.entities
         if entity.entity_type is gemmi.EntityType.Polymer
+    }
+    sequences = {
+        subchain: entity_sequences[entity.name]
+        for entity in source.entities
+        if entity.name in entity_sequences
         for subchain in entity.subchains
     }
     chain_sequences = (
@@ -162,6 +169,55 @@ def source_polymer_successions(
             raw_slots,
             unassigned_sequence=chain_sequences.get(chain_id),
         )
+        for residue, port in (
+            ((chain.residues[0], "N"), (chain.residues[-1], "C"))
+            if chain.residues
+            else ()
+        ):
+            rid = residue.residue_id
+            variants = raw_slots.get(rid, ())
+            for raw in variants:
+                sequence = (
+                    sequences.get(raw.subchain)
+                    or entity_sequences.get(raw.entity_id)
+                    or chain_sequences.get(chain_id)
+                )
+                position = (
+                    raw.label_seq if raw.label_seq is not None else positions.get(rid)
+                )
+                labels = source_labels.get(rid, ())
+                if not sequence:
+                    if file_format is FileFormat.MMCIF and (
+                        not all(label.matches(raw, position) for label in labels)
+                        or (
+                            position is not None
+                            and (position < 1 or (port == "N" and position != 1))
+                        )
+                    ):
+                        unverified_ports.add(AtomRef(rid, port))
+                    continue
+                end = 1 if port == "N" else len(sequence)
+                if position is None and file_format is FileFormat.PDB:
+                    ids = tuple(selected)
+                    if (
+                        ids == tuple(s.residue_id for s in chain.residues)
+                        and all(len(raw_slots[i]) == 1 for i in ids)
+                        and sequence_requires_observed_end(
+                            tuple(selected[i].name.strip().upper() for i in ids),
+                            sequence,
+                            n_terminal=port == "N",
+                        )
+                    ):
+                        position = end
+                if (
+                    len(variants) != 1
+                    or position != end
+                    or not _sequence_accepts_source_component(
+                        sequence, position, residue.component_id
+                    )
+                    or not all(label.matches(raw, position) for label in labels)
+                ):
+                    unverified_ports.add(AtomRef(rid, port))
         source_offsets = {
             residue_id: offset for offset, residue_id in enumerate(raw_slots)
         }
@@ -236,7 +292,7 @@ def source_polymer_successions(
                 SourcePolymerSuccession(first_id, second_id, consecutive, verified)
             )
 
-    return tuple(successions)
+    return tuple(successions), frozenset(unverified_ports)
 
 
 def _sequence_accepts_source_component(

@@ -1,6 +1,12 @@
 """Diagnostic projection of unresolved fixed polymer H inventories."""
 
-from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from protrepair.chemistry.microstate.context import input_declares_thiolate
+from protrepair.chemistry.microstate.preparation import (
+    AminoAcidPreparation,
+    AminoAcidSitePreparation,
+)
+from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.chemistry.peptide_caps import LinkedPeptideCap
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
@@ -16,6 +22,40 @@ def linked_cap_issue(cap: LinkedPeptideCap, detail: str) -> ValidationIssue:
         residue_id=cap.residue_id,
         component_id=cap.component_id,
         message=f"Linked cap hydrogenation unavailable: {detail}",
+    )
+
+
+def declared_thiolate_conflict(
+    target: AminoAcidSitePreparation,
+) -> ValidationIssue | None:
+    """Report a conflicting sulfur assignment even if no hydrogen needs adding.
+
+    Parameters
+    ----------
+    target : AminoAcidSitePreparation
+        Site bound to the structure being diagnosed.
+
+    Returns
+    -------
+    ValidationIssue or None
+        The contradiction on a declared cysteine thiolate, if present.
+    """
+    if (
+        target.resolution.status is not MicrostateResolutionStatus.CONFLICT
+        or target.site.kind is not PolymerChemicalSite.SIDECHAIN
+        or target.site.template.component_id != "CYS"
+        or not input_declares_thiolate(target.context.source, target.residue_id)
+    ):
+        return None
+    detail = "; ".join(target.resolution.details)
+    reason = f": {detail}" if detail else ""
+    return ValidationIssue.for_residue(
+        kind=ValidationIssueKind.CHEMISTRY_CONTRADICTION,
+        severity=IssueSeverity.WARNING,
+        residue_id=target.residue_id,
+        component_id="CYS",
+        atom_names=("SG",),
+        message=f"Cysteine SG has charge -1 but its site evidence is incompatible with a thiolate{reason}; left unchanged.",
     )
 
 
@@ -40,7 +80,7 @@ def unresolved_fixed_hydrogen_issue(
     -------
     ValidationIssue or None
         Parent-local reason, any independent inventory failure and untyped-link
-        guidance, or no unresolved parent.
+        guidance, or None when no unresolved inventory is found.
 
     Raises
     ------
@@ -51,27 +91,34 @@ def unresolved_fixed_hydrogen_issue(
     if cap is not None:
         return None if cap.refusal is None else linked_cap_issue(cap, cap.refusal)
     fixed = preparation.fixed_hydrogen_context(residue_id)
+    unresolved = fixed is not None and bool(fixed.unresolved_parent_names)
+    inventory_failure = None
+    if unresolved or any(t.is_requested() for t in preparation.targets_for(residue_id)):
+        try:
+            preparation.fixed_hydrogen_atom_sites(residue_id)
+        except ValueError as error:
+            inventory_failure = str(error)
     if (
-        fixed is None or not fixed.unresolved_parent_names
-    ) and reference_failure_detail is None:
+        not unresolved
+        and inventory_failure is None
+        and reference_failure_detail is None
+    ):
         return None
 
     context = preparation.context
     residue = context.source.constitution.residue_or_ligand(residue_id)
     assert residue is not None
     if fixed is None or not fixed.unresolved_parent_names:
+        details = "; ".join(
+            d for d in (reference_failure_detail, inventory_failure) if d
+        )
         return ValidationIssue.for_residue(
             kind=ValidationIssueKind.UNRESOLVED_POLYMER_HYDROGEN,
             severity=IssueSeverity.WARNING,
             residue_id=residue_id,
             component_id=residue.component_id,
-            message=f"polymer H coverage is indeterminate: {reference_failure_detail}",
+            message=f"polymer H coverage is indeterminate: {details}",
         )
-    inventory_failure = ""
-    try:
-        preparation.fixed_hydrogen_atom_sites(residue_id)
-    except ValueError as error:
-        inventory_failure = f"; other fixed H inventory could not be selected: {error}"
 
     untyped = any(
         bond.relationship_type is BondRelationshipType.UNKNOWN
@@ -92,7 +139,12 @@ def unresolved_fixed_hydrogen_issue(
         component_id=residue.component_id,
         message=(
             f"linked polymer H at {', '.join(sorted(fixed.unresolved_parent_names))} "
-            f"left unresolved: {fixed.failure_reason}{guidance}{inventory_failure}"
+            f"left unresolved: {fixed.failure_reason}{guidance}"
+            + (
+                f"; other fixed H inventory could not be selected: {inventory_failure}"
+                if inventory_failure
+                else ""
+            )
             + (f"; {reference_failure_detail}" if reference_failure_detail else "")
         ),
     )

@@ -10,6 +10,10 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_heavy_atom_elements,
 )
 from protrepair.chemistry.inference.smiles_correspondence import bind_smiles_assignment
+from protrepair.chemistry.microstate.bound_protonation import (
+    BoundSiteProtonations,
+    site_protonation_run,
+)
 from protrepair.chemistry.retained_non_polymer.definition import (
     RetainedComponentAssignment,
 )
@@ -100,7 +104,14 @@ def process_canonical_structure(
             use_ccd_orthophosphate_models=active_ingress.use_ccd_orthophosphate_models,
         )
     )
-    with stationary_water_run(normalized_structure):
+    with (
+        stationary_water_run(normalized_structure),
+        site_protonation_run(
+            BoundSiteProtonations.bind(
+                normalized_structure, active_transform_requests.site_protonations
+            )
+        ),
+    ):
         packing_reference = (
             None
             if active_transform_requests.reference_sidechain_packing is None
@@ -139,6 +150,7 @@ def process_canonical_structure(
             branches=runtime_result.branches,
             stop_reason=runtime_result.stop_reason,
             span_reconstruction_evidence=runtime_result.span_reconstruction_evidence,
+            site_protonation_history=runtime_result.site_protonation_history,
             planning_context=active_planning_context,
             component_library=component_library,
             requested_analyses=normalized_analyses,

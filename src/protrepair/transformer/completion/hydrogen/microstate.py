@@ -229,6 +229,26 @@ def _place_site_hydrogens(
     missing = [
         (atom, parent) for atom, parent in identities if atom.name not in preserved
     ]
+    if resolution.basis is MicrostateSelectionBasis.REQUESTED and missing:
+        observation = context.site_observation(residue_id, site)
+        assert observation is not None
+        original = {h.hydrogen for h in resolution.observed_hydrogens}
+        placements += tuple(
+            MicrostateHydrogenPlacement(
+                atom,
+                parent,
+                observation.geometry.atom_geometry(
+                    observation.constitution.atom_index(AtomRef(residue_id, atom.name))
+                ),
+            )
+            for atom, parent in missing
+            if AtomRef(residue_id, atom.name) in original
+        )
+        missing = [
+            (atom, parent)
+            for atom, parent in missing
+            if AtomRef(residue_id, atom.name) not in original
+        ]
     if missing:
         if Chem is None:
             raise RdkitUnavailableError(
@@ -266,7 +286,8 @@ def _place_site_hydrogens(
         AppliedMicrostateChoice(
             residue_id, site.template.component_id, graph, resolution.basis
         )
-        if resolution.basis is not MicrostateSelectionBasis.EVIDENCE
+        if resolution.basis
+        not in (MicrostateSelectionBasis.EVIDENCE, MicrostateSelectionBasis.REQUESTED)
         else None
     )
     repositioned = (

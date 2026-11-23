@@ -27,7 +27,10 @@ from protrepair.workflow.contracts import (
     ExternalSpanReconstructionStatus,
     HydrogenLengthRequest,
     OrphanFragmentPolicy,
+    PolymerChemicalSite,
     ProcessResult,
+    SiteProtonation,
+    SiteProtonationReason,
     StructureIngressOptions,
     WorkflowPlanningContext,
     WorkflowSpanDonorAvailability,
@@ -94,6 +97,33 @@ def _report(result: ProcessResult) -> ExternalSpanReconstructionReport:
     report = result.external_span_reconstruction_report
     assert report is not None
     return report
+
+
+def test_a_site_absent_at_input_does_not_attach_to_a_successful_graft(donor_rows):
+    source, spans = _separate_chain_spans(donor_rows, "AB")
+    absent = SiteProtonation(
+        ResidueId("A", 5), PolymerChemicalSite.BACKBONE_N, site_charge=0
+    )
+    existing = SiteProtonation(
+        ResidueId("B", 3), PolymerChemicalSite.BACKBONE_N, site_charge=1
+    )
+    result = process_structure(
+        source,
+        transform_requests=WorkflowTransformRequests(
+            external_span_reconstructions=spans, site_protonations=(absent, existing)
+        ),
+    )
+    assert result.site_protonation_report is not None
+    refused, applied = result.site_protonation_report.outcomes
+    assert refused.reason is SiteProtonationReason.ABSENT_AT_INPUT
+    assert applied.status.value == "applied"
+    assert (
+        result.structure.constitution.residue_or_ligand(absent.residue_id) is not None
+    )
+    assert all(
+        r.status is ExternalSpanReconstructionStatus.APPLIED
+        for r in _report(result).outcomes
+    )
 
 
 @pytest.mark.parametrize("near", [False, True])

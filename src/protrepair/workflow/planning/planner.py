@@ -34,6 +34,7 @@ from protrepair.workflow.actions.bonded_geometry import BondedGeometryFeedback
 from protrepair.workflow.actions.external_span_reconstruction import (
     ExternalSpanReconstructionTransformer,
 )
+from protrepair.workflow.actions.site_protonation import SiteProtonationTransformer
 from protrepair.workflow.contracts.external_reference import (
     ExternalSpanReconstructionSpec,
 )
@@ -239,6 +240,8 @@ class WorkflowPlanningOutcome:
             for proposal in candidate_proposals
             if proposal.transformer.proposal_family() is first_family
         )
+        if first_family is SiteProtonationTransformer:
+            return batch[:1]
         if (
             not ordered_span_requests
             or first_family is not ExternalSpanReconstructionTransformer

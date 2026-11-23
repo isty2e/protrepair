@@ -4,6 +4,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias, TypeVar, overload
 
+from protrepair.chemistry.microstate.selection import SiteProtonation
 from protrepair.io.ingress_policy import NonPolymerRetentionPolicy
 from protrepair.scope import (
     ResidueBoundaryScope,
@@ -417,6 +418,7 @@ class WorkflowTransformRequests:
     protonate_histidines: bool = False
     allow_retained_non_polymer_rdkit_fallback: bool = True
     histidine_protonation: HistidineProtonationRequest | None = None
+    site_protonations: tuple[SiteProtonation, ...] = ()
 
     def __init__(
         self,
@@ -429,7 +431,17 @@ class WorkflowTransformRequests:
         protonate_histidines: bool = False,
         allow_retained_non_polymer_rdkit_fallback: bool = True,
         histidine_protonation: HistidineProtonationRequest | None = None,
+        *,
+        site_protonations: Iterable[SiteProtonation] = (),
     ) -> None:
+        if isinstance(site_protonations, (str, bytes)):
+            raise TypeError("site_protonations requires an iterable of requests")
+        sites = tuple(site_protonations)
+        if not all(isinstance(item, SiteProtonation) for item in sites):
+            raise TypeError("site_protonations must contain SiteProtonation values")
+        if len({(item.residue_id, item.site) for item in sites}) != len(sites):
+            raise ValueError("duplicate residue and site in site_protonations")
+        object.__setattr__(self, "site_protonations", sites)
         object.__setattr__(self, "orphan_fragment_policy", orphan_fragment_policy)
         object.__setattr__(
             self,
@@ -592,7 +604,8 @@ class WorkflowTransformRequests:
             return False
 
         return (
-            not self.requests_reference_sidechain_packing()
+            not self.site_protonations
+            and not self.requests_reference_sidechain_packing()
             and not self.requests_committed_sidechain_packing()
             and not self.requests_backbone_window_refinement()
             and self.repair_refinement is None

@@ -1,5 +1,6 @@
 """Observed-to-external protein sequence alignment models."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 
@@ -29,6 +30,26 @@ RESIDUE_TOKEN_BY_COMPONENT_ID: dict[str, str] = {
     "TYR": "Y",
     "VAL": "V",
 }
+
+
+def sequence_requires_observed_end(
+    observed: Sequence[str], declared: Sequence[str], *, n_terminal: bool
+) -> bool:
+    """Test whether every order-preserving embedding uses the specified end.
+
+    Internal gaps need not have a unique alignment. Removing the end must
+    eliminate every full embedding, rather than just the preferred alignment.
+    """
+
+    def fits(reference: Sequence[str]) -> bool:
+        remaining = iter(reference)
+        return all(token in remaining for token in observed)
+
+    return (
+        bool(observed)
+        and fits(declared)
+        and not fits(declared[1:] if n_terminal else declared[:-1])
+    )
 
 
 class SequenceAlignmentRelation(str, Enum):

@@ -3,6 +3,11 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.bound_protonation import (
+    active_site_protonations,
+    requested_site,
+)
+from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.scope import ResidueBoundaryScope, ResidueBoundarySide, ResidueSetScope
@@ -115,6 +120,16 @@ class TerminalAugmentationTransformer(ResidueSetWorkflowStructureTransformer):
                 continue
 
             residue_id = requested_scope.residue_id
+            binding = active_site_protonations()
+            request = requested_site(
+                structure, residue_id, PolymerChemicalSite.BACKBONE_C
+            )
+            if (
+                binding is not None
+                and request is not None
+                and binding.free_end_failure(structure, request)
+            ):
+                continue
             residue_site = structure.constitution.residue_or_ligand(residue_id)
             if residue_site is None:
                 continue

@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from dataclasses import InitVar, dataclass, field, replace
 from math import isfinite
 
+from protrepair.chemistry.microstate.bound_protonation import requested_site
 from protrepair.chemistry.microstate.context import (
     AminoAcidMicrostateContext,
 )
@@ -135,13 +136,18 @@ class AminoAcidMicrostatePatch:
             raise ValueError(
                 "microstate patch context requires the exact source snapshot"
             )
-        resolution = self.site.resolve(
-            residue,
-            self.source.provenance.ingress.observation,
-            override=override,
-            applied_choice=applied_choice,
-            preferences=preferences,
-            requirements=context.site_requirements(self.residue_id, self.site),
+        selection = requested_site(self.source, self.residue_id, self.site.kind)
+        resolution = (
+            context.resolve(self.residue_id, self.site)
+            if selection is not None
+            else self.site.resolve(
+                residue,
+                self.source.provenance.ingress.observation,
+                override=override,
+                applied_choice=applied_choice,
+                preferences=preferences,
+                requirements=context.site_requirements(self.residue_id, self.site),
+            )
         )
         graph = resolution.graph
         if graph is None:
@@ -489,7 +495,9 @@ def apply_amino_acid_microstate_patches(
             patch.residue_id,
             patch.site.template.component_id,
             patch.graph,
-            patch.resolution.basis,
+            MicrostateSelectionBasis.COMMITTED_REQUEST
+            if patch.resolution.basis is MicrostateSelectionBasis.REQUESTED
+            else patch.resolution.basis,
         )
         for patch in patches
         if patch.resolution.basis is not MicrostateSelectionBasis.EVIDENCE

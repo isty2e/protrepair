@@ -130,10 +130,93 @@ without preventing package imports or non-native I/O. If you serialize the
 returned molecule, use explicit RDKit property flags to keep its metadata;
 see [native export](public-api.md#native-rdkit-export) for a binary example.
 
+## Set the Protonation of One Site
+
+Use `SiteProtonation` to specify the charge of a standard polymer side chain,
+backbone N or backbone C. For example, download [3HTB.cif](https://files.rcsb.org/download/3HTB.cif)
+and request cationic histidine at A:31:
+
+```python
+from protrepair.api import process_structure
+from protrepair.structure import ResidueId
+from protrepair.workflow.contracts import (
+    PolymerChemicalSite,
+    SiteProtonation,
+    WorkflowTransformRequests,
+)
+
+source = "3HTB.cif"
+request = SiteProtonation(ResidueId("A", 31), PolymerChemicalSite.SIDECHAIN, site_charge=1)
+requests = WorkflowTransformRequests(site_protonations=(request,))
+result = process_structure(source, transform_requests=requests)
+row = result.site_protonation_report.outcomes[0]
+print(row.status.value)  # applied: His31 has both HD1 and HE2
+```
+
+The charge is for the site, not an individual atom. If you want neutral
+histidine with a hydrogen on ND1, pass `site_charge=0, parent_hydrogens={"ND1": 1}`.
+Counts include D and T. Without that parent count or input evidence that
+distinguishes the two ring nitrogens, a neutral request returns `ambiguous`
+and lists both alternatives.
+A deposited H, charge or bond order that rules out the requested state gives
+a conflict. A site request alone does not add OXT or complete the rest of the
+residue.
+
+For multiple sites, inspect one outcome per request in input order. The
+assessment describes which chemical states are compatible; the status tells
+you what happened on the returned structure. When a site is refused, check
+`row.reason` and `row.details` to distinguish missing atoms, an incompatible
+input or a physical constraint. A new request can change a
+previously generated state in memory. If you write the structure to a file and
+read it back, the H atoms and charges in that file are now input evidence.
+
+### Check Which State Was Returned
+
+Adding a whole-structure H goal changes the result in this example. The
+candidate with cationic His31 satisfies the H goal, but adds a short contact
+between His31 HD1 and Asp70 OD2. The default branch policy prefers fewer
+clashes. It returns a structure with neither ring H, and the H goal remains
+unmet:
+
+```python
+from protrepair.scope import WholeStructureScope
+from protrepair.state import HydrogenCoverageState
+from protrepair.workflow.contracts import requested_process_goal
+
+goals = (requested_process_goal(scope=WholeStructureScope(), value=HydrogenCoverageState.COMPLETE),)
+result = process_structure(source, requested_goals=goals, transform_requests=requests)
+row = result.site_protonation_report.outcomes[0]
+print(row.assessment.value, row.status.value)  # resolved not_retained
+```
+
+If you want to inspect the candidate that meets the requested chemistry,
+rank goals ahead of clashes for this call. The order below keeps hard errors,
+parser compatibility, stereochemistry and severe geometry ahead of goals. It
+applies to the whole structure, so inspect the contacts on the returned model.
+
+```python
+from protrepair.workflow.contracts import WorkflowPlanningContext
+from protrepair.workflow.contracts.planning import (
+    WorkflowBranchPreferencePolicy,
+    WorkflowBranchQualityAxis as Axis,
+)
+
+policy = WorkflowBranchPreferencePolicy(axes=(
+    Axis.HARD_ERRORS, Axis.PARSER_COMPATIBILITY, Axis.STEREOCHEMISTRY,
+    Axis.SEVERE_GEOMETRY, Axis.REQUESTED_GOALS, Axis.INTRINSIC_CLASH,
+    Axis.INTERACTION_CLASH, Axis.ISSUE_BURDEN, Axis.SEARCH_DEPTH,
+))
+result = process_structure(
+    source, requested_goals=goals, transform_requests=requests,
+    planning_context=WorkflowPlanningContext(branch_preference_policy=policy),
+)
+print(result.site_protonation_report.outcomes[0].status.value)  # applied
+```
+
 ## Request PRAS-Ratio Histidine Protonation
 
-Histidine protonation is opt-in. Supply an explicit request through the
-transform request boundary and request complete hydrogen coverage:
+To use the chain-wide PRAS ratio, pass a ratio request and ask for complete
+hydrogen coverage:
 
 ```python
 from protrepair.scope import WholeStructureScope

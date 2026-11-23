@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TypeAlias, TypeGuard
 
+from protrepair.chemistry.microstate.bound_protonation import requested_site
 from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.resolution import MicrostateConstraints
 from protrepair.structure.aggregate import ProteinStructure
@@ -181,7 +182,13 @@ def histidine_microstate_requests(
             for assignment in resolve_histidine_protonation_assignments(chain, request)
         }
         for index, residue in enumerate(chain.residues):
-            if residue.component_id == "HIS":
+            if (
+                residue.component_id == "HIS"
+                and requested_site(
+                    structure, residue.residue_id, PolymerChemicalSite.SIDECHAIN
+                )
+                is None
+            ):
                 requests[(residue.residue_id, PolymerChemicalSite.SIDECHAIN)] = (
                     selected.get(index)
                 )

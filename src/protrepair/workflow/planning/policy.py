@@ -5,7 +5,19 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 
-from protrepair.scope import ResidueBoundaryScope
+from protrepair.scope import (
+    AtomSetScope,
+    ResidueBoundaryScope,
+    ResidueSetScope,
+    WholeStructureScope,
+)
+from protrepair.workflow.actions.backbone_window_refinement import (
+    BackboneWindowRefinementTransformer,
+)
+from protrepair.workflow.actions.heavy_completion import HeavyAtomCompletionTransformer
+from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
+from protrepair.workflow.actions.packing import CommittedPackingTransformer
+from protrepair.workflow.actions.site_protonation import SiteProtonationTransformer
 from protrepair.workflow.planning.action.domain import WorkflowActionDomain
 from protrepair.workflow.planning.action.proposals import WorkflowActionProposal
 from protrepair.workflow.planning.action.registry import WorkflowStateActionType
@@ -62,8 +74,67 @@ class WorkflowPlanningPolicy:
             candidate_groups,
             key=lambda group: self._group_sort_key(group, domain=domain),
         )
-        return tuple(
+        ranked = tuple(
             proposal for group in ranked_groups for proposal in group.proposals
+        )
+        if not domain.transform_requests.site_protonations:
+            return ranked
+        return self._order_site_writes(ranked, domain)
+
+    @staticmethod
+    def _order_site_writes(
+        ranked: tuple[WorkflowActionProposal, ...], domain: WorkflowActionDomain
+    ) -> tuple[WorkflowActionProposal, ...]:
+        """Let already-executable changes to the same scaffold run before a site write."""
+        pending = {
+            p.transformer.request.residue_id
+            for p in ranked
+            if isinstance(p.transformer, SiteProtonationTransformer)
+        }
+        if not pending:
+            return ranked
+        deferred_sites = set()
+        dependent_refinements = set()
+        preparation_targets = pending.intersection(
+            domain.explicit_repair.hydrogen_missing_residue_ids()
+        )
+        for proposal in ranked:
+            action = proposal.transformer
+            if not isinstance(
+                action,
+                (
+                    HeavyAtomCompletionTransformer,
+                    CommittedPackingTransformer,
+                    LocalRefinementTransformer,
+                    BackboneWindowRefinementTransformer,
+                ),
+            ):
+                continue
+            if (
+                isinstance(action, LocalRefinementTransformer)
+                and proposal.explicitly_requested
+                and preparation_targets
+            ):
+                # The FF prerequisite set also includes fixed pocket neighbours.
+                dependent_refinements.add(id(proposal))
+                continue
+            scope = action.workflow_scope
+            if isinstance(scope, WholeStructureScope):
+                deferred_sites.update(pending)
+            elif isinstance(scope, ResidueSetScope):
+                deferred_sites.update(pending.intersection(scope.residue_ids))
+            elif isinstance(scope, AtomSetScope):
+                deferred_sites.update(
+                    pending.intersection(ref.residue_id for ref in scope.atom_refs)
+                )
+        return tuple(
+            p
+            for p in ranked
+            if id(p) not in dependent_refinements
+            and not (
+                isinstance(p.transformer, SiteProtonationTransformer)
+                and p.transformer.request.residue_id in deferred_sites
+            )
         )
 
     def _group_candidates(
