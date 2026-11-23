@@ -1,5 +1,7 @@
 """Completion-family workflow action proposal adapters."""
 
+from protrepair.chemistry.microstate.bound_protonation import active_site_protonations
+from protrepair.chemistry.microstate.requested_sites import RequestedSiteAssessment
 from protrepair.workflow.actions.heavy_completion import HeavyAtomCompletionTransformer
 from protrepair.workflow.actions.hydrogen_completion import (
     HydrogenCompletionTransformer,
@@ -7,8 +9,12 @@ from protrepair.workflow.actions.hydrogen_completion import (
 from protrepair.workflow.actions.retained_non_polymer_hydrogen_completion import (
     RetainedNonPolymerHydrogenCompletionTransformer,
 )
+from protrepair.workflow.actions.site_protonation import SiteProtonationTransformer
 from protrepair.workflow.planning.action.domain import WorkflowActionDomain
-from protrepair.workflow.planning.action.proposals import WorkflowActionProposal
+from protrepair.workflow.planning.action.proposals import (
+    WorkflowActionProposal,
+    WorkflowProposalSelectionMode,
+)
 from protrepair.workflow.planning.completion.transformer_candidates import (
     plan_atom_completion_transformers,
     plan_retained_non_polymer_hydrogen_completion_transformers,
@@ -17,7 +23,28 @@ from protrepair.workflow.planning.default_action_registry.capabilities import (
     HEAVY_ATOM_COMPLETION_CAPABILITY,
     HYDROGEN_COMPLETION_CAPABILITY,
     RETAINED_NON_POLYMER_HYDROGEN_COMPLETION_CAPABILITY,
+    SITE_PROTONATION_CAPABILITY,
 )
+
+
+def site_protonation_proposals(
+    domain: WorkflowActionDomain,
+) -> tuple[WorkflowActionProposal, ...]:
+    binding = active_site_protonations()
+    if binding is None:
+        return ()
+    context = domain.observed_preparation.context
+    return tuple(
+        WorkflowActionProposal(
+            transformer=SiteProtonationTransformer(request),
+            capability=SITE_PROTONATION_CAPABILITY,
+            selection_mode=WorkflowProposalSelectionMode.QUALITY_ALTERNATIVE,
+        )
+        for request in binding.requests.values()
+        if RequestedSiteAssessment.observe(
+            binding, context, domain.component_library, request
+        ).requires_commit()
+    )
 
 
 def heavy_atom_completion_is_admissible(domain: WorkflowActionDomain) -> bool:

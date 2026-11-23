@@ -330,15 +330,16 @@ does not certify their protonation. Local refinement refuses an execution region
 containing an unresolved polymer microstate, including fixed context residues.
 For example, in 6NBB, selecting A:46 also includes unresolved A:174 and is refused.
 
-The public API has no CYS protonation selector. To resolve an admitted site,
-provide chemically consistent SG formal charge or attached H in the input:
+For a standard polymer CYS you can [request a side-chain charge](how-to.md#set-the-protonation-of-one-site):
+`-1` for thiolate or `0` for thiol. The request must agree with source
+evidence and the site's attachments. Without a request, input declarations
+can also determine the chemistry:
 `SG -1` selects thiolate, while `SG 0` or source H selects neutral thiol.
 For PDB input, charge columns 79 and 80 accept `1-` for thiolate and `0+` or
 `0-` for explicit zero; a blank field is unknown, not neutral. Supplying HG is
 another way to specify a thiol. In mmCIF, use `-1` or `0` in
 `_atom_site.pdbx_formal_charge`.
-Contradictory charge and H are reported as conflicts. An explicit choice here
-refers to the internal microstate model, not an additional public request option.
+Contradictory charge and H are reported as conflicts.
 Resolving protonation alone does not establish metal-site force-field support.
 
 This is a preparation convention, not a universal rule for heme proteins:

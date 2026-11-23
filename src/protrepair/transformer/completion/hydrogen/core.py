@@ -215,7 +215,7 @@ def materialize_hydrogens_core(
         repairs = list(result.repairs)
         issues = list(result.issues)
         for residue_id in sorted(targets):
-            for target in prepared.targets_for(residue_id):
+            for target in prepared.ordinary_hydrogen_targets_for(residue_id):
                 if (target.site.kind is PolymerChemicalSite.BACKBONE_C) != carbonyls:
                     continue
                 try:

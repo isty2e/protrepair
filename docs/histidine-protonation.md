@@ -6,6 +6,12 @@ contacts to prefer delta or epsilon HIS; a tie falls back to epsilon. This does
 not predict pKa, solvent exposure, or a coupled hydrogen-bond network. Additional
 cationic histidines require an explicit request.
 
+To choose a specific HIS, use a [site protonation request](how-to.md#set-the-protonation-of-one-site).
+If you also use the ratio method, the site request takes precedence on that
+ring, even if its requested state is ambiguous or conflicts with the input.
+The ratio still uses the full chain's HIS count and does not select a
+replacement for the skipped ring.
+
 ## Neutral Tautomer Selection
 
 Only source-compatible neutral candidates enter the contact comparison. The

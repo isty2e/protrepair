@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.bound_protonation import active_site_protonations
 from protrepair.chemistry.microstate.context import PolymerMicrostateContext
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.diagnostics import (
@@ -79,6 +80,14 @@ def cleanup_targets_from_report(
                     context = PolymerMicrostateContext(structure)
                 parents = template.template_hydrogen_anchor_by_name((atom_name,))
                 parent = parents.get(atom_name)
+                if active_site_protonations() is not None and parent is not None:
+                    if preparation is None:
+                        preparation = AminoAcidPreparation(context, component_library)
+                    if any(
+                        t.is_requested() and parent in t.controlled_parent_names()
+                        for t in preparation.targets_for(residue_id)
+                    ):
+                        continue
                 if (
                     parent is not None
                     and residue_site.has_atom_site(parent)

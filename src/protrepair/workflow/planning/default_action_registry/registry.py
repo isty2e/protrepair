@@ -28,6 +28,7 @@ from protrepair.workflow.actions.retained_non_polymer_hydrogen_completion import
 from protrepair.workflow.actions.retained_non_polymer_topology import (
     RetainedNonPolymerTopologyResolutionTransformer,
 )
+from protrepair.workflow.actions.site_protonation import SiteProtonationTransformer
 from protrepair.workflow.actions.stereochemistry import (
     StereochemistryCorrectionTransformer,
 )
@@ -53,8 +54,12 @@ from protrepair.workflow.planning.default_action_registry.capabilities import (
     POLYMER_HYDROGEN_TOPOLOGY_RESOLUTION_CAPABILITY,
     RETAINED_NON_POLYMER_HYDROGEN_COMPLETION_CAPABILITY,
     RETAINED_NON_POLYMER_TOPOLOGY_RESOLUTION_CAPABILITY,
+    SITE_PROTONATION_CAPABILITY,
     STEREOCHEMISTRY_CORRECTION_CAPABILITY,
     TERMINAL_AUGMENTATION_CAPABILITY,
+)
+from protrepair.workflow.planning.default_action_registry.completion_proposals import (
+    site_protonation_proposals,
 )
 from protrepair.workflow.planning.default_action_registry.proposals import (
     backbone_window_refinement_is_admissible,
@@ -183,6 +188,14 @@ EXPLICIT_WORKFLOW_ACTION_REGISTRY: tuple[
         capability=LOCAL_REFINEMENT_CAPABILITY,
         is_admissible_for_domain=local_refinement_is_admissible,
         proposals_for_domain=local_refinement_proposals,
+    ),
+    WorkflowActionRegistryEntry(
+        action_type=SiteProtonationTransformer,
+        capability=SITE_PROTONATION_CAPABILITY,
+        is_admissible_for_domain=lambda domain: bool(
+            domain.transform_requests.site_protonations
+        ),
+        proposals_for_domain=site_protonation_proposals,
     ),
 )
 

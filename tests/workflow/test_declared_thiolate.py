@@ -14,6 +14,11 @@ from protrepair.state import HydrogenCoverageState
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.transformer.completion.hydrogen.repair import add_hydrogens
+from protrepair.workflow.contracts import (
+    PolymerChemicalSite,
+    SiteProtonation,
+    WorkflowTransformRequests,
+)
 from protrepair.workflow.contracts.request import (
     RequestedGoalSet,
     requested_process_goal,
@@ -160,3 +165,35 @@ def test_projection_reports_one_current_sulfur_conflict_after_repeated_stages():
         component_library=build_default_component_library(),
     )
     assert projected.count(conflict) == 1
+
+
+@pytest.mark.parametrize("source_isotope", (None, "D"))
+def test_selected_sulfur_stays_reserved_when_attached_isotope_disagrees(source_isotope):
+    structure = _read_cysteine("  ", source_isotope)
+    selected = SiteProtonation(_CYS, PolymerChemicalSite.SIDECHAIN, site_charge=-1)
+    result = process_structure(
+        structure,
+        requested_goals=_H_GOAL,
+        transform_requests=WorkflowTransformRequests(site_protonations=(selected,)),
+    )
+    assert result.site_protonation_report is not None
+    (row,) = result.site_protonation_report.outcomes
+    assert row.assessment.value == (
+        "resolved" if source_isotope is None else "conflict"
+    )
+    assert result.structure.constitution.resolve_atom_index(AtomRef(_CYS, "HG")) is None
+    if source_isotope is not None:
+        ref = AtomRef(_CYS, "DG")
+        assert result.structure.geometry.atom_geometry(
+            result.structure.constitution.atom_index(ref)
+        ) == structure.geometry.atom_geometry(structure.constitution.atom_index(ref))
+        assert (
+            result.structure.topology.formal_charge(
+                result.structure.constitution.atom_index(_SG)
+            )
+            is None
+        )
+    else:
+        later = process_structure(result.structure, requested_goals=_H_GOAL).structure
+        assert later.constitution.resolve_atom_index(AtomRef(_CYS, "HG")) is None
+        assert later.topology.formal_charge(later.constitution.atom_index(_SG)) == -1

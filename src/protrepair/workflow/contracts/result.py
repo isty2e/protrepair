@@ -35,6 +35,7 @@ from protrepair.workflow.contracts.request import (
     is_workflow_goal_state_value,
     validate_workflow_goal_scope,
 )
+from protrepair.workflow.contracts.site_protonation import SiteProtonationReport
 from protrepair.workflow.contracts.span_report import ExternalSpanReconstructionReport
 
 if TYPE_CHECKING:
@@ -341,6 +342,7 @@ class WorkflowBranchQualityScore:
     severe_geometry_residue_count: int = 0
     search_depth: int = 0
     bonded_geometry_preference: tuple[int, float] | None = None
+    realized_site_count: int | None = field(default=None, kw_only=True)
 
     @classmethod
     def from_requested_goal_report(
@@ -361,6 +363,7 @@ class WorkflowBranchQualityScore:
         severe_geometry_residue_count: int = 0,
         search_depth: int = 0,
         bonded_geometry_preference: tuple[int, float] | None = None,
+        realized_site_count: int | None = None,
     ) -> "WorkflowBranchQualityScore":
         """Build a branch score from requested goals plus observed burdens."""
 
@@ -383,6 +386,7 @@ class WorkflowBranchQualityScore:
             severe_geometry_residue_count=severe_geometry_residue_count,
             search_depth=search_depth,
             bonded_geometry_preference=bonded_geometry_preference,
+            realized_site_count=realized_site_count,
         )
 
     def order_key(
@@ -432,6 +436,11 @@ class WorkflowBranchQualityScore:
                 self.blocked_goal_count,
                 self.unsupported_goal_count,
                 *(self.bonded_geometry_preference or ()),
+                *(
+                    (-self.realized_site_count,)
+                    if self.realized_site_count is not None
+                    else ()
+                ),
             )
         if axis is WorkflowBranchQualityAxis.ISSUE_BURDEN:
             return (self.warning_count, self.issue_count)
@@ -728,6 +737,9 @@ class ProcessResult(TransformationResult):
     external_span_reconstruction_report : ExternalSpanReconstructionReport or None
         One outcome per explicit span request, combining trial evidence and
         returned coverage. Omitted when there were no span requests.
+    site_protonation_report : SiteProtonationReport or None
+        Final chemistry and execution outcome of each requested polymer site
+        in input order. Omitted when no sites were requested.
 
     Notes
     -----
@@ -742,6 +754,9 @@ class ProcessResult(TransformationResult):
     hydrogen_length_report: HydrogenLengthReport | None = None
     external_span_reconstruction_report: ExternalSpanReconstructionReport | None = (
         field(default=None, kw_only=True)
+    )
+    site_protonation_report: SiteProtonationReport | None = field(
+        default=None, kw_only=True
     )
 
     @property

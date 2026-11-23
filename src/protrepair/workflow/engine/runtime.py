@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.bound_protonation import active_site_protonations
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     SelectedRetainedChemistry,
@@ -43,6 +44,7 @@ from protrepair.workflow.actions.external_span_reconstruction import (
     ExternalSpanReconstructionTransformer,
 )
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
+from protrepair.workflow.actions.site_protonation import SiteProtonationTransformer
 from protrepair.workflow.contracts.planning import (
     WorkflowBranchPreferencePolicy,
     WorkflowBranchQualityAxis,
@@ -70,6 +72,7 @@ from protrepair.workflow.engine.reporting import (
     evaluate_workflow_branch_outcome,
     evaluate_workflow_branch_quality_score,
 )
+from protrepair.workflow.engine.site_protonation_reporting import SiteProtonationHistory
 from protrepair.workflow.engine.span_reporting import (
     SpanReconstructionEvidence,
     SpanReconstructionRecorder,
@@ -387,6 +390,7 @@ class WorkflowRuntimeResult:
     branches: tuple[WorkflowBranch, ...]
     stop_reason: SpeculativeStopReason = SpeculativeStopReason.NO_PROPOSALS_AVAILABLE
     span_reconstruction_evidence: SpanReconstructionEvidence | None = None
+    site_protonation_history: SiteProtonationHistory | None = None
 
 
 def execute_iterative_workflow(
@@ -417,6 +421,12 @@ def execute_iterative_workflow(
     )
     branches: list[WorkflowBranch] = []
     span_requests = transform_requests.external_span_reconstructions
+    binding = active_site_protonations()
+    site_history = (
+        SiteProtonationHistory(binding, component_library)
+        if binding is not None
+        else None
+    )
     span_recorder = (
         SpanReconstructionRecorder(structure, span_requests) if span_requests else None
     )
@@ -543,6 +553,17 @@ def execute_iterative_workflow(
                 transformer=transformer,
                 execution_context=execution_context,
             )
+            if site_history is not None and isinstance(
+                transformer, SiteProtonationTransformer
+            ):
+                site_history.record(
+                    active_node.node_id,
+                    transformer.request,
+                    execution_outcome.repairs[len(runtime_state.result.repairs) :],
+                    execution_outcome.issues[
+                        len(_retained_execution_issues(runtime_state.result.issues)) :
+                    ],
+                )
             if span_recorder is not None and isinstance(
                 transformer, ExternalSpanReconstructionTransformer
             ):
@@ -712,8 +733,25 @@ def execute_iterative_workflow(
             "iterative workflow execution requires at least one assessed branch"
         )
 
+    if site_history is not None:
+        for node in trace.nodes:
+            decision = node.adopted_decision
+            action = (
+                decision.candidate.execution.proposal
+                if decision is not None and decision.candidate is not None
+                else None
+            )
+            site_history.retain(
+                node.node_id,
+                node.parent_node_id,
+                node.state.result.structure,
+                action.request
+                if isinstance(action, SiteProtonationTransformer)
+                else None,
+            )
     return WorkflowRuntimeResult(
         branches=tuple(branches),
+        site_protonation_history=site_history,
         stop_reason=trace.stop_reason or SpeculativeStopReason.NO_PROPOSALS_AVAILABLE,
         span_reconstruction_evidence=(
             None if span_recorder is None else span_recorder.finish(trace)

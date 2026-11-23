@@ -371,6 +371,8 @@ def project_zero_occupancy_omissions(
             topology=topology,
             excluded_coordination_connections=observation.excluded_coordination_connections,
             source_connections=observation.unresolved_non_polymer_links,
+            unresolved_polymer_endpoints=observation.unresolved_polymer_endpoints,
+            unverified_polymer_ports=observation.unverified_polymer_ports,
         )
     return ProteinStructure.from_payload(
         constitution=constitution,

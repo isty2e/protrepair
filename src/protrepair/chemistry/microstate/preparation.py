@@ -8,6 +8,11 @@ from protrepair.chemistry.component.defaults import build_default_component_libr
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.component.semantics import HydrogenSemantics
 from protrepair.chemistry.component.template import ResidueTemplate
+from protrepair.chemistry.microstate.bound_protonation import (
+    BoundSiteProtonations,
+    active_site_protonations,
+    requested_site,
+)
 from protrepair.chemistry.microstate.catalog import (
     PeptideLinkage,
     PolymerChemicalSite,
@@ -17,6 +22,7 @@ from protrepair.chemistry.microstate.context import (
     AminoAcidMicrostateContext,
     PolymerMicrostateContext,
 )
+from protrepair.chemistry.microstate.graph import MicrostateGraph
 from protrepair.chemistry.microstate.histidine_environment import HistidineEnvironment
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.microstate.resolution import (
@@ -25,6 +31,7 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateResolutionStatus,
 )
 from protrepair.chemistry.microstate.retained import RetainedAminoAcidContext
+from protrepair.chemistry.microstate.selection import SiteProtonation
 from protrepair.chemistry.peptide_caps import LinkedPeptideCap
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
@@ -86,11 +93,21 @@ class AminoAcidSitePreparation:
     retain_applied_choice: bool = True
     selection_preferences: tuple[MicrostateConstraints, ...] = field(init=False)
     resolution: MicrostateResolution = field(init=False)
+    selection: SiteProtonation | None = field(init=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "selection",
+            requested_site(self.context.source, self.residue_id, self.site.kind),
+        )
         preferences = (
-            *self.context.existing_hydrogen_preferences(self.residue_id, self.site),
-            *self.preferences,
+            ()
+            if self.is_requested()
+            else (
+                *self.context.existing_hydrogen_preferences(self.residue_id, self.site),
+                *self.preferences,
+            )
         )
         object.__setattr__(self, "selection_preferences", preferences)
         object.__setattr__(
@@ -104,6 +121,10 @@ class AminoAcidSitePreparation:
                 retain_applied_choice=self.retain_applied_choice,
             ),
         )
+
+    def is_requested(self) -> bool:
+        """Whether this snapshot's site is reserved by a source-compatible request."""
+        return self.selection is not None
 
     def hydrogen_atom_sites(self) -> tuple[tuple[AtomSite, str], ...]:
         """Return selected H identities and parents, or reject an unresolved target.
@@ -132,9 +153,30 @@ class AminoAcidSitePreparation:
             Unresolved or unsupported current chemistry returns False.
         """
         try:
+            if self.is_requested():
+                return self.realized_requested_graph() is not None
             return self.context.is_realized(self.residue_id, self.site, self.resolution)
         except ValueError:
             return False
+
+    def realized_requested_graph(self) -> MicrostateGraph | None:
+        """Find the complete current drawing within the unique source-compatible class."""
+        if self.resolution.graph is None:
+            return None
+        constitution = self.context.source.constitution
+        if any(
+            constitution.resolve_atom_index(item.hydrogen) is None
+            for item in self.resolution.observed_hydrogens
+        ):
+            return None
+        for graph in self.resolution.candidates:
+            candidate = replace(self.resolution, candidates=(graph,))
+            try:
+                if self.context.is_realized(self.residue_id, self.site, candidate):
+                    return graph
+            except ValueError:
+                continue
+        return None
 
     def controlled_parent_names(self) -> frozenset[str]:
         """Identify this site's atoms even when source evidence prevents selection.
@@ -168,11 +210,19 @@ class AminoAcidSitePreparation:
         """
         residue = self.context.source.constitution.residue_or_ligand(self.residue_id)
         assert residue is not None
-        return (
+        possible = (
             self.site.kind is PolymerChemicalSite.BACKBONE_C
             and self.site.linkage is PeptideLinkage.FREE
             and not residue.has_atom_site("OXT")
             and self.resolution.status is not MicrostateResolutionStatus.UNSUPPORTED
+        )
+        if not possible:
+            return False
+        binding = active_site_protonations()
+        return (
+            binding is None
+            or self.selection is None
+            or binding.free_end_failure(self.context.source, self.selection) is None
         )
 
 
@@ -389,6 +439,7 @@ class AminoAcidPreparation:
     component_library: ComponentLibrary
     _disulfides: frozenset[ResidueId]
     _coordinate_dependent: bool
+    _site_binding: BoundSiteProtonations | None
     _cysteine_adducts: Mapping[ResidueId, CysteineMichaelAdductBinding]
     _requests: Mapping[
         tuple[ResidueId, PolymerChemicalSite], MicrostateConstraints | None
@@ -409,6 +460,8 @@ class AminoAcidPreparation:
         excluded_retained_residue_ids: frozenset[ResidueId] = frozenset(),
     ) -> None:
         requested = {} if requests is None else dict(requests)
+        binding = active_site_protonations()
+        object.__setattr__(self, "_site_binding", binding)
         pending = dict(requested)
         adducts = {}
         coordinate_dependent_adducts = False
@@ -523,7 +576,8 @@ class AminoAcidPreparation:
             target
             for entries in targets.values()
             for target in entries
-            if target.site.template.component_id == "HIS"
+            if not target.is_requested()
+            and target.site.template.component_id == "HIS"
             and target.site.kind is PolymerChemicalSite.SIDECHAIN
             and target.resolution.status is MicrostateResolutionStatus.AMBIGUOUS
             and all(
@@ -560,7 +614,8 @@ class AminoAcidPreparation:
         object.__setattr__(
             self,
             "_coordinate_dependent",
-            bool(unresolved_histidines)
+            binding is not None
+            or bool(unresolved_histidines)
             or coordinate_dependent_adducts
             or coordinate_dependent_retained
             or any(
@@ -623,6 +678,7 @@ class AminoAcidPreparation:
             self.context.source is structure
             and self.component_library is component_library
             and self._requests == requested
+            and self._site_binding is active_site_protonations()
         ):
             return self
         return AminoAcidPreparation(
@@ -643,7 +699,12 @@ class AminoAcidPreparation:
         """
         source = self.context.source
         return (
-            source.constitution == structure.constitution
+            self._site_binding is active_site_protonations()
+            and (
+                self._site_binding is None
+                or source.polymer_blueprint == structure.polymer_blueprint
+            )
+            and source.constitution == structure.constitution
             and source.topology == structure.topology
             and source.provenance == structure.provenance
             and (
@@ -969,6 +1030,26 @@ class AminoAcidPreparation:
         """
         return self._targets.get(residue_id, ())
 
+    def ordinary_hydrogen_targets_for(
+        self, residue_id: ResidueId
+    ) -> tuple[AminoAcidSitePreparation, ...]:
+        """Return coupled sites writable by ordinary hydrogen completion.
+
+        Parameters
+        ----------
+        residue_id : ResidueId
+            Occurrence in the bound snapshot.
+
+        Returns
+        -------
+        tuple of AminoAcidSitePreparation
+            Targets not reserved for a caller's site-specific write.
+        """
+        targets = self.targets_for(residue_id)
+        if self._site_binding is None:
+            return targets
+        return tuple(target for target in targets if not target.is_requested())
+
     def known_hydrogen_atom_sites(
         self, residue_id: ResidueId
     ) -> tuple[tuple[AtomSite, str], ...]:
@@ -1054,7 +1135,7 @@ class AminoAcidPreparation:
         )
 
     def has_pending_hydrogen_updates(self, residue_id: ResidueId) -> bool:
-        """Return whether supported H or selected chemistry still needs an edit.
+        """Return whether ordinary H completion has an edit on this residue.
 
         Parameters
         ----------
@@ -1077,7 +1158,7 @@ class AminoAcidPreparation:
         Unresolved parents do not become executable work merely because the
         residue's overall H coverage remains incomplete.
         """
-        for target in self.targets_for(residue_id):
+        for target in self.ordinary_hydrogen_targets_for(residue_id):
             if target.resolution.graph is None or target.is_realized():
                 continue
             if not isinstance(target.context, RetainedAminoAcidContext):

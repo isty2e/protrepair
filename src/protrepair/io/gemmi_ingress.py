@@ -667,6 +667,8 @@ def _mmcif_source_atom_attributes(
             )
         )
         if prove_whole_residue_omissions
+        or bool(block.find_values("_atom_site.label_seq_id"))
+        or bool(block.find_values("_entity_poly_seq.mon_id"))
         else None
     )
     atom_names = _coalesced_mmcif_column(

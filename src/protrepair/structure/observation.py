@@ -5,7 +5,11 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 from protrepair.errors import ModelInvariantError
-from protrepair.structure.constitution import ResidueSite, StructureConstitution
+from protrepair.structure.constitution import (
+    ResidueRole,
+    ResidueSite,
+    StructureConstitution,
+)
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
@@ -38,6 +42,10 @@ class StructureObservation:
         Additional inter-residue declarations with only the retained
         non-polymer endpoint represented. They cannot establish a bond or
         certify that the retained site is chemically isolated.
+    unresolved_polymer_endpoints : frozenset[AtomRef]
+        Selected polymer endpoints whose declared external partner was excluded.
+    unverified_polymer_ports : frozenset[AtomRef]
+        Outer backbone ports whose position in a declared sequence is unverified.
 
     Raises
     ------
@@ -52,6 +60,12 @@ class StructureObservation:
     excluded_coordination_connections: tuple[SourceConnection, ...] = ()
     unresolved_non_polymer_links: tuple[SourceConnection, ...] = field(
         default=(), kw_only=True
+    )
+    unresolved_polymer_endpoints: frozenset[AtomRef] = field(
+        default=frozenset(), kw_only=True
+    )
+    unverified_polymer_ports: frozenset[AtomRef] = field(
+        default=frozenset(), kw_only=True
     )
     _bonds_by_residue: Mapping[ResidueId, tuple[TopologyBond, ...]] = field(
         init=False, repr=False, compare=False
@@ -143,6 +157,8 @@ class StructureObservation:
         topology: StructureTopology,
         excluded_coordination_connections: tuple[SourceConnection, ...] = (),
         source_connections: tuple[SourceConnection, ...] = (),
+        unverified_polymer_ports: frozenset[AtomRef] = frozenset(),
+        unresolved_polymer_endpoints: frozenset[AtomRef] = frozenset(),
     ) -> "StructureObservation":
         """Capture source facts before any chemistry-changing transformation.
 
@@ -159,6 +175,10 @@ class StructureObservation:
             endpoint was encountered in a policy-excluded residue or chain.
         source_connections : tuple[SourceConnection, ...]
             Decoded declarations before projection to pairs of selected atoms.
+        unverified_polymer_ports : frozenset[AtomRef]
+            Terminal ports that a declared sequence does not confirm.
+        unresolved_polymer_endpoints : frozenset[AtomRef]
+            Off-graph polymer endpoint evidence carried through a projection.
 
         Returns
         -------
@@ -202,6 +222,18 @@ class StructureObservation:
             geometry=geometry,
             topology=source_topology,
             excluded_coordination_connections=excluded_coordination_connections,
+            unverified_polymer_ports=unverified_polymer_ports,
+            unresolved_polymer_endpoints=unresolved_polymer_endpoints
+            | frozenset(
+                endpoint.atom_ref
+                for link in source_connections
+                if (
+                    endpoint := link.lone_retained_endpoint(
+                        constitution, geometry, role=ResidueRole.POLYMER
+                    )
+                )
+                is not None
+            ),
             unresolved_non_polymer_links=tuple(
                 link
                 for link in source_connections

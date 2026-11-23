@@ -39,10 +39,12 @@ from protrepair.workflow.contracts.planning import WorkflowPlanningContext
 from protrepair.workflow.contracts.result import (
     ProcessResult,
     WorkflowBranchReport,
+    WorkflowBranchStatus,
 )
 from protrepair.workflow.engine.hydrogen import project_hydrogen_issues
 from protrepair.workflow.engine.hydrogen_lengths import WorkflowHydrogenLengthPlan
 from protrepair.workflow.engine.runtime import WorkflowBranch
+from protrepair.workflow.engine.site_protonation_reporting import SiteProtonationHistory
 from protrepair.workflow.engine.span_reporting import SpanReconstructionEvidence
 
 
@@ -57,6 +59,7 @@ def finalize_workflow_result(
     repair_refinement: RepairRefinementSpec | None = None,
     hydrogen_length_plan: WorkflowHydrogenLengthPlan | None = None,
     span_reconstruction_evidence: SpanReconstructionEvidence | None = None,
+    site_protonation_history: SiteProtonationHistory | None = None,
     retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
 ) -> ProcessResult:
     """Select the preferred assessed branch and attach final diagnostics.
@@ -171,6 +174,17 @@ def finalize_workflow_result(
             result,
             external_span_reconstruction_report=span_reconstruction_evidence.report_for(
                 result.structure, selected_node=branch_report.preferred_node_id
+            ),
+        )
+    if site_protonation_history is not None:
+        result = replace(
+            result,
+            site_protonation_report=site_protonation_history.report(
+                result.structure,
+                branch_report.preferred_node_id,
+                search_limited=branch_report.preferred_outcome().status
+                is WorkflowBranchStatus.FRONTIER
+                and branch_report.search_exhausted(),
             ),
         )
     return _attach_requested_analyses(

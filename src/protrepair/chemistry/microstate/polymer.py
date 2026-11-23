@@ -22,7 +22,9 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateSelectionBasis,
     MicrostateSite,
     ObservedHydrogenAttachment,
+    SiteProtonationReason,
 )
+from protrepair.chemistry.microstate.selection import SiteProtonation
 from protrepair.structure.constitution import (
     AtomSite,
     ResidueSite,
@@ -108,6 +110,7 @@ class PolymerMicrostateSite:
         applied_choice: AppliedMicrostateChoice | None = None,
         preferences: tuple[MicrostateConstraints, ...] = (),
         requirements: MicrostateConstraints | None = None,
+        selection: SiteProtonation | None = None,
     ) -> MicrostateResolution:
         """Resolve chemistry without treating generated atoms as source evidence.
 
@@ -164,12 +167,14 @@ class PolymerMicrostateSite:
             return MicrostateResolution(
                 MicrostateResolutionStatus.INSUFFICIENT,
                 details=("backbone linkage is unknown",),
+                reason=SiteProtonationReason.UNVERIFIED_BOUNDARY if selection else None,
             )
         site = self.candidates()
         if site is None:
             return MicrostateResolution(
                 MicrostateResolutionStatus.UNSUPPORTED,
                 details=("no supported standard site catalog",),
+                reason=SiteProtonationReason.OUTSIDE_CATALOG if selection else None,
             )
 
         reference = site.candidates[0]
@@ -204,6 +209,7 @@ class PolymerMicrostateSite:
             return MicrostateResolution(
                 MicrostateResolutionStatus.INSUFFICIENT,
                 details=(f"missing heavy atoms: {', '.join(sorted(missing))}",),
+                reason=SiteProtonationReason.MISSING_HEAVY_ATOMS if selection else None,
             )
         if not self._scaffold_matches_template(residue):
             return MicrostateResolution(
@@ -232,6 +238,7 @@ class PolymerMicrostateSite:
         if isinstance(evidence, MicrostateResolution):
             return evidence
         constraints, attachments, details = evidence
+        original_requirements = None
         if observation is not None:
             try:
                 original_requirements = self.coordination_requirements(
@@ -243,7 +250,7 @@ class PolymerMicrostateSite:
                 return MicrostateResolution(
                     MicrostateResolutionStatus.UNSUPPORTED, details=(str(error),)
                 )
-            if not original_requirements.is_empty():
+            if selection is None and not original_requirements.is_empty():
                 feasible = tuple(
                     graph
                     for graph in site.candidates
@@ -257,12 +264,37 @@ class PolymerMicrostateSite:
                 site = MicrostateSite(feasible)
         if self.free_terminal_assumption:
             details = (*details, "free-terminal linkage is a preparation assumption")
-        resolution = site.resolve(
-            constraints,
-            override=override,
-            preferences=preferences,
-            requirements=requirements,
+        resolution = (
+            site.resolve_protonation(
+                constraints,
+                site_charge=selection.site_charge,
+                parent_hydrogens=selection.parent_hydrogens,
+                requirements=requirements,
+                original_requirements=original_requirements,
+            )
+            if selection is not None
+            else site.resolve(
+                constraints,
+                override=override,
+                preferences=preferences,
+                requirements=requirements,
+            )
         )
+        if (
+            selection is None
+            and override is None
+            and applied_choice is not None
+            and applied_choice.basis is MicrostateSelectionBasis.COMMITTED_REQUEST
+            and applied_choice.matches_site(
+                residue.residue_id, residue.component_id, reference
+            )
+            and resolution.graph is not None
+            and resolution.graph.protonation_key()
+            == applied_choice.graph.protonation_key()
+        ):
+            resolution = replace(
+                resolution, basis=MicrostateSelectionBasis.COMMITTED_REQUEST
+            )
         return replace(
             resolution,
             details=(*resolution.details, *details),

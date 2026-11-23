@@ -29,6 +29,10 @@ membership without requiring a second hand-maintained count in this document.
   and direct API tests.
 - `pdb/1aho_faspr_input.pdb`: small side-chain packing fixture for the packaged
   FASPR backend.
+- `pdb/protonation/3htb_his31_asp70.pdb`: model 1, chain A, residues 30-32
+  and 69-71 from [3HTB](https://files.rcsb.org/download/3HTB.cif). The
+  site-protonation tests use the deposited coordinates of His31, Asp70 and
+  their peptide neighbors without adding H or moving atoms in the fixture.
 - `pdb/refinement/*.pdb`: extracted local neighborhoods for local refinement,
   chemistry-admissibility, and literature-backed regression. These are small
   derived fixtures rather than full deposited structures. Their canonical case

@@ -35,7 +35,7 @@ from protrepair.io.source_identity import (
 from protrepair.io.source_peptide import (
     SourcePolymerLabels,
     source_compatible_peptide_bonds,
-    source_polymer_successions,
+    source_polymer_paths,
     source_sequence_inferred_polymer_topology_bonds,
 )
 from protrepair.io.source_peptide_caps import PdbCapSourceContext
@@ -505,7 +505,7 @@ def normalize_raw_structure(
         constitution=constitution,
         residue_payloads=normalized_residue_payloads,
     )
-    successions = source_polymer_successions(
+    successions, unverified_ports = source_polymer_paths(
         raw_structure,
         file_format=file_format,
         constitution=constitution,
@@ -556,6 +556,7 @@ def normalize_raw_structure(
         geometry=geometry,
         topology=topology,
         source_connections=projected_source_connections,
+        unverified_polymer_ports=unverified_ports,
         excluded_coordination_connections=_excluded_coordination_connections(
             source_connections,
             excluded_source_endpoints,

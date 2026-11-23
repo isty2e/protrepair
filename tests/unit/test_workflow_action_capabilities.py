@@ -36,6 +36,7 @@ from protrepair.workflow.actions.packing import CommittedPackingTransformer
 from protrepair.workflow.actions.retained_non_polymer_hydrogen_completion import (
     RetainedNonPolymerHydrogenCompletionTransformer,
 )
+from protrepair.workflow.actions.site_protonation import SiteProtonationTransformer
 from protrepair.workflow.actions.stereochemistry import (
     StereochemistryCorrectionTransformer,
 )
@@ -146,7 +147,13 @@ def test_explicit_action_registry_entries_expose_capability_metadata() -> None:
         StereochemistryCorrectionTransformer,
         BackboneWindowRefinementTransformer,
         LocalRefinementTransformer,
+        SiteProtonationTransformer,
     }
+    site_capability = registry_by_type[SiteProtonationTransformer].capability
+    assert site_capability.activation_mode is WorkflowActionActivationMode.EXPLICIT_ONLY
+    assert site_capability.can_reduce_deficit_family(
+        WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS
+    )
     assert registry_by_type[
         ExternalSpanReconstructionTransformer
     ].capability.can_reduce_deficit_family(WorkflowCapabilityDeficitFamily.COVERAGE_GAP)

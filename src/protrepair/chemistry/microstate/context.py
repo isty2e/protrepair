@@ -6,6 +6,10 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 from protrepair.chemistry.component.template import ResidueTemplate
+from protrepair.chemistry.microstate.bound_protonation import (
+    active_site_protonations,
+    requested_site,
+)
 from protrepair.chemistry.microstate.catalog import (
     PeptideLinkage,
     PolymerChemicalSite,
@@ -17,6 +21,8 @@ from protrepair.chemistry.microstate.resolution import (
     MicrostateConstraints,
     MicrostateResolution,
     MicrostateResolutionStatus,
+    MicrostateSelectionBasis,
+    SiteProtonationReason,
 )
 from protrepair.chemistry.peptide_caps import (
     LinkedPeptideCap,
@@ -28,6 +34,7 @@ from protrepair.chemistry.retained_non_polymer.template_binding import (
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite, ResidueRole
 from protrepair.structure.labels import AtomRef, ResidueId
+from protrepair.structure.observation import StructureObservation
 from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import (
@@ -222,6 +229,16 @@ class AminoAcidMicrostateContext:
             else ()
         )
 
+    def site_observation(
+        self, residue_id: ResidueId, site: PolymerMicrostateSite
+    ) -> StructureObservation | None:
+        """Return deposited evidence, or the requested site's frozen canonical input."""
+        selection = requested_site(self.source, residue_id, site.kind)
+        binding = active_site_protonations()
+        if binding is not None and selection is not None:
+            return binding.observation
+        return self.source.provenance.ingress.observation
+
     def resolve(
         self,
         residue_id: ResidueId,
@@ -267,6 +284,77 @@ class AminoAcidMicrostateContext:
         index = constitution.residue_index(residue_id)
         residue = constitution.residue_site_at(index)
         catalog = site.candidates()
+        selection = requested_site(self.source, residue_id, site.kind)
+        if selection is not None:
+            binding = active_site_protonations()
+            assert binding is not None
+            limitation = binding.limitation(self.source, selection, site)
+            if limitation is not None:
+                return limitation
+            try:
+                physical = self.coordination_requirements(residue_id, site)
+            except ValueError as error:
+                return MicrostateResolution(
+                    MicrostateResolutionStatus.UNSUPPORTED,
+                    details=(str(error),),
+                    reason=SiteProtonationReason.PHYSICAL_CONSTRAINT,
+                )
+            resolution = site.resolve(
+                residue, binding.observation, selection=selection, requirements=physical
+            )
+            if resolution.graph is not None:
+                for attachment in resolution.observed_hydrogens:
+                    ref = attachment.hydrogen
+                    original = binding.observation.constitution.atom_index(ref)
+                    current = constitution.resolve_atom_index(ref)
+                    if current is None:
+                        anchor = constitution.resolve_atom_index(attachment.parent)
+                        original_anchor = (
+                            binding.observation.constitution.resolve_atom_index(
+                                attachment.parent
+                            )
+                        )
+                        if (
+                            anchor is None
+                            or original_anchor is None
+                            or self.source.geometry.atom_geometry(anchor).position
+                            != binding.observation.geometry.atom_geometry(
+                                original_anchor
+                            ).position
+                        ):
+                            return MicrostateResolution(
+                                MicrostateResolutionStatus.INSUFFICIENT,
+                                reason=SiteProtonationReason.CHANGED_HYDROGEN_ANCHOR,
+                                details=(
+                                    "cannot restore an original hydrogen on a changed anchor",
+                                ),
+                            )
+                    elif (
+                        constitution.atom_site_at(current)
+                        != binding.observation.constitution.atom_site_at(original)
+                        or self.source.geometry.atom_geometry(current).altloc
+                        != binding.observation.geometry.atom_geometry(original).altloc
+                    ):
+                        return MicrostateResolution(
+                            MicrostateResolutionStatus.CONFLICT,
+                            reason=SiteProtonationReason.SOURCE_CONFLICT,
+                            details=("original hydrogen identity has changed",),
+                        )
+                if len(resolution.candidates) > 1:
+                    # Adding missing H need not move a compatible resonance charge.
+                    realized = self.realized_heavy_graph(residue_id, site, resolution)
+                    if (
+                        realized in resolution.candidates
+                        and realized != resolution.graph
+                    ):
+                        resolution = replace(
+                            resolution,
+                            candidates=(
+                                realized,
+                                *(g for g in resolution.candidates if g != realized),
+                            ),
+                        )
+            return resolution
         names = (
             set()
             if catalog is None
@@ -1075,7 +1163,7 @@ class AminoAcidMicrostateContext:
         assert graph is not None
         constitution = self.source.constitution
         residue = constitution.residue_site_at(constitution.residue_index(residue_id))
-        observation = self.source.provenance.ingress.observation
+        observation = self.site_observation(residue_id, site)
         original: dict[str, tuple[AtomSite, str]] = {}
         for attachment in resolution.observed_hydrogens:
             assert observation is not None
@@ -1172,7 +1260,8 @@ class PolymerMicrostateContext(AminoAcidMicrostateContext):
         Returns
         -------
         bool
-            A present, non-crosslinked SG is coordinated or declared anionic.
+            A present, non-crosslinked SG has a coordination constraint, an
+            anionic input declaration, or a requested or committed protonation.
         """
         sulfur = AtomRef(residue_id, "SG")
         index = self.source.constitution.resolve_atom_index(sulfur)
@@ -1191,6 +1280,15 @@ class PolymerMicrostateContext(AminoAcidMicrostateContext):
         if any(
             bond.relationship_type is BondRelationshipType.METAL_COORDINATION
             for bond in external
+        ):
+            return True
+        if requested_site(
+            self.source, residue_id, PolymerChemicalSite.SIDECHAIN
+        ) is not None or any(
+            choice.basis is MicrostateSelectionBasis.COMMITTED_REQUEST
+            and choice.component_id == "CYS"
+            and any(atom.name == "SG" for atom in choice.graph.atoms)
+            for choice in self._choices_by_residue.get(residue_id, ())
         ):
             return True
         observation = self.source.provenance.ingress.observation

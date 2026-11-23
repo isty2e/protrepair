@@ -1,6 +1,6 @@
 """Evidence intersection and explicit authority for local microstate graphs."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from protrepair.chemistry.component.graph import BondDefinition
@@ -162,6 +162,7 @@ class MicrostateSelectionBasis(str, Enum):
     OVERRIDE = "override"
     DEFAULT = "default"
     REQUESTED = "requested"
+    COMMITTED_REQUEST = "committed_request"
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,8 +178,9 @@ class AppliedMicrostateChoice:
     graph : MicrostateGraph
         Complete selected site, including its chemical boundary valence.
     basis : MicrostateSelectionBasis
-        OVERRIDE grants explicit replacement authority. DEFAULT is only a
-        source-compatible preference. Only choices applied by a writer are saved.
+        OVERRIDE can replace source evidence. DEFAULT and COMMITTED_REQUEST
+        are conditional preferences; the latter retains the caller's proton
+        distribution without fixing its resonance drawing.
 
     Raises
     ------
@@ -224,8 +226,11 @@ class AppliedMicrostateChoice:
         Returns
         -------
         MicrostateConstraints
-            Exact selected charges, parent H counts and site bond orders.
+            A committed caller class supplies parent H counts without pinning
+            its resonance drawing. Other choices retain their original constraints.
         """
+        if self.basis is MicrostateSelectionBasis.COMMITTED_REQUEST:
+            return MicrostateConstraints(hydrogens=self.graph.protonation_key()[1])
         return MicrostateConstraints(
             charges=tuple((atom.name, atom.charge) for atom in self.graph.atoms),
             hydrogens=tuple((atom.name, atom.hydrogens) for atom in self.graph.atoms),
@@ -272,6 +277,23 @@ class MicrostateResolutionStatus(str, Enum):
     UNSUPPORTED = "unsupported"
 
 
+class SiteProtonationReason(str, Enum):
+    """Specific evidence or input condition preventing a requested site state."""
+
+    ABSENT_AT_INPUT = "absent_at_input"
+    NON_POLYMER = "non_polymer"
+    UNSUPPORTED_COMPONENT = "unsupported_component"
+    SUPERSEDED_IDENTITY = "superseded_identity"
+    OUTSIDE_CATALOG = "outside_catalog"
+    PHYSICAL_CONSTRAINT = "physical_constraint"
+    SOURCE_CONFLICT = "source_conflict"
+    INSUFFICIENT_PROVENANCE = "insufficient_provenance"
+    UNVERIFIED_BOUNDARY = "unverified_boundary"
+    EXCLUDED_PARTNER = "excluded_partner"
+    MISSING_HEAVY_ATOMS = "missing_heavy_atoms"
+    CHANGED_HYDROGEN_ANCHOR = "changed_hydrogen_anchor"
+
+
 @dataclass(frozen=True, slots=True)
 class MicrostateResolution:
     """Expose a graph only when one protonation state is resolved.
@@ -291,6 +313,8 @@ class MicrostateResolution:
     observed_hydrogens : tuple[ObservedHydrogenAttachment, ...]
         Interpreted original H identities and parents for this site. They remain
         source evidence even when an explicit override requests a different count.
+    reason : SiteProtonationReason or None
+        More specific cause when a named site request cannot be satisfied.
 
     Raises
     ------
@@ -307,12 +331,23 @@ class MicrostateResolution:
     superseded_source: MicrostateConstraints = MicrostateConstraints()
     details: tuple[str, ...] = ()
     observed_hydrogens: tuple[ObservedHydrogenAttachment, ...] = ()
+    reason: SiteProtonationReason | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, MicrostateResolutionStatus) or not isinstance(
             self.basis, MicrostateSelectionBasis
         ):
             raise TypeError("microstate resolution requires canonical enum values")
+        if self.reason is not None:
+            if not isinstance(self.reason, SiteProtonationReason):
+                raise TypeError("site refusal reason must use a canonical reason")
+            if self.status in (
+                MicrostateResolutionStatus.RESOLVED,
+                MicrostateResolutionStatus.AMBIGUOUS,
+            ):
+                raise ValueError(
+                    "a compatible chemical class cannot carry a refusal reason"
+                )
         if self.candidates:
             object.__setattr__(
                 self, "candidates", MicrostateSite(self.candidates).candidates
@@ -415,6 +450,7 @@ class MicrostateSite:
         site_charge: int,
         parent_hydrogens: tuple[tuple[str, int], ...] = (),
         requirements: MicrostateConstraints | None = None,
+        original_requirements: MicrostateConstraints | None = None,
     ) -> MicrostateResolution:
         """Resolve a mandatory request without replacing evidence or breaking ties.
 
@@ -428,6 +464,8 @@ class MicrostateSite:
             Exact counts on named parents. Omitted parents remain unconstrained.
         requirements : MicrostateConstraints or None
             Physical constraints on this skeleton, such as an occupied donor.
+        original_requirements : MicrostateConstraints or None
+            Donor requirements from the original structure, before any repair.
 
         Returns
         -------
@@ -458,17 +496,22 @@ class MicrostateSite:
                 MicrostateResolutionStatus.UNSUPPORTED,
                 basis=basis,
                 details=("requested protonation is not in the site catalog",),
+                reason=SiteProtonationReason.OUTSIDE_CATALOG,
             )
-        feasible = (
-            matches
-            if requirements is None
-            else tuple(g for g in matches if requirements.violations(g).is_empty())
+        feasible = tuple(
+            graph
+            for graph in matches
+            if all(
+                req is None or req.violations(graph).is_empty()
+                for req in (requirements, original_requirements)
+            )
         )
         if not feasible:
             return MicrostateResolution(
                 MicrostateResolutionStatus.CONFLICT,
                 basis=basis,
                 details=("requested protonation conflicts with physical requirements",),
+                reason=SiteProtonationReason.PHYSICAL_CONSTRAINT,
             )
         candidates = tuple(g for g in feasible if source.violations(g).is_empty())
         if not candidates:
@@ -476,6 +519,7 @@ class MicrostateSite:
                 MicrostateResolutionStatus.CONFLICT,
                 basis=basis,
                 details=("requested protonation conflicts with source evidence",),
+                reason=SiteProtonationReason.SOURCE_CONFLICT,
             )
         return _classify_candidates(source, candidates, basis)
 

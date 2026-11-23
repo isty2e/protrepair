@@ -1,6 +1,7 @@
 """Current H-preparation diagnostics for workflow assessment and output."""
 
 from protrepair.chemistry import ComponentLibrary
+from protrepair.chemistry.microstate.bound_protonation import active_site_protonations
 from protrepair.chemistry.microstate.context import input_declares_thiolate
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.definition import (
@@ -101,6 +102,14 @@ def project_hydrogen_issues(
             if outcome.requested_goal.value is HydrogenCoverageState.COMPLETE
         )
     )
+    check_when_complete = set(assigned)
+    if hydrogen_goals and (binding := active_site_protonations()) is not None:
+        # A complete name count can still hide an incompatible fixed H/D inventory.
+        check_when_complete.update(
+            request.residue_id
+            for request in binding.requests.values()
+            if binding.identity_failure(structure, request) is None
+        )
     thiolates = (
         {
             residue.residue_id
@@ -113,7 +122,7 @@ def project_hydrogen_issues(
     )
     check_thiolates: set[ResidueId] = set()
     for outcome in hydrogen_goals:
-        if outcome.is_satisfied() and not (assigned or thiolates):
+        if outcome.is_satisfied() and not (check_when_complete or thiolates):
             continue
         scope = outcome.requested_goal.scope
         if isinstance(scope, WholeStructureScope):
@@ -130,7 +139,9 @@ def project_hydrogen_issues(
             continue
         check_thiolates.update(thiolates.intersection(in_scope))
         selected.update(
-            assigned.intersection(in_scope) if outcome.is_satisfied() else in_scope
+            check_when_complete.intersection(in_scope)
+            if outcome.is_satisfied()
+            else in_scope
         )
 
     if repair_refinement is not None:
