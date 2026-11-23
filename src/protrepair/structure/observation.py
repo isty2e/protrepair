@@ -34,6 +34,10 @@ class StructureObservation:
     excluded_coordination_connections : tuple[SourceConnection, ...]
         Typed declarations to partners removed by source normalization. These
         endpoints do not become atoms or bonds in the selected address space.
+    unresolved_non_polymer_links : tuple[SourceConnection, ...]
+        Additional inter-residue declarations with only the retained
+        non-polymer endpoint represented. They cannot establish a bond or
+        certify that the retained site is chemically isolated.
 
     Raises
     ------
@@ -46,6 +50,9 @@ class StructureObservation:
     geometry: StructureGeometry
     topology: StructureTopology
     excluded_coordination_connections: tuple[SourceConnection, ...] = ()
+    unresolved_non_polymer_links: tuple[SourceConnection, ...] = field(
+        default=(), kw_only=True
+    )
     _bonds_by_residue: Mapping[ResidueId, tuple[TopologyBond, ...]] = field(
         init=False, repr=False, compare=False
     )
@@ -102,6 +109,15 @@ class StructureObservation:
         object.__setattr__(
             self, "excluded_coordination_connections", excluded_connections
         )
+        unresolved = tuple(dict.fromkeys(self.unresolved_non_polymer_links))
+        if any(
+            link.lone_retained_endpoint(self.constitution, self.geometry) is None
+            for link in unresolved
+        ):
+            raise ModelInvariantError(
+                "unresolved non-polymer links require exactly one retained endpoint"
+            )
+        object.__setattr__(self, "unresolved_non_polymer_links", unresolved)
 
         by_residue: dict[ResidueId, list[TopologyBond]] = {}
         for bond in self.topology.bonds:
@@ -126,6 +142,7 @@ class StructureObservation:
         geometry: StructureGeometry,
         topology: StructureTopology,
         excluded_coordination_connections: tuple[SourceConnection, ...] = (),
+        source_connections: tuple[SourceConnection, ...] = (),
     ) -> "StructureObservation":
         """Capture source facts before any chemistry-changing transformation.
 
@@ -140,6 +157,8 @@ class StructureObservation:
         excluded_coordination_connections : tuple[SourceConnection, ...]
             Typed declarations incident to a retained metal whose other source
             endpoint was encountered in a policy-excluded residue or chain.
+        source_connections : tuple[SourceConnection, ...]
+            Decoded declarations before projection to pairs of selected atoms.
 
         Returns
         -------
@@ -177,11 +196,18 @@ class StructureObservation:
                 if bond.provenance is BondProvenance.SOURCE_EXPLICIT
             ),
         )
+        excluded = frozenset(excluded_coordination_connections)
         return cls(
             constitution=constitution,
             geometry=geometry,
             topology=source_topology,
             excluded_coordination_connections=excluded_coordination_connections,
+            unresolved_non_polymer_links=tuple(
+                link
+                for link in source_connections
+                if link not in excluded
+                and link.lone_retained_endpoint(constitution, geometry) is not None
+            ),
         )
 
     def coordination_connections(self) -> tuple[SourceConnection, ...]:

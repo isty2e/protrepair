@@ -261,6 +261,9 @@ class StructureIngressOptions:
         Select water and other non-polymers instead of applying legacy defaults.
     retained_non_polymer_chemistry_overrides : iterable of RetainedNonPolymerChemistryOverride
         Explicit chemistry to use for the named retained residues.
+    use_ccd_orthophosphate_models : bool, default=False
+        Use the deposited PO4, PI or 2HP model for kept inorganic phosphate
+        unless a site override is supplied. This does not request H completion.
     omit_zero_occupancy_sidechain_heavy_atoms : bool, default=False
         Treat eligible explicitly zero standard side-chain positions in input
         coordinate files as missing. This option does not request reconstruction.
@@ -288,6 +291,7 @@ class StructureIngressOptions:
     ] = ()
     omit_zero_occupancy_sidechain_heavy_atoms: bool = field(default=False, kw_only=True)
     omit_zero_occupancy_polymer_residues: bool = field(default=False, kw_only=True)
+    use_ccd_orthophosphate_models: bool = field(default=False, kw_only=True)
 
     def __init__(
         self,
@@ -301,11 +305,15 @@ class StructureIngressOptions:
         omit_zero_occupancy_sidechain_heavy_atoms: bool = False,
         omit_zero_occupancy_polymer_residues: bool = False,
         non_polymer_retention: NonPolymerRetentionPolicy | None = None,
+        use_ccd_orthophosphate_models: bool = False,
     ) -> None:
         object.__setattr__(self, "occupancy_policy", occupancy_policy)
         object.__setattr__(self, "mutation_policy", mutation_policy)
         object.__setattr__(self, "ligand_policy", ligand_policy)
         object.__setattr__(self, "non_polymer_retention", non_polymer_retention)
+        object.__setattr__(
+            self, "use_ccd_orthophosphate_models", use_ccd_orthophosphate_models
+        )
         object.__setattr__(
             self,
             "omit_zero_occupancy_sidechain_heavy_atoms",
@@ -341,6 +349,8 @@ class StructureIngressOptions:
             raise TypeError("omit_zero_occupancy_sidechain_heavy_atoms must be a bool")
         if not isinstance(self.omit_zero_occupancy_polymer_residues, bool):
             raise TypeError("omit_zero_occupancy_polymer_residues must be a bool")
+        if not isinstance(self.use_ccd_orthophosphate_models, bool):
+            raise TypeError("use_ccd_orthophosphate_models must be a bool")
 
         normalized_overrides: list[RetainedNonPolymerChemistryOverride] = []
         seen_override_residue_ids = set()

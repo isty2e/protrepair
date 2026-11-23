@@ -164,10 +164,33 @@ execution:
 | `ligand_policy` | `LigandPolicy.DROP` | Drop, keep, or reject non-water non-polymers when no retention rules are supplied |
 | `non_polymer_retention` | `None` | Select whole waters and other non-polymers using [ordered retention rules](ingress-policy.md#keeping-selected-waters-cofactors-and-ions) |
 | `retained_non_polymer_chemistry_overrides` | empty | Supply explicit retained-component chemistry |
+| `use_ccd_orthophosphate_models` | `False` | Use the deposited chemical component model for retained inorganic phosphate |
 | `omit_zero_occupancy_sidechain_heavy_atoms` | `False` | Treat eligible, explicitly zero side-chain coordinates as missing without requesting repair |
 | `omit_zero_occupancy_polymer_residues` | `False` | Treat verified all-zero internal singleton residues as missing without requesting reconstruction |
 
 Exact normalization precedence is defined in the [ingress policy](ingress-policy.md).
+
+To prepare retained phosphate under a hydrogen-completion goal, set
+`StructureIngressOptions(ligand_policy=LigandPolicy.KEEP, use_ccd_orthophosphate_models=True)`.
+The [PO4](https://www.rcsb.org/ligand/PO4) model assigns charge -3 and no
+hydrogens. [PI](https://www.rcsb.org/ligand/PI) assigns charge -2 and an H
+on O4; [2HP](https://www.rcsb.org/ligand/2HP) assigns charge -1 and an H on
+each of O3 and O4. These assignments use the deposited atom names, not the
+order of the coordinate records. Added H and their model-assigned parents
+appear in the hydrogen-addition repair event. Compatible observed H/D/T keep
+their names and coordinates. If neither the atom name nor a recorded bond
+identifies the parent, the repair uses the coordinates only when one
+model-allowed oxygen fits the O-H distance and is the unique nearest heavy
+atom in the phosphate.
+
+A site-specific override takes precedence over the CCD model. Both must agree
+with the observed atoms and their attachments. A phosphate linked to a metal
+or covalently attached to another residue stays unchanged, even if the partner
+was filtered out. If the selected graph conflicts with the input, that site
+leaves the H goal unmet; other sites can still be prepared. Hydrogen coverage
+counts atoms. If all H are present but their coordinates prevent bond
+assignment, the repair reports that failure separately. Selecting a model
+neither keeps a dropped ion nor requests a repair.
 
 ## Transform Requests
 

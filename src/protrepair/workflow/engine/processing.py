@@ -12,6 +12,9 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
+from protrepair.chemistry.retained_non_polymer.orthophosphate import (
+    DepositedOrthophosphate,
+)
 from protrepair.diagnostics.source_microstate import (
     diagnose_source_microstate_contradictions,
 )
@@ -90,6 +93,7 @@ def process_canonical_structure(
         _validated_retained_non_polymer_chemistry_evidence(
             normalized_structure,
             active_ingress.retained_non_polymer_chemistry_overrides,
+            use_ccd_orthophosphate_models=active_ingress.use_ccd_orthophosphate_models,
         )
     )
     with stationary_water_run(normalized_structure):
@@ -239,10 +243,12 @@ def _default_workflow_planning_context(
 def _validated_retained_non_polymer_chemistry_evidence(
     structure: ProteinStructure,
     overrides: tuple[RetainedNonPolymerChemistryOverride, ...],
+    *,
+    use_ccd_orthophosphate_models: bool,
 ) -> tuple[RetainedNonPolymerChemistryEvidence, ...]:
-    """Validate ingress retained non-polymer overrides as canonical evidence."""
+    """Bind explicit site overrides before selecting any deposited models."""
 
-    if not overrides:
+    if not overrides and not use_ccd_orthophosphate_models:
         return ()
 
     ligands_by_residue_id = {
@@ -301,5 +307,13 @@ def _validated_retained_non_polymer_chemistry_evidence(
                 )
 
         validated_evidence.append(evidence)
+
+    if use_ccd_orthophosphate_models:
+        overridden = {item.residue_id for item in validated_evidence}
+        for ligand in structure.constitution.ligands:
+            if ligand.residue_id not in overridden:
+                model = DepositedOrthophosphate.for_residue(ligand)
+                if model is not None:
+                    validated_evidence.append(model)
 
     return tuple(validated_evidence)

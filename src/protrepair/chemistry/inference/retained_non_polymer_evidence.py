@@ -1,7 +1,7 @@
 """RDKit-backed inference for retained non-polymer chemistry evidence."""
 
 from collections.abc import Mapping
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import TYPE_CHECKING
 
 try:
@@ -18,11 +18,18 @@ from protrepair.chemistry.inference.rdkit_graph import (
     native_bond_projection_from_molecule,
     require_compatible_named_pose_stereochemistry,
 )
+from protrepair.chemistry.inference.rdkit_hydrogen_geometry import (
+    named_pose_hydrogen_bond_lengths,
+)
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
+)
+from protrepair.chemistry.retained_non_polymer.orthophosphate import (
+    SelectedOrthophosphateGraph,
+    is_orthophosphate_component,
 )
 from protrepair.errors import (
     BondOrderConstraintError,
@@ -80,6 +87,63 @@ def require_retained_non_polymer_evidence_stereochemistry(
         tuple(names[index] for index in range(template.GetNumAtoms())),
         geometry,
         hydrogen_attachments=hydrogen_attachments,
+    )
+
+
+def retained_orthophosphate_hydrogen_parents(
+    evidence: RetainedNonPolymerChemistryEvidence, structure: ProteinStructure
+) -> dict[str, str] | None:
+    """Bind observed phosphate H/D/T to the selected graph's oxygen sites.
+
+    Parameters
+    ----------
+    evidence : RetainedNonPolymerChemistryEvidence
+        The winning site override or explicitly selected CCD model.
+    structure : ProteinStructure
+        Current site and its original source observation, if available.
+
+    Returns
+    -------
+    dict[str, str] or None
+        Present hydrogen names mapped to oxygen names, or None for other
+        components, which keep their own attachment rules.
+
+    Raises
+    ------
+    ValueError
+        The selected graph would contradict source or current chemistry.
+    RdkitUnavailableError
+        The selected molecular graph could not be interpreted without RDKit.
+    """
+    site = structure.constitution.residue_or_ligand(evidence.residue_id)
+    if site is None or not is_orthophosphate_component(site.component_id):
+        return None
+    mol = template_without_hydrogens(evidence.smiles)
+    names = _evidence_heavy_atom_names_by_index(
+        mol, heavy_atom_names=evidence.heavy_atom_names
+    )
+    atoms = {names[atom.GetIdx()]: atom for atom in mol.GetAtoms()}
+    return SelectedOrthophosphateGraph(
+        evidence.residue_id,
+        site.component_id,
+        elements={name: atom.GetSymbol().upper() for name, atom in atoms.items()},
+        formal_charges={name: atom.GetFormalCharge() for name, atom in atoms.items()},
+        bond_orders={
+            frozenset(
+                (names[bond.GetBeginAtomIdx()], names[bond.GetEndAtomIdx()])
+            ): int(bond.GetBondTypeAsDouble())
+            for bond in mol.GetBonds()
+        },
+        hydrogen_capacity={
+            name: atom.GetTotalNumHs()
+            for name, atom in atoms.items()
+            if atom.GetAtomicNum() == 8 and atom.GetTotalNumHs()
+        },
+    ).hydrogen_parents(
+        structure,
+        prepare_lengths=partial(
+            named_pose_hydrogen_bond_lengths, mol, evidence.heavy_atom_names
+        ),
     )
 
 

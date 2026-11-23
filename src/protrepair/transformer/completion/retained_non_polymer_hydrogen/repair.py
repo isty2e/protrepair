@@ -21,6 +21,7 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_coordination_bonds,
     retained_non_polymer_evidence_external_bonds,
     retained_non_polymer_evidence_formal_charge_requirements,
+    retained_orthophosphate_hydrogen_parents,
 )
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
@@ -41,6 +42,9 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 )
 from protrepair.chemistry.retained_non_polymer.hydrogen_correspondence import (
     source_hydrogen_bond_length_is_compatible,
+)
+from protrepair.chemistry.retained_non_polymer.orthophosphate import (
+    DepositedOrthophosphate,
 )
 from protrepair.chemistry.retained_non_polymer.template_binding import (
     RetainedTemplateBinding,
@@ -491,6 +495,11 @@ def _execute_retained_non_polymer_hydrogen_stage(
                     continue
             try:
                 if evidence is not None:
+                    phosphate_parents = retained_orthophosphate_hydrogen_parents(
+                        evidence, structure
+                    )
+                    if phosphate_parents is not None:
+                        source_hydrogen_anchor_by_name = phosphate_parents
                     evidence_external_bonds = (
                         retained_non_polymer_evidence_external_bonds(
                             evidence, structure
@@ -1308,6 +1317,17 @@ def _hydrogenate_retained_non_polymer_payload(
             for atom_name in hydrogenated_payload.atom_names()
             if atom_name not in (source_payload or payload).atom_names()
         )
+        projected_bonds = reconciliation.project_bond_definitions(
+            hydrogenation_result.heavy_bond_definitions
+            + projection.hydrogen_bond_definitions
+        )
+        details = None
+        if added_atom_names and isinstance(chemistry_evidence, DepositedOrthophosphate):
+            parents = _hydrogen_anchor_by_name(projected_bonds, hydrogenated_payload)
+            assignments = ", ".join(
+                f"{name} on {parents[name]}" for name in added_atom_names
+            )
+            details = f"Model-assigned from CCD {chemistry_evidence.component_id}: {assignments}"
         return _RetainedNonPolymerHydrogenPayloadResult(
             payload=hydrogenated_payload,
             repairs=(
@@ -1319,16 +1339,14 @@ def _hydrogenate_retained_non_polymer_payload(
                         residue_id=payload.residue_id,
                         component_id=payload.component_id,
                         atom_names=added_atom_names,
+                        details=details,
                     ),
                 )
             ),
             issues=(),
             topology_plan=_topology_plan_for_bond_definitions(
                 residue_id=payload.residue_id,
-                bond_definitions=reconciliation.project_bond_definitions(
-                    hydrogenation_result.heavy_bond_definitions
-                    + projection.hydrogen_bond_definitions,
-                ),
+                bond_definitions=projected_bonds,
                 provenance=BondProvenance.EVIDENCE_RESOLVED,
                 formal_charge_requirements=(
                     coordination_preparation.formal_charge_requirements()

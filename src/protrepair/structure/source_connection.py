@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 
 from protrepair.errors import ModelInvariantError
-from protrepair.structure.constitution import StructureConstitution
+from protrepair.structure.constitution import ResidueRole, StructureConstitution
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
@@ -176,6 +176,48 @@ class SourceConnection:
         """Return whether lowering requires the selected source altloc."""
 
         return self.source_metadata.record_type is not SourceBondRecordType.PDB_SSBOND
+
+    def lone_retained_endpoint(
+        self, constitution: StructureConstitution, geometry: StructureGeometry
+    ) -> SourceAtomIdentity | None:
+        """Return the kept non-water non-polymer endpoint of an unrepresented link.
+
+        Parameters
+        ----------
+        constitution : StructureConstitution
+            Selected source atoms and their residue roles.
+        geometry : StructureGeometry
+            Alternate location of each selected atom.
+
+        Returns
+        -------
+        SourceAtomIdentity or None
+            The sole represented endpoint of an external declaration that
+            could affect local chemistry. Hydrogen bonds do not count.
+        """
+        if (
+            self.endpoint_1.atom_ref.residue_id == self.endpoint_2.atom_ref.residue_id
+            or self.source_metadata.reported_relationship_type
+            is BondRelationshipType.HYDROGEN_BOND
+        ):
+            return None
+        present = []
+        for endpoint in self.endpoint_pair():
+            index = endpoint.resolve_index(
+                constitution,
+                geometry,
+                require_altloc_match=self.requires_exact_altloc_match(),
+            )
+            if index is not None:
+                present.append(
+                    (endpoint, constitution.residue_index_for_atom_index(index))
+                )
+        if (
+            len(present) == 1
+            and constitution.role_at(present[0][1]) is ResidueRole.LIGAND
+        ):
+            return present[0][0]
+        return None
 
     def is_fallback_record(self) -> bool:
         """Return whether typed records take precedence over this record's type."""

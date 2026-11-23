@@ -2,6 +2,9 @@
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
+from protrepair.chemistry.retained_non_polymer.orthophosphate import (
+    is_orthophosphate_component,
+)
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.diagnostics.polymer_hydrogen import (
@@ -166,10 +169,17 @@ def project_hydrogen_issues(
         )[1].retained_non_polymer_facts
         if fact.chemistry_failure is not None
         and not fact.has_complete_reference_hydrogens()
-        and observation.hydrogen_expectation_model.resolution_for_retained_non_polymer(
-            fact.residue_id
-        ).unresolved_hydrogen_requirement
-        is not None
+        and (
+            observation.hydrogen_expectation_model.resolution_for_retained_non_polymer(
+                fact.residue_id
+            ).unresolved_hydrogen_requirement
+            is not None
+            or (
+                fact.residue_id
+                in observation.retained_non_polymer_evidence_by_residue_id
+                and is_orthophosphate_component(fact.component_id)
+            )
+        )
     )
     refused_retained_caps = tuple(
         linked_cap_issue(cap, cap.refusal)

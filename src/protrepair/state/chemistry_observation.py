@@ -709,6 +709,7 @@ class StructureChemistryObservation:
         elif hydrogen_expectation_resolution.source in {
             RetainedNonPolymerChemistryEvidenceSource.AMINO_ACID_PREPARATION,
             RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE,
+            RetainedNonPolymerChemistryEvidenceSource.DEPOSITED_CCD_MODEL,
             RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION,
         }:
             heavy_topology_source = hydrogen_expectation_resolution.source
