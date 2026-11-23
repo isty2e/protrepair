@@ -4,6 +4,8 @@
 
 ### Added
 
+- assign SMILES to one retained residue without an ordered list of atom names;
+  leave the residue unprepared when the input cannot distinguish different chemistry
 - assign a local PDBx component dictionary to a retained ligand by residue ID
   and prepare its named hydrogens, bonds and charges on the deposited coordinates
 

@@ -39,9 +39,12 @@ from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
 from protrepair.chemistry.retained_non_polymer.definition import (
-    RetainedComponentAssignment,
+    MatchedSmiles,
+    NamedGraphAssignment,
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
+    BoundRetainedChemistry,
+    RefusedSmiles,
     SelectedRetainedChemistry,
 )
 from protrepair.chemistry.retained_non_polymer.orthophosphate import (
@@ -72,6 +75,7 @@ class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
     TEMPLATE = "template"
     EXTERNAL_OVERRIDE = "external_override"
     CALLER_COMPONENT_DEFINITION = "caller_component_definition"
+    SMILES_CORRESPONDENCE = "smiles_correspondence"
     DEPOSITED_CCD_MODEL = "deposited_ccd_model"
     COORDINATION_PREPARATION = "coordination_preparation"
     ATOMIC_INVENTORY = "atomic_inventory"
@@ -91,6 +95,11 @@ class RetainedNonPolymerChemistryFailureKind(str, Enum):
     NO_ADMITTED_PREPARATION = "no_admitted_preparation"
     CONTEXT_UNRESOLVED = "context_unresolved"
     EVIDENCE_REJECTED = "evidence_rejected"
+    AMBIGUOUS_CORRESPONDENCE = "ambiguous_correspondence"
+    INCOMPATIBLE_CORRESPONDENCE = "incompatible_correspondence"
+    UNSUPPORTED_CORRESPONDENCE = "unsupported_correspondence"
+    INDETERMINATE_CORRESPONDENCE = "indeterminate_correspondence"
+    CORRESPONDENCE_SEARCH_LIMIT = "correspondence_search_limit"
     FALLBACK_DISABLED = "fallback_disabled"
     INFERENCE_FAILED = "inference_failed"
     REFERENCE_INVALID = "reference_invalid"
@@ -616,11 +625,23 @@ def resolve_retained_non_polymer_chemistry(
     """Resolve selected chemistry against source and current connected context."""
 
     if (
-        isinstance(evidence, RetainedComponentAssignment)
+        isinstance(evidence, NamedGraphAssignment)
         and evidence.residue_id != residue.residue_id
     ):
         raise ValueError(
-            f"caller CCD targets {evidence.residue_id!r}, not {residue.residue_id!r}"
+            f"{'caller SMILES' if isinstance(evidence, MatchedSmiles) else 'caller CCD'} targets {evidence.residue_id!r}, not {residue.residue_id!r}"
+        )
+    if isinstance(evidence, RefusedSmiles):
+        if residue.residue_id != evidence.residue_id:
+            raise ValueError("SMILES assignment targets a different residue")
+        return RetainedNonPolymerChemistryResolution(
+            source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
+            failure=RetainedNonPolymerChemistryFailure(
+                RetainedNonPolymerChemistryFailureKind(evidence.cause.value),
+                evidence.detail,
+                RetainedNonPolymerChemistryEvidenceSource.SMILES_CORRESPONDENCE,
+            ),
+            unresolved_hydrogen_requirement=evidence.requires_hydrogens,
         )
     prepared = (
         AminoAcidPreparation(PolymerMicrostateContext(structure), component_library)
@@ -637,7 +658,7 @@ def resolve_retained_non_polymer_chemistry(
         allow_rdkit_fallback=allow_rdkit_fallback,
     )
     if not resolution.source.is_resolved() and not isinstance(
-        evidence, RetainedComponentAssignment
+        evidence, NamedGraphAssignment
     ):
         reference = RetainedNonPolymerChemistryResolution.from_unprepared_reference(
             component_library.get(residue.component_id)
@@ -754,7 +775,7 @@ def _resolve_retained_non_polymer_chemistry_source(
     residue: ResidueSite,
     *,
     component_library: ComponentLibrary,
-    evidence: SelectedRetainedChemistry | None = None,
+    evidence: BoundRetainedChemistry | None = None,
     allow_rdkit_fallback: bool = True,
 ) -> RetainedNonPolymerChemistryResolution:
     """Resolve retained chemistry from its template, override, or fallback source."""
@@ -812,10 +833,7 @@ def _resolve_retained_non_polymer_chemistry_source(
             hydrogen_bond_definitions = (
                 retained_non_polymer_evidence_hydrogen_bond_definitions(evidence)
             )
-            if (
-                isinstance(evidence, RetainedComponentAssignment)
-                and parents is not None
-            ):
+            if isinstance(evidence, NamedGraphAssignment) and parents is not None:
                 occupied = {
                     slot: name
                     for name, slot in evidence.definition.occupied_slots(
@@ -844,32 +862,36 @@ def _resolve_retained_non_polymer_chemistry_source(
                 source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
                 failure=RetainedNonPolymerChemistryFailure(
                     RetainedNonPolymerChemistryFailureKind.EVIDENCE_REJECTED,
-                    f"caller CCD {evidence.definition.component_id}: {error}"
-                    if isinstance(evidence, RetainedComponentAssignment)
+                    f"{evidence.model_label}: {error}"
+                    if isinstance(evidence, NamedGraphAssignment)
                     else str(error),
-                    RetainedNonPolymerChemistryEvidenceSource.CALLER_COMPONENT_DEFINITION
-                    if isinstance(evidence, RetainedComponentAssignment)
+                    RetainedNonPolymerChemistryEvidenceSource.SMILES_CORRESPONDENCE
+                    if isinstance(evidence, MatchedSmiles)
+                    else RetainedNonPolymerChemistryEvidenceSource.CALLER_COMPONENT_DEFINITION
+                    if isinstance(evidence, NamedGraphAssignment)
                     else None,
                 ),
                 unresolved_hydrogen_requirement=bool(
                     evidence.definition.hydrogen_slots()
                 )
-                if isinstance(evidence, RetainedComponentAssignment)
+                if isinstance(evidence, NamedGraphAssignment)
                 else None,
             )
         return RetainedNonPolymerChemistryResolution(
             source=(
                 RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION
                 if preparation is not None
+                else RetainedNonPolymerChemistryEvidenceSource.SMILES_CORRESPONDENCE
+                if isinstance(evidence, MatchedSmiles)
                 else RetainedNonPolymerChemistryEvidenceSource.CALLER_COMPONENT_DEFINITION
-                if isinstance(evidence, RetainedComponentAssignment)
+                if isinstance(evidence, NamedGraphAssignment)
                 else RetainedNonPolymerChemistryEvidenceSource.DEPOSITED_CCD_MODEL
                 if isinstance(evidence, DepositedOrthophosphate)
                 else RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
             ),
             expected_heavy_atom_names=evidence.heavy_atom_names,
             expected_hydrogen_atom_names=evidence_expected_hydrogen_atom_names
-            if isinstance(evidence, RetainedComponentAssignment)
+            if isinstance(evidence, NamedGraphAssignment)
             else _preferred_expected_hydrogen_atom_names(
                 expected_hydrogen_atom_names=evidence_expected_hydrogen_atom_names,
                 present_hydrogen_atom_names=present_hydrogen_atom_names,

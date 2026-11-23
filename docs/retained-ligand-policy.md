@@ -49,6 +49,40 @@ and their parents. A complete H count alone does not establish that the selected
 graph was accepted. Supplying a graph does not make the ligand movable in a
 force field. Reapply the assignment when processing an exported structure.
 
+### Matching a SMILES to a Residue
+
+Use [`SmilesAssignment`](public-api.md#ingress-options) when you know the
+protonation state of one retained molecule but do not have its atom-name
+correspondence. It accepts a complete, isolated, connected, closed-shell
+nonmetal molecule. The assignment does not select a residue for retention or
+grant permission to move its heavy atoms.
+
+Several mappings are harmless if they give the same chemistry on the deposited
+atoms. For instance, exchanging the two ends of glycerol does not change which
+named atoms should bear H. Exchanging the two oxygens of a carboxylic acid
+*does* change which atom gets the proton. A reported carbonyl bond order or a
+distance-compatible, explicitly bonded H can distinguish them. Proximity alone
+does not pick the protonation site. Existing H/D/T must each have a compatible
+parent and keep their names and coordinates during hydrogen completion.
+
+For terminal, unprotonated oxygens on the same center, exchanging a single
+bond to O(-1) with a double bond to neutral O is an allowed resonance
+convention when it preserves stereo. ProtRepair uses one reproducible,
+model-assigned localization that respects declared charges and bond orders.
+A SMILES assignment can replace a template-inferred order between the same
+two heavy atoms. For example, a reported negative charge on a sulfate oxygen
+takes precedence over the template's double bond. A reported double bond
+does not change. If a stored order differs from the assignment, the site must
+be prepared before it can serve as fixed context for force-field refinement.
+
+Malformed SMILES and a missing or dropped target are request errors. A
+chemical mismatch, ambiguous mapping, unsupported notation (including atom
+maps or isotope-labelled query atoms), or incomplete search leaves the site
+unchanged. Other sites can still be prepared. If the issue reports ambiguity
+or a search limit, supply an ordered atom-name override or a named CCD.
+Component-dictionary rows in a coordinate mmCIF are not treated as deposited
+site bond orders.
+
 ### Retained Amino Acids
 
 Retained standard amino acids and the H-capable CSO, HYP, MSE, PTR, SEP and TPO

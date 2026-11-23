@@ -709,6 +709,7 @@ class StructureChemistryObservation:
             RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE,
             RetainedNonPolymerChemistryEvidenceSource.DEPOSITED_CCD_MODEL,
             RetainedNonPolymerChemistryEvidenceSource.CALLER_COMPONENT_DEFINITION,
+            RetainedNonPolymerChemistryEvidenceSource.SMILES_CORRESPONDENCE,
             RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION,
         }:
             heavy_topology_source = hydrogen_expectation_resolution.source

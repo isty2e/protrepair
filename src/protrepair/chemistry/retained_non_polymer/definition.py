@@ -6,6 +6,10 @@ from dataclasses import dataclass
 
 from protrepair.structure.labels import ResidueId
 
+NAMED_COMPONENT_ELEMENTS = frozenset(
+    ("H", "B", "C", "N", "O", "F", "SI", "P", "S", "CL", "BR", "I")
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ComponentAtom:
@@ -30,8 +34,8 @@ class ComponentBond:
 
 
 @dataclass(frozen=True, slots=True)
-class RetainedComponentDefinition:
-    """Immutable named chemistry read from a local PDBx component dictionary."""
+class NamedComponentGraph:
+    """An isolated component's atom, bond, charge, H and stereo inventory."""
 
     component_id: str
     atoms: tuple[ComponentAtom, ...]
@@ -87,6 +91,11 @@ class RetainedComponentDefinition:
         alias = "H" + name[1:]
         return alias if name.startswith(("D", "T")) and alias in names else None
 
+
+@dataclass(frozen=True, slots=True)
+class RetainedComponentDefinition(NamedComponentGraph):
+    """Immutable named chemistry read from a local PDBx component dictionary."""
+
     def for_residue(self, residue_id: ResidueId) -> "RetainedComponentAssignment":
         """Select this definition for one retained residue.
 
@@ -118,3 +127,36 @@ class RetainedComponentAssignment:
     def heavy_atom_names(self) -> tuple[str, ...]:
         """Return the heavy atom correspondence of this selection."""
         return self.definition.heavy_atom_names
+
+    @property
+    def model_label(self) -> str:
+        """Identify the selected source in preparation diagnostics."""
+        return f"caller CCD {self.definition.component_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class MatchedSmiles:
+    """One uniquely determined named chemistry, fixed before workflow search."""
+
+    residue_id: ResidueId
+    definition: NamedComponentGraph
+    heavy_sites: tuple[tuple[str, str | None], ...]
+    observed_hydrogens: tuple[tuple[str, str, str | None, str], ...]
+    from_supplied_model: bool = False
+
+    @property
+    def heavy_atom_names(self) -> tuple[str, ...]:
+        """Return the published graph's stable heavy order."""
+        return self.definition.heavy_atom_names
+
+    @property
+    def model_label(self) -> str:
+        """Identify the charge and bond localization as model-assigned."""
+        return (
+            "caller SMILES (model-assigned correspondence on supplied canonical input)"
+            if self.from_supplied_model
+            else "caller SMILES (model-assigned correspondence)"
+        )
+
+
+NamedGraphAssignment = RetainedComponentAssignment | MatchedSmiles

@@ -7,9 +7,12 @@ from enum import Enum
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.retained_non_polymer.definition import (
+    MatchedSmiles,
+    NamedGraphAssignment,
     RetainedComponentAssignment,
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
+    RefusedSmiles,
     SelectedRetainedChemistry,
     evidence_by_residue_id,
 )
@@ -24,6 +27,7 @@ from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex, ResidueIndex
 from protrepair.structure.snapshot import ProteinStructureSnapshot
+from protrepair.structure.topology import BondRelationshipType
 
 
 class LocalBondPlanningSupportMode(Enum):
@@ -109,7 +113,12 @@ def resolve_local_bond_planning_support(
         if role is ResidueRole.LIGAND
         else None
     )
-    if isinstance(explicit_evidence, RetainedComponentAssignment):
+    if isinstance(explicit_evidence, (NamedGraphAssignment, RefusedSmiles)):
+        label = (
+            "caller CCD"
+            if isinstance(explicit_evidence, RetainedComponentAssignment)
+            else "caller SMILES"
+        )
         resolution = resolve_retained_non_polymer_chemistry(
             snapshot.structure,
             residue_site,
@@ -123,7 +132,7 @@ def resolve_local_bond_planning_support(
                 blocker_message=_retained_non_polymer_support_blocker_message(
                     residue_site,
                     reason=resolution.failure_reason,
-                    prefix="caller CCD chemistry unavailable",
+                    prefix=f"{label} chemistry unavailable",
                 ),
             )
         if any(
@@ -132,7 +141,7 @@ def resolve_local_bond_planning_support(
         ):
             return LocalBondPlanningSupportResolution(
                 mode=LocalBondPlanningSupportMode.UNSUPPORTED,
-                blocker_message="caller CCD provides passive ligand chemistry only",
+                blocker_message=f"{label} provides passive ligand chemistry only",
             )
         if not set(resolution.expected_hydrogen_atom_names).issubset(
             residue_site.atom_site_names()
@@ -148,7 +157,14 @@ def resolve_local_bond_planning_support(
         ):
             return LocalBondPlanningSupportResolution(
                 mode=LocalBondPlanningSupportMode.UNSUPPORTED,
-                blocker_message="caller CCD hydrogens and charges must be prepared before passive refinement",
+                blocker_message=f"{label} hydrogens and charges must be prepared before passive refinement",
+            )
+        if isinstance(explicit_evidence, MatchedSmiles) and _competing_passive_bond(
+            snapshot.structure, residue_index, resolution.heavy_bond_definitions
+        ):
+            return LocalBondPlanningSupportResolution(
+                mode=LocalBondPlanningSupportMode.UNSUPPORTED,
+                blocker_message="caller SMILES bond orders must be prepared before passive refinement",
             )
         return LocalBondPlanningSupportResolution(
             mode=LocalBondPlanningSupportMode.NAMED_GRAPH_PASSIVE_CONTEXT,
@@ -252,6 +268,39 @@ def resolve_local_bond_planning_support(
         mode=LocalBondPlanningSupportMode.TEMPLATE_LESS_PASSIVE_CONTEXT,
         fallback_bond_definitions=passive_bond_definitions,
     )
+
+
+def _competing_passive_bond(
+    structure: ProteinStructure,
+    residue_index: ResidueIndex,
+    expected: tuple[BondDefinition, ...],
+) -> bool:
+    """Canonical edges take precedence over fallback bonds in a continuous region."""
+    for definition in expected:
+        bond = structure.topology.bond_between(
+            structure.constitution.atom_index_in_residue(
+                residue_index, definition.atom_name_1
+            ),
+            structure.constitution.atom_index_in_residue(
+                residue_index, definition.atom_name_2
+            ),
+        )
+        if bond is None:
+            continue
+        if bond.relationship_type is BondRelationshipType.UNKNOWN:
+            if (
+                bond.order is not None
+                and not definition.aromatic
+                and bond.order != definition.order
+            ):
+                return True
+        elif (
+            bond.relationship_type is not BondRelationshipType.COVALENT
+            or bond.aromatic != definition.aromatic
+            or (not bond.aromatic and bond.order != definition.order)
+        ):
+            return True
+    return False
 
 
 def _retained_non_polymer_chemistry_resolution(

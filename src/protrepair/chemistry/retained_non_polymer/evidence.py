@@ -2,10 +2,11 @@
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from enum import Enum
 from types import MappingProxyType
 
 from protrepair.chemistry.retained_non_polymer.definition import (
-    RetainedComponentAssignment,
+    NamedGraphAssignment,
 )
 from protrepair.structure.labels import ResidueId
 
@@ -50,9 +51,28 @@ class RetainedNonPolymerChemistryEvidence:
         object.__setattr__(self, "heavy_atom_names", normalized_heavy_atom_names)
 
 
-SelectedRetainedChemistry = (
-    RetainedNonPolymerChemistryEvidence | RetainedComponentAssignment
-)
+class CorrespondenceFailure(str, Enum):
+    """Site-local result of an unsuccessful whole-graph correspondence."""
+
+    AMBIGUOUS = "ambiguous_correspondence"
+    INCOMPATIBLE = "incompatible_correspondence"
+    UNSUPPORTED = "unsupported_correspondence"
+    INDETERMINATE = "indeterminate_correspondence"
+    SEARCH_LIMIT = "correspondence_search_limit"
+
+
+@dataclass(frozen=True, slots=True)
+class RefusedSmiles:
+    """An explicit selection that must never fall through to other chemistry."""
+
+    residue_id: ResidueId
+    cause: CorrespondenceFailure
+    detail: str
+    requires_hydrogens: bool | None
+
+
+BoundRetainedChemistry = RetainedNonPolymerChemistryEvidence | NamedGraphAssignment
+SelectedRetainedChemistry = BoundRetainedChemistry | RefusedSmiles
 
 
 def evidence_by_residue_id(

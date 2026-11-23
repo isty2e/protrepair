@@ -206,9 +206,29 @@ exact residue IDs, including any insertion codes. Find those IDs in
 `structure.constitution.ligands` after reading with the same retention and
 chain settings. Other copies keep their usual chemistry. To read several files,
 use `read_retained_component_definitions(*paths)`; duplicate component IDs in
-one lookup are an error. A site can have either a dictionary assignment or a
-named SMILES override, but not both. See the [retained-ligand policy](retained-ligand-policy.md#named-component-dictionaries)
-for supported chemistry and refusal conditions.
+one lookup are an error.
+
+If you know the SMILES but not the deposited atom names, use a
+`SmilesAssignment` in the same overrides list. For example, the following
+assignment replaces the dictionary lookup for AQ4 above:
+
+```python
+from protrepair.sources import SmilesAssignment
+
+aq4_assignment = SmilesAssignment(
+    residue_id=ResidueId("A", 999),
+    smiles="COCCOc1cc2ncnc(Nc3cccc(c3)C#C)c2cc1OCCOC",
+)
+ingress = StructureIngressOptions(
+    ligand_policy=LigandPolicy.KEEP,
+    retained_non_polymer_chemistry_overrides=[aq4_assignment],
+)
+```
+
+A site can have one SMILES or dictionary assignment. An ambiguous SMILES
+leaves that site unprepared; use a named SMILES override or a CCD when you can
+identify the atoms yourself. See [matching a SMILES to a residue](retained-ligand-policy.md#matching-a-smiles-to-a-residue)
+for the evidence used and the distinction between symmetry and ambiguity.
 
 To prepare retained phosphate under a hydrogen-completion goal, set
 `StructureIngressOptions(ligand_policy=LigandPolicy.KEEP, use_ccd_orthophosphate_models=True)`.
