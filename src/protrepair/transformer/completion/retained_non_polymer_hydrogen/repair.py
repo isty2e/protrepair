@@ -21,7 +21,7 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_coordination_bonds,
     retained_non_polymer_evidence_external_bonds,
     retained_non_polymer_evidence_formal_charge_requirements,
-    retained_orthophosphate_hydrogen_parents,
+    selected_isolated_hydrogen_parents,
 )
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
@@ -36,8 +36,11 @@ from protrepair.chemistry.retained_non_polymer.coordination import (
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
+from protrepair.chemistry.retained_non_polymer.definition import (
+    RetainedComponentAssignment,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
     evidence_by_residue_id,
 )
 from protrepair.chemistry.retained_non_polymer.hydrogen_correspondence import (
@@ -274,7 +277,7 @@ def add_retained_non_polymer_hydrogens(
     component_library: ComponentLibrary | None = None,
     *,
     target_residue_ids: frozenset[ResidueId] | None = None,
-    chemistry_evidence: tuple[RetainedNonPolymerChemistryEvidence, ...] = (),
+    chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
     allow_retained_non_polymer_rdkit_fallback: bool = True,
 ) -> TransformationResult:
     """Add hydrogens to supported retained non-polymer components."""
@@ -315,7 +318,7 @@ def _execute_retained_non_polymer_hydrogen_stage(
     target_residue_ids: frozenset[ResidueId],
     chemistry_evidence_by_residue_id: Mapping[
         ResidueId,
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
     ],
     allow_retained_non_polymer_rdkit_fallback: bool,
     topology_only: bool = False,
@@ -495,11 +498,11 @@ def _execute_retained_non_polymer_hydrogen_stage(
                     continue
             try:
                 if evidence is not None:
-                    phosphate_parents = retained_orthophosphate_hydrogen_parents(
+                    isolated_parents = selected_isolated_hydrogen_parents(
                         evidence, structure
                     )
-                    if phosphate_parents is not None:
-                        source_hydrogen_anchor_by_name = phosphate_parents
+                    if isolated_parents is not None:
+                        source_hydrogen_anchor_by_name = isolated_parents
                     evidence_external_bonds = (
                         retained_non_polymer_evidence_external_bonds(
                             evidence, structure
@@ -1168,7 +1171,7 @@ def resolve_retained_non_polymer_topology(
     component_library: ComponentLibrary,
     *,
     target_residue_ids: frozenset[ResidueId] | None = None,
-    chemistry_evidence: tuple[RetainedNonPolymerChemistryEvidence, ...] = (),
+    chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
     allow_retained_non_polymer_rdkit_fallback: bool = True,
 ) -> TransformationResult:
     """Publish admitted bonds and missing charges without replacing atoms.
@@ -1181,7 +1184,7 @@ def resolve_retained_non_polymer_topology(
         Active component definitions.
     target_residue_ids : frozenset[ResidueId] or None
         Selected retained residues; None selects all retained residues.
-    chemistry_evidence : tuple[RetainedNonPolymerChemistryEvidence, ...]
+    chemistry_evidence : tuple[SelectedRetainedChemistry, ...]
         Explicit chemistry overrides, validated against the current pose.
     allow_retained_non_polymer_rdkit_fallback : bool, default=True
         Whether coordinate-based inference is allowed without template/evidence.
@@ -1224,7 +1227,7 @@ def _hydrogenate_retained_non_polymer_payload(
     *,
     component_library: ComponentLibrary,
     polar_chemistry: PolarContactChemistry,
-    chemistry_evidence: RetainedNonPolymerChemistryEvidence | None = None,
+    chemistry_evidence: SelectedRetainedChemistry | None = None,
     coordination_preparation: CoordinatedComponentPreparation | None = None,
     source_payload: CompletionResiduePayload | None = None,
     source_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
@@ -1269,6 +1272,9 @@ def _hydrogenate_retained_non_polymer_payload(
         hydrogenated_payload = projection.payload
         reconciliation = _reconcile_source_hydrogens(
             hydrogenated_payload,
+            dictionary_assignment=chemistry_evidence
+            if isinstance(chemistry_evidence, RetainedComponentAssignment)
+            else None,
             source_payload=source_payload,
             source_hydrogen_anchor_by_name=source_hydrogen_anchor_by_name,
             source_explicit_hydrogen_anchor_by_name=(
@@ -1322,12 +1328,19 @@ def _hydrogenate_retained_non_polymer_payload(
             + projection.hydrogen_bond_definitions
         )
         details = None
-        if added_atom_names and isinstance(chemistry_evidence, DepositedOrthophosphate):
+        if added_atom_names and isinstance(
+            chemistry_evidence, (DepositedOrthophosphate, RetainedComponentAssignment)
+        ):
             parents = _hydrogen_anchor_by_name(projected_bonds, hydrogenated_payload)
             assignments = ", ".join(
                 f"{name} on {parents[name]}" for name in added_atom_names
             )
-            details = f"Model-assigned from CCD {chemistry_evidence.component_id}: {assignments}"
+            source = (
+                f"caller CCD {chemistry_evidence.definition.component_id}"
+                if isinstance(chemistry_evidence, RetainedComponentAssignment)
+                else f"CCD {chemistry_evidence.component_id}"
+            )
+            details = f"Model-assigned from {source}: {assignments}"
         return _RetainedNonPolymerHydrogenPayloadResult(
             payload=hydrogenated_payload,
             repairs=(
@@ -1813,6 +1826,7 @@ def _reconcile_source_hydrogens(
     hydrogenated_payload: CompletionResiduePayload,
     *,
     source_payload: CompletionResiduePayload | None,
+    dictionary_assignment: RetainedComponentAssignment | None = None,
     source_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
     source_explicit_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
     generated_hydrogen_anchor_by_name: Mapping[str, str] | None = None,
@@ -1855,6 +1869,22 @@ def _reconcile_source_hydrogens(
         generated_name: source_name
         for source_name, generated_name in generated_name_by_source_name.items()
     }
+    free_names: dict[str, str] = {}
+    if dictionary_assignment is not None:
+        # An observed isotope reserves a dictionary name, but replaces the nearest
+        # generated position on its parent, which may have a different slot name.
+        occupied = set(
+            dictionary_assignment.definition.occupied_slots(
+                source_hydrogen_anchor_by_name or {}
+            ).values()
+        )
+        for group in dictionary_assignment.definition.hydrogen_slots().values():
+            remaining_positions = (
+                slot for slot in group if slot not in source_name_by_generated_name
+            )
+            remaining_names = (slot for slot in group if slot not in occupied)
+            free_names.update(zip(remaining_positions, remaining_names, strict=True))
+
     reconciled_payload = hydrogenated_payload.without_atom_sites(
         generated_hydrogen_atom_names
     )
@@ -1873,7 +1903,7 @@ def _reconcile_source_hydrogens(
             atom_name_projection[generated_name] = source_name
             continue
 
-        materialized_name = generated_name
+        materialized_name = free_names.get(generated_name, generated_name)
         if materialized_name in used_atom_names:
             materialized_name = _next_generated_hydrogen_atom_name(used_atom_names)
         generated_atom_site = hydrogenated_payload.atom_site(generated_name)

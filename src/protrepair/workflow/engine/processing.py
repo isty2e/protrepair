@@ -9,8 +9,11 @@ from protrepair.chemistry import build_default_component_library
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_heavy_atom_elements,
 )
+from protrepair.chemistry.retained_non_polymer.definition import (
+    RetainedComponentAssignment,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.chemistry.retained_non_polymer.orthophosphate import (
     DepositedOrthophosphate,
@@ -22,7 +25,7 @@ from protrepair.diagnostics.water_contacts import stationary_water_run
 from protrepair.errors import RdkitUnavailableError
 from protrepair.io import read_structure
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
-from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
+from protrepair.sources.chemistry import RetainedChemistryOverride
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.workflow.contracts.hydrogen_lengths import HydrogenLengthRequest
 from protrepair.workflow.contracts.planning import (
@@ -242,10 +245,10 @@ def _default_workflow_planning_context(
 
 def _validated_retained_non_polymer_chemistry_evidence(
     structure: ProteinStructure,
-    overrides: tuple[RetainedNonPolymerChemistryOverride, ...],
+    overrides: tuple[RetainedChemistryOverride, ...],
     *,
     use_ccd_orthophosphate_models: bool,
-) -> tuple[RetainedNonPolymerChemistryEvidence, ...]:
+) -> tuple[SelectedRetainedChemistry, ...]:
     """Bind explicit site overrides before selecting any deposited models."""
 
     if not overrides and not use_ccd_orthophosphate_models:
@@ -254,10 +257,29 @@ def _validated_retained_non_polymer_chemistry_evidence(
     ligands_by_residue_id = {
         ligand.residue_id: ligand for ligand in structure.constitution.ligands
     }
-    validated_evidence: list[RetainedNonPolymerChemistryEvidence] = []
+    validated_evidence: list[SelectedRetainedChemistry] = []
     for override in overrides:
-        evidence = override.to_evidence()
         ligand = ligands_by_residue_id.get(override.residue_id)
+        if isinstance(override, RetainedComponentAssignment):
+            expected = override.definition.component_id
+            if ligand is None:
+                target = structure.constitution.residue_or_ligand(override.residue_id)
+                actual = (
+                    "absent"
+                    if target is None
+                    else f"{structure.constitution.role_at(structure.constitution.residue_index(override.residue_id)).value} {target.component_id}"
+                )
+                raise ValueError(
+                    f"{override.residue_id!r}: expected kept ligand {expected}, found {actual}; inspect structure.constitution.ligands"
+                )
+            if ligand.component_id != expected:
+                raise ValueError(
+                    f"{override.residue_id!r}: expected kept ligand {expected}, found {ligand.component_id}"
+                )
+            validated_evidence.append(override)
+            continue
+
+        evidence = override.to_evidence()
         if ligand is None:
             raise ValueError(
                 "retained non-polymer chemistry override must target one kept "

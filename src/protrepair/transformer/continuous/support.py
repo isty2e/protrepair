@@ -6,8 +6,11 @@ from enum import Enum
 
 from protrepair.chemistry.component.graph import BondDefinition
 from protrepair.chemistry.component.library import ComponentLibrary
+from protrepair.chemistry.retained_non_polymer.definition import (
+    RetainedComponentAssignment,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
     evidence_by_residue_id,
 )
 from protrepair.chemistry.single_atom_inorganic import RetainedAtomicSite
@@ -28,6 +31,7 @@ class LocalBondPlanningSupportMode(Enum):
 
     TEMPLATE = "template"
     TEMPLATE_LESS_PASSIVE_CONTEXT = "template_less_passive_context"
+    NAMED_GRAPH_PASSIVE_CONTEXT = "named_graph_passive_context"
     NONBONDING_PASSIVE_CONTEXT = "nonbonding_passive_context"
     UNSUPPORTED = "unsupported"
 
@@ -42,7 +46,11 @@ class LocalBondPlanningSupportResolution:
 
     def __post_init__(self) -> None:
         if (
-            self.mode is not LocalBondPlanningSupportMode.TEMPLATE_LESS_PASSIVE_CONTEXT
+            self.mode
+            not in (
+                LocalBondPlanningSupportMode.TEMPLATE_LESS_PASSIVE_CONTEXT,
+                LocalBondPlanningSupportMode.NAMED_GRAPH_PASSIVE_CONTEXT,
+            )
             and self.fallback_bond_definitions
         ):
             raise ValueError(
@@ -76,7 +84,7 @@ def resolve_local_bond_planning_support(
     component_library: ComponentLibrary,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = (),
     retained_non_polymer_chemistry_resolution_by_residue_id: Mapping[
@@ -93,6 +101,59 @@ def resolve_local_bond_planning_support(
         return LocalBondPlanningSupportResolution(
             mode=LocalBondPlanningSupportMode.UNSUPPORTED,
             blocker_message="stationary retained water is outside the local force field",
+        )
+    explicit_evidence = (
+        evidence_by_residue_id(retained_non_polymer_chemistry_evidence).get(
+            residue_site.residue_id
+        )
+        if role is ResidueRole.LIGAND
+        else None
+    )
+    if isinstance(explicit_evidence, RetainedComponentAssignment):
+        resolution = resolve_retained_non_polymer_chemistry(
+            snapshot.structure,
+            residue_site,
+            component_library=component_library,
+            evidence=explicit_evidence,
+            allow_rdkit_fallback=False,
+        )
+        if not resolution.source.is_resolved():
+            return LocalBondPlanningSupportResolution(
+                mode=LocalBondPlanningSupportMode.UNSUPPORTED,
+                blocker_message=_retained_non_polymer_support_blocker_message(
+                    residue_site,
+                    reason=resolution.failure_reason,
+                    prefix="caller CCD chemistry unavailable",
+                ),
+            )
+        if any(
+            constitution.atom_ref_at(index).residue_id == residue_site.residue_id
+            for index in movable_atom_indices
+        ):
+            return LocalBondPlanningSupportResolution(
+                mode=LocalBondPlanningSupportMode.UNSUPPORTED,
+                blocker_message="caller CCD provides passive ligand chemistry only",
+            )
+        if not set(resolution.expected_hydrogen_atom_names).issubset(
+            residue_site.atom_site_names()
+        ) or any(
+            (
+                snapshot.structure.topology.formal_charge(
+                    constitution.atom_index_in_residue(residue_index, name)
+                )
+                or 0
+            )
+            != charge
+            for name, charge in resolution.formal_charge_requirements
+        ):
+            return LocalBondPlanningSupportResolution(
+                mode=LocalBondPlanningSupportMode.UNSUPPORTED,
+                blocker_message="caller CCD hydrogens and charges must be prepared before passive refinement",
+            )
+        return LocalBondPlanningSupportResolution(
+            mode=LocalBondPlanningSupportMode.NAMED_GRAPH_PASSIVE_CONTEXT,
+            fallback_bond_definitions=resolution.heavy_bond_definitions
+            + resolution.hydrogen_bond_definitions,
         )
     if component_library.get(residue_site.component_id) is not None:
         return LocalBondPlanningSupportResolution(
@@ -140,9 +201,6 @@ def resolve_local_bond_planning_support(
             mode=LocalBondPlanningSupportMode.UNSUPPORTED
         )
 
-    explicit_evidence = evidence_by_residue_id(
-        retained_non_polymer_chemistry_evidence
-    ).get(residue_site.residue_id)
     chemistry_resolution = _retained_non_polymer_chemistry_resolution(
         snapshot.structure,
         residue_site,
@@ -201,7 +259,7 @@ def _retained_non_polymer_chemistry_resolution(
     residue_site: ResidueSite,
     *,
     component_library: ComponentLibrary,
-    evidence: RetainedNonPolymerChemistryEvidence | None,
+    evidence: SelectedRetainedChemistry | None,
     allow_rdkit_fallback: bool,
     resolution_by_residue_id: Mapping[
         ResidueId,

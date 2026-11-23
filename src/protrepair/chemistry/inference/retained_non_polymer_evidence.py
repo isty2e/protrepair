@@ -10,6 +10,7 @@ except ImportError:  # pragma: no cover - exercised by availability checks
     Chem = None
 
 from protrepair.chemistry.component.graph import BondDefinition
+from protrepair.chemistry.inference.ccd_graph import component_heavy_molecule
 from protrepair.chemistry.inference.coordination_donor import NitrogenCoordinationDonor
 from protrepair.chemistry.inference.rdkit_graph import (
     AROMATIC_N_COORDINATION_METALS,
@@ -21,14 +22,20 @@ from protrepair.chemistry.inference.rdkit_graph import (
 from protrepair.chemistry.inference.rdkit_hydrogen_geometry import (
     named_pose_hydrogen_bond_lengths,
 )
+from protrepair.chemistry.radii import RadiusKind, prepare_radius_lookup
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
+from protrepair.chemistry.retained_non_polymer.definition import (
+    RetainedComponentAssignment,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
+)
+from protrepair.chemistry.retained_non_polymer.isolated_graph import (
+    SelectedIsolatedGraph,
 )
 from protrepair.chemistry.retained_non_polymer.orthophosphate import (
-    SelectedOrthophosphateGraph,
     is_orthophosphate_component,
 )
 from protrepair.errors import (
@@ -51,8 +58,43 @@ if TYPE_CHECKING:
 _EVIDENCE_TEMPLATE_CACHE_MAXSIZE = 256
 
 
+def evidence_heavy_molecule(evidence: SelectedRetainedChemistry) -> "Mol":
+    """Return an independent native graph in the selection's heavy-name order."""
+    if isinstance(evidence, RetainedComponentAssignment):
+        return component_heavy_molecule(evidence.definition)
+    return template_without_hydrogens(evidence.smiles)
+
+
+def require_evidence_bond_geometry(
+    geometry: ResidueGeometry,
+    elements: Mapping[str, str],
+    bonds: tuple[BondDefinition, ...],
+    residue_id: ResidueId,
+) -> None:
+    """Check that the named bond endpoints admit the selected heavy correspondence."""
+    radii = prepare_radius_lookup(
+        (
+            elements[name]
+            for bond in bonds
+            for name in (bond.atom_name_1, bond.atom_name_2)
+        ),
+        RadiusKind.COVALENT,
+    )
+    radii.require_complete("retained non-polymer evidence bond geometry")
+    for bond in bonds:
+        a, b = bond.atom_name_1, bond.atom_name_2
+        actual = geometry.position(a).distance_to(geometry.position(b))
+        expected = radii.radius_angstrom(elements[a]) + radii.radius_angstrom(
+            elements[b]
+        )
+        if not abs(actual - expected) <= 0.60:
+            raise ValueError(
+                f"retained non-polymer evidence atom mapping is inconsistent with payload geometry for {residue_id.display_token()} {a}-{b}: observed {actual:.2f} A, expected about {expected:.2f} A"
+            )
+
+
 def require_retained_non_polymer_evidence_stereochemistry(
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
     geometry: ResidueGeometry,
     *,
     hydrogen_attachments: tuple[tuple[str, str], ...] = (),
@@ -61,7 +103,7 @@ def require_retained_non_polymer_evidence_stereochemistry(
 
     Parameters
     ----------
-    evidence : RetainedNonPolymerChemistryEvidence
+    evidence : SelectedRetainedChemistry
         Selected chemical graph and its ordered heavy-atom names.
     geometry : ResidueGeometry
         Current named coordinates, without inferred connectivity.
@@ -76,7 +118,7 @@ def require_retained_non_polymer_evidence_stereochemistry(
     RdkitUnavailableError
         Native interpretation is unavailable.
     """
-    template = template_without_hydrogens(evidence.smiles)
+    template = evidence_heavy_molecule(evidence)
     if not has_declared_stereochemistry(template):
         return
     names = _evidence_heavy_atom_names_by_index(
@@ -90,14 +132,14 @@ def require_retained_non_polymer_evidence_stereochemistry(
     )
 
 
-def retained_orthophosphate_hydrogen_parents(
-    evidence: RetainedNonPolymerChemistryEvidence, structure: ProteinStructure
+def selected_isolated_hydrogen_parents(
+    evidence: SelectedRetainedChemistry, structure: ProteinStructure
 ) -> dict[str, str] | None:
-    """Bind observed phosphate H/D/T to the selected graph's oxygen sites.
+    """Bind observed H/D/T on caller-defined molecules and isolated phosphates.
 
     Parameters
     ----------
-    evidence : RetainedNonPolymerChemistryEvidence
+    evidence : SelectedRetainedChemistry
         The winning site override or explicitly selected CCD model.
     structure : ProteinStructure
         Current site and its original source observation, if available.
@@ -105,7 +147,7 @@ def retained_orthophosphate_hydrogen_parents(
     Returns
     -------
     dict[str, str] or None
-        Present hydrogen names mapped to oxygen names, or None for other
+        Present hydrogen names mapped to verified parents, or None for other
         components, which keep their own attachment rules.
 
     Raises
@@ -116,16 +158,26 @@ def retained_orthophosphate_hydrogen_parents(
         The selected molecular graph could not be interpreted without RDKit.
     """
     site = structure.constitution.residue_or_ligand(evidence.residue_id)
-    if site is None or not is_orthophosphate_component(site.component_id):
+    named = isinstance(evidence, RetainedComponentAssignment)
+    if site is None or (
+        not named and not is_orthophosphate_component(site.component_id)
+    ):
         return None
-    mol = template_without_hydrogens(evidence.smiles)
+    mol = evidence_heavy_molecule(evidence)
     names = _evidence_heavy_atom_names_by_index(
         mol, heavy_atom_names=evidence.heavy_atom_names
     )
     atoms = {names[atom.GetIdx()]: atom for atom in mol.GetAtoms()}
-    return SelectedOrthophosphateGraph(
+    slots = (
+        evidence.definition.hydrogen_slots()
+        if isinstance(evidence, RetainedComponentAssignment)
+        else {}
+    )
+    graph = SelectedIsolatedGraph(
         evidence.residue_id,
-        site.component_id,
+        evidence.definition.component_id
+        if isinstance(evidence, RetainedComponentAssignment)
+        else site.component_id,
         elements={name: atom.GetSymbol().upper() for name, atom in atoms.items()},
         formal_charges={name: atom.GetFormalCharge() for name, atom in atoms.items()},
         bond_orders={
@@ -137,25 +189,51 @@ def retained_orthophosphate_hydrogen_parents(
         hydrogen_capacity={
             name: atom.GetTotalNumHs()
             for name, atom in atoms.items()
-            if atom.GetAtomicNum() == 8 and atom.GetTotalNumHs()
+            if (named or atom.GetAtomicNum() == 8) and atom.GetTotalNumHs()
         },
-    ).hydrogen_parents(
-        structure,
-        prepare_lengths=partial(
-            named_pose_hydrogen_bond_lengths, mol, evidence.heavy_atom_names
+        named_slots={h: p for p, group in slots.items() for h in group}
+        if named
+        else None,
+        aromatic_pairs=frozenset(
+            frozenset((names[b.GetBeginAtomIdx()], names[b.GetEndAtomIdx()]))
+            for b in mol.GetBonds()
+            if b.GetIsAromatic()
         ),
+    )
+    prepare_lengths = partial(
+        named_pose_hydrogen_bond_lengths, mol, evidence.heavy_atom_names
+    )
+    if not isinstance(evidence, RetainedComponentAssignment):
+        return graph.hydrogen_parents(structure, prepare_lengths=prepare_lengths)
+
+    def validate_pose(
+        pose: ResidueGeometry,
+        orders: Mapping[tuple[str, str], int],
+        parents: dict[str, str],
+    ) -> None:
+        heavy = retained_non_polymer_evidence_heavy_bond_definitions(
+            evidence, bond_order_constraints=orders
+        )
+        require_evidence_bond_geometry(pose, graph.elements, heavy, evidence.residue_id)
+        require_retained_non_polymer_evidence_stereochemistry(
+            evidence, pose, hydrogen_attachments=tuple(parents.items())
+        )
+        evidence.definition.occupied_slots(parents)
+
+    return graph.hydrogen_parents(
+        structure, prepare_lengths=prepare_lengths, validate_pose=validate_pose
     )
 
 
 def retained_non_polymer_evidence_external_bonds(
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
     structure: ProteinStructure,
 ) -> tuple[tuple[AtomRef, AtomRef], ...]:
     """Admit isolated evidence or a terminal thiol bound in a canonical disulfide.
 
     Parameters
     ----------
-    evidence : RetainedNonPolymerChemistryEvidence
+    evidence : SelectedRetainedChemistry
         Residue-local precursor SMILES with an ordered heavy-atom mapping.
     structure : ProteinStructure
         Current canonical graph, including source charges and external attachments.
@@ -184,7 +262,7 @@ def retained_non_polymer_evidence_external_bonds(
         raise RdkitUnavailableError(
             "disulfide evidence requires an operational RDKit installation"
         )
-    template = template_without_hydrogens(evidence.smiles)
+    template = evidence_heavy_molecule(evidence)
     names = _evidence_heavy_atom_names_by_index(
         template, heavy_atom_names=evidence.heavy_atom_names
     )
@@ -216,11 +294,11 @@ def retained_non_polymer_evidence_external_bonds(
 
 
 def retained_non_polymer_evidence_heavy_atom_elements(
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
 ) -> tuple[str, ...]:
     """Return heavy-atom elements in evidence-template order."""
 
-    heavy_template = template_without_hydrogens(evidence.smiles)
+    heavy_template = evidence_heavy_molecule(evidence)
     if heavy_template.GetNumAtoms() != len(evidence.heavy_atom_names):
         raise ValueError(
             "retained non-polymer chemistry evidence heavy_atom_names must match "
@@ -231,10 +309,13 @@ def retained_non_polymer_evidence_heavy_atom_elements(
 
 
 def retained_non_polymer_evidence_expected_hydrogen_atom_names(
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
 ) -> tuple[str, ...]:
     """Return deterministic expected hydrogen names for one evidence item."""
 
+    if isinstance(evidence, RetainedComponentAssignment):
+        slots = evidence.definition.hydrogen_slots()
+        return tuple(h for p in evidence.heavy_atom_names for h in slots.get(p, ()))
     hydrogenated_template = template_with_hydrogens(evidence.smiles)
     hydrogen_count = sum(
         1 for atom in hydrogenated_template.GetAtoms() if atom.GetAtomicNum() == 1
@@ -243,13 +324,13 @@ def retained_non_polymer_evidence_expected_hydrogen_atom_names(
 
 
 def retained_non_polymer_evidence_formal_charge_requirements(
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
 ) -> tuple[tuple[str, int], ...]:
     """Project the explicit SMILES heavy-atom charge assignment.
 
     Parameters
     ----------
-    evidence : RetainedNonPolymerChemistryEvidence
+    evidence : SelectedRetainedChemistry
         SMILES and its ordered canonical heavy atom identities.
 
     Returns
@@ -264,7 +345,7 @@ def retained_non_polymer_evidence_formal_charge_requirements(
     RdkitUnavailableError
         RDKit is not operational.
     """
-    template = template_without_hydrogens(evidence.smiles)
+    template = evidence_heavy_molecule(evidence)
     names = _evidence_heavy_atom_names_by_index(
         template, heavy_atom_names=evidence.heavy_atom_names
     )
@@ -274,7 +355,7 @@ def retained_non_polymer_evidence_formal_charge_requirements(
 
 
 def retained_non_polymer_evidence_heavy_bond_definitions(
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
     *,
     bond_order_constraints: Mapping[tuple[str, str], int] | None = None,
 ) -> tuple[BondDefinition, ...]:
@@ -282,7 +363,7 @@ def retained_non_polymer_evidence_heavy_bond_definitions(
 
     Parameters
     ----------
-    evidence : RetainedNonPolymerChemistryEvidence
+    evidence : SelectedRetainedChemistry
         Resolved SMILES chemistry with canonical heavy atom names.
     bond_order_constraints : Mapping[tuple[str, str], int] or None
         Reported local heavy orders; aromatic resonance may change, not microstate.
@@ -307,7 +388,7 @@ def retained_non_polymer_evidence_heavy_bond_definitions(
 
 
 def retained_non_polymer_evidence_bond_projection(
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
     *,
     bond_order_constraints: Mapping[tuple[str, str], int] | None = None,
 ) -> NativeBondProjection:
@@ -315,7 +396,7 @@ def retained_non_polymer_evidence_bond_projection(
 
     Parameters
     ----------
-    evidence : RetainedNonPolymerChemistryEvidence
+    evidence : SelectedRetainedChemistry
         Resolved SMILES and ordered canonical heavy atom identities.
     bond_order_constraints : Mapping[tuple[str, str], int] or None
         Reported integral covalent orders, not coordination strengths.
@@ -335,7 +416,7 @@ def retained_non_polymer_evidence_bond_projection(
     RdkitUnavailableError
         RDKit is not operational.
     """
-    template = template_without_hydrogens(evidence.smiles)
+    template = evidence_heavy_molecule(evidence)
     names = _evidence_heavy_atom_names_by_index(
         template, heavy_atom_names=evidence.heavy_atom_names
     )
@@ -375,14 +456,14 @@ def retained_non_polymer_evidence_bond_projection(
 
 
 def retained_non_polymer_evidence_coordination_bonds(
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
     structure: ProteinStructure,
 ) -> tuple[tuple[AtomRef, AtomRef], ...]:
     """Bind selected local chemistry to current and original typed partners.
 
     Parameters
     ----------
-    evidence : RetainedNonPolymerChemistryEvidence
+    evidence : SelectedRetainedChemistry
         Selected local SMILES with an exact heavy atom correspondence.
     structure : ProteinStructure
         Current graph and, when available, immutable original observations.
@@ -404,7 +485,7 @@ def retained_non_polymer_evidence_coordination_bonds(
         RDKit is not operational.
     """
     projection = retained_non_polymer_evidence_bond_projection(evidence)
-    molecule = template_without_hydrogens(evidence.smiles)
+    molecule = evidence_heavy_molecule(evidence)
     return selected_graph_coordination_bonds(
         structure,
         residue_id=evidence.residue_id,
@@ -691,10 +772,16 @@ def selected_graph_coordination_bonds(
 
 
 def retained_non_polymer_evidence_hydrogen_bond_definitions(
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
 ) -> tuple[BondDefinition, ...]:
     """Return generated H-heavy bond definitions mapped from evidence chemistry."""
 
+    if isinstance(evidence, RetainedComponentAssignment):
+        return tuple(
+            BondDefinition(parent, h)
+            for parent, group in evidence.definition.hydrogen_slots().items()
+            for h in group
+        )
     hydrogenated_template = template_with_hydrogens(evidence.smiles)
     atom_names_by_index = _evidence_atom_names_by_index(
         hydrogenated_template,

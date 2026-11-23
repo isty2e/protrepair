@@ -20,7 +20,7 @@ from protrepair.chemistry.microstate.preparation import (
 from protrepair.chemistry.peptide_caps import LinkedPeptideCap
 from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
     evidence_by_residue_id,
 )
 from protrepair.relation.blueprint import StructureBlueprintCoverage
@@ -105,13 +105,11 @@ class StructureChemistryObservation:
 
     context_structure: ProteinStructure
     component_library: ComponentLibrary
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ]
+    retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...]
     allow_retained_non_polymer_rdkit_fallback: bool
     covalent_like_endpoint_pairs: Collection[tuple[AtomIndex, AtomIndex]]
     retained_non_polymer_evidence_by_residue_id: Mapping[
-        ResidueId, RetainedNonPolymerChemistryEvidence
+        ResidueId, SelectedRetainedChemistry
     ]
     _hydrogen_expectation_model: StructureHydrogenExpectationModel | None
     _polar_contact_chemistry: PolarContactChemistry | None
@@ -128,7 +126,7 @@ class StructureChemistryObservation:
         *,
         component_library: ComponentLibrary | None = None,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence, ...
+            SelectedRetainedChemistry, ...
         ] = (),
         allow_retained_non_polymer_rdkit_fallback: bool = True,
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
@@ -272,7 +270,7 @@ class StructureChemistryObservation:
         *,
         component_library: ComponentLibrary | None,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence, ...
+            SelectedRetainedChemistry, ...
         ] = (),
         allow_retained_non_polymer_rdkit_fallback: bool = True,
     ) -> None:
@@ -710,6 +708,7 @@ class StructureChemistryObservation:
             RetainedNonPolymerChemistryEvidenceSource.AMINO_ACID_PREPARATION,
             RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE,
             RetainedNonPolymerChemistryEvidenceSource.DEPOSITED_CCD_MODEL,
+            RetainedNonPolymerChemistryEvidenceSource.CALLER_COMPONENT_DEFINITION,
             RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION,
         }:
             heavy_topology_source = hydrogen_expectation_resolution.source

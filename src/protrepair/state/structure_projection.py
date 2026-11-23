@@ -6,7 +6,7 @@ from typing import cast
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.microstate.preparation import AminoAcidSitePreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.scope import ResidueSetScope, WholeStructureScope
 from protrepair.state.chemistry_observation import StructureChemistryObservation
@@ -256,7 +256,7 @@ class StructureProjectionStateFacts:
         *,
         component_library: ComponentLibrary | None = None,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence,
+            SelectedRetainedChemistry,
             ...,
         ] = (),
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
@@ -271,7 +271,7 @@ class StructureProjectionStateFacts:
         component_library : ComponentLibrary or None
             Active definitions, or None for defaults.
         retained_non_polymer_chemistry_evidence : tuple
-            Explicit RetainedNonPolymerChemistryEvidence entries.
+            Explicit SelectedRetainedChemistry entries.
         hydrogen_expectation_model : StructureHydrogenExpectationModel or None
             Expectations reused only when their complete inputs match.
         allow_retained_non_polymer_rdkit_fallback : bool
@@ -305,7 +305,7 @@ class StructureProjectionStateFacts:
         ligands: tuple[ResidueSite, ...] = (),
         component_library: ComponentLibrary | None = None,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence,
+            SelectedRetainedChemistry,
             ...,
         ] = (),
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None = None,
@@ -326,7 +326,7 @@ class StructureProjectionStateFacts:
         component_library : ComponentLibrary or None
             Active definitions, or None for defaults.
         retained_non_polymer_chemistry_evidence : tuple
-            Explicit RetainedNonPolymerChemistryEvidence entries.
+            Explicit SelectedRetainedChemistry entries.
         hydrogen_expectation_model : StructureHydrogenExpectationModel or None
             Expectations reused only when their complete inputs match.
         allow_retained_non_polymer_rdkit_fallback : bool
@@ -382,7 +382,7 @@ class StructureProjectionStateFacts:
         ligands: tuple[ResidueSite, ...],
         component_library: ComponentLibrary | None,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence,
+            SelectedRetainedChemistry,
             ...,
         ],
         hydrogen_expectation_model: StructureHydrogenExpectationModel | None,

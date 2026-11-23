@@ -2,6 +2,7 @@
 
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
     evidence_by_residue_id,
 )
 from protrepair.chemistry.retained_non_polymer.registry import (
@@ -13,6 +14,7 @@ from protrepair.chemistry.retained_non_polymer.registry import (
 
 __all__ = [
     "RetainedNonPolymerChemistryEvidence",
+    "SelectedRetainedChemistry",
     "build_bundled_retained_non_polymer_component_library",
     "build_bundled_retained_non_polymer_registry",
     "build_bundled_retained_non_polymer_restraint_library",

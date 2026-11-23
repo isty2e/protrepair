@@ -24,7 +24,7 @@ from protrepair.chemistry.inference.retained_non_polymer_evidence import (
     retained_non_polymer_evidence_heavy_atom_elements,
     retained_non_polymer_evidence_heavy_bond_definitions,
     retained_non_polymer_evidence_hydrogen_bond_definitions,
-    retained_orthophosphate_hydrogen_parents,
+    selected_isolated_hydrogen_parents,
 )
 from protrepair.chemistry.inference.retained_non_polymer_fallback import (
     infer_retained_non_polymer_rdkit_fallback,
@@ -38,8 +38,11 @@ from protrepair.chemistry.retained_non_polymer.coordination import (
 from protrepair.chemistry.retained_non_polymer.covalent_context import (
     RetainedCovalentContext,
 )
+from protrepair.chemistry.retained_non_polymer.definition import (
+    RetainedComponentAssignment,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.chemistry.retained_non_polymer.orthophosphate import (
     DepositedOrthophosphate,
@@ -68,6 +71,7 @@ class RetainedNonPolymerChemistryEvidenceSource(str, Enum):
 
     TEMPLATE = "template"
     EXTERNAL_OVERRIDE = "external_override"
+    CALLER_COMPONENT_DEFINITION = "caller_component_definition"
     DEPOSITED_CCD_MODEL = "deposited_ccd_model"
     COORDINATION_PREPARATION = "coordination_preparation"
     ATOMIC_INVENTORY = "atomic_inventory"
@@ -106,10 +110,13 @@ class RetainedNonPolymerChemistryFailure:
         Machine-readable failure category.
     detail : str
         Explanation of the unavailable or rejected interpretation.
+    selected_source : RetainedNonPolymerChemistryEvidenceSource or None
+        Identifies a caller-supplied definition even when its graph was refused.
     """
 
     kind: RetainedNonPolymerChemistryFailureKind
     detail: str
+    selected_source: RetainedNonPolymerChemistryEvidenceSource | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -601,13 +608,20 @@ def resolve_retained_non_polymer_chemistry(
     residue: ResidueSite,
     *,
     component_library: ComponentLibrary,
-    evidence: RetainedNonPolymerChemistryEvidence | None = None,
+    evidence: SelectedRetainedChemistry | None = None,
     allow_rdkit_fallback: bool = True,
     disulfide_residue_ids: frozenset[ResidueId] | None = None,
     amino_acid_preparation: AminoAcidPreparation | None = None,
 ) -> RetainedNonPolymerChemistryResolution:
     """Resolve selected chemistry against source and current connected context."""
 
+    if (
+        isinstance(evidence, RetainedComponentAssignment)
+        and evidence.residue_id != residue.residue_id
+    ):
+        raise ValueError(
+            f"caller CCD targets {evidence.residue_id!r}, not {residue.residue_id!r}"
+        )
     prepared = (
         AminoAcidPreparation(PolymerMicrostateContext(structure), component_library)
         if amino_acid_preparation is None
@@ -622,7 +636,9 @@ def resolve_retained_non_polymer_chemistry(
         evidence=evidence,
         allow_rdkit_fallback=allow_rdkit_fallback,
     )
-    if not resolution.source.is_resolved():
+    if not resolution.source.is_resolved() and not isinstance(
+        evidence, RetainedComponentAssignment
+    ):
         reference = RetainedNonPolymerChemistryResolution.from_unprepared_reference(
             component_library.get(residue.component_id)
         )
@@ -738,7 +754,7 @@ def _resolve_retained_non_polymer_chemistry_source(
     residue: ResidueSite,
     *,
     component_library: ComponentLibrary,
-    evidence: RetainedNonPolymerChemistryEvidence | None = None,
+    evidence: SelectedRetainedChemistry | None = None,
     allow_rdkit_fallback: bool = True,
 ) -> RetainedNonPolymerChemistryResolution:
     """Resolve retained chemistry from its template, override, or fallback source."""
@@ -767,7 +783,7 @@ def _resolve_retained_non_polymer_chemistry_source(
 
     if evidence is not None:
         try:
-            retained_orthophosphate_hydrogen_parents(evidence, structure)
+            parents = selected_isolated_hydrogen_parents(evidence, structure)
             external_bonds = retained_non_polymer_evidence_external_bonds(
                 evidence, structure
             )
@@ -796,6 +812,25 @@ def _resolve_retained_non_polymer_chemistry_source(
             hydrogen_bond_definitions = (
                 retained_non_polymer_evidence_hydrogen_bond_definitions(evidence)
             )
+            if (
+                isinstance(evidence, RetainedComponentAssignment)
+                and parents is not None
+            ):
+                occupied = {
+                    slot: name
+                    for name, slot in evidence.definition.occupied_slots(
+                        parents
+                    ).items()
+                }
+                evidence_expected_hydrogen_atom_names = tuple(
+                    occupied.get(name, name)
+                    for name in evidence_expected_hydrogen_atom_names
+                )
+                hydrogen_bond_definitions = tuple(
+                    BondDefinition(parent, occupied.get(h, h))
+                    for parent, slots in evidence.definition.hydrogen_slots().items()
+                    for h in slots
+                )
             heavy_atom_elements = retained_non_polymer_evidence_heavy_atom_elements(
                 evidence
             )
@@ -809,19 +844,33 @@ def _resolve_retained_non_polymer_chemistry_source(
                 source=RetainedNonPolymerChemistryEvidenceSource.UNRESOLVED,
                 failure=RetainedNonPolymerChemistryFailure(
                     RetainedNonPolymerChemistryFailureKind.EVIDENCE_REJECTED,
-                    str(error),
+                    f"caller CCD {evidence.definition.component_id}: {error}"
+                    if isinstance(evidence, RetainedComponentAssignment)
+                    else str(error),
+                    RetainedNonPolymerChemistryEvidenceSource.CALLER_COMPONENT_DEFINITION
+                    if isinstance(evidence, RetainedComponentAssignment)
+                    else None,
                 ),
+                unresolved_hydrogen_requirement=bool(
+                    evidence.definition.hydrogen_slots()
+                )
+                if isinstance(evidence, RetainedComponentAssignment)
+                else None,
             )
         return RetainedNonPolymerChemistryResolution(
             source=(
                 RetainedNonPolymerChemistryEvidenceSource.COORDINATION_PREPARATION
                 if preparation is not None
+                else RetainedNonPolymerChemistryEvidenceSource.CALLER_COMPONENT_DEFINITION
+                if isinstance(evidence, RetainedComponentAssignment)
                 else RetainedNonPolymerChemistryEvidenceSource.DEPOSITED_CCD_MODEL
                 if isinstance(evidence, DepositedOrthophosphate)
                 else RetainedNonPolymerChemistryEvidenceSource.EXTERNAL_OVERRIDE
             ),
             expected_heavy_atom_names=evidence.heavy_atom_names,
-            expected_hydrogen_atom_names=_preferred_expected_hydrogen_atom_names(
+            expected_hydrogen_atom_names=evidence_expected_hydrogen_atom_names
+            if isinstance(evidence, RetainedComponentAssignment)
+            else _preferred_expected_hydrogen_atom_names(
                 expected_hydrogen_atom_names=evidence_expected_hydrogen_atom_names,
                 present_hydrogen_atom_names=present_hydrogen_atom_names,
             ),

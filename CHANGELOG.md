@@ -4,6 +4,9 @@
 
 ### Added
 
+- assign a local PDBx component dictionary to a retained ligand by residue ID
+  and prepare its named hydrogens, bonds and charges on the deposited coordinates
+
 - prepare retained inorganic phosphate using the deposited PO4, PI or 2HP
   model when requested, with per-site chemistry overrides taking precedence
 - select waters, ions and cofactors with ordered non-polymer retention rules. Keep

@@ -2,6 +2,9 @@
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
+from protrepair.chemistry.retained_non_polymer.definition import (
+    RetainedComponentAssignment,
+)
 from protrepair.chemistry.retained_non_polymer.orthophosphate import (
     is_orthophosphate_component,
 )
@@ -75,12 +78,20 @@ def project_hydrogen_issues(
     )
     structure = result.structure
     selected: set[ResidueId] = set()
+    assigned = (
+        set()
+        if chemistry_observation is None
+        else {
+            item.residue_id
+            for item in chemistry_observation.retained_non_polymer_chemistry_evidence
+            if isinstance(item, RetainedComponentAssignment)
+        }
+    )
     snapshot: ProteinStructureSnapshot | None = None
     if requested_goal_report is not None:
         for outcome in requested_goal_report.outcomes:
-            if (
-                outcome.requested_goal.value is not HydrogenCoverageState.COMPLETE
-                or outcome.is_satisfied()
+            if outcome.requested_goal.value is not HydrogenCoverageState.COMPLETE or (
+                outcome.is_satisfied() and not assigned
             ):
                 continue
             scope = outcome.requested_goal.scope
@@ -88,12 +99,17 @@ def project_hydrogen_issues(
                 selected.update(
                     r.residue_id
                     for r in structure.constitution.iter_residues(include_ligands=True)
+                    if not outcome.is_satisfied() or r.residue_id in assigned
                 )
             elif OBSERVED_ATOM_SCOPE_LOWERING.supports(scope):
                 if snapshot is None:
                     snapshot = ProteinStructureSnapshot.from_structure(structure)
                 lowered = OBSERVED_ATOM_SCOPE_LOWERING.lower(scope, carrier=snapshot)
-                selected.update(ref.residue_id for ref in lowered.atom_refs)
+                selected.update(
+                    ref.residue_id
+                    for ref in lowered.atom_refs
+                    if not outcome.is_satisfied() or ref.residue_id in assigned
+                )
 
     if repair_refinement is not None:
         if snapshot is None:

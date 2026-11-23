@@ -4,6 +4,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from protrepair.chemistry.retained_non_polymer.definition import (
+    RetainedComponentAssignment,
+)
 from protrepair.structure.labels import ResidueId
 
 
@@ -47,12 +50,17 @@ class RetainedNonPolymerChemistryEvidence:
         object.__setattr__(self, "heavy_atom_names", normalized_heavy_atom_names)
 
 
+SelectedRetainedChemistry = (
+    RetainedNonPolymerChemistryEvidence | RetainedComponentAssignment
+)
+
+
 def evidence_by_residue_id(
-    evidence: Iterable[RetainedNonPolymerChemistryEvidence],
-) -> Mapping[ResidueId, RetainedNonPolymerChemistryEvidence]:
+    evidence: Iterable[SelectedRetainedChemistry],
+) -> Mapping[ResidueId, SelectedRetainedChemistry]:
     """Return residue-keyed retained non-polymer chemistry evidence."""
 
-    evidence_map: dict[ResidueId, RetainedNonPolymerChemistryEvidence] = {}
+    evidence_map: dict[ResidueId, SelectedRetainedChemistry] = {}
     for item in evidence:
         if item.residue_id in evidence_map:
             raise ValueError(
@@ -66,5 +74,6 @@ def evidence_by_residue_id(
 
 __all__ = [
     "RetainedNonPolymerChemistryEvidence",
+    "SelectedRetainedChemistry",
     "evidence_by_residue_id",
 ]

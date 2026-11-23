@@ -44,6 +44,7 @@ from protrepair.chemistry.restraint.defaults import build_default_restraint_libr
 from protrepair.chemistry.restraint.library import RestraintLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
     evidence_by_residue_id,
 )
 from protrepair.chemistry.retained_non_polymer.registry import (
@@ -81,6 +82,7 @@ __all__ = [
     "RestraintLibrary",
     "RetainedNonPolymerChemistryEvidence",
     "RotatableHydrogenKind",
+    "SelectedRetainedChemistry",
     "TetrahedralCenterSemantics",
     "UnknownElementRadiusError",
     "build_bundled_retained_non_polymer_component_library",

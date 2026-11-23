@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary, build_default_component_library
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.scope import AtomSetScope, ResidueSetScope
 from protrepair.state.chemistry_observation import StructureChemistryObservation
@@ -205,7 +205,7 @@ class RepairLocalRefinementDirective:
         component_library: ComponentLibrary | None = None,
         allow_retained_non_polymer_rdkit_fallback: bool = True,
         retained_non_polymer_chemistry_evidence: tuple[
-            RetainedNonPolymerChemistryEvidence,
+            SelectedRetainedChemistry,
             ...,
         ] = (),
         chemistry_observation: StructureChemistryObservation | None = None,

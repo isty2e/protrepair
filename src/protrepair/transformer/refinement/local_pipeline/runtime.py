@@ -5,7 +5,7 @@ from time import perf_counter
 
 from protrepair.chemistry import ComponentLibrary, RestraintLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.diagnostics.water_contacts import stationary_water_refusal
 from protrepair.state.chemistry_observation import StructureChemistryObservation
@@ -52,7 +52,7 @@ def execute_local_transformation(
     restraint_library: RestraintLibrary | None = None,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = (),
     chemistry_observation: StructureChemistryObservation | None = None,
@@ -113,7 +113,7 @@ def execute_local_transformation_profiled(
     restraint_library: RestraintLibrary | None = None,
     allow_retained_non_polymer_rdkit_fallback: bool = True,
     retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence,
+        SelectedRetainedChemistry,
         ...,
     ] = (),
     chemistry_observation: StructureChemistryObservation | None = None,

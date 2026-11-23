@@ -22,20 +22,20 @@ from protrepair.chemistry.inference.rdkit_hydrogen_geometry import (
     add_hydrogens_preserving_stereochemistry,
 )
 from protrepair.chemistry.inference.retained_non_polymer_evidence import (
+    evidence_heavy_molecule,
+    require_evidence_bond_geometry,
     require_retained_non_polymer_evidence_stereochemistry,
     retained_non_polymer_evidence_bond_projection,
+    retained_non_polymer_evidence_expected_hydrogen_atom_names,
     retained_non_polymer_evidence_heavy_atom_elements,
     retained_non_polymer_evidence_heavy_bond_definitions,
     retained_non_polymer_evidence_hydrogen_bond_definitions,
-    template_without_hydrogens,
 )
-from protrepair.chemistry.radii import (
-    ElementRadiusLookup,
-    RadiusKind,
-    prepare_radius_lookup,
+from protrepair.chemistry.retained_non_polymer.definition import (
+    RetainedComponentAssignment,
 )
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import GeometryPlacementError, Vec3
@@ -47,8 +47,6 @@ from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 
 if TYPE_CHECKING:
     from rdkit.Chem.rdchem import Mol
-
-EVIDENCE_BOND_DISTANCE_TOLERANCE_ANGSTROM = 0.60
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +74,7 @@ class EvidenceHydrogenationResult:
 def hydrogenate_retained_non_polymer_payload_with_evidence(
     payload: CompletionResiduePayload,
     *,
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
 ) -> CompletionResiduePayload:
     """Hydrogenate one retained non-polymer payload from evidence chemistry."""
 
@@ -89,7 +87,7 @@ def hydrogenate_retained_non_polymer_payload_with_evidence(
 def hydrogenate_retained_non_polymer_payload_with_evidence_result(
     payload: CompletionResiduePayload,
     *,
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
     bond_order_constraints: Mapping[tuple[str, str], int] | None = None,
     coordination_partner_positions: Mapping[str, Vec3] | None = None,
 ) -> EvidenceHydrogenationResult:
@@ -99,8 +97,8 @@ def hydrogenate_retained_non_polymer_payload_with_evidence_result(
     ----------
     payload : CompletionResiduePayload
         Current heavy scaffold and source scalar/charge evidence.
-    evidence : RetainedNonPolymerChemistryEvidence
-        Selected SMILES chemistry and canonical atom correspondence.
+    evidence : SelectedRetainedChemistry
+        Selected molecular graph and canonical atom correspondence.
     bond_order_constraints : Mapping[tuple[str, str], int] or None
         Reported local heavy orders for a compatible integral resonance form.
     coordination_partner_positions : Mapping[str, Vec3] or None
@@ -151,8 +149,10 @@ def hydrogenate_retained_non_polymer_payload_with_evidence_result(
             rdkit_patch.rdkit_hydrogen_append_patch(
                 payload,
                 hydrogenated_molecule=hydrogenated_molecule,
-                hydrogen_atom_names=_evidence_hydrogen_atom_names(
-                    hydrogenated_molecule,
+                hydrogen_atom_names=(
+                    retained_non_polymer_evidence_expected_hydrogen_atom_names(evidence)
+                    if isinstance(evidence, RetainedComponentAssignment)
+                    else _evidence_hydrogen_atom_names(hydrogenated_molecule)
                 ),
             )
         ),
@@ -284,7 +284,7 @@ def place_coordinated_template_hydrogens(
 def _validate_evidence_alignment(
     payload: CompletionResiduePayload,
     *,
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
 ) -> None:
     """Raise when one evidence cannot be projected onto the current payload."""
 
@@ -325,74 +325,26 @@ def _validate_evidence_alignment(
 
 
 def _validate_evidence_bond_geometry(
-    payload: CompletionResiduePayload,
-    *,
-    evidence: RetainedNonPolymerChemistryEvidence,
+    payload: CompletionResiduePayload, *, evidence: SelectedRetainedChemistry
 ) -> None:
-    """Raise when evidence atom mapping is implausible for payload geometry."""
-
-    heavy_bond_definitions = retained_non_polymer_evidence_heavy_bond_definitions(
-        evidence
+    require_evidence_bond_geometry(
+        payload.residue_geometry,
+        {a.name: a.element for a in payload.atom_sites if not a.is_hydrogen()},
+        retained_non_polymer_evidence_heavy_bond_definitions(evidence),
+        payload.residue_id,
     )
-    covalent_radius_lookup = _evidence_bond_covalent_radius_lookup(
-        payload,
-        heavy_bond_definitions=heavy_bond_definitions,
-    )
-    for bond_definition in heavy_bond_definitions:
-        atom_name_1 = bond_definition.atom_name_1
-        atom_name_2 = bond_definition.atom_name_2
-        element_1 = payload.atom_site(atom_name_1).element
-        element_2 = payload.atom_site(atom_name_2).element
-        observed_distance = payload.position(atom_name_1).distance_to(
-            payload.position(atom_name_2)
-        )
-        expected_distance = covalent_radius_lookup.radius_angstrom(
-            element_1
-        ) + covalent_radius_lookup.radius_angstrom(element_2)
-        deviation = abs(observed_distance - expected_distance)
-        if deviation <= EVIDENCE_BOND_DISTANCE_TOLERANCE_ANGSTROM:
-            continue
-
-        raise ValueError(
-            "retained non-polymer evidence atom mapping is inconsistent with "
-            f"payload geometry for {payload.residue_id.display_token()} "
-            f"{atom_name_1}-{atom_name_2}: observed {observed_distance:.2f} A, "
-            f"expected about {expected_distance:.2f} A"
-        )
-
-
-def _evidence_bond_covalent_radius_lookup(
-    payload: CompletionResiduePayload,
-    *,
-    heavy_bond_definitions: tuple[BondDefinition, ...],
-) -> ElementRadiusLookup:
-    """Return prepared covalent radii needed by evidence-bond geometry checks."""
-
-    radius_lookup = prepare_radius_lookup(
-        (
-            payload.atom_site(atom_name).element
-            for bond_definition in heavy_bond_definitions
-            for atom_name in (
-                bond_definition.atom_name_1,
-                bond_definition.atom_name_2,
-            )
-        ),
-        RadiusKind.COVALENT,
-    )
-    radius_lookup.require_complete("retained non-polymer evidence bond geometry")
-    return radius_lookup
 
 
 def _rdkit_pose_molecule(
     payload: CompletionResiduePayload,
     *,
-    evidence: RetainedNonPolymerChemistryEvidence,
+    evidence: SelectedRetainedChemistry,
 ) -> "Mol":
     """Return one heavy-atom RDKit pose aligned to the current payload."""
 
     assert Chem is not None
 
-    pose_molecule = Chem.Mol(template_without_hydrogens(evidence.smiles))
+    pose_molecule = Chem.Mol(evidence_heavy_molecule(evidence))
     pose_molecule.RemoveAllConformers()
     conformer = Chem.Conformer(pose_molecule.GetNumAtoms())
     for atom_index, atom_name in enumerate(evidence.heavy_atom_names):

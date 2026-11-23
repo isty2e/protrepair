@@ -3,7 +3,11 @@
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import TypeVar
 
+from protrepair.chemistry.retained_non_polymer.definition import (
+    RetainedComponentAssignment,
+)
 from protrepair.chemistry.retained_non_polymer.evidence import (
     RetainedNonPolymerChemistryEvidence,
 )
@@ -37,12 +41,18 @@ class RetainedNonPolymerChemistryOverride:
         )
 
 
+RetainedChemistryOverride = (
+    RetainedNonPolymerChemistryOverride | RetainedComponentAssignment
+)
+_Override = TypeVar("_Override", bound=RetainedChemistryOverride)
+
+
 def override_by_residue_id(
-    overrides: Iterable[RetainedNonPolymerChemistryOverride],
-) -> Mapping[ResidueId, RetainedNonPolymerChemistryOverride]:
+    overrides: Iterable[_Override],
+) -> Mapping[ResidueId, _Override]:
     """Return residue-keyed retained non-polymer overrides."""
 
-    override_map: dict[ResidueId, RetainedNonPolymerChemistryOverride] = {}
+    override_map: dict[ResidueId, _Override] = {}
     for override in overrides:
         if override.residue_id in override_map:
             raise ValueError(

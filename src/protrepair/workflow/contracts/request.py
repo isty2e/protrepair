@@ -11,7 +11,7 @@ from protrepair.scope import (
     Scope,
     WholeStructureScope,
 )
-from protrepair.sources.chemistry import RetainedNonPolymerChemistryOverride
+from protrepair.sources.chemistry import RetainedChemistryOverride
 from protrepair.state import (
     BackboneHeavyAtomCompletenessState,
     BondedGeometryState,
@@ -259,7 +259,7 @@ class StructureIngressOptions:
         How to treat non-water ligands.
     non_polymer_retention : NonPolymerRetentionPolicy or None, default=None
         Select water and other non-polymers instead of applying legacy defaults.
-    retained_non_polymer_chemistry_overrides : iterable of RetainedNonPolymerChemistryOverride
+    retained_non_polymer_chemistry_overrides : iterable of RetainedChemistryOverride
         Explicit chemistry to use for the named retained residues.
     use_ccd_orthophosphate_models : bool, default=False
         Use the deposited PO4, PI or 2HP model for kept inorganic phosphate
@@ -286,7 +286,7 @@ class StructureIngressOptions:
         default=None, kw_only=True
     )
     retained_non_polymer_chemistry_overrides: tuple[
-        RetainedNonPolymerChemistryOverride,
+        RetainedChemistryOverride,
         ...,
     ] = ()
     omit_zero_occupancy_sidechain_heavy_atoms: bool = field(default=False, kw_only=True)
@@ -299,7 +299,7 @@ class StructureIngressOptions:
         mutation_policy: MutationPolicy = MutationPolicy.HIGHEST_OCCUPANCY,
         ligand_policy: LigandPolicy = LigandPolicy.DROP,
         retained_non_polymer_chemistry_overrides: Iterable[
-            RetainedNonPolymerChemistryOverride
+            RetainedChemistryOverride
         ] = (),
         *,
         omit_zero_occupancy_sidechain_heavy_atoms: bool = False,
@@ -352,13 +352,13 @@ class StructureIngressOptions:
         if not isinstance(self.use_ccd_orthophosphate_models, bool):
             raise TypeError("use_ccd_orthophosphate_models must be a bool")
 
-        normalized_overrides: list[RetainedNonPolymerChemistryOverride] = []
+        normalized_overrides: list[RetainedChemistryOverride] = []
         seen_override_residue_ids = set()
         for override in self.retained_non_polymer_chemistry_overrides:
-            if not isinstance(override, RetainedNonPolymerChemistryOverride):
+            if not isinstance(override, RetainedChemistryOverride):
                 raise TypeError(
                     "ingress retained_non_polymer_chemistry_overrides must contain "
-                    "RetainedNonPolymerChemistryOverride values"
+                    "RetainedNonPolymerChemistryOverride or retained CCD assignment values"
                 )
             if override.residue_id in seen_override_residue_ids:
                 raise ValueError(

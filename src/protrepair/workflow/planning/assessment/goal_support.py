@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from protrepair.chemistry import ComponentLibrary
 from protrepair.chemistry.retained_non_polymer.evidence import (
-    RetainedNonPolymerChemistryEvidence,
+    SelectedRetainedChemistry,
 )
 from protrepair.scope import (
     ResidueBoundaryScope,
@@ -204,9 +204,7 @@ def already_satisfied_requested_goals(
     requested_goals: tuple[WorkflowGoal, ...],
     component_library: ComponentLibrary | None = None,
     chemistry_observation: StructureChemistryObservation | None = None,
-    retained_non_polymer_chemistry_evidence: tuple[
-        RetainedNonPolymerChemistryEvidence, ...
-    ] = (),
+    retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
 ) -> tuple[WorkflowGoal, ...]:
     """Return requested goals satisfied by the current structure.
 
