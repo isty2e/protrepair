@@ -167,6 +167,7 @@ execution:
 | `use_ccd_orthophosphate_models` | `False` | Use the deposited chemical component model for retained inorganic phosphate |
 | `omit_zero_occupancy_sidechain_heavy_atoms` | `False` | Treat eligible, explicitly zero side-chain coordinates as missing without requesting repair |
 | `omit_zero_occupancy_polymer_residues` | `False` | Treat verified all-zero internal singleton residues as missing without requesting reconstruction |
+| `omit_consecutive_zero_occupancy_polymer_residues` | `False` | Withhold two or more consecutive internal residues as one interval if every deposited atom explicitly has zero occupancy and the polymer path is verified |
 
 Exact normalization precedence is defined in the [ingress policy](ingress-policy.md).
 

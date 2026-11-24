@@ -162,7 +162,10 @@ def _normalize_structure_text(
     """Parse and normalize one coordinate payload through one boundary path."""
 
     _assert_structure_text_size(contents, source_name=source_name)
-    prove_whole_residue_omissions = policy.omit_zero_occupancy_polymer_residues
+    omit_consecutive_residues = policy.omit_consecutive_zero_occupancy_polymer_residues
+    prove_whole_residue_omissions = (
+        policy.omit_zero_occupancy_polymer_residues or omit_consecutive_residues
+    )
     prove_zero_occupancy = (
         policy.omit_zero_occupancy_sidechain_heavy_atoms
         or prove_whole_residue_omissions
@@ -175,7 +178,11 @@ def _normalize_structure_text(
         raw_structure = gemmi.read_pdb_string(contents)
         sequences = pdb_seqres_sequences(contents)
         uncertain_links = (
-            pdb_uncertain_peptide_ports(contents) if "LINK" in contents else frozenset()
+            pdb_uncertain_peptide_ports(
+                contents, include_sidechains=omit_consecutive_residues
+            )
+            if "LINK" in contents
+            else frozenset()
         )
         observe_cap_paths = len(raw_structure) != 0 and any(
             residue.het_flag == "H" and residue.name in PEPTIDE_CAP_COMPONENT_IDS
@@ -195,8 +202,21 @@ def _normalize_structure_text(
             contents,
             atom_identity_by_serial=atom_identity_by_serial,
             observe_cap_paths=observe_cap_paths,
-            observe_sequence_ports=bool(sequences) or observe_cap_paths,
+            observe_sequence_ports=bool(sequences)
+            or observe_cap_paths
+            or omit_consecutive_residues,
+            include_sidechains=omit_consecutive_residues,
             duplicate_ports=duplicate_ports,
+        )
+        uncertain_attachment_atoms = (
+            (uncertain_links | unresolved_conect_ports)
+            if omit_consecutive_residues
+            else frozenset()
+        )
+        unresolved_conect_ports = frozenset(
+            ref
+            for ref in unresolved_conect_ports
+            if (sequences or observe_cap_paths) and ref.atom_name in ("N", "C")
         )
         uncertain_links |= unresolved_conect_ports
         (
@@ -251,20 +271,27 @@ def _normalize_structure_text(
         source_orders_by_id = _mmcif_connection_orders(source_document)
         uncertain_links = (
             cif_uncertain_peptide_ports(
-                source_document.sole_block(), source_labels_by_residue
+                source_document.sole_block(),
+                source_labels_by_residue,
+                include_sidechains=omit_consecutive_residues,
             )
             if len(source_document)
             else frozenset()
+        )
+        uncertain_attachment_atoms = (
+            uncertain_links if omit_consecutive_residues else frozenset()
         )
         peptide_break_after = frozenset()
 
     # Typed Gemmi declarations precede untyped PDB CONECT fallback so the
     # canonical endpoint keeps the strongest surviving source fact.
+    intra_residue_links: list[SourceConnection] = []
     source_connections = (
         *_source_connections_from_raw_structure(
             raw_structure,
             file_format=file_format,
             orders_by_id=source_orders_by_id,
+            local_pdb_links=intra_residue_links if omit_consecutive_residues else None,
         ),
         *pdb_conect_source_connections,
     )
@@ -281,7 +308,11 @@ def _normalize_structure_text(
         deposited_peptide_boundaries=sequence_boundaries,
         deposited_peptide_sequences=deposited_sequences,
         unresolved_conect_ports=unresolved_conect_ports,
-        uncertain_peptide_link_ports=uncertain_links,
+        uncertain_peptide_link_ports=frozenset(
+            ref for ref in uncertain_links if ref.atom_name in ("N", "C")
+        ),
+        uncertain_attachment_atoms=uncertain_attachment_atoms,
+        intra_residue_pdb_links=tuple(intra_residue_links),
         pdb_cap_source=pdb_cap_source,
     )
 
@@ -317,6 +348,7 @@ def _source_connections_from_raw_structure(
     *,
     file_format: FileFormat,
     orders_by_id: dict[str, int | None] | None = None,
+    local_pdb_links: list[SourceConnection] | None = None,
 ) -> tuple[SourceConnection, ...]:
     """Project Gemmi connection records into boundary-normalized facts."""
 
@@ -328,14 +360,17 @@ def _source_connections_from_raw_structure(
             continue
         if endpoint_1.atom_ref == endpoint_2.atom_ref:
             continue
+        destination = source_connections
         if (
             file_format is FileFormat.PDB
             and endpoint_1.atom_ref.residue_id == endpoint_2.atom_ref.residue_id
         ):
-            continue
+            if local_pdb_links is None:
+                continue
+            destination = local_pdb_links
 
         relationship_type = _relationship_type_from_connection(connection.type)
-        source_connections.append(
+        destination.append(
             SourceConnection(
                 endpoint_1=endpoint_1,
                 endpoint_2=endpoint_2,
@@ -461,6 +496,7 @@ def _pdb_conect_source_connections(
     observe_cap_paths: bool,
     observe_sequence_ports: bool,
     duplicate_ports: dict[int, tuple[AtomRef, ...]],
+    include_sidechains: bool = False,
 ) -> tuple[
     tuple[SourceConnection, ...],
     frozenset[tuple[SourceAtomIdentity, SourceAtomIdentity]],
@@ -511,13 +547,14 @@ def _pdb_conect_source_connections(
                 unresolved_ports.update(
                     atom.atom_ref
                     for atom in identifiable
-                    if atom.atom_ref.atom_name in {"C", "N"}
+                    if include_sidechains or atom.atom_ref.atom_name in {"C", "N"}
                 )
                 unresolved_ports.update(
                     ref
                     for serial in (source, *targets)
                     if serial is not None
                     for ref in duplicate_ports.get(serial, ())
+                    if include_sidechains or ref.atom_name in {"C", "N"}
                 )
         if not targets or source is None or source not in atom_identity_by_serial:
             continue
@@ -593,7 +630,7 @@ def _first_model_pdb_atom_identities(
         if len(records) == 1
     }
     return unique, {
-        serial: tuple(r.atom_ref for r in records if r.atom_ref.atom_name in {"C", "N"})
+        serial: tuple(r.atom_ref for r in records)
         for serial, records in records_by_serial.items()
         if len(records) > 1
     }

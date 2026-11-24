@@ -324,6 +324,8 @@ def normalize_raw_structure(
     deposited_peptide_sequences: tuple[DepositedPeptideSequence, ...] = (),
     unresolved_conect_ports: frozenset[AtomRef] = frozenset(),
     uncertain_peptide_link_ports: frozenset[AtomRef] | None = None,
+    uncertain_attachment_atoms: frozenset[AtomRef] = frozenset(),
+    intra_residue_pdb_links: tuple[SourceConnection, ...] = (),
 ) -> ProteinStructure:
     """Normalize one first model from format-boundary-projected source facts.
 
@@ -363,6 +365,10 @@ def normalize_raw_structure(
     uncertain_peptide_link_ports : frozenset[AtomRef] or None, default=None
         Ports implicated by ambiguous raw declarations. None means those
         declarations were not inspected.
+    uncertain_attachment_atoms : frozenset[AtomRef], default=frozenset()
+        Atoms with ambiguous source connections, including side-chain atoms.
+    intra_residue_pdb_links : tuple of SourceConnection, default=()
+        Local PDB LINK declarations checked before withholding consecutive residues.
 
     Returns
     -------
@@ -383,7 +389,8 @@ def normalize_raw_structure(
 
     omit_sidechains = policy.omit_zero_occupancy_sidechain_heavy_atoms
     omit_residues = policy.omit_zero_occupancy_polymer_residues
-    prove_zero_occupancy = omit_sidechains or omit_residues
+    omit_consecutive_residues = policy.omit_consecutive_zero_occupancy_polymer_residues
+    prove_zero_occupancy = omit_sidechains or omit_residues or omit_consecutive_residues
     source_annotations = _source_annotation_iterators(
         source_annotations_by_atom_identity, require_occupancy=prove_zero_occupancy
     )
@@ -408,6 +415,9 @@ def normalize_raw_structure(
                     ),
                     zero_occupancy_omissions=() if omit_sidechains else None,
                     zero_occupancy_residue_omissions=() if omit_residues else None,
+                    consecutive_zero_occupancy_residue_omissions=()
+                    if omit_consecutive_residues
+                    else None,
                 )
             ),
         )
@@ -556,7 +566,7 @@ def normalize_raw_structure(
         file_format=file_format,
         constitution=constitution,
         peptide_break_after=source_peptide_break_after,
-        verify_source_paths=omit_residues,
+        verify_source_paths=omit_residues or omit_consecutive_residues,
         source_labels_by_residue=source_labels_by_residue,
     )
     peptide_candidates = source_sequence_inferred_polymer_topology_bonds(
@@ -568,9 +578,17 @@ def normalize_raw_structure(
         source_connections, normalized_residue_payloads
     )
     if uncertain_peptide_link_ports is not None:
-        uncertain_peptide_link_ports |= _conflicting_link_variants(
-            projected_source_connections, constitution, geometry
+        conflicts = _conflicting_link_variants(
+            projected_source_connections,
+            constitution,
+            geometry,
+            include_sidechains=omit_consecutive_residues,
         )
+        uncertain_peptide_link_ports |= frozenset(
+            ref for ref in conflicts if ref.atom_name in ("N", "C")
+        )
+        if omit_consecutive_residues:
+            uncertain_attachment_atoms |= conflicts
     source_topology_bonds = _topology_bonds_from_source_connections(
         projected_source_connections,
         constitution=constitution,
@@ -671,13 +689,25 @@ def normalize_raw_structure(
             source_connections=projected_source_connections,
         )
     residue_omissions = None
-    if omit_residues:
+    consecutive_omissions = None
+    if omit_residues or omit_consecutive_residues:
         assert source_annotations_by_atom_identity is not None
         all_zero_ids, charged_atoms = _all_zero_source_residues(
             source_annotations_by_atom_identity
         )
-        residue_omissions = zero_occupancy_residue_omissions(
+        isolated, windows = zero_occupancy_residue_omissions(
             selected,
+            singletons=omit_residues,
+            consecutive_residues=omit_consecutive_residues,
+            intra_residue_pdb_links=intra_residue_pdb_links,
+            uncertain_atoms=uncertain_attachment_atoms
+            | (uncertain_peptide_link_ports or frozenset()),
+            raw_terminal_ids=frozenset(
+                identity.atom_ref.residue_id
+                for identity in source_annotations_by_atom_identity
+                if omit_consecutive_residues
+                and identity.atom_ref.atom_name in {"OXT", "OT2"}
+            ),
             all_zero_residue_ids=frozenset(
                 payload.residue_id
                 for payload in normalized_residue_payloads
@@ -701,10 +731,13 @@ def normalize_raw_structure(
             charged_source_atoms_by_residue=charged_atoms,
             source_connections=projected_source_connections,
         )
+        residue_omissions = isolated if omit_residues else None
+        consecutive_omissions = windows if omit_consecutive_residues else None
     return project_zero_occupancy_omissions(
         selected,
         atom_omissions=atom_omissions,
         residue_omissions=residue_omissions,
+        consecutive_omissions=consecutive_omissions,
     )
 
 
@@ -732,6 +765,8 @@ def _conflicting_link_variants(
     connections: tuple[SourceConnection, ...],
     constitution: StructureConstitution,
     geometry: StructureGeometry,
+    *,
+    include_sidechains: bool = False,
 ) -> frozenset[AtomRef]:
     return frozenset(
         end.atom_ref
@@ -750,7 +785,7 @@ def _conflicting_link_variants(
             for ep in link.endpoint_pair()
         )
         for end in link.endpoint_pair()
-        if end.atom_ref.atom_name in ("N", "C")
+        if include_sidechains or end.atom_ref.atom_name in ("N", "C")
     )
 
 
@@ -976,6 +1011,14 @@ def apply_structure_normalization_policy(
     ):
         raise StructureNormalizationError(
             "zero-occupancy residue omission requires re-reading the original coordinate input"
+        )
+    if (
+        policy.omit_consecutive_zero_occupancy_polymer_residues
+        and structure.provenance.ingress.consecutive_zero_occupancy_residue_omissions
+        is None
+    ):
+        raise StructureNormalizationError(
+            "omitting consecutive zero-occupancy residues requires re-reading the original coordinate input"
         )
 
     if policy.selected_chain_ids is None:

@@ -19,10 +19,10 @@ class _Partner:
     component: str
     image: str
 
-    def ports(self) -> Iterator[AtomRef]:
+    def implicated_atoms(self, *, include_sidechains: bool) -> Iterator[AtomRef]:
         for rid in self.ids:
             for name in ("N", "C") if not self.atom else (self.atom,):
-                if name in ("N", "C"):
+                if include_sidechains or name in ("N", "C"):
                     yield AtomRef(rid, name)
 
     def uncertain_with(self, other: "_Partner") -> bool:
@@ -43,8 +43,10 @@ def _rid(chain: str, seq: str, ins: str) -> ResidueId | None:
         return None
 
 
-def pdb_uncertain_peptide_ports(contents: str) -> frozenset[AtomRef]:
-    """Find N/C endpoints of incomplete, self, or non-local LINK records."""
+def pdb_uncertain_peptide_ports(
+    contents: str, *, include_sidechains: bool = False
+) -> frozenset[AtomRef]:
+    """Find ambiguous LINK endpoints, restricting them to N/C unless whole slots matter."""
     ports: set[AtomRef] = set()
     for line in contents.splitlines():
         if line[:6] not in ("LINK  ", "LINKR "):
@@ -65,14 +67,21 @@ def pdb_uncertain_peptide_ports(contents: str) -> frozenset[AtomRef]:
                 )
             )
         if ends[0].uncertain_with(ends[1]):
-            ports.update(ref for end in ends for ref in end.ports())
+            ports.update(
+                ref
+                for end in ends
+                for ref in end.implicated_atoms(include_sidechains=include_sidechains)
+            )
     return frozenset(ports)
 
 
 def cif_uncertain_peptide_ports(
-    block: gemmi.cif.Block, labels: Mapping[ResidueId, frozenset[SourcePolymerLabels]]
+    block: gemmi.cif.Block,
+    labels: Mapping[ResidueId, frozenset[SourcePolymerLabels]],
+    *,
+    include_sidechains: bool = False,
 ) -> frozenset[AtomRef]:
-    """Keep identifiable N/C ports when a struct_conn row cannot bind locally."""
+    """Keep identifiable endpoints of ambiguous struct_conn rows; normally only N/C."""
     table = block.find_mmcif_category("_struct_conn.")
     if not table:
         return frozenset()
@@ -114,5 +123,9 @@ def cif_uncertain_peptide_ports(
                 _Partner(frozenset(ids), atom, component, row.get(p + "symmetry", ""))
             )
         if ends[0].uncertain_with(ends[1]):
-            ports.update(ref for end in ends for ref in end.ports())
+            ports.update(
+                ref
+                for end in ends
+                for ref in end.implicated_atoms(include_sidechains=include_sidechains)
+            )
     return frozenset(ports)

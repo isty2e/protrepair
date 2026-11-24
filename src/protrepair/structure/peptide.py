@@ -73,11 +73,10 @@ def are_peptide_adjacent(
     if _are_consecutive_polymer_residue_slots(
         left_residue, right_residue, structure=structure
     ):
-        omissions = structure.provenance.ingress.zero_occupancy_residue_omissions
+        omissions = structure.provenance.ingress.recorded_residue_gaps()
         if not omissions or not any(
             record.preceding_residue_id == left_residue.residue_id
             and record.following_residue_id == right_residue.residue_id
-            and structure.constitution.residue_or_ligand(record.residue_id) is None
             for record in omissions
         ):
             return True

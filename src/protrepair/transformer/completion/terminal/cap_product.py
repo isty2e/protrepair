@@ -1,16 +1,11 @@
 """Atomic assembly of an internal cap and the linked peptide flank."""
 
-from collections.abc import Iterator
 from dataclasses import dataclass
 
 import gemmi
 
 from protrepair.chemistry import build_default_component_library
-from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.peptide_caps import observe_linked_peptide_cap
-from protrepair.chemistry.retained_non_polymer.hydrogen_correspondence import (
-    source_hydrogen_bond_length_is_compatible,
-)
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import AtomSite, ResidueRole, ResidueSite
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
@@ -22,102 +17,17 @@ from protrepair.structure.topology import (
     TopologyBond,
 )
 from protrepair.structure.topology import BondRelationshipType as Rel
+from protrepair.transformer.completion.shared.peptide_attachment import (
+    amide_hydrogens,
+    check_unbonded_carbonyl_h,
+    neighbors,
+    require_preserved_amide_hydrogens,
+)
 from protrepair.transformer.completion.terminal.cap_geometry import (
     PeptideCapFrame,
     PeptideCapPose,
 )
 from protrepair.transformer.completion.terminal.cap_sequence import linking_component
-
-
-def neighbors(
-    snapshot: ProteinStructure | StructureObservation, ref: AtomRef
-) -> Iterator[tuple[AtomRef, TopologyBond]]:
-    """Yield every non-hydrogen-bond neighbor in the original address space."""
-    c, t = snapshot.constitution, snapshot.topology
-    idx = c.resolve_atom_index(ref)
-    if idx is not None:
-        for bond in t.incident_bonds_by_atom().get(idx, ()):
-            if bond.relationship_type is not Rel.HYDROGEN_BOND:
-                a, b = bond.endpoint_pair()
-                yield c.atom_ref_at(b if a == idx else a), bond
-
-
-def _n_hydrogens(
-    snapshot: ProteinStructure | StructureObservation, residue: ResidueSite
-) -> tuple[str, ...]:
-    rid = residue.residue_id
-    c = snapshot.constitution
-    template = build_default_component_library().get(residue.component_id)
-    assert template is not None
-    aliases = template.polymer_hydrogen_parent_aliases()
-    n_idx = c.resolve_atom_index(AtomRef(rid, "N"))
-    names = []
-    for atom in residue.atom_sites:
-        if not atom.is_hydrogen():
-            continue
-        ref = AtomRef(rid, atom.name)
-        declared = tuple(neighbors(snapshot, ref))
-        named = aliases.get(PolymerMicrostateSite.hydrogen_slot_name(atom))
-        needs_n = named == "N" or any(a == AtomRef(rid, "N") for a, _ in declared)
-        pos = snapshot.geometry.position(c.atom_index(ref))
-        near = n_idx is not None and source_hydrogen_bond_length_is_compatible(
-            pos.distance_to(snapshot.geometry.position(n_idx)), 1.01
-        )
-        if needs_n and not declared:
-            for other in residue.atom_sites:
-                if other.is_hydrogen() or other.name == "N":
-                    continue
-                typical = {"C": 1.09, "N": 1.01, "O": 0.98, "S": 1.34}.get(
-                    other.element
-                )
-                if typical is not None and source_hydrogen_bond_length_is_compatible(
-                    pos.distance_to(
-                        snapshot.geometry.position(
-                            c.atom_index(AtomRef(rid, other.name))
-                        )
-                    ),
-                    typical,
-                ):
-                    raise ValueError("ambiguous_n_h_parent")
-        if not needs_n:
-            if not declared and named is None and near:
-                raise ValueError("unknown_h_parent")
-            continue
-        if (
-            snapshot.topology.formal_charge(c.atom_index(ref)) not in (None, 0)
-            or any(
-                a != AtomRef(rid, "N")
-                or b.relationship_type not in (Rel.COVALENT, Rel.UNKNOWN)
-                or b.order not in (None, 1)
-                or b.aromatic
-                for a, b in declared
-            )
-            or (named is not None and named != "N")
-            or not near
-        ):
-            raise ValueError("incompatible_n_h")
-        names.append(atom.name)
-    return tuple(names)
-
-
-def _check_unbonded_carbonyl_h(
-    snapshot: ProteinStructure | StructureObservation, residue: ResidueSite
-) -> None:
-    c = snapshot.constitution
-    rid = residue.residue_id
-    for atom in residue.atom_sites:
-        if not atom.is_hydrogen():
-            continue
-        ref = AtomRef(rid, atom.name)
-        if any(neighbors(snapshot, ref)):
-            continue
-        point = snapshot.geometry.position(c.atom_index(ref))
-        for name, length in (("C", 1.09), ("O", 0.98)):
-            idx = c.resolve_atom_index(AtomRef(rid, name))
-            if idx is not None and source_hydrogen_bond_length_is_compatible(
-                point.distance_to(snapshot.geometry.position(idx)), length
-            ):
-                raise ValueError("possible_carbonyl_h")
 
 
 def _flank(
@@ -140,7 +50,7 @@ def _flank(
     ):
         raise ValueError("existing_terminal_oxygen")
     if side == "C":
-        _check_unbonded_carbonyl_h(snapshot, residue)
+        check_unbonded_carbonyl_h(snapshot, residue)
 
     template = build_default_component_library().get(residue.component_id)
     assert template is not None
@@ -148,7 +58,7 @@ def _flank(
     if any(not a.is_hydrogen() and a.name not in heavy for a in residue.atom_sites):
         raise ValueError("unqualified_flank_heavy_atom")
     ring = "CD" in template.definition.bonded_atom_names("N")
-    hs = _n_hydrogens(snapshot, residue) if side == "N" else ()
+    hs = amide_hydrogens(snapshot, residue, template) if side == "N" else ()
     if len(hs) > (0 if ring else 1):
         raise ValueError("surplus_terminal_h")
     wanted = (
@@ -204,18 +114,7 @@ def frame_for(
         raise ValueError("changed_flank_identity")
     original_h = _flank(obs, port, cap=cap)
     hs = _flank(parent, port, cap=cap)
-    for name in original_h:
-        ref = AtomRef(port.residue_id, name)
-        oi = obs.constitution.atom_index(ref)
-        i = c.resolve_atom_index(ref)
-        if (
-            name not in hs
-            or i is None
-            or c.atom_site_at(i) != obs.constitution.atom_site_at(oi)
-            or parent.geometry.atom_geometry(i).altloc
-            != obs.geometry.atom_geometry(oi).altloc
-        ):
-            raise ValueError("lost_source_h")
+    require_preserved_amide_hydrogens(parent, obs, port, original_h, hs)
     template = build_default_component_library().get(site.component_id)
     assert template is not None
     ring = port.atom_name == "N" and "CD" in template.definition.bonded_atom_names("N")

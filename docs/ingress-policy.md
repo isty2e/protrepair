@@ -172,8 +172,9 @@ zero occupancies. This is independent of the side-chain option. All atom
 records at the slot in the first model must declare zero, including H/D/T and
 discarded alternate locations. Both flanks must have positively declared
 `N`, `CA`, `C` and `O` and follow the source polymer sequence through the
-slot. Terminal slots, consecutive zero runs, insertion codes and ambiguous
-or conflicting sequence evidence leave the selected coordinates in place.
+slot. This option leaves terminal residues and consecutive zero-occupancy
+residues in place. It also keeps coordinates if the path contains an
+insertion code or the sequence evidence is ambiguous or conflicting.
 An otherwise eligible omission that would discard a declared connection or
 formal charge is refused.
 
@@ -197,6 +198,36 @@ history. A fresh read can still treat unusually close flanks as geometrical
 neighbors even without a C-N topology bond. To retain the source gap
 semantics, continue with the returned structure or reread the original input
 with the option enabled.
+
+To withhold two or more consecutive residues, set
+`omit_consecutive_zero_occupancy_polymer_residues=True`. The reader checks
+the whole interval between residues with positive backbone occupancies.
+A single deposited atom can identify a residue if its component and place
+in the polymer are unambiguous. Every deposited atom in the interval must
+explicitly report zero occupancy. If any atom fails that test, all the
+residues stay in place. The reader also keeps them if an attachment is
+uncertain within the interval or at either end. A decoded connection or
+explicit charge on an otherwise eligible residue fails the read. Without
+PDB SEQRES, the reader checks the original consecutive slots, ordinary residue
+numbers and chain breaks; when sequence labels are available they must agree.
+
+For each omitted interval, `consecutive_zero_occupancy_residue_omissions`
+records both flanking residues and the original atoms in residue order.
+`None` means the option was off; an empty tuple means no interval qualified.
+Enable both whole-residue options to cover isolated and consecutive residues.
+Neither creates an unobserved-sequence declaration or requests a peptide cap.
+
+To restore the omitted residues, request the entire interval with its original
+flanks and a donor of the same residue sequence. All inserted heavy atoms and coordinates
+used in the fit must have positive occupancy. A donor can still lack a
+side-chain atom. A successful fit connects the peptide; it does not establish
+the conformation of the unobserved loop or exclude clashes with its surroundings.
+
+If a chain carries a generated peptide cap and an unrestored omission, PDB
+and mmCIF export raise `StructureSerializationError` rather than publish the
+withheld residues as missing from the deposition. Restore the interval before
+exporting that chain, or keep working with the in-memory structure. An open
+interval on a different chain does not prevent export of the cap.
 
 ## Original Chemistry Observations
 
