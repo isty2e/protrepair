@@ -16,7 +16,7 @@ from protrepair.chemistry.nonstandard.registry import (
 from protrepair.chemistry.standard.components import (
     build_standard_component_library,
 )
-from protrepair.errors import StructureNormalizationError
+from protrepair.errors import ModelInvariantError, StructureNormalizationError
 from protrepair.geometry import Vec3
 from protrepair.io.gemmi_normalization import (
     gemmi,
@@ -45,6 +45,7 @@ from protrepair.io.zero_occupancy import (
     zero_occupancy_sidechain_omissions,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.cap_attachment import PeptideCapAttachment
 from protrepair.structure.constitution import (
     AtomSite,
     ChainSite,
@@ -68,7 +69,10 @@ from protrepair.structure.provenance import (
     StructureIngress,
     StructureProvenance,
 )
-from protrepair.structure.sequence_boundary import DepositedPeptideBoundary
+from protrepair.structure.sequence_boundary import (
+    DepositedPeptideBoundary,
+    DepositedPeptideSequence,
+)
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
@@ -317,7 +321,9 @@ def normalize_raw_structure(
     | None = None,
     pdb_cap_source: PdbCapSourceContext | None = None,
     deposited_peptide_boundaries: tuple[DepositedPeptideBoundary, ...] = (),
+    deposited_peptide_sequences: tuple[DepositedPeptideSequence, ...] = (),
     unresolved_conect_ports: frozenset[AtomRef] = frozenset(),
+    uncertain_peptide_link_ports: frozenset[AtomRef] | None = None,
 ) -> ProteinStructure:
     """Normalize one first model from format-boundary-projected source facts.
 
@@ -350,8 +356,13 @@ def normalize_raw_structure(
         Raw PDB adjacency and serial ambiguity facts for retained cap selection.
     deposited_peptide_boundaries : tuple[DepositedPeptideBoundary, ...], default=()
         Positive source sequence facts computed before retention or omission.
+    deposited_peptide_sequences : tuple[DepositedPeptideSequence, ...], default=()
+        Construct sequences and feasible positions of their deposited coordinate slots.
     unresolved_conect_ports : frozenset[AtomRef], default=frozenset()
-        Possible endpoints on undecodable CONECT rows in sequence-bearing PDB.
+        Possible endpoints on undecodable first-model CONECT rows.
+    uncertain_peptide_link_ports : frozenset[AtomRef] or None, default=None
+        Ports implicated by ambiguous raw declarations. None means those
+        declarations were not inspected.
 
     Returns
     -------
@@ -423,11 +434,33 @@ def normalize_raw_structure(
                     endpoint.atom_ref.residue_id, []
                 ).append(endpoint)
     excluded_source_endpoints: set[SourceAtomIdentity] = set()
+    omitted_cap_candidates: dict[ResidueId, list[_NormalizedResiduePayload | None]] = {
+        ep.atom_ref.residue_id: []
+        for link in source_connections
+        if link.endpoint_1.atom_ref.residue_id != link.endpoint_2.atom_ref.residue_id
+        and {link.endpoint_1.atom_ref.atom_name, link.endpoint_2.atom_ref.atom_name}
+        == {"C", "N"}
+        for ep in link.endpoint_pair()
+        if ep.component_id in PEPTIDE_CAP_COMPONENT_IDS
+    }
     reordered_polymer_chains: set[str] = set()
     for raw_chain in model:
         chain_id = normalize_chain_id(raw_chain.name)
         if not policy.selects_chain(chain_id):
             for raw_residue in raw_chain:
+                rid = _raw_residue_id(raw_residue, chain_id)
+                if rid in omitted_cap_candidates:
+                    role = _explicit_entity_role(
+                        raw_residue, entity_type_by_id=entity_type_by_id
+                    )
+                    omitted_cap_candidates[rid].append(
+                        _omitted_cap_variant(
+                            raw_residue, chain_id, policy, normalized_source_elements
+                        )
+                        if role is ResidueRole.LIGAND
+                        or (role is None and raw_residue.het_flag == "H")
+                        else None
+                    )
                 excluded_source_endpoints.update(
                     _referenced_source_endpoints(
                         raw_residue, chain_id, coordination_endpoints_by_residue
@@ -450,6 +483,7 @@ def normalize_raw_structure(
                 source_element_by_atom_identity=normalized_source_elements,
                 source_annotations=source_annotations,
                 coordination_endpoints_by_residue=coordination_endpoints_by_residue,
+                omitted_cap_candidates=omitted_cap_candidates,
             )
         )
         excluded_source_endpoints.update(excluded_endpoints)
@@ -533,6 +567,10 @@ def normalize_raw_structure(
     projected_source_connections = _project_source_connection_names(
         source_connections, normalized_residue_payloads
     )
+    if uncertain_peptide_link_ports is not None:
+        uncertain_peptide_link_ports |= _conflicting_link_variants(
+            projected_source_connections, constitution, geometry
+        )
     source_topology_bonds = _topology_bonds_from_source_connections(
         projected_source_connections,
         constitution=constitution,
@@ -592,6 +630,13 @@ def normalize_raw_structure(
                 source_format=file_format,
                 source_name=source_name,
                 observation=observation,
+                uncertain_peptide_link_ports=uncertain_peptide_link_ports,
+                deposited_peptide_sequences=tuple(
+                    path
+                    for path in deposited_peptide_sequences
+                    if path.chain_id not in reordered_polymer_chains
+                    and constitution.has_chain(path.chain_id)
+                ),
                 pdb_adjacent_cap_links=(
                     ()
                     if pdb_cap_source is None
@@ -599,7 +644,16 @@ def normalize_raw_structure(
                         observation, projected_source_connections
                     )
                 ),
-            )
+            ),
+            omitted_peptide_caps=_raw_omitted_cap_attachments(
+                omitted_cap_candidates,
+                chains,
+                policy,
+                projected_source_connections,
+                pdb_cap_source,
+                (uncertain_peptide_link_ports or frozenset())
+                | observation.unresolved_conect_ports,
+            ),
         ),
     )
     if not prove_zero_occupancy:
@@ -651,6 +705,156 @@ def normalize_raw_structure(
         selected,
         atom_omissions=atom_omissions,
         residue_omissions=residue_omissions,
+    )
+
+
+def _omitted_cap_variant(
+    residue: gemmi.Residue,
+    chain_id: str,
+    policy: StructureNormalizationPolicy,
+    elements: Mapping[SourceAtomIdentity, str],
+) -> _NormalizedResiduePayload | None:
+    try:
+        return _normalize_residue(
+            residue,
+            chain_id,
+            policy.occupancy_policy,
+            is_hetero=True,
+            source_element_by_atom_identity=elements,
+            source_annotations=None,
+        )
+    except (ModelInvariantError, StructureNormalizationError, ValueError):
+        # An unreadable dropped variant supplies no proof of a named attachment.
+        return None
+
+
+def _conflicting_link_variants(
+    connections: tuple[SourceConnection, ...],
+    constitution: StructureConstitution,
+    geometry: StructureGeometry,
+) -> frozenset[AtomRef]:
+    return frozenset(
+        end.atom_ref
+        for link in connections
+        if link.source_metadata.reported_relationship_type
+        is not BondRelationshipType.HYDROGEN_BOND
+        and link.endpoint_1.atom_ref.residue_id != link.endpoint_2.atom_ref.residue_id
+        and any(
+            constitution.residue_or_ligand(ep.atom_ref.residue_id) is not None
+            and ep.resolve_index(
+                constitution,
+                geometry,
+                require_altloc_match=link.requires_exact_altloc_match(),
+            )
+            is None
+            for ep in link.endpoint_pair()
+        )
+        for end in link.endpoint_pair()
+        if end.atom_ref.atom_name in ("N", "C")
+    )
+
+
+def _raw_omitted_cap_attachments(
+    candidates: dict[ResidueId, list[_NormalizedResiduePayload | None]],
+    chains: list[tuple[str, list[_NormalizedResiduePayload]]],
+    policy: StructureNormalizationPolicy,
+    connections: tuple[SourceConnection, ...],
+    pdb_source: PdbCapSourceContext | None,
+    uncertain: frozenset[AtomRef],
+) -> frozenset[PeptideCapAttachment]:
+    caps = tuple(
+        best
+        for variants in candidates.values()
+        if variants
+        and None not in variants
+        and (
+            best := _select_residue_variant(
+                [p for p in variants if p is not None], policy.mutation_policy
+            )
+        ).component_id
+        in PEPTIDE_CAP_COMPONENT_IDS
+    )
+    if not caps:
+        return frozenset()
+    cap_ids = {p.residue_id for p in caps}
+    relevant_ids = {
+        other.atom_ref.residue_id
+        for connection in connections
+        for end, other in (
+            connection.endpoint_pair(),
+            tuple(reversed(connection.endpoint_pair())),
+        )
+        if end.atom_ref.residue_id in cap_ids
+        and other.atom_ref.residue_id not in cap_ids
+    }
+    flanks = {
+        cid: tuple(p for p in group if p.residue_id in relevant_ids)
+        for cid, group in chains
+    }
+    constitution = StructureConstitution(
+        chains=tuple(
+            ChainSite(cid, tuple(p.constitution for p in group))
+            for cid, group in flanks.items()
+            if group
+        ),
+        ligands=tuple(p.constitution for p in caps),
+    )
+    payloads = (*caps, *(p for group in flanks.values() for p in group))
+    geometry = _structure_geometry_from_payloads(
+        constitution=constitution, residue_payloads=payloads
+    )
+    scope = cap_ids | relevant_ids
+    relevant = tuple(
+        link
+        for link in connections
+        if link.endpoint_1.atom_ref.residue_id != link.endpoint_2.atom_ref.residue_id
+        and any(ep.atom_ref.residue_id in scope for ep in link.endpoint_pair())
+    )
+    by_pair: dict[tuple[AtomRef, AtomRef], list[SourceConnection]] = {}
+    for link in relevant:
+        first, second = link.endpoint_pair()
+        pair = (
+            (first.atom_ref, second.atom_ref)
+            if first.atom_ref < second.atom_ref
+            else (second.atom_ref, first.atom_ref)
+        )
+        by_pair.setdefault(pair, []).append(link)
+    uncertain = uncertain | _conflicting_link_variants(relevant, constitution, geometry)
+    bonds: list[TopologyBond] = []
+    for pair, declarations in by_pair.items():
+        try:
+            bonds.extend(
+                _topology_bonds_from_source_connections(
+                    tuple(declarations),
+                    constitution=constitution,
+                    geometry=geometry,
+                    expected_bonds_by_pair={},
+                )
+            )
+        except ModelInvariantError:
+            uncertain = uncertain.union(pair)
+    topology = StructureTopology(
+        constitution=constitution,
+        atom_topologies=(None,) * len(constitution.atom_slots),
+        bonds=tuple(bonds),
+    )
+    snapshot = StructureObservation.from_source_facets(
+        constitution=constitution,
+        geometry=geometry,
+        topology=topology,
+        source_connections=relevant,
+    )
+    adjacent = () if pdb_source is None else pdb_source.links_for(snapshot, relevant)
+    return frozenset(
+        link
+        for link, _ in PeptideCapAttachment.bonded_ports(
+            constitution,
+            geometry,
+            topology,
+            adjacent=adjacent,
+            uncertain=uncertain,
+            observation=snapshot,
+        )
     )
 
 
@@ -882,6 +1086,32 @@ def apply_structure_normalization_policy(
         else structure.polymer_blueprint.select_chains(selected_chain_ids)
     )
 
+    provenance = structure.provenance
+    if any(
+        site.component_id in PEPTIDE_CAP_COMPONENT_IDS
+        and site.residue_id not in selected_residue_ids
+        for site in structure.constitution.ligands
+    ):
+        removed = frozenset(
+            link
+            for link, _ in PeptideCapAttachment.bonded_ports(
+                structure.constitution,
+                structure.geometry,
+                structure.topology,
+                adjacent=provenance.ingress.pdb_adjacent_cap_links,
+                uncertain=provenance.ingress.uncertain_peptide_link_ports
+                or frozenset(),
+                observation=provenance.ingress.observation,
+            )
+            if link.cap_id not in selected_residue_ids
+            and link.identifies_port_in(selected_structure_constitution)
+        )
+        if removed:
+            provenance = replace(
+                provenance,
+                omitted_peptide_caps=provenance.omitted_peptide_caps | removed,
+            )
+
     return ProteinStructure.from_payload(
         constitution=selected_structure_constitution,
         geometry=selected_geometry,
@@ -907,7 +1137,7 @@ def apply_structure_normalization_policy(
             ),
         ),
         polymer_blueprint=selected_polymer_blueprint,
-        provenance=structure.provenance,
+        provenance=provenance,
     )
 
 
@@ -1226,6 +1456,7 @@ def _normalize_chain_residues(
     source_annotations: Mapping[SourceAtomIdentity, Iterator[SourceAtomAnnotation]]
     | None,
     coordination_endpoints_by_residue: Mapping[ResidueId, list[SourceAtomIdentity]],
+    omitted_cap_candidates: dict[ResidueId, list[_NormalizedResiduePayload | None]],
 ) -> tuple[
     list[_NormalizedResiduePayload],
     list[_NormalizedResiduePayload],
@@ -1255,6 +1486,15 @@ def _normalize_chain_residues(
         is_hetero = role is not ResidueRole.POLYMER
         if is_hetero:
             if policy.non_polymer_retention is None and policy.drops_ligands():
+                if role is ResidueRole.LIGAND and residue_id in omitted_cap_candidates:
+                    omitted_cap_candidates[residue_id].append(
+                        _omitted_cap_variant(
+                            raw_residue,
+                            chain_id,
+                            policy,
+                            source_element_by_atom_identity,
+                        )
+                    )
                 excluded_endpoints.update(
                     _referenced_source_endpoints(
                         raw_residue, chain_id, coordination_endpoints_by_residue
@@ -1302,6 +1542,11 @@ def _normalize_chain_residues(
         ):
             non_polymer.append(payload)
         else:
+            if (
+                residue_id in omitted_cap_candidates
+                and residue_role_by_id[residue_id] is ResidueRole.LIGAND
+            ):
+                omitted_cap_candidates[residue_id].append(payload)
             for endpoint in coordination_endpoints_by_residue.get(residue_id, ()):
                 atom = payload.geometry.atoms_by_name.get(endpoint.atom_ref.atom_name)
                 if (

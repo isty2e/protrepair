@@ -105,6 +105,25 @@ def test_built_wheel_contains_runtime_assets_and_notices(
     )
 
 
+def test_release_artifacts_include_the_complete_backbone_references(
+    built_release_artifacts: BuiltReleaseArtifacts,
+) -> None:
+    with (
+        ZipFile(built_release_artifacts.wheel_path) as wheel,
+        tarfile.open(built_release_artifacts.sdist_path) as sdist,
+    ):
+        for contour in (
+            "general-noGPIVpreP",
+            "gly-sym",
+            "ileval-nopreP",
+            "prepro-noGP",
+        ):
+            path = f"protrepair/analysis/resources/rama8000-{contour}.data.gz"
+            expected = (REPOSITORY_ROOT / "src" / path).read_bytes()
+            assert wheel.read(path) == expected
+            assert _tar_member_bytes(sdist, f"/src/{path}") == expected
+
+
 def test_built_wheel_requires_native_chemistry_without_extras(
     built_release_artifacts: BuiltReleaseArtifacts,
 ) -> None:

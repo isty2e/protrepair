@@ -32,6 +32,7 @@ from protrepair.chemistry.retained_non_polymer.template_binding import (
     is_resolved_acyl_amide_link,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.constitution import AtomSite, ResidueRole
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
@@ -575,7 +576,11 @@ class AminoAcidMicrostateContext:
                 end = chain.residues[
                     0 if kind is PolymerChemicalSite.BACKBONE_N else -1
                 ]
-                if end.residue_id == residue_id:
+                ports = active_peptide_ports()
+                if end.residue_id == residue_id and (
+                    ports is None
+                    or not ports.reserves(self.source, AtomRef(residue_id, name))
+                ):
                     linkage = PeptideLinkage.FREE
                     assumed = True
         return PolymerMicrostateSite(

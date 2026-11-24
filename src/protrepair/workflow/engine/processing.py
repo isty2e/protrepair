@@ -32,6 +32,10 @@ from protrepair.io import read_structure
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
 from protrepair.sources.chemistry import RetainedChemistryOverride, SmilesAssignment
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.bound_peptide_ports import BoundPeptidePorts, peptide_port_run
+from protrepair.transformer.completion.terminal.cap_sequence import (
+    qualified_peptide_neighbors,
+)
 from protrepair.workflow.contracts.hydrogen_lengths import HydrogenLengthRequest
 from protrepair.workflow.contracts.planning import (
     WorkflowLigandContextMode,
@@ -67,6 +71,54 @@ def process_canonical_structure(
     """Process a canonical structure through the current repair workflow."""
 
     active_ingress = StructureIngressOptions() if ingress is None else ingress
+    normalized_structure = apply_structure_normalization_policy(
+        structure, policy=active_ingress.structure_normalization_policy()
+    )
+    return run_normalized_workflow(
+        normalized_structure,
+        ingress=active_ingress,
+        requested_goals=requested_goals,
+        transform_requests=transform_requests,
+        planning_context=planning_context,
+        analyses=analyses,
+        hydrogen_lengths=hydrogen_lengths,
+    )
+
+
+def run_normalized_workflow(
+    normalized_structure: ProteinStructure,
+    *,
+    ingress: StructureIngressOptions,
+    requested_goals: Sequence[WorkflowGoal] = (),
+    transform_requests: WorkflowTransformRequests | None = None,
+    planning_context: WorkflowPlanningContext | None = None,
+    analyses: Iterable[AnalysisKind] = frozenset(),
+    hydrogen_lengths: HydrogenLengthRequest | None = None,
+) -> ProcessResult:
+    """Run ordinary repairs and plan cap assessments on the same normalized input.
+
+    Parameters
+    ----------
+    normalized_structure : ProteinStructure
+        The input after retention, chain selection and any occupancy policy.
+    ingress : StructureIngressOptions
+        Already-applied ingress settings and the caller's retained chemistry.
+    requested_goals : Sequence[WorkflowGoal]
+        Independent repair goals, including H coverage or terminal OXT.
+    transform_requests : WorkflowTransformRequests or None
+        Requested transformations, including donor spans and peptide end caps.
+    planning_context : WorkflowPlanningContext or None
+        Explicit planning limits and policy, or the defaults for this input.
+    analyses : Iterable[AnalysisKind]
+        Analyses to evaluate on the selected structure.
+    hydrogen_lengths : HydrogenLengthRequest or None
+        Terminal hydrogen-length assessment or repair.
+
+    Returns
+    -------
+    ProcessResult
+        Selected structure and ordinary workflow reports.
+    """
     requested_goal_set = RequestedGoalSet(tuple(requested_goals))
     active_transform_requests = (
         WorkflowTransformRequests()
@@ -74,16 +126,28 @@ def process_canonical_structure(
         else transform_requests
     )
     normalized_analyses = normalize_analysis_kinds(analyses)
+    peptide_capping = active_transform_requests.peptide_capping
+    peptide_ports = (
+        None
+        if peptide_capping is None
+        else BoundPeptidePorts.bind(
+            normalized_structure,
+            qualified_gap_ports=qualified_peptide_neighbors(normalized_structure),
+            only=None
+            if peptide_capping.ports is None
+            else tuple(p.atom_ref for p in peptide_capping.ports),
+            graft_ids=frozenset(
+                rid
+                for request in active_transform_requests.external_span_reconstructions
+                for rid in request.scope.absent_residue_ids
+            ),
+        )
+    )
 
     component_library = build_default_component_library()
-    normalization_policy = active_ingress.structure_normalization_policy()
-    normalized_structure = apply_structure_normalization_policy(
-        structure,
-        policy=normalization_policy,
-    )
     active_planning_context = (
         _default_workflow_planning_context(
-            ingress=active_ingress,
+            ingress=ingress,
             transform_requests=active_transform_requests,
             has_retained_ligands=bool(normalized_structure.constitution.ligands),
         )
@@ -94,17 +158,17 @@ def process_canonical_structure(
         normalized_structure, hydrogen_lengths
     )
     initial_microstate_issues = diagnose_source_microstate_contradictions(
-        normalized_structure,
-        component_library=component_library,
+        normalized_structure, component_library=component_library
     )
     validated_retained_non_polymer_chemistry_evidence = (
         _validated_retained_non_polymer_chemistry_evidence(
             normalized_structure,
-            active_ingress.retained_non_polymer_chemistry_overrides,
-            use_ccd_orthophosphate_models=active_ingress.use_ccd_orthophosphate_models,
+            ingress.retained_non_polymer_chemistry_overrides,
+            use_ccd_orthophosphate_models=ingress.use_ccd_orthophosphate_models,
         )
     )
     with (
+        peptide_port_run(peptide_ports),
         stationary_water_run(normalized_structure),
         site_protonation_run(
             BoundSiteProtonations.bind(
@@ -151,6 +215,7 @@ def process_canonical_structure(
             stop_reason=runtime_result.stop_reason,
             span_reconstruction_evidence=runtime_result.span_reconstruction_evidence,
             site_protonation_history=runtime_result.site_protonation_history,
+            peptide_capping_history=runtime_result.peptide_capping_history,
             planning_context=active_planning_context,
             component_library=component_library,
             requested_analyses=normalized_analyses,

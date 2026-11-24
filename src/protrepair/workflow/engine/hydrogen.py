@@ -14,6 +14,7 @@ from protrepair.chemistry.retained_non_polymer.orthophosphate import (
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.diagnostics.polymer_hydrogen import (
+    PendingCapLinkageIssue,
     declared_thiolate_conflict,
     linked_cap_issue,
     unresolved_fixed_hydrogen_issue,
@@ -23,8 +24,13 @@ from protrepair.scope import WholeStructureScope
 from protrepair.scope.observed_atom_scope_lowering import OBSERVED_ATOM_SCOPE_LOWERING
 from protrepair.state import HydrogenCoverageState
 from protrepair.state.chemistry_observation import StructureChemistryObservation
+from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.labels import ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
+from protrepair.transformer.completion.terminal.cap_placement import (
+    CapPortAssessment,
+    PortCondition,
+)
 from protrepair.transformer.local.projection import (
     LocalContinuousExecutionResidueProjection,
 )
@@ -65,13 +71,17 @@ def project_hydrogen_issues(
     tuple[ValidationIssue, ...]
         Unrelated issues in their original order and multiplicity, followed by
         at most one current unresolved-H warning per requested residue.
-        Stale or out-of-scope unresolved-H warnings are omitted.
+        Stale or out-of-scope unresolved-H warnings are omitted. An H-stage
+        warning about a reserved cap linkage remains until that exact junction
+        passes verification on this structure.
 
     Raises
     ------
     ValueError
         The supplied observation belongs to a different structure or library.
     """
+    structure = result.structure
+    ports = active_peptide_ports()
     retained = tuple(
         issue
         for issue in result.issues
@@ -80,8 +90,14 @@ def project_hydrogen_issues(
             ValidationIssueKind.UNRESOLVED_POLYMER_HYDROGEN,
             ValidationIssueKind.UNRESOLVED_RETAINED_HYDROGEN,
         }
+        and not (
+            ports is not None
+            and isinstance(issue, PendingCapLinkageIssue)
+            and ports.reserves(structure, issue.port)
+            and CapPortAssessment.observe(ports, structure, issue.port).condition
+            is PortCondition.COMPLETE
+        )
     )
-    structure = result.structure
     selected: set[ResidueId] = set()
     assigned = (
         set()

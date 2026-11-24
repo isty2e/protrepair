@@ -137,6 +137,7 @@ class TerminalAugmentationTransformer(ResidueSetWorkflowStructureTransformer):
                 continue
             if should_add_terminal_oxt(
                 residue_site,
+                structure=structure,
                 component_library=component_library,
             ):
                 target_residue_ids.append(residue_id)

@@ -28,6 +28,14 @@ from protrepair.workflow.contracts.hydrogen_lengths import (
     HydrogenLengthReport,
     HydrogenLengthRequest,
 )
+from protrepair.workflow.contracts.peptide_capping import (
+    PeptideCapOutcome,
+    PeptideCappingReport,
+    PeptideCappingRequest,
+    PeptideCapStatus,
+    PeptideEnd,
+    PeptidePort,
+)
 from protrepair.workflow.contracts.planning import (
     WorkflowLigandContextMode,
     WorkflowPlanningContext,
@@ -96,6 +104,12 @@ __all__ = [
     "PackingMode",
     "PackingScope",
     "PackingSpec",
+    "PeptideCapOutcome",
+    "PeptideCapStatus",
+    "PeptideCappingReport",
+    "PeptideCappingRequest",
+    "PeptideEnd",
+    "PeptidePort",
     "PolymerChemicalSite",
     "PrasRatioHistidineProtonationRequest",
     "ProcessResult",

@@ -4,11 +4,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from protrepair.chemistry.microstate.resolution import AppliedMicrostateChoice
+from protrepair.structure.cap_attachment import PeptideCapAttachment
 from protrepair.structure.element import ElementIdentity
 from protrepair.structure.endpoint import StructureEndpoint
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
+from protrepair.structure.sequence_boundary import DepositedPeptideSequence
 from protrepair.structure.source_connection import (
     PdbAdjacentCapLink,
     SourceAtomIdentity,
@@ -164,6 +166,11 @@ class StructureIngress:
     pdb_adjacent_cap_links : tuple of PdbAdjacentCapLink, default=()
         Selected bare CONECT attachments corroborated by source PDB slot order.
         These are source observations, not realized peptide bonds.
+    uncertain_peptide_link_ports : frozenset[AtomRef] or None, default=None
+        N/C addresses on incomplete, conflicting or non-local declarations.
+        None denotes an input whose raw records were not inspected.
+    deposited_peptide_sequences : tuple[DepositedPeptideSequence, ...]
+        Verified constructs with their original coordinate position intervals.
 
     Raises
     ------
@@ -187,6 +194,12 @@ class StructureIngress:
     pdb_adjacent_cap_links: tuple[PdbAdjacentCapLink, ...] = field(
         default=(), kw_only=True, repr=False
     )
+    uncertain_peptide_link_ports: frozenset[AtomRef] | None = field(
+        default=None, kw_only=True, repr=False
+    )
+    deposited_peptide_sequences: tuple[DepositedPeptideSequence, ...] = field(
+        default=(), kw_only=True, repr=False
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_format, FileFormat):
@@ -198,6 +211,27 @@ class StructureIngress:
             raise TypeError(
                 "structure ingress observation must be a StructureObservation or None"
             )
+
+        ports = self.uncertain_peptide_link_ports
+        if ports is not None and (
+            not isinstance(ports, frozenset)
+            or any(
+                not isinstance(port, AtomRef) or port.atom_name not in ("N", "C")
+                for port in ports
+            )
+        ):
+            raise TypeError(
+                "uncertain peptide ports require a frozen set of backbone atom references"
+            )
+        paths = self.deposited_peptide_sequences
+        if not isinstance(paths, tuple) or any(
+            not isinstance(path, DepositedPeptideSequence) for path in paths
+        ):
+            raise TypeError(
+                "deposited peptide sequences require a tuple of bound paths"
+            )
+        if len({path.chain_id for path in paths}) != len(paths):
+            raise ValueError("multiple deposited peptide paths for one author chain")
 
         omissions = self.zero_occupancy_omissions
         residue_omissions = self.zero_occupancy_residue_omissions
@@ -323,6 +357,9 @@ class StructureProvenance:
     microstate_choices : tuple[AppliedMicrostateChoice, ...]
         Disjoint applied site choices with their original authority. Defaults
         remain preferences, not observations or explicit overrides.
+    omitted_peptide_caps : frozenset[PeptideCapAttachment]
+        Qualified occupied ports whose cap was removed by retention. Their
+        history survives re-entry even if the source observation predates the cap.
 
     Raises
     ------
@@ -335,10 +372,18 @@ class StructureProvenance:
     ingress: StructureIngress
     lineage: tuple[StructureEndpoint, ...] = ()
     microstate_choices: tuple[AppliedMicrostateChoice, ...] = ()
+    omitted_peptide_caps: frozenset[PeptideCapAttachment] = field(
+        default_factory=frozenset, kw_only=True, repr=False
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.ingress, StructureIngress):
             raise TypeError("structure provenance requires a StructureIngress value")
+
+        if not isinstance(self.omitted_peptide_caps, frozenset) or not all(
+            isinstance(link, PeptideCapAttachment) for link in self.omitted_peptide_caps
+        ):
+            raise TypeError("omitted peptide caps require a frozenset of attachments")
 
         lineage_list: list[StructureEndpoint] = []
         for lineage_scope in self.lineage:

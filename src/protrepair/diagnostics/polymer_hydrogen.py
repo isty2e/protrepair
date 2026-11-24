@@ -1,6 +1,8 @@
-"""Diagnostic projection of unresolved fixed polymer H inventories."""
+"""Diagnostics for unresolved polymer hydrogen inventories and peptide linkages."""
 
-from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
+from dataclasses import dataclass
+
+from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
 from protrepair.chemistry.microstate.context import input_declares_thiolate
 from protrepair.chemistry.microstate.preparation import (
     AminoAcidPreparation,
@@ -8,10 +10,73 @@ from protrepair.chemistry.microstate.preparation import (
 )
 from protrepair.chemistry.microstate.resolution import MicrostateResolutionStatus
 from protrepair.chemistry.peptide_caps import LinkedPeptideCap
-from protrepair.diagnostics.events import ValidationIssue
+from protrepair.diagnostics.events import EventScope, ResidueAtomImpact, ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
+from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import BondRelationshipType
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PendingCapLinkageIssue(ValidationIssue):
+    """An H-stage warning that a verified cap at the same port can resolve.
+
+    Parameters
+    ----------
+    port : AtomRef
+        Polymer N or C whose linkage was unknown during H preparation.
+    """
+
+    port: AtomRef
+
+    @classmethod
+    def for_unresolved_target(
+        cls, target: AminoAcidSitePreparation, message: str
+    ) -> "PendingCapLinkageIssue | None":
+        """Identify a pending cap without reclassifying other placement failures.
+
+        Parameters
+        ----------
+        target : AminoAcidSitePreparation
+            Backbone or side-chain chemistry assessed by the H stage.
+        message : str
+            Original placement diagnostic, retained if the port stays unresolved.
+
+        Returns
+        -------
+        PendingCapLinkageIssue or None
+            A port-specific warning only for insufficient chemistry at a reserved
+            backbone end with unknown linkage.
+        """
+        binding = active_peptide_ports()
+        if (
+            binding is None
+            or target.site.kind is PolymerChemicalSite.SIDECHAIN
+            or target.site.linkage is not PeptideLinkage.UNKNOWN
+            or target.resolution.status is not MicrostateResolutionStatus.INSUFFICIENT
+        ):
+            return None
+        port = AtomRef(
+            target.residue_id,
+            "N" if target.site.kind is PolymerChemicalSite.BACKBONE_N else "C",
+        )
+        if not binding.reserves(target.context.source, port):
+            return None
+
+        return cls(
+            port=port,
+            kind=ValidationIssueKind.UNSUPPORTED_HYDROGENATION,
+            severity=IssueSeverity.WARNING,
+            message=message,
+            scope=EventScope.for_residue(port.residue_id),
+            residue_impacts=(
+                ResidueAtomImpact(
+                    port.residue_id,
+                    target.site.template.component_id,
+                    tuple(sorted(target.controlled_parent_names())),
+                ),
+            ),
+        )
 
 
 def linked_cap_issue(cap: LinkedPeptideCap, detail: str) -> ValidationIssue:

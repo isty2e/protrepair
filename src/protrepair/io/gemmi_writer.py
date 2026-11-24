@@ -19,6 +19,7 @@ from protrepair.errors import (
     StructureSerializationError,
     UnsupportedFileFormatError,
 )
+from protrepair.io.cap_sequence_projection import CapSequenceProjection
 from protrepair.io.gemmi_normalization import (
     gemmi,
     infer_file_format,
@@ -31,6 +32,7 @@ from protrepair.io.pdb_records import (
     pdb_text_field_fits,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.cap_attachment import PeptideCapAttachment
 from protrepair.structure.constitution import AtomSite, ResidueRole, ResidueSite
 from protrepair.structure.disulfide import disulfide_atom_ref_pair
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
@@ -165,14 +167,19 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
         _validate_pdb_output(structure) if file_format is FileFormat.PDB else {}
     )
     raw_structure = build_gemmi_structure(structure)
+    cap_sequences = CapSequenceProjection.apply(raw_structure, structure, file_format)
     if file_format is FileFormat.PDB:
         add_topology_connections_to_gemmi_structure(
             raw_structure,
             structure,
             file_format=file_format,
-            bonds=(
-                *pdb_typed_connection_topology_bonds_for_egress(structure),
-                *_realized_pdb_cap_links_for_egress(structure),
+            bonds=tuple(
+                dict.fromkeys(
+                    (
+                        *pdb_typed_connection_topology_bonds_for_egress(structure),
+                        *_realized_pdb_cap_links_for_egress(structure),
+                    )
+                )
             ),
         )
         _normalize_pdb_altlocs(raw_structure)
@@ -199,6 +206,7 @@ def write_structure_string(structure: ProteinStructure, file_format: FileFormat)
             bonds=bonds,
         )
         mmcif_document = raw_structure.make_mmcif_document()
+        CapSequenceProjection.write_scheme(mmcif_document.sole_block(), cap_sequences)
         _quote_mmcif_asym_ids(mmcif_document, raw_structure[0])
         _set_mmcif_connection_orders(mmcif_document, bonds)
         _restore_mmcif_atom_attributes(mmcif_document, structure)
@@ -211,16 +219,33 @@ def _realized_pdb_cap_links_for_egress(
     structure: ProteinStructure,
 ) -> tuple[TopologyBond, ...]:
     """Retain realized cap chemistry if archival PDB ordering loses the source path."""
-    return tuple(
+    ingress = structure.provenance.ingress
+    qualified_source = (
         bond
-        for link in structure.provenance.ingress.pdb_adjacent_cap_links
+        for link in ingress.pdb_adjacent_cap_links
         if (
             bond := link.bond_in(
                 structure.constitution, structure.geometry, structure.topology
             )
         )
         is not None
-        and bond.relationship_type is BondRelationshipType.COVALENT
+    )
+    generated = (
+        bond
+        for _, bond in PeptideCapAttachment.bonded_ports(
+            structure.constitution,
+            structure.geometry,
+            structure.topology,
+            adjacent=ingress.pdb_adjacent_cap_links,
+            uncertain=ingress.uncertain_peptide_link_ports or frozenset(),
+            observation=ingress.observation,
+        )
+        if bond.provenance is BondProvenance.REPAIR_INFERRED
+    )
+    return tuple(
+        bond
+        for bond in (*qualified_source, *generated)
+        if bond.relationship_type is BondRelationshipType.COVALENT
         and bond.order == 1
         and not bond.aromatic
     )

@@ -11,7 +11,10 @@ except ImportError:  # pragma: no cover - exercised by backend-availability test
 
 from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.component.semantics import IdealGeometryHydrogenSemantics
-from protrepair.chemistry.peptide_caps import LinkedPeptideCap
+from protrepair.chemistry.peptide_caps import (
+    LinkedPeptideCap,
+    observe_linked_peptide_cap,
+)
 from protrepair.diagnostics.events import RepairEvent
 from protrepair.diagnostics.kinds import RepairEventKind
 from protrepair.diagnostics.polymer_hydrogen import linked_cap_issue
@@ -19,16 +22,105 @@ from protrepair.errors import RdkitUnavailableError
 from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.geometry.placement_vector import normalized_vector_or_none
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.cap_attachment import PeptideCapAttachment
 from protrepair.structure.constitution import AtomSite
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
-from protrepair.structure.topology import StructureTopology, TopologyBond
+from protrepair.structure.topology import (
+    BondRelationshipType,
+    StructureTopology,
+    TopologyBond,
+)
 from protrepair.transformer.completion.hydrogen.component_patch import (
     generate_component_hydrogen_patch,
 )
 from protrepair.transformer.completion.shared.domain import CompletionResiduePayload
 from protrepair.transformer.completion.shared.patch import OrderedAtomPatch
 from protrepair.transformer.result import TransformationResult
+
+
+def stage_complete_cap_topology(
+    structure: ProteinStructure, port: AtomRef, cap_id: ResidueId
+) -> ProteinStructure:
+    """Stage connectivity-only file bonds for a two-sided cap conformance check.
+
+    A cap must already contain its full hydrogen inventory. For an amide N
+    on the polymer, only a declared, singly attached local H/D/T can acquire
+    a bond order here. The caller verifies the resulting junction before use.
+
+    Parameters
+    ----------
+    structure : ProteinStructure
+        Current carrier with the input link evidence.
+    port : AtomRef
+        Polymer backbone atom across the junction.
+    cap_id : ResidueId
+        Address of the retained ACE or NME.
+
+    Returns
+    -------
+    ProteinStructure
+        Same atom identities and coordinates, with the admitted effective orders.
+
+    Raises
+    ------
+    ValueError
+        The cap or its attachment conflicts with the input graph.
+    """
+    constitution = structure.constitution
+    ingress = structure.provenance.ingress
+    if ingress.uncertain_peptide_link_ports is None or not any(
+        a.port == port and a.cap_id == cap_id
+        for a, _ in PeptideCapAttachment.bonded_ports(
+            constitution,
+            structure.geometry,
+            structure.topology,
+            adjacent=ingress.pdb_adjacent_cap_links,
+            uncertain=ingress.uncertain_peptide_link_ports,
+            observation=ingress.observation,
+        )
+    ):
+        raise ValueError("no verified local peptide-cap attachment")
+    cap_site = constitution.residue_or_ligand(cap_id)
+    cap = None if cap_site is None else observe_linked_peptide_cap(structure, cap_site)
+    if (
+        cap is None
+        or cap.refusal
+        or cap.partner != port
+        or cap.missing_hydrogen_parents
+    ):
+        raise ValueError(
+            (cap.refusal if cap else None) or "incomplete peptide-cap attachment"
+        )
+    updates = [*cap.heavy_bond_updates, *cap.hydrogen_bond_updates]
+
+    if port.atom_name == "N":
+        nitrogen = constitution.atom_index(port)
+        incident = structure.topology.incident_bonds_by_atom()
+        for edge in incident.get(nitrogen, ()):
+            first, second = edge.endpoint_pair()
+            other = first if second == nitrogen else second
+            if (
+                not constitution.atom_site_at(other).is_hydrogen()
+                or edge.relationship_type is BondRelationshipType.HYDROGEN_BOND
+            ):
+                continue
+            if (
+                constitution.atom_ref_at(other).residue_id != port.residue_id
+                or edge.aromatic
+                or edge.order not in (None, 1)
+                or any(
+                    b != edge
+                    and b.relationship_type is not BondRelationshipType.HYDROGEN_BOND
+                    for b in incident[other]
+                )
+            ):
+                raise ValueError("incompatible amide hydrogen attachment")
+            expected = TopologyBond(first, second)
+            resolved = edge.with_resolved_chemistry(expected)
+            if resolved != edge:
+                updates.append(resolved)
+    return _with_bonds(structure, tuple(updates)) if updates else structure
 
 
 def publish_linked_cap_topology(

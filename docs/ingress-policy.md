@@ -380,3 +380,16 @@ records above. This preserves the resolved attachment when PDB export puts
 retained residues after the polymer. An unresolved attachment is not promoted
 on export; rewriting the source before preparation may lose the original slot
 order needed to resolve it.
+
+When an attached ACE or NME is retained, the writer can preserve the flank's
+deposited polymer sequence across a second write and read. The cap stays
+outside the biological sequence. mmCIF also retains the assigned sequence
+positions and author numbers for missing residues when the address table
+agrees with the deposited sequence. If filtering
+removed an originally observed polymer residue, a deposited cap does not
+cause that residue to be reported as a gap in the exported sequence.
+
+Dropping an attached cap removes its atoms and bond. The in-memory result
+remembers which cap occupied the port when the input identifies a single
+local attachment. Proximity alone, a link to a different crystal image, or a
+conflicting connection cannot identify the omitted cap.

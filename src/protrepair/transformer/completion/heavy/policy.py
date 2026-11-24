@@ -7,8 +7,10 @@ from protrepair.chemistry import (
     IdealGeometryHeavyAtomSemantics,
     ResidueTemplate,
 )
+from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.constitution import ResidueSite
-from protrepair.structure.labels import ResidueId
+from protrepair.structure.labels import AtomRef, ResidueId
 
 
 class ResidueRefinementTargeting(Protocol):
@@ -23,11 +25,32 @@ class ResidueRefinementTargeting(Protocol):
 def should_add_terminal_oxt(
     residue: ResidueSite,
     *,
+    structure: ProteinStructure,
     component_library: ComponentLibrary,
 ) -> bool:
-    """Return whether a residue can receive terminal OXT augmentation."""
+    """Check whether a chain-end residue can receive OXT.
+
+    Parameters
+    ----------
+    residue : ResidueSite
+        Chain-end heavy inventory, including any atoms just repaired.
+    structure : ProteinStructure
+        Current carrier for rebinding the C port to the original occurrence.
+    component_library : ComponentLibrary
+        Definitions in effect for this repair.
+
+    Returns
+    -------
+    bool
+        Whether the end is unreserved and has the template and anchors for OXT.
+    """
 
     if residue.has_atom_site("OXT"):
+        return False
+    ports = active_peptide_ports()
+    if ports is not None and ports.reserves(
+        structure, AtomRef(residue.residue_id, "C")
+    ):
         return False
 
     template = component_library.get(residue.component_id)

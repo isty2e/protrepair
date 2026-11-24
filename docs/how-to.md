@@ -86,6 +86,44 @@ failed reconstruction leaves the source span absent. The
 [span reconstruction reference](span-reconstruction.md) describes the
 acceptance gates and scientific limits.
 
+## Cap An Exposed Peptide Group
+
+When the deposited sequence continues beyond the available coordinates, you
+can close the exposed N with an acetyl group (ACE), or the exposed C with
+an N-methylamide group (NME). The cap is a separate, bonded residue; it
+does not replace the missing biological residue. For example, to consider
+only the N on chain A, residue 42:
+
+```python
+from protrepair import process_structure
+from protrepair.structure import ResidueId
+from protrepair.workflow.contracts import (
+    LigandPolicy, PeptideCappingRequest, PeptideEnd, PeptidePort,
+    StructureIngressOptions, WorkflowTransformRequests,
+)
+
+port = PeptidePort(ResidueId("A", 42), PeptideEnd.N)
+result = process_structure(
+    source,
+    ingress=StructureIngressOptions(ligand_policy=LigandPolicy.KEEP),
+    transform_requests=WorkflowTransformRequests(
+        peptide_capping=PeptideCappingRequest.only((port,)),
+    ),
+)
+for outcome in result.peptide_capping_report.outcomes:
+    print(outcome.port, outcome.status.value, outcome.reason, outcome.attachment)
+```
+
+Use `PeptideCappingRequest()` to consider all exposed ends. A chain break or
+numbering jump alone is not evidence of a missing peptide. Check the outcome
+for each end: a requested graft may already have restored it, a deposited
+group may occupy it, or no pose may fit without moving existing atoms.
+If `status` is `attached_unverified`, the named cap is still bonded but
+its final geometry or chemistry failed verification.
+Reprocess exported caps with `KEEP` or a retention rule that keeps them.
+With `DROP`, the report identifies a recognized omitted cap rather than adding
+it back. Capping by itself does not hydrogenate the rest of the structure.
+
 ## Disable Retained-Ligand Chemistry Fallback
 
 RDKit fallback is enabled by default for retained components that lack explicit

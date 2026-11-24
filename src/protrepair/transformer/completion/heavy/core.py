@@ -535,6 +535,7 @@ def _repair_heavy_atom_chain(
         and repaired_residues
         and should_add_terminal_oxt(
             repaired_residues[-1].residue_site,
+            structure=source_structure,
             component_library=component_library,
         )
     ):

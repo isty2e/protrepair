@@ -74,6 +74,7 @@ def augment_c_terminal_oxt(
             and terminal_residue.residue_id not in target_residue_ids
         ) or not should_add_terminal_oxt(
             terminal_residue.residue_site,
+            structure=augmented_structure,
             component_library=library,
         ):
             continue

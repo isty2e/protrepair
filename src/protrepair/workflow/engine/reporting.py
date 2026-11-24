@@ -42,6 +42,11 @@ from protrepair.state import (
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.bound_peptide_ports import (
+    BoundPeptidePorts,
+    active_peptide_ports,
+    peptide_port_run,
+)
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.refinement.spec import RepairRefinementSpec
@@ -86,6 +91,7 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
         "_blockers",
         "_cached_outcomes",
         "_component_library",
+        "_peptide_ports",
         "_planning_context",
         "_site_binding",
         "_structure",
@@ -94,6 +100,7 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
     _blockers: tuple[WorkflowBlocker, ...]
     _cached_outcomes: tuple[WorkflowPhaseOutcome, ...] | None
     _component_library: ComponentLibrary | None
+    _peptide_ports: BoundPeptidePorts | None
     _planning_context: WorkflowPlanningContext
     _site_binding: BoundSiteProtonations | None
     _structure: ProteinStructure
@@ -110,6 +117,7 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
         object.__setattr__(self, "_structure", structure)
         object.__setattr__(self, "_planning_context", planning_context)
         object.__setattr__(self, "_site_binding", active_site_protonations())
+        object.__setattr__(self, "_peptide_ports", active_peptide_ports())
         object.__setattr__(self, "_component_library", component_library)
         object.__setattr__(self, "_blockers", tuple(blockers))
         object.__setattr__(self, "_cached_outcomes", None)
@@ -122,7 +130,10 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
         if cached_outcomes is not None:
             return cached_outcomes
 
-        with site_protonation_run(self._site_binding):
+        with (
+            site_protonation_run(self._site_binding),
+            peptide_port_run(self._peptide_ports),
+        ):
             resolved_outcomes = evaluate_workflow_phase_outcomes(
                 self._structure,
                 planning_context=self._planning_context,

@@ -15,6 +15,7 @@ from protrepair.chemistry import (
     ResidueTemplate,
     prepare_radius_lookup,
 )
+from protrepair.chemistry.peptide_caps import observe_linked_peptide_cap
 from protrepair.chemistry.polar_contacts import PolarContactChemistry
 from protrepair.diagnostics import clash_topology_rules
 from protrepair.diagnostics.clash_pair_generation import (
@@ -29,6 +30,7 @@ from protrepair.diagnostics.clash_pair_generation import (
 from protrepair.diagnostics.events import EventScope, ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.constitution import ResidueSite, StructureConstitution
 from protrepair.structure.disulfide import (
     disulfide_atom_ref_pairs_from_topology,
@@ -40,9 +42,9 @@ from protrepair.structure.geometry import (
     StructureGeometry,
 )
 from protrepair.structure.labels import AtomRef, ResidueId
-from protrepair.structure.peptide import are_peptide_adjacent
+from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS, are_peptide_adjacent
 from protrepair.structure.slots import ResidueIndex
-from protrepair.structure.topology import StructureTopology
+from protrepair.structure.topology import BondProvenance, StructureTopology
 
 MINIMUM_CLASH_GRID_CELL_SIZE_ANGSTROM = 1.0
 NEIGHBOR_CELL_OFFSETS: tuple[tuple[int, int, int], ...] = tuple(
@@ -173,6 +175,8 @@ class ResidueContext:
         Shared observation of the structure's current bonds and formal charges.
     peptide_neighbor_residue_ids : frozenset[ResidueId], default=frozenset()
         Residues connected by supported peptide adjacency.
+    cap_junction : tuple[AtomRef, AtomRef] or None
+        Verified cap and peptide endpoints for local bonded-pair exclusions.
 
     Raises
     ------
@@ -188,6 +192,7 @@ class ResidueContext:
     residue_index: int | None
     polar_chemistry: PolarContactChemistry = field(repr=False, compare=False)
     peptide_neighbor_residue_ids: frozenset[ResidueId] = frozenset()
+    cap_junction: tuple[AtomRef, AtomRef] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "domain", ContactDomain.normalize(self.domain))
@@ -1473,7 +1478,29 @@ def bind_residue_contexts(
         residue_context_bases,
     )
     contexts: list[ResidueContext] = []
+    cap_run = active_peptide_ports()
     for basis_index, basis in enumerate(residue_context_bases):
+        junction = None
+        if (
+            basis.domain is ContactDomain.RETAINED_NON_POLYMER
+            and basis.residue_site.component_id in PEPTIDE_CAP_COMPONENT_IDS
+        ):
+            cap = observe_linked_peptide_cap(structure, basis.residue_site)
+            if cap is not None and cap.partner is not None and cap.link_is_realized():
+                local = AtomRef(
+                    cap.residue_id, "C" if cap.component_id == "ACE" else "N"
+                )
+                bond = structure.topology.bond_between(
+                    structure.constitution.atom_index(local),
+                    structure.constitution.atom_index(cap.partner),
+                )
+                if bond is not None and (
+                    bond.provenance is BondProvenance.REPAIR_INFERRED
+                    or (
+                        cap_run is not None and cap_run.reserves(structure, cap.partner)
+                    )
+                ):
+                    junction = (local, cap.partner)
         residue_geometry = structure.geometry.residue_geometry(
             constitution=structure.constitution,
             residue_index=ResidueIndex(basis.residue_slot_index),
@@ -1487,6 +1514,7 @@ def bind_residue_contexts(
                 chain_index=basis.chain_index,
                 residue_index=basis.residue_index,
                 polar_chemistry=basis.polar_chemistry,
+                cap_junction=junction,
                 peptide_neighbor_residue_ids=peptide_neighbor_ids_by_basis_index[
                     basis_index
                 ],
@@ -1657,6 +1685,21 @@ def should_consider_pair(
     )
 
 
+def cap_junction_bond_hops(
+    cap: AtomSite, flank: AtomSite, junction: tuple[AtomRef, AtomRef]
+) -> int | None:
+    """Count bonds through a verified cap junction, using only residue-local paths."""
+    if (
+        cap.residue_id != junction[0].residue_id
+        or flank.residue_id != junction[1].residue_id
+    ):
+        return None
+    chemistry = cap.context.polar_chemistry
+    p = chemistry.bond_hop_distance(cap.atom_ref(), junction[0])
+    q = chemistry.bond_hop_distance(flank.atom_ref(), junction[1])
+    return None if p is None or q is None else p + 1 + q
+
+
 def should_ignore_pair(
     left_site: AtomSite,
     right_site: AtomSite,
@@ -1664,6 +1707,17 @@ def should_ignore_pair(
     policy: ContactPairPolicy,
 ) -> bool:
     """Return whether one atom pair should be ignored as bonded or near-bonded."""
+
+    cap, flank = (
+        (left_site, right_site)
+        if left_site.context.cap_junction is not None
+        else (right_site, left_site)
+    )
+    junction = cap.context.cap_junction
+    if junction is not None:
+        hops = cap_junction_bond_hops(cap, flank, junction)
+        if hops is not None and hops <= policy.ignore_adjacent_polymer_bond_hops:
+            return True
 
     return clash_topology_rules.should_ignore_pair(
         cast(clash_topology_rules.ClashTopologyAtomSite, left_site),
