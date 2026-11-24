@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import replace
+from itertools import pairwise
 
 from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
@@ -17,6 +18,7 @@ from protrepair.structure.observation import StructureObservation
 from protrepair.structure.provenance import (
     ZeroOccupancyOmission,
     ZeroOccupancyResidueOmission,
+    ZeroOccupancyRunOmission,
 )
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
@@ -172,114 +174,138 @@ def zero_occupancy_sidechain_omissions(
 def zero_occupancy_residue_omissions(
     selected: ProteinStructure,
     *,
+    singletons: bool,
+    runs: bool,
+    run_local_links: tuple[SourceConnection, ...],
     all_zero_residue_ids: frozenset[ResidueId],
     positive_backbone_residue_ids: frozenset[ResidueId],
     verified_neighbors: frozenset[tuple[ResidueId, ResidueId]],
     charged_source_atoms_by_residue: Mapping[ResidueId, AtomRef],
     source_connections: tuple[SourceConnection, ...],
-) -> tuple[ZeroOccupancyResidueOmission, ...]:
-    """Check which original all-zero slots can be treated as internal gaps.
-
-    Parameters
-    ----------
-    selected : ProteinStructure
-        Provisional structure before either occupancy rule.
-    all_zero_residue_ids : frozenset of ResidueId
-        Single-component slots proven zero in every raw occurrence.
-    positive_backbone_residue_ids : frozenset of ResidueId
-        Selected residues with positively declared N, CA, C and O.
-    verified_neighbors : frozenset of tuple of ResidueId
-        Adjacent source slots without a conflicting sequence or declared break.
-    charged_source_atoms_by_residue : Mapping of ResidueId to AtomRef
-        One source charge witness per slot, including explicit neutral values.
-    source_connections : tuple of SourceConnection
-        Decoded declarations before endpoint filtering.
-
-    Returns
-    -------
-    tuple of ZeroOccupancyResidueOmission
-        Eligible internal singleton gaps in source order.
-
-    Raises
-    ------
-    StructureNormalizationError
-        An eligible gap would discard a source connection or formal charge.
-    """
+    uncertain_atoms: frozenset[AtomRef],
+    raw_terminal_ids: frozenset[ResidueId],
+) -> tuple[
+    tuple[ZeroOccupancyResidueOmission, ...], tuple[ZeroOccupancyRunOmission, ...]
+]:
+    """Preflight each entire interval between successive usable flanks."""
     if not all_zero_residue_ids:
-        return ()
+        return (), ()
 
-    incident_connections: dict[ResidueId, SourceConnection] = {}
+    incident: dict[ResidueId, SourceConnection] = {}
+    partners: dict[AtomRef, set[AtomRef]] = {}
     for connection in source_connections:
-        for endpoint in connection.endpoint_pair():
-            residue_id = endpoint.atom_ref.residue_id
-            if residue_id in all_zero_residue_ids:
-                incident_connections.setdefault(residue_id, connection)
+        first, second = connection.endpoint_pair()
+        for end, other in ((first, second), (second, first)):
+            if end.atom_ref.residue_id in all_zero_residue_ids:
+                incident.setdefault(end.atom_ref.residue_id, connection)
+            if (
+                runs
+                and end.atom_ref.atom_name in {"N", "C"}
+                and end.atom_ref.residue_id != other.atom_ref.residue_id
+                and connection.source_metadata.reported_relationship_type
+                is not BondRelationshipType.HYDROGEN_BOND
+            ):
+                partners.setdefault(end.atom_ref, set()).add(other.atom_ref)
 
+    uncertain_slots = {ref.residue_id for ref in uncertain_atoms}
+    local_declared = {
+        link.endpoint_1.atom_ref.residue_id: link for link in run_local_links
+    }
     templates = build_standard_component_library()
-    omissions: list[ZeroOccupancyResidueOmission] = []
+    isolated: list[ZeroOccupancyResidueOmission] = []
+    windows: list[ZeroOccupancyRunOmission] = []
     for chain in selected.constitution.chains:
         residues = chain.residues
-        for preceding, residue, following in zip(
-            residues, residues[1:], residues[2:], strict=False
-        ):
-            before, target, after = (
-                site.residue_id for site in (preceding, residue, following)
-            )
+        flanks = (
+            i
+            for i, residue in enumerate(residues)
+            if residue.residue_id in positive_backbone_residue_ids
+        )
+        for left, right in pairwise(flanks):
+            size = right - left - 1
+            if not size or not (singletons if size == 1 else runs):
+                continue
+            stretch = residues[left : right + 1]
+            preceding, following = stretch[0], stretch[-1]
+            members = stretch[1:-1]
+            path = tuple(site.residue_id for site in stretch)
+            before, after = path[0], path[-1]
             if (
-                target not in all_zero_residue_ids
-                or before not in positive_backbone_residue_ids
-                or after not in positive_backbone_residue_ids
-                or (before, target) not in verified_neighbors
-                or (target, after) not in verified_neighbors
+                any(r.insertion_code is not None for r in path)
+                or any(r not in all_zero_residue_ids for r in path[1:-1])
                 or any(
-                    rid.insertion_code is not None for rid in (before, target, after)
+                    (a, b) not in verified_neighbors or not a.immediately_precedes(b)
+                    for a, b in pairwise(path)
                 )
-                or not before.immediately_precedes(target)
-                or not target.immediately_precedes(after)
-                or preceding.has_atom_site("OXT")
-                or residue.has_atom_site("OXT")
+                or any(site.has_atom_site("OXT") for site in stretch[:-1])
+                or any(
+                    (t := templates.get(site.component_id)) is None
+                    or t.component_id != site.component_id
+                    for site in members
+                )
             ):
                 continue
-            template = templates.get(residue.component_id)
-            if template is None or template.component_id != residue.component_id:
-                continue
+            ports = AtomRef(before, "C"), AtomRef(after, "N")
             bond = selected.topology.bond_between(
-                selected.constitution.atom_index(AtomRef(before, "C")),
-                selected.constitution.atom_index(AtomRef(after, "N")),
+                *(selected.constitution.atom_index(p) for p in ports)
             )
             if bond is not None and (
                 is_covalent_like_relationship(bond)
                 or bond.relationship_type is BondRelationshipType.UNKNOWN
             ):
                 continue
+            if size > 1:
+                targets = set(path[1:-1])
+                if (
+                    targets & uncertain_slots
+                    or any(p in uncertain_atoms for p in ports)
+                    or any(r in raw_terminal_ids for r in path[:-1])
+                    or any(
+                        other.residue_id not in targets
+                        for p in ports
+                        for other in partners.get(p, ())
+                    )
+                ):
+                    continue
 
-            charge = charged_source_atoms_by_residue.get(target)
-            if charge is not None:
-                raise StructureNormalizationError(
-                    "zero-occupancy residue omission cannot preserve the formal charge at "
-                    f"{charge.display_token()}"
-                )
-            connection = incident_connections.get(target)
-            if connection is not None:
-                endpoint = next(
-                    endpoint
-                    for endpoint in connection.endpoint_pair()
-                    if endpoint.atom_ref.residue_id == target
-                )
-                raise StructureNormalizationError(
-                    "zero-occupancy residue omission cannot preserve "
-                    f"{connection.source_metadata.record_type.value} connection at "
-                    f"{endpoint.atom_ref.display_token()}"
-                )
-
-            omissions.append(
-                ZeroOccupancyResidueOmission(
-                    before,
-                    after,
-                    _omission_atoms(selected, residue, set(residue.atom_site_names())),
-                )
+            for target in path[1:-1]:
+                charge = charged_source_atoms_by_residue.get(target)
+                if charge is not None:
+                    raise StructureNormalizationError(
+                        "zero-occupancy residue omission cannot preserve the formal charge at "
+                        f"{charge.display_token()}"
+                    )
+                connection = incident.get(target)
+                if connection is None and size > 1:
+                    connection = local_declared.get(target)
+                if connection is not None:
+                    endpoint = next(
+                        end
+                        for end in connection.endpoint_pair()
+                        if end.atom_ref.residue_id == target
+                    )
+                    raise StructureNormalizationError(
+                        "zero-occupancy residue omission cannot preserve "
+                        f"{connection.source_metadata.record_type.value} connection at "
+                        f"{endpoint.atom_ref.display_token()}"
+                    )
+            archive = tuple(
+                _omission_atoms(selected, site, set(site.atom_site_names()))
+                for site in members
             )
-    return tuple(omissions)
+            if size == 1:
+                isolated.append(ZeroOccupancyResidueOmission(before, after, archive[0]))
+            else:
+                windows.append(
+                    ZeroOccupancyRunOmission(
+                        before,
+                        after,
+                        preceding.component_id,
+                        following.component_id,
+                        archive,
+                    )
+                )
+    return tuple(isolated), tuple(windows)
 
 
 def _omission_atoms(
@@ -307,6 +333,7 @@ def project_zero_occupancy_omissions(
     *,
     atom_omissions: tuple[ZeroOccupancyOmission, ...] | None,
     residue_omissions: tuple[ZeroOccupancyResidueOmission, ...] | None,
+    run_omissions: tuple[ZeroOccupancyRunOmission, ...] | None = None,
 ) -> ProteinStructure:
     """Publish both preflighted omissions and their filtered source observation.
 
@@ -314,7 +341,7 @@ def project_zero_occupancy_omissions(
     ----------
     selected : ProteinStructure
         Original selected snapshot used by both preflights.
-    atom_omissions, residue_omissions : tuple or None
+    atom_omissions, residue_omissions, run_omissions : tuple or None
         Independent history for each applied policy; None means not applied.
 
     Returns
@@ -327,8 +354,11 @@ def project_zero_occupancy_omissions(
     constitution = selected.constitution
     geometry = selected.geometry
     topology = selected.topology
-    if atom_omissions or residue_omissions:
+    if atom_omissions or residue_omissions or run_omissions:
         omitted_residues = {record.residue_id for record in residue_omissions or ()}
+        omitted_residues.update(
+            r for run in run_omissions or () for r in run.residue_ids
+        )
         names_by_residue: dict[ResidueId, set[str]] = {}
         for omission in atom_omissions or ():
             ref = omission.source_identity.atom_ref
@@ -388,6 +418,7 @@ def project_zero_occupancy_omissions(
                 observation=observation,
                 zero_occupancy_omissions=atom_omissions,
                 zero_occupancy_residue_omissions=residue_omissions,
+                zero_occupancy_run_omissions=run_omissions,
                 pdb_adjacent_cap_links=(
                     ()
                     if observation is None

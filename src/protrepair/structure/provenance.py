@@ -2,9 +2,11 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from itertools import pairwise
 
 from protrepair.chemistry.microstate.resolution import AppliedMicrostateChoice
 from protrepair.structure.cap_attachment import PeptideCapAttachment
+from protrepair.structure.constitution import ResidueRole, StructureConstitution
 from protrepair.structure.element import ElementIdentity
 from protrepair.structure.endpoint import StructureEndpoint
 from protrepair.structure.geometry import AtomGeometry
@@ -126,6 +128,16 @@ class ZeroOccupancyResidueOmission:
 
         return self.atoms[0].source_identity.component_id
 
+    @property
+    def residue_ids(self) -> tuple[ResidueId, ...]:
+        """Return the biological positions in source order."""
+        return (self.residue_id,)
+
+    @property
+    def component_ids(self) -> tuple[str, ...]:
+        """Return the biological sequence at the omitted positions."""
+        return (self.component_id,)
+
     def contains_position(self, residue_id: ResidueId) -> bool:
         """Return whether a proposed slot lies strictly between these flanks.
 
@@ -140,6 +152,87 @@ class ZeroOccupancyResidueOmission:
             Whether the proposal lies inside this recorded gap.
         """
 
+        return self.preceding_residue_id < residue_id < self.following_residue_id
+
+
+@dataclass(frozen=True, slots=True)
+class ZeroOccupancyRunOmission:
+    """An internal polymer run withheld as one indivisible donor target.
+
+    Parameters
+    ----------
+    preceding_residue_id, following_residue_id : ResidueId
+        Original adjacent positive-backbone flanks outside the run.
+    preceding_component_id, following_component_id : str
+        Deposited component identities of the two flanks.
+    members : tuple of tuples of ZeroOccupancyOmission
+        Selected source atoms grouped by residue in biological order.
+
+    Raises
+    ------
+    ValueError
+        The archive does not describe distinct atoms in at least two consecutive slots.
+    TypeError
+        A flank or atom archive has a noncanonical type.
+    """
+
+    preceding_residue_id: ResidueId
+    following_residue_id: ResidueId
+    preceding_component_id: str
+    following_component_id: str
+    members: tuple[tuple[ZeroOccupancyOmission, ...], ...]
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(r, ResidueId)
+            for r in (self.preceding_residue_id, self.following_residue_id)
+        ):
+            raise TypeError("a run omission requires ResidueId flanks")
+        if not all(
+            isinstance(c, str) and c and c == c.strip().upper()
+            for c in (self.preceding_component_id, self.following_component_id)
+        ):
+            raise ValueError("a run omission requires canonical flank components")
+        if not isinstance(self.members, tuple) or any(
+            not isinstance(group, tuple)
+            or any(not isinstance(a, ZeroOccupancyOmission) for a in group)
+            for group in self.members
+        ):
+            raise TypeError("a run omission requires ordered tuples of atom omissions")
+        if len(self.members) < 2 or not all(self.members):
+            raise ValueError(
+                "a run omission requires at least two nonempty source slots"
+            )
+        for group in self.members:
+            first = group[0].source_identity
+            if len({a.source_identity.atom_ref for a in group}) != len(group) or any(
+                a.source_identity.atom_ref.residue_id != first.atom_ref.residue_id
+                or a.source_identity.component_id != first.component_id
+                for a in group
+            ):
+                raise ValueError(
+                    "each run member must archive distinct atoms of one component"
+                )
+        path = (self.preceding_residue_id, *self.residue_ids, self.following_residue_id)
+        if any(r.insertion_code is not None for r in path) or not all(
+            a.immediately_precedes(b) for a, b in pairwise(path)
+        ):
+            raise ValueError("a run omission requires consecutive ordinary source ids")
+
+    @property
+    def residue_ids(self) -> tuple[ResidueId, ...]:
+        """Return the member addresses in source order."""
+        return tuple(
+            group[0].source_identity.atom_ref.residue_id for group in self.members
+        )
+
+    @property
+    def component_ids(self) -> tuple[str, ...]:
+        """Return the source sequence that an explicit donor must restore."""
+        return tuple(group[0].source_identity.component_id for group in self.members)
+
+    def contains_position(self, residue_id: ResidueId) -> bool:
+        """Return whether a proposed slot lies inside the recorded interval."""
         return self.preceding_residue_id < residue_id < self.following_residue_id
 
 
@@ -163,6 +256,8 @@ class StructureIngress:
         Whole source residues withheld from the observation. Empty and None
         distinguish applied without omissions and not applied independently
         of the side-chain policy.
+    zero_occupancy_run_omissions : tuple of ZeroOccupancyRunOmission or None, default=None
+        Internal runs withheld as units. None means the run policy was not applied.
     pdb_adjacent_cap_links : tuple of PdbAdjacentCapLink, default=()
         Selected bare CONECT attachments corroborated by source PDB slot order.
         These are source observations, not realized peptide bonds.
@@ -191,6 +286,9 @@ class StructureIngress:
     zero_occupancy_residue_omissions: (
         tuple[ZeroOccupancyResidueOmission, ...] | None
     ) = field(default=None, kw_only=True, repr=False)
+    zero_occupancy_run_omissions: tuple[ZeroOccupancyRunOmission, ...] | None = field(
+        default=None, kw_only=True, repr=False
+    )
     pdb_adjacent_cap_links: tuple[PdbAdjacentCapLink, ...] = field(
         default=(), kw_only=True, repr=False
     )
@@ -250,6 +348,12 @@ class StructureIngress:
             )
         ):
             raise TypeError("residue omission history must be a tuple of omissions")
+        runs = self.zero_occupancy_run_omissions
+        if runs is not None and (
+            not isinstance(runs, tuple)
+            or any(not isinstance(run, ZeroOccupancyRunOmission) for run in runs)
+        ):
+            raise TypeError("run omission history must be a tuple of run omissions")
 
         observation = self.observation
         cap_links = self.pdb_adjacent_cap_links
@@ -275,7 +379,7 @@ class StructureIngress:
                 "PDB cap links must identify distinct observed retained attachments"
             )
         if (
-            omissions is not None or residue_omissions is not None
+            omissions is not None or residue_omissions is not None or runs is not None
         ) and observation is None:
             raise ValueError("occupancy omission history requires a source observation")
         if omissions is not None:
@@ -288,10 +392,12 @@ class StructureIngress:
                 raise ValueError(
                     "occupancy omissions must be distinct and absent from the source observation"
                 )
-        if residue_omissions is not None:
+        if residue_omissions or runs:
             assert observation is not None
-            residue_ids = {record.residue_id for record in residue_omissions}
-            if len(residue_ids) != len(residue_omissions) or any(
+            gaps = self.recorded_residue_gaps()
+            slots = tuple(r for gap in gaps for r in gap.residue_ids)
+            residue_ids = set(slots)
+            if len(residue_ids) != len(slots) or any(
                 observation.constitution.residue_or_ligand(residue_id) is not None
                 for residue_id in residue_ids
             ):
@@ -305,19 +411,76 @@ class StructureIngress:
                 raise ValueError(
                     "side-chain and whole-residue omissions must be disjoint"
                 )
-            for record in residue_omissions:
+            for record in gaps:
                 for flank in (record.preceding_residue_id, record.following_residue_id):
                     residue = observation.constitution.residue_or_ligand(flank)
                     if residue is None or residue.is_hetero:
                         raise ValueError(
                             "residue omission requires present polymer source flanks"
                         )
+                    if isinstance(record, ZeroOccupancyRunOmission):
+                        expected = (
+                            record.preceding_component_id
+                            if flank == record.preceding_residue_id
+                            else record.following_component_id
+                        )
+                        if (
+                            residue.component_id != expected
+                            or observation.constitution.role_at(
+                                observation.constitution.residue_index(flank)
+                            )
+                            is not ResidueRole.POLYMER
+                        ):
+                            raise ValueError(
+                                "run omission flank components must match the observation"
+                            )
 
         source_name = self.source_name
         if source_name is not None:
             source_name = source_name.strip() or None
 
         object.__setattr__(self, "source_name", source_name)
+
+    def recorded_residue_gaps(
+        self,
+    ) -> tuple[ZeroOccupancyResidueOmission | ZeroOccupancyRunOmission, ...]:
+        """Return biological intervals withheld by either whole-residue policy."""
+        return (
+            *(self.zero_occupancy_residue_omissions or ()),
+            *(self.zero_occupancy_run_omissions or ()),
+        )
+
+    def unrestored_residue_gaps(
+        self, constitution: StructureConstitution, chain_id: str
+    ) -> tuple[ZeroOccupancyResidueOmission | ZeroOccupancyRunOmission, ...]:
+        """Find historical gaps that still prevent publishing a full sequence.
+
+        Parameters
+        ----------
+        constitution : StructureConstitution
+            Current structure, which may contain a subsequently restored span.
+        chain_id : str
+            Author chain whose sequence is to be projected.
+
+        Returns
+        -------
+        tuple of ZeroOccupancyResidueOmission or ZeroOccupancyRunOmission
+            Intervals with an absent, non-polymer or changed component.
+        """
+        return tuple(
+            gap
+            for gap in self.recorded_residue_gaps()
+            if gap.preceding_residue_id.chain_id == chain_id
+            and not all(
+                (site := constitution.residue_or_ligand(rid)) is not None
+                and site.component_id == component
+                and constitution.role_at(constitution.residue_index(rid))
+                is ResidueRole.POLYMER
+                for rid, component in zip(
+                    gap.residue_ids, gap.component_ids, strict=True
+                )
+            )
+        )
 
     def pdb_adjacent_cap_link_for(
         self, residue_id: ResidueId

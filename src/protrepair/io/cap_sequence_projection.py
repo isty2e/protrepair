@@ -117,6 +117,15 @@ class CapSequenceProjection:
                 continue
             current = structure.constitution.chain(path.chain_id)
             try:
+                if blocked := ingress.unrestored_residue_gaps(
+                    structure.constitution, chain.name
+                ):
+                    members = blocked[0].residue_ids
+                    raise StructureSerializationError(
+                        f"cannot preserve deposited sequence on chain {chain.name}: "
+                        f"zero-occupancy omission {members[0].display_token()} through "
+                        f"{members[-1].display_token()} is not restored"
+                    )
                 bounds = _exportable_positions(path, current, structure, fmt)
             except StructureSerializationError:
                 if chain.name in generated:

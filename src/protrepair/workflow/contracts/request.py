@@ -269,6 +269,8 @@ class StructureIngressOptions:
     omit_zero_occupancy_sidechain_heavy_atoms : bool, default=False
         Treat eligible explicitly zero standard side-chain positions in input
         coordinate files as missing. This option does not request reconstruction.
+    omit_zero_occupancy_polymer_runs : bool, default=False
+        Withhold verified internal stretches of two or more all-zero standard residues.
     omit_zero_occupancy_polymer_residues : bool, default=False
         Withhold eligible interior standard residues whose source coordinates
         are all explicitly zero. This does not request span reconstruction.
@@ -293,6 +295,7 @@ class StructureIngressOptions:
     ] = ()
     omit_zero_occupancy_sidechain_heavy_atoms: bool = field(default=False, kw_only=True)
     omit_zero_occupancy_polymer_residues: bool = field(default=False, kw_only=True)
+    omit_zero_occupancy_polymer_runs: bool = field(default=False, kw_only=True)
     use_ccd_orthophosphate_models: bool = field(default=False, kw_only=True)
 
     def __init__(
@@ -306,6 +309,7 @@ class StructureIngressOptions:
         *,
         omit_zero_occupancy_sidechain_heavy_atoms: bool = False,
         omit_zero_occupancy_polymer_residues: bool = False,
+        omit_zero_occupancy_polymer_runs: bool = False,
         non_polymer_retention: NonPolymerRetentionPolicy | None = None,
         use_ccd_orthophosphate_models: bool = False,
     ) -> None:
@@ -325,6 +329,9 @@ class StructureIngressOptions:
             self,
             "omit_zero_occupancy_polymer_residues",
             omit_zero_occupancy_polymer_residues,
+        )
+        object.__setattr__(
+            self, "omit_zero_occupancy_polymer_runs", omit_zero_occupancy_polymer_runs
         )
         object.__setattr__(
             self,
@@ -351,6 +358,8 @@ class StructureIngressOptions:
             raise TypeError("omit_zero_occupancy_sidechain_heavy_atoms must be a bool")
         if not isinstance(self.omit_zero_occupancy_polymer_residues, bool):
             raise TypeError("omit_zero_occupancy_polymer_residues must be a bool")
+        if not isinstance(self.omit_zero_occupancy_polymer_runs, bool):
+            raise TypeError("omit_zero_occupancy_polymer_runs must be a bool")
         if not isinstance(self.use_ccd_orthophosphate_models, bool):
             raise TypeError("use_ccd_orthophosphate_models must be a bool")
 
@@ -400,6 +409,7 @@ class StructureIngressOptions:
             non_polymer_retention=self.non_polymer_retention,
             omit_zero_occupancy_sidechain_heavy_atoms=self.omit_zero_occupancy_sidechain_heavy_atoms,
             omit_zero_occupancy_polymer_residues=self.omit_zero_occupancy_polymer_residues,
+            omit_zero_occupancy_polymer_runs=self.omit_zero_occupancy_polymer_runs,
         )
 
 

@@ -172,7 +172,7 @@ zero occupancies. This is independent of the side-chain option. All atom
 records at the slot in the first model must declare zero, including H/D/T and
 discarded alternate locations. Both flanks must have positively declared
 `N`, `CA`, `C` and `O` and follow the source polymer sequence through the
-slot. Terminal slots, consecutive zero runs, insertion codes and ambiguous
+slot. With this option alone, terminal slots, consecutive zero runs, insertion codes and ambiguous
 or conflicting sequence evidence leave the selected coordinates in place.
 An otherwise eligible omission that would discard a declared connection or
 formal charge is refused.
@@ -197,6 +197,35 @@ history. A fresh read can still treat unusually close flanks as geometrical
 neighbors even without a C-N topology bond. To retain the source gap
 semantics, continue with the returned structure or reread the original input
 with the option enabled.
+
+For two or more consecutive residues, set `omit_zero_occupancy_polymer_runs=True`.
+The reader checks the entire interval between positive-backbone flanks. A
+single deposited atom can identify a withheld residue if its component and
+place in the polymer are unambiguous. Every deposited coordinate at every
+member must explicitly report zero occupancy. If one member fails that test,
+the whole stretch stays in place. So does a run with an uncertain attachment
+at a member or either gap-facing port. A decoded connection or explicit charge
+on an otherwise eligible member instead fails the read. Without PDB SEQRES, the
+reader checks the original consecutive slots, ordinary residue numbers and
+chain breaks; when sequence labels are available they must agree.
+
+`zero_occupancy_run_omissions` on the ingress record holds each run's two
+flanks and its original atoms grouped in residue order. It has its own
+`None` (option off) and empty tuple (checked, none withheld). Enable both
+whole-residue options to cover singletons and longer runs. Neither creates
+an unobserved-sequence declaration or requests a peptide cap.
+
+To restore a run, request the entire interval with its original flanks and a
+donor of the same residue sequence. All inserted heavy atoms and coordinates
+used in the fit must have positive occupancy. A donor can still lack a
+side-chain atom. A successful fit connects the peptide; it does not establish
+the conformation of the unobserved loop or exclude clashes with its surroundings.
+
+If a chain carries a generated peptide cap and an unrestored omission, PDB
+and mmCIF export raise `StructureSerializationError` rather than publish the
+withheld residues as missing from the deposition. Restore the interval before
+exporting that chain, or keep working with the in-memory structure. An open
+interval on a different chain does not prevent export of the cap.
 
 ## Original Chemistry Observations
 
