@@ -10,6 +10,7 @@ from protrepair.io.ingress_policy import LigandHandling, StructureNormalizationP
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
 from protrepair.relation.sequence_embedding import SequenceEmbedding
 from protrepair.structure import AtomRef, ProteinStructure, ResidueId
+from protrepair.structure.bound_peptide_ports import BoundPeptidePorts
 from protrepair.structure.sequence_boundary import PeptideSequenceBoundary
 
 END = PeptideSequenceBoundary.CONSTRUCT_END
@@ -303,6 +304,37 @@ def test_mmcif_only_considers_the_original_model_and_its_entity_positions():
     assert source.constitution.chain("A").residue_ids() == (
         ResidueId("A", 10),
         ResidueId("A", 11),
+    )
+
+
+@pytest.mark.parametrize("contradicts", [False, True])
+def test_mmcif_cap_addresses_avoid_both_number_columns_even_without_coordinates(
+    contradicts,
+):
+    scheme = """loop_
+_pdbx_poly_seq_scheme.asym_id
+_pdbx_poly_seq_scheme.seq_id
+_pdbx_poly_seq_scheme.pdb_seq_num
+_pdbx_poly_seq_scheme.auth_seq_num
+_pdbx_poly_seq_scheme.pdb_ins_code
+X 1 10 10 .
+X 2 '15' ? A
+X 3 11 16 .
+"""
+    missing = """loop_
+_pdbx_unobs_or_zero_occ_residues.auth_asym_id
+_pdbx_unobs_or_zero_occ_residues.auth_seq_id
+A 17
+B 18
+"""
+    source = read_structure_string(
+        _CIF + scheme + ("X 3 11 17 .\n" if contradicts else "") + missing,
+        FileFormat.MMCIF,
+    )
+    bound = BoundPeptidePorts.bind(source)
+    assert len(bound.components) == 2
+    assert sorted(r.seq_num for r in bound.cap_ids.values()) == (
+        [] if contradicts else [18, 19]
     )
 
 

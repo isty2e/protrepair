@@ -16,8 +16,8 @@ from protrepair.errors import (
 from protrepair.io.deposited_peptide import (
     MmcifSequenceSlot,
     PdbSequenceSlot,
-    mmcif_peptide_boundaries,
-    pdb_peptide_boundaries,
+    mmcif_peptide_paths,
+    pdb_peptide_paths,
     pdb_seqres_sequences,
 )
 from protrepair.io.gemmi_normalization import (
@@ -27,6 +27,10 @@ from protrepair.io.gemmi_normalization import (
 )
 from protrepair.io.ingress_policy import StructureNormalizationPolicy
 from protrepair.io.pdb_records import decode_pdb_integer, pdb_atom_identity
+from protrepair.io.peptide_link_evidence import (
+    cif_uncertain_peptide_ports,
+    pdb_uncertain_peptide_ports,
+)
 from protrepair.io.source_identity import (
     normalize_altloc,
     normalize_chain_id,
@@ -42,7 +46,10 @@ from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.provenance import FileFormat
-from protrepair.structure.sequence_boundary import DepositedPeptideBoundary
+from protrepair.structure.sequence_boundary import (
+    DepositedPeptideBoundary,
+    DepositedPeptideSequence,
+)
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
     BondRelationshipType,
@@ -167,15 +174,13 @@ def _normalize_structure_text(
     if file_format is FileFormat.PDB:
         raw_structure = gemmi.read_pdb_string(contents)
         sequences = pdb_seqres_sequences(contents)
-        observe_cap_paths = (
-            policy.keeps_ligands()
-            and len(raw_structure) != 0
-            and any(
-                residue.het_flag == "H" and residue.name in PEPTIDE_CAP_COMPONENT_IDS
-                for chain in raw_structure[0]
-                if policy.selects_chain(normalize_chain_id(chain.name))
-                for residue in chain
-            )
+        uncertain_links = (
+            pdb_uncertain_peptide_ports(contents) if "LINK" in contents else frozenset()
+        )
+        observe_cap_paths = len(raw_structure) != 0 and any(
+            residue.het_flag == "H" and residue.name in PEPTIDE_CAP_COMPONENT_IDS
+            for chain in raw_structure[0]
+            for residue in chain
         )
         # Validate serials even without CONECT, independently of atom attributes.
         atom_identity_by_serial, duplicate_ports = _first_model_pdb_atom_identities(
@@ -190,9 +195,10 @@ def _normalize_structure_text(
             contents,
             atom_identity_by_serial=atom_identity_by_serial,
             observe_cap_paths=observe_cap_paths,
-            observe_sequence_ports=bool(sequences),
+            observe_sequence_ports=bool(sequences) or observe_cap_paths,
             duplicate_ports=duplicate_ports,
         )
+        uncertain_links |= unresolved_conect_ports
         (
             source_element_by_atom_identity,
             source_annotations,
@@ -206,8 +212,11 @@ def _normalize_structure_text(
             observe_cap_paths=observe_cap_paths,
             read_sequence_slots=bool(sequences),
         )
-        sequence_boundaries = pdb_peptide_boundaries(
-            sequences, sequence_slots, peptide_break_after
+        sequence_boundaries, deposited_sequences = pdb_peptide_paths(
+            sequences,
+            sequence_slots,
+            peptide_break_after,
+            remarks=raw_structure.raw_remarks,
         )
         if observe_cap_paths:
             pdb_cap_source = PdbCapSourceContext(
@@ -232,7 +241,7 @@ def _normalize_structure_text(
             source_element_by_atom_identity,
             source_annotations,
             source_labels_by_residue,
-            sequence_boundaries,
+            (sequence_boundaries, deposited_sequences),
         ) = _mmcif_source_atom_attributes(
             source_document,
             selected_model=raw_structure[0].num if len(raw_structure) else None,
@@ -240,6 +249,13 @@ def _normalize_structure_text(
             prove_whole_residue_omissions=prove_whole_residue_omissions,
         )
         source_orders_by_id = _mmcif_connection_orders(source_document)
+        uncertain_links = (
+            cif_uncertain_peptide_ports(
+                source_document.sole_block(), source_labels_by_residue
+            )
+            if len(source_document)
+            else frozenset()
+        )
         peptide_break_after = frozenset()
 
     # Typed Gemmi declarations precede untyped PDB CONECT fallback so the
@@ -263,7 +279,9 @@ def _normalize_structure_text(
         source_peptide_break_after=peptide_break_after,
         source_labels_by_residue=source_labels_by_residue,
         deposited_peptide_boundaries=sequence_boundaries,
+        deposited_peptide_sequences=deposited_sequences,
         unresolved_conect_ports=unresolved_conect_ports,
+        uncertain_peptide_link_ports=uncertain_links,
         pdb_cap_source=pdb_cap_source,
     )
 
@@ -710,17 +728,17 @@ def _mmcif_source_atom_attributes(
     dict[SourceAtomIdentity, str],
     dict[SourceAtomIdentity, list[SourceAtomAnnotation]],
     dict[ResidueId, frozenset[SourcePolymerLabels]],
-    tuple[DepositedPeptideBoundary, ...],
+    tuple[tuple[DepositedPeptideBoundary, ...], tuple[DepositedPeptideSequence, ...]],
 ]:
     """Read first-model atom annotations and uncollapsed polymer labels."""
 
     if len(document) == 0:
-        return {}, {}, {}, ()
+        return {}, {}, {}, ((), ())
 
     block = document[0]
     type_symbols = tuple(block.find_values("_atom_site.type_symbol"))
     if not type_symbols:
-        return {}, {}, {}, ()
+        return {}, {}, {}, ((), ())
 
     row_count = len(type_symbols)
     charge_tokens = _coalesced_mmcif_column(
@@ -907,11 +925,11 @@ def _mmcif_source_atom_attributes(
         source_elements,
         source_annotations,
         {residue_id: frozenset(labels) for residue_id, labels in source_labels.items()},
-        mmcif_peptide_boundaries(
+        mmcif_peptide_paths(
             block, sequence_slots, unaddressable_chains=frozenset(unaddressable_chains)
         )
         if sequence_slots
-        else (),
+        else ((), ()),
     )
 
 

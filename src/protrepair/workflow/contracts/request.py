@@ -38,6 +38,7 @@ from protrepair.transformer.refinement.spec import (
 from protrepair.workflow.contracts.external_reference import (
     ExternalSpanReconstructionSpec,
 )
+from protrepair.workflow.contracts.peptide_capping import PeptideCappingRequest
 from protrepair.workflow.contracts.policies import (
     LigandPolicy,
     MutationPolicy,
@@ -419,6 +420,7 @@ class WorkflowTransformRequests:
     allow_retained_non_polymer_rdkit_fallback: bool = True
     histidine_protonation: HistidineProtonationRequest | None = None
     site_protonations: tuple[SiteProtonation, ...] = ()
+    peptide_capping: PeptideCappingRequest | None = None
 
     def __init__(
         self,
@@ -433,7 +435,13 @@ class WorkflowTransformRequests:
         histidine_protonation: HistidineProtonationRequest | None = None,
         *,
         site_protonations: Iterable[SiteProtonation] = (),
+        peptide_capping: PeptideCappingRequest | None = None,
     ) -> None:
+        if peptide_capping is not None and not isinstance(
+            peptide_capping, PeptideCappingRequest
+        ):
+            raise TypeError("peptide_capping requires a PeptideCappingRequest")
+        object.__setattr__(self, "peptide_capping", peptide_capping)
         if isinstance(site_protonations, (str, bytes)):
             raise TypeError("site_protonations requires an iterable of requests")
         sites = tuple(site_protonations)
@@ -605,6 +613,7 @@ class WorkflowTransformRequests:
 
         return (
             not self.site_protonations
+            and self.peptide_capping is None
             and not self.requests_reference_sidechain_packing()
             and not self.requests_committed_sidechain_packing()
             and not self.requests_backbone_window_refinement()

@@ -62,6 +62,15 @@ International (CC BY 4.0) and requires source acknowledgement.
 
 ## Structure and chemical-component data
 
+The four rama8000 backbone contour tables in
+`src/protrepair/analysis/resources/` are from the Richardson Lab at Duke
+University. Copyright (c) 2016-2026 David C. Richardson, Jane S. Richardson,
+and contributors. They are distributed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+The [source tables](https://github.com/rlabduke/reference_data/tree/7b0c33dd2885380f44c49ede639d84d5e87abad9/Top8000/Top8000_ramachandran_pct_contour_grids)
+are gzip-compressed without changes to their contents. See
+[Williams et al. (2018), MolProbity: More and better reference data for improved all-atom structure validation](https://doi.org/10.1002/pro.3330).
+
 Some test fixtures, migration inputs, and bundled chemical-component records
 are derived from Protein Data Bank structure files and the wwPDB Chemical
 Component Dictionary. These data files are not covered by the repository MIT

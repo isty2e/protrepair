@@ -1,11 +1,12 @@
 """Covalent geometry of a peptide junction, including amide-N substituents."""
 
 from dataclasses import dataclass
-from math import acos, atan2, degrees, isfinite
+from math import acos, degrees, isfinite
 
 import numpy as np
 
 from protrepair.geometry import Vec3
+from protrepair.geometry.dihedral import measured_dihedral_degrees
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,14 +56,16 @@ class PeptideJunctionGeometry:
         if not all(angle is not None and 85.0 <= angle <= 145.0 for angle in angles):
             return False
         torsions = (
-            _dihedral(
+            measured_dihedral_degrees(
                 self.preceding_ca, self.carbonyl_c, self.nitrogen, self.following_ca
             ),
-            _dihedral(
+            measured_dihedral_degrees(
                 self.carbonyl_o, self.carbonyl_c, self.nitrogen, self.following_ca
             ),
             *(
-                _dihedral(self.carbonyl_c, self.nitrogen, self.following_ca, neighbor)
+                measured_dihedral_degrees(
+                    self.carbonyl_c, self.nitrogen, self.following_ca, neighbor
+                )
                 for neighbor in self.nitrogen_substituents
             ),
         )
@@ -83,25 +86,3 @@ def _angle(first: Vec3, center: Vec3, third: Vec3) -> float | None:
     if not isfinite(cosine):
         return None
     return degrees(acos(min(1.0, max(-1.0, cosine))))
-
-
-def _dihedral(first: Vec3, second: Vec3, third: Vec3, fourth: Vec3) -> float | None:
-    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-        left = first.to_array() - second.to_array()
-        axis = third.to_array() - second.to_array()
-        right = fourth.to_array() - third.to_array()
-        norm = float(np.linalg.norm(axis))
-        if not isfinite(norm) or norm <= 1.0e-10:
-            return None
-        unit = axis / norm
-        left -= np.dot(left, unit) * unit
-        right -= np.dot(right, unit) * unit
-        for plane in (left, right):
-            norm = float(np.linalg.norm(plane))
-            if not isfinite(norm) or norm <= 1.0e-10:
-                return None
-        cosine = float(np.dot(left, right))
-        sine = float(np.dot(np.cross(unit, left), right))
-    if not isfinite(cosine) or not isfinite(sine):
-        return None
-    return degrees(atan2(sine, cosine))

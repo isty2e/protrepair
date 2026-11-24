@@ -3,12 +3,13 @@
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from protrepair.chemistry.microstate.catalog import PeptideLinkage, PolymerChemicalSite
 from protrepair.chemistry.microstate.resolution import (
+    MicrostateConstraints,
     MicrostateResolution,
     MicrostateResolutionStatus,
     SiteProtonationReason,
@@ -20,6 +21,7 @@ from protrepair.relation.sequence_alignment import (
     sequence_requires_observed_end,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.constitution import ResidueRole
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
@@ -130,6 +132,33 @@ class BoundSiteProtonations:
         selection: SiteProtonation,
         site: "PolymerMicrostateSite",
     ) -> MicrostateResolution | None:
+        if site.kind in (
+            PolymerChemicalSite.BACKBONE_N,
+            PolymerChemicalSite.BACKBONE_C,
+        ):
+            ports = active_peptide_ports()
+            port = AtomRef(
+                selection.residue_id,
+                "N" if site.kind is PolymerChemicalSite.BACKBONE_N else "C",
+            )
+            if (
+                ports is not None
+                and ports.reserves(current, port)
+                and (
+                    site.linkage is PeptideLinkage.UNKNOWN
+                    or (
+                        site.linkage is PeptideLinkage.LINKED
+                        and _requires_free_end(site, selection)
+                    )
+                )
+            ):
+                return MicrostateResolution(
+                    MicrostateResolutionStatus.CONFLICT,
+                    details=(
+                        "selected peptide port is reserved against free-terminal chemistry",
+                    ),
+                    reason=SiteProtonationReason.PHYSICAL_CONSTRAINT,
+                )
         catalog = site.candidates()
         if catalog is None:
             return None
@@ -205,6 +234,23 @@ class BoundSiteProtonations:
                     "source relationship to an excluded or changed partner",
                 )
         return None
+
+
+def _requires_free_end(
+    site: "PolymerMicrostateSite", selection: SiteProtonation
+) -> bool:
+    def admits(linkage: PeptideLinkage) -> bool:
+        catalog = replace(site, linkage=linkage).candidates()
+        if catalog is None:
+            return False
+        request = catalog.resolve_protonation(
+            MicrostateConstraints(),
+            site_charge=selection.site_charge,
+            parent_hydrogens=selection.parent_hydrogens,
+        )
+        return bool(request.candidates)
+
+    return not admits(PeptideLinkage.LINKED) and admits(PeptideLinkage.FREE)
 
 
 _ACTIVE: ContextVar[BoundSiteProtonations | None] = ContextVar(

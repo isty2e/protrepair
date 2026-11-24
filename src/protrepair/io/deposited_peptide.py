@@ -14,6 +14,7 @@ from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.peptide import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.sequence_boundary import (
     DepositedPeptideBoundary,
+    DepositedPeptideSequence,
     PeptideSequenceBoundary,
 )
 
@@ -102,6 +103,17 @@ def pdb_peptide_boundaries(
     slots: Iterable[PdbSequenceSlot],
     break_after: frozenset[ResidueId],
 ) -> tuple[DepositedPeptideBoundary, ...]:
+    """Return just the deposited PDB port facts."""
+    return pdb_peptide_paths(sequences, slots, break_after)[0]
+
+
+def pdb_peptide_paths(
+    sequences: dict[str, tuple[str, ...]],
+    slots: Iterable[PdbSequenceSlot],
+    break_after: frozenset[ResidueId],
+    *,
+    remarks: Iterable[str] = (),
+) -> tuple[tuple[DepositedPeptideBoundary, ...], tuple[DepositedPeptideSequence, ...]]:
     """Find ends and compulsory gaps using all plausible first-model monomers.
 
     Parameters
@@ -112,17 +124,33 @@ def pdb_peptide_boundaries(
         Original record runs, including non-polymer and unsupported components.
     break_after : frozenset[ResidueId]
         Original TER boundaries.
+    remarks : Iterable[str]
+        REMARK 465 author addresses to exclude from cap numbering.
 
     Returns
     -------
-    tuple[DepositedPeptideBoundary, ...]
-        Positive sequence facts, independent of current occupancy or bonds.
+    tuple
+        Directed port facts and the underlying sequence and coordinate-slot intervals.
     """
+    missing_numbers: dict[str, set[int]] = defaultdict(set)
+    for row in remarks:
+        if (
+            row.startswith("REMARK 465 ")
+            and row[15:18].strip()
+            and not row[18:19].strip()
+        ):
+            try:
+                number = int(row[21:26])
+            except ValueError:
+                continue
+            missing_numbers[normalize_chain_id(row[19:20])].add(number)
+
     chains: dict[str, list[PdbSequenceSlot]] = defaultdict(list)
     for slot in slots:
         if slot.residue_id.chain_id in sequences:
             chains[slot.residue_id.chain_id].append(slot)
     result: list[DepositedPeptideBoundary] = []
+    paths: list[DepositedPeptideSequence] = []
     for chain, rows in chains.items():
         declared = sequences[chain]
         components = frozenset(declared)
@@ -130,6 +158,7 @@ def pdb_peptide_boundaries(
         terminated = False
         segments: set[str] = set()
         trailing_monomers: set[str] = set()
+        trailing_slots: list[tuple[ResidueId, str]] = []
         seen: set[ResidueId] = set()
         for slot in rows:
             name = slot.component_id
@@ -143,6 +172,7 @@ def pdb_peptide_boundaries(
                         break
                     if name in components:
                         trailing_monomers.add(name)
+                        trailing_slots.append((slot.residue_id, name))
                     elif info.is_amino_acid() or slot.backbone_names == {
                         "N",
                         "CA",
@@ -158,6 +188,24 @@ def pdb_peptide_boundaries(
                 continue
             embedding = SequenceEmbedding.match(tuple(n for _, n in observed), declared)
             if embedding is not None:
+                paths.append(
+                    DepositedPeptideSequence(
+                        chain,
+                        "",
+                        declared,
+                        tuple(
+                            (rid, first, last)
+                            for (rid, _), first, last in zip(
+                                observed, embedding.first, embedding.last, strict=True
+                            )
+                        ),
+                        tuple(trailing_slots),
+                        unavailable_cap_numbers=frozenset(
+                            row.residue_id.seq_num for row in rows
+                        )
+                        | missing_numbers[chain],
+                    )
+                )
                 # A matching HETATM after TER may occupy a declared slot. Ignore
                 # it only for intervals in which its component cannot occur.
                 possible = (
@@ -172,7 +220,7 @@ def pdb_peptide_boundaries(
                 result.extend(
                     _boundaries(chain, len(declared), observed, embedding, possible)
                 )
-    return tuple(result)
+    return tuple(result), tuple(paths)
 
 
 def _boundaries(
@@ -287,6 +335,18 @@ def mmcif_peptide_boundaries(
     *,
     unaddressable_chains: frozenset[str],
 ) -> tuple[DepositedPeptideBoundary, ...]:
+    """Return just the deposited mmCIF port facts."""
+    return mmcif_peptide_paths(block, slots, unaddressable_chains=unaddressable_chains)[
+        0
+    ]
+
+
+def mmcif_peptide_paths(
+    block: gemmi.cif.Block,
+    slots: Iterable[MmcifSequenceSlot],
+    *,
+    unaddressable_chains: frozenset[str],
+) -> tuple[tuple[DepositedPeptideBoundary, ...], tuple[DepositedPeptideSequence, ...]]:
     """Bind original atom labels to contiguous declared polypeptide sequences.
 
     Parameters
@@ -300,12 +360,12 @@ def mmcif_peptide_boundaries(
 
     Returns
     -------
-    tuple[DepositedPeptideBoundary, ...]
-        Positive facts for instances with consistent row labels and addresses.
+    tuple
+        Directed port facts and the underlying labelled sequences and address maps.
     """
     instances, sequences, nonpeptide = _mmcif_sequences(block)
     if not sequences:
-        return ()
+        return (), ()
     sites: dict[str, dict[ResidueId, tuple[int, str]]] = defaultdict(dict)
     owners: dict[ResidueId, str] = {}
     invalid: set[str] = set()
@@ -350,6 +410,80 @@ def mmcif_peptide_boundaries(
             invalid.add(asym)
         last_residue[asym] = rid
     result: list[DepositedPeptideBoundary] = []
+    paths: list[DepositedPeptideSequence] = []
+    types = _unique_column(_rows(block, "_entity_poly.", ["entity_id", "type"]))
+    scheme: dict[str, dict[int, tuple[int, str, str, str]]] = defaultdict(dict)
+    invalid_scheme: set[str] = set()
+    raw_numbers: dict[str, set[int]] = defaultdict(set)
+    for rid in owners:
+        raw_numbers[rid.chain_id].add(rid.seq_num)
+    for row in block.find(
+        "_pdbx_unobs_or_zero_occ_residues.", ["auth_asym_id", "auth_seq_id"]
+    ):
+        if gemmi.cif.is_null(row[0]):
+            continue
+        try:
+            number = int(gemmi.cif.as_string(row[1]))
+        except ValueError:
+            continue
+        raw_numbers[normalize_chain_id(gemmi.cif.as_string(row[0]))].add(number)
+    chain_by_instance = {
+        asym: next(iter(residues)).chain_id
+        for asym, residues in sites.items()
+        if residues
+    }
+    for row in block.find(
+        "_pdbx_poly_seq_scheme.",
+        [
+            "asym_id",
+            "seq_id",
+            "?pdb_seq_num",
+            "?auth_seq_num",
+            "?pdb_ins_code",
+            "?entity_id",
+            "?mon_id",
+            "?pdb_strand_id",
+        ],
+    ):
+        asym = gemmi.cif.as_string(row[0])
+        seq = gemmi.cif.as_string(row[1])
+        sequence = sequences.get(instances.get(asym, ""))
+        if sequence is None or asym not in chain_by_instance:
+            continue
+        if not (
+            seq.isascii()
+            and seq.isdigit()
+            and len(seq) <= len(str(len(sequence)))
+            and 1 <= int(seq) <= len(sequence)
+        ):
+            invalid_scheme.add(asym)
+            continue
+        pos = int(seq)
+        if any(
+            row.has(i)
+            and not gemmi.cif.is_null(row[i])
+            and gemmi.cif.as_string(row[i]) != expected
+            for i, expected in enumerate(
+                (instances[asym], sequence[pos - 1], chain_by_instance[asym]), start=5
+            )
+        ):
+            invalid_scheme.add(asym)
+            continue
+        address = (
+            pos,
+            row[2] if row.has(2) else "?",
+            row[3] if row.has(3) else "?",
+            row[4] if row.has(4) else "?",
+        )
+        for token in address[1:3]:
+            if not gemmi.cif.is_null(token):
+                try:
+                    number = int(gemmi.cif.as_string(token))
+                except ValueError:
+                    continue
+                raw_numbers[chain_by_instance[asym]].add(number)
+        if scheme[asym].setdefault(pos, address) != address:
+            invalid_scheme.add(asym)
     for asym, residues in sites.items():
         chains = {rid.chain_id for rid in residues}
         if (
@@ -361,6 +495,16 @@ def mmcif_peptide_boundaries(
         positions = tuple(pos for pos, _ in residues.values())
         if any(b <= a for a, b in pairwise(positions)):
             continue
+        paths.append(
+            DepositedPeptideSequence(
+                asym,
+                types[instances[asym]],
+                sequences[instances[asym]],
+                tuple((rid, pos, pos) for rid, (pos, _) in residues.items()),
+                scheme=None if asym in invalid_scheme else tuple(scheme[asym].values()),
+                unavailable_cap_numbers=frozenset(raw_numbers[chain_by_instance[asym]]),
+            )
+        )
         result.extend(
             _boundaries(
                 asym,
@@ -369,4 +513,4 @@ def mmcif_peptide_boundaries(
                 SequenceEmbedding.labelled(positions),
             )
         )
-    return tuple(result)
+    return tuple(result), tuple(paths)

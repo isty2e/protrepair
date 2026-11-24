@@ -33,6 +33,7 @@ from protrepair.workflow.actions.hydrogen_topology import (
 )
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.actions.packing import CommittedPackingTransformer
+from protrepair.workflow.actions.peptide_capping import PeptideCappingTransformer
 from protrepair.workflow.actions.retained_non_polymer_hydrogen_completion import (
     RetainedNonPolymerHydrogenCompletionTransformer,
 )
@@ -148,7 +149,11 @@ def test_explicit_action_registry_entries_expose_capability_metadata() -> None:
         BackboneWindowRefinementTransformer,
         LocalRefinementTransformer,
         SiteProtonationTransformer,
+        PeptideCappingTransformer,
     }
+    capping = registry_by_type[PeptideCappingTransformer].capability
+    assert capping.activation_mode is WorkflowActionActivationMode.EXPLICIT_ONLY
+    assert capping.supports_locality(WorkflowActionLocality.RESIDUE_SET)
     site_capability = registry_by_type[SiteProtonationTransformer].capability
     assert site_capability.activation_mode is WorkflowActionActivationMode.EXPLICIT_ONLY
     assert site_capability.can_reduce_deficit_family(

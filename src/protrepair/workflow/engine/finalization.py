@@ -43,6 +43,7 @@ from protrepair.workflow.contracts.result import (
 )
 from protrepair.workflow.engine.hydrogen import project_hydrogen_issues
 from protrepair.workflow.engine.hydrogen_lengths import WorkflowHydrogenLengthPlan
+from protrepair.workflow.engine.peptide_capping_reporting import PeptideCappingHistory
 from protrepair.workflow.engine.runtime import WorkflowBranch
 from protrepair.workflow.engine.site_protonation_reporting import SiteProtonationHistory
 from protrepair.workflow.engine.span_reporting import SpanReconstructionEvidence
@@ -60,6 +61,7 @@ def finalize_workflow_result(
     hydrogen_length_plan: WorkflowHydrogenLengthPlan | None = None,
     span_reconstruction_evidence: SpanReconstructionEvidence | None = None,
     site_protonation_history: SiteProtonationHistory | None = None,
+    peptide_capping_history: PeptideCappingHistory | None = None,
     retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
 ) -> ProcessResult:
     """Select the preferred assessed branch and attach final diagnostics.
@@ -86,6 +88,8 @@ def finalize_workflow_result(
         selected candidate, before final diagnostics.
     span_reconstruction_evidence : SpanReconstructionEvidence or None
         Execution and ancestry evidence for explicit span requests.
+    peptide_capping_history : PeptideCappingHistory or None
+        Attempted peptide caps to reconcile against the final selected structure.
     retained_non_polymer_chemistry_evidence : tuple
         Explicit chemistry used for final current-state diagnostics.
 
@@ -183,6 +187,18 @@ def finalize_workflow_result(
                 result.structure,
                 branch_report.preferred_node_id,
                 search_limited=branch_report.preferred_outcome().status
+                is WorkflowBranchStatus.FRONTIER
+                and branch_report.search_exhausted(),
+            ),
+        )
+    if peptide_capping_history is not None:
+        result = replace(
+            result,
+            peptide_capping_report=peptide_capping_history.report(
+                result.structure,
+                result.repairs,
+                branch_report.preferred_node_id,
+                limited=branch_report.preferred_outcome().status
                 is WorkflowBranchStatus.FRONTIER
                 and branch_report.search_exhausted(),
             ),

@@ -1,5 +1,6 @@
 """Default workflow action registry assembly."""
 
+from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.workflow.actions.backbone_window_refinement import (
     BackboneWindowRefinementTransformer,
 )
@@ -22,6 +23,7 @@ from protrepair.workflow.actions.hydrogen_topology import (
 )
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
 from protrepair.workflow.actions.packing import CommittedPackingTransformer
+from protrepair.workflow.actions.peptide_capping import PeptideCappingTransformer
 from protrepair.workflow.actions.retained_non_polymer_hydrogen_completion import (
     RetainedNonPolymerHydrogenCompletionTransformer,
 )
@@ -51,6 +53,7 @@ from protrepair.workflow.planning.default_action_registry.capabilities import (
     HEAVY_ATOM_COMPLETION_CAPABILITY,
     HYDROGEN_COMPLETION_CAPABILITY,
     LOCAL_REFINEMENT_CAPABILITY,
+    PEPTIDE_CAPPING_CAPABILITY,
     POLYMER_HYDROGEN_TOPOLOGY_RESOLUTION_CAPABILITY,
     RETAINED_NON_POLYMER_HYDROGEN_COMPLETION_CAPABILITY,
     RETAINED_NON_POLYMER_TOPOLOGY_RESOLUTION_CAPABILITY,
@@ -84,6 +87,9 @@ from protrepair.workflow.planning.default_action_registry.proposals import (
     stereochemistry_correction_proposals,
     terminal_augmentation_is_admissible,
     terminal_augmentation_proposals,
+)
+from protrepair.workflow.planning.default_action_registry.terminal_proposals import (
+    peptide_cap_proposals,
 )
 from protrepair.workflow.planning.default_action_registry.topology_proposals import (
     polymer_hydrogen_topology_resolution_is_admissible,
@@ -159,6 +165,12 @@ EXPLICIT_WORKFLOW_ACTION_REGISTRY: tuple[
     WorkflowActionRegistryEntry[WorkflowActionDomain],
     ...,
 ] = (
+    WorkflowActionRegistryEntry(
+        action_type=PeptideCappingTransformer,
+        capability=PEPTIDE_CAPPING_CAPABILITY,
+        is_admissible_for_domain=lambda domain: active_peptide_ports() is not None,
+        proposals_for_domain=peptide_cap_proposals,
+    ),
     WorkflowActionRegistryEntry(
         action_type=ExternalSpanReconstructionTransformer,
         capability=EXTERNAL_SPAN_RECONSTRUCTION_CAPABILITY,

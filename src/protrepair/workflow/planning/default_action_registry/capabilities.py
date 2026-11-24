@@ -64,6 +64,17 @@ SITE_PROTONATION_CAPABILITY = WorkflowActionCapability(
     supported_localities=(WorkflowActionLocality.RESIDUE_SET,),
 )
 
+PEPTIDE_CAPPING_CAPABILITY = WorkflowActionCapability(
+    reducible_deficit_families=(WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,),
+    read_fact_families=(
+        WorkflowCapabilityFactFamily.BOUNDARY,
+        WorkflowCapabilityFactFamily.CHEMISTRY_READINESS,
+    ),
+    activation_mode=WorkflowActionActivationMode.EXPLICIT_ONLY,
+    effect_class=WorkflowActionEffectClass.AUGMENTS_ABSENCE,
+    supported_localities=(WorkflowActionLocality.RESIDUE_SET,),
+)
+
 HYDROGEN_COMPLETION_CAPABILITY = WorkflowActionCapability(
     reducible_deficit_families=(WorkflowCapabilityDeficitFamily.CHEMISTRY_READINESS,),
     read_fact_families=(

@@ -1,7 +1,12 @@
 """Peptide-adjacency predicates over canonical structures."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from protrepair.errors import ResidueNotFoundError
-from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.bound_peptide_ports import active_peptide_ports
+from protrepair.structure.cap_attachment import PEPTIDE_CAP_COMPONENT_IDS
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import AtomRef
 from protrepair.structure.topology import (
@@ -9,8 +14,10 @@ from protrepair.structure.topology import (
     is_covalent_like_relationship,
 )
 
+if TYPE_CHECKING:
+    from protrepair.structure.aggregate import ProteinStructure
+
 PEPTIDE_CN_DISTANCE_MAX_ANGSTROM = 1.8
-PEPTIDE_CAP_COMPONENT_IDS = frozenset(("ACE", "NME"))
 
 
 def peptide_ports_allow_link(carbonyl_component: str, amide_component: str) -> bool:
@@ -49,6 +56,15 @@ def are_peptide_adjacent(
 
     if PEPTIDE_CAP_COMPONENT_IDS.intersection(
         (left_residue.component_id, right_residue.component_id)
+    ):
+        return _has_topology_peptide_bond(
+            left_residue, right_residue, structure=structure, require_single=True
+        )
+
+    ports = active_peptide_ports()
+    if ports is not None and (
+        ports.reserves(structure, AtomRef(left_residue.residue_id, "C"))
+        or ports.reserves(structure, AtomRef(right_residue.residue_id, "N"))
     ):
         return _has_topology_peptide_bond(
             left_residue, right_residue, structure=structure, require_single=True

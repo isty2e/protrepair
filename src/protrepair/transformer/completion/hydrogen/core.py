@@ -31,6 +31,7 @@ from protrepair.diagnostics.kinds import (
     ValidationIssueKind,
 )
 from protrepair.diagnostics.polymer_hydrogen import (
+    PendingCapLinkageIssue,
     declared_thiolate_conflict,
     unresolved_fixed_hydrogen_issue,
 )
@@ -716,6 +717,11 @@ def _heavy_anchors_changed(
 def _site_failure(target: AminoAcidSitePreparation, reason: str) -> ValidationIssue:
     if (conflict := declared_thiolate_conflict(target)) is not None:
         return conflict
+    message = f"polymer {target.site.kind.value} left unchanged: {reason}"
+    if (
+        pending := PendingCapLinkageIssue.for_unresolved_target(target, message)
+    ) is not None:
+        return pending
     return ValidationIssue.for_residue(
         kind=(
             ValidationIssueKind.CHEMISTRY_CONTRADICTION
@@ -726,7 +732,7 @@ def _site_failure(target: AminoAcidSitePreparation, reason: str) -> ValidationIs
         residue_id=target.residue_id,
         component_id=target.site.template.component_id,
         atom_names=tuple(sorted(target.controlled_parent_names())),
-        message=f"polymer {target.site.kind.value} left unchanged: {reason}",
+        message=message,
     )
 
 

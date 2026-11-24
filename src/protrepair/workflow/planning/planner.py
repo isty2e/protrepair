@@ -25,6 +25,7 @@ from protrepair.state.structure_topology import (
     StructureDisulfideTopologyFacts,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.snapshot import ProteinStructureSnapshot
 from protrepair.transformer.continuous.execution import ContinuousRelaxationExecution
 from protrepair.transformer.local.projection import (
@@ -73,6 +74,7 @@ from protrepair.workflow.planning.context_projection import (
 from protrepair.workflow.planning.intrinsic_geometry import (
     derive_structure_intrinsic_geometry_facts,
 )
+from protrepair.workflow.planning.peptide_capping import PeptideCapSchedule
 from protrepair.workflow.planning.policy import WorkflowPlanningPolicy
 from protrepair.workflow.planning.transformation.runtime import (
     StructurePlanningSignature,
@@ -120,6 +122,8 @@ class WorkflowPlanningOutcome:
         Goals met before this planning step.
     state_deficit : WorkflowStateDeficit or None
         Current assessed burden, when available.
+    peptide_cap_schedule : PeptideCapSchedule or None
+        Per-branch admission to pose assessment for reserved gaps.
 
     Raises
     ------
@@ -140,6 +144,7 @@ class WorkflowPlanningOutcome:
         ...,
     ] = ()
     state_deficit: WorkflowStateDeficit | None = None
+    peptide_cap_schedule: PeptideCapSchedule | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "proposals", tuple(self.proposals))
@@ -172,6 +177,7 @@ class WorkflowPlanningOutcome:
         structure_planning_signature: StructurePlanningSignature,
         candidate_proposals: list[WorkflowActionProposal],
         ordered_span_requests: tuple[ExternalSpanReconstructionSpec, ...] = (),
+        peptide_cap_schedule: PeptideCapSchedule | None = None,
         blockers: tuple[WorkflowBlocker, ...] = (),
         unsupported_requested_goals: tuple[
             WorkflowGoal,
@@ -194,6 +200,8 @@ class WorkflowPlanningOutcome:
             Already ranked proposals; order and duplicates remain meaningful.
         ordered_span_requests : tuple[ExternalSpanReconstructionSpec, ...]
             Nonempty only for an ordered span-only run, in normalized request order.
+        peptide_cap_schedule : PeptideCapSchedule or None
+            Prerequisites observed across all executable families on this parent.
         blockers : tuple[WorkflowBlocker, ...]
             Current goal obstacles.
         unsupported_requested_goals : tuple[WorkflowGoal, ...]
@@ -221,6 +229,7 @@ class WorkflowPlanningOutcome:
             blocked_requested_goals=blocked_requested_goals,
             already_satisfied_requested_goals=(already_satisfied_requested_goals),
             state_deficit=state_deficit,
+            peptide_cap_schedule=peptide_cap_schedule,
         )
 
     @staticmethod
@@ -789,15 +798,23 @@ def plan_workflow_actions(
         )
         for blocked_goal_projection in blocked_goal_projections
     )
+    ports = active_peptide_ports()
+    cap_schedule = (
+        None
+        if ports is None
+        else PeptideCapSchedule.on_branch(ports, structure, candidate_proposals)
+    )
     ranked_candidate_proposals = WorkflowPlanningPolicy().rank_candidates(
-        candidate_proposals,
+        candidate_proposals
+        if cap_schedule is None
+        else cap_schedule.ordered_proposals(candidate_proposals),
         domain=action_domain,
     )
-
     ordered_span_requests = (
         transform_requests.external_span_reconstructions
         if requested_goals.is_empty()
         and not terminal_repair_requested
+        and ports is None
         and transform_requests.requests_only_distinct_external_spans()
         else ()
     )
@@ -805,6 +822,7 @@ def plan_workflow_actions(
         structure_planning_signature=structure_planning_signature,
         candidate_proposals=list(ranked_candidate_proposals),
         ordered_span_requests=ordered_span_requests,
+        peptide_cap_schedule=cap_schedule,
         blockers=blockers,
         unsupported_requested_goals=unsupported_goal_set,
         blocked_requested_goals=blocked_requested_goals,

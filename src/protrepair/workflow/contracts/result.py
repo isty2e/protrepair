@@ -24,6 +24,7 @@ from protrepair.transformer.refinement.result import RefinementTransformationRes
 from protrepair.transformer.refinement.speculative_planning import SpeculativeStopReason
 from protrepair.transformer.result import TransformationResult
 from protrepair.workflow.contracts.hydrogen_lengths import HydrogenLengthReport
+from protrepair.workflow.contracts.peptide_capping import PeptideCappingReport
 from protrepair.workflow.contracts.planning import (
     WorkflowBranchPreferencePolicy,
     WorkflowBranchQualityAxis,
@@ -740,6 +741,9 @@ class ProcessResult(TransformationResult):
     site_protonation_report : SiteProtonationReport or None
         Final chemistry and execution outcome of each requested polymer site
         in input order. Omitted when no sites were requested.
+    peptide_capping_report : PeptideCappingReport or None
+        Per-port closure on the returned structure, including refusals and budget
+        stops. Omitted unless peptide capping was requested.
 
     Notes
     -----
@@ -756,6 +760,9 @@ class ProcessResult(TransformationResult):
         field(default=None, kw_only=True)
     )
     site_protonation_report: SiteProtonationReport | None = field(
+        default=None, kw_only=True
+    )
+    peptide_capping_report: PeptideCappingReport | None = field(
         default=None, kw_only=True
     )
 

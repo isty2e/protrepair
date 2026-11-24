@@ -19,6 +19,7 @@ from protrepair.state import BondedGeometryState
 from protrepair.state.bonded_geometry import BondedGeometrySelection
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.transformer.completion.hydrogen.protonation import (
     HistidineProtonationRequest,
 )
@@ -44,6 +45,7 @@ from protrepair.workflow.actions.external_span_reconstruction import (
     ExternalSpanReconstructionTransformer,
 )
 from protrepair.workflow.actions.local_refinement import LocalRefinementTransformer
+from protrepair.workflow.actions.peptide_capping import PeptideCappingTransformer
 from protrepair.workflow.actions.site_protonation import SiteProtonationTransformer
 from protrepair.workflow.contracts.planning import (
     WorkflowBranchPreferencePolicy,
@@ -67,6 +69,7 @@ from protrepair.workflow.contracts.result import (
 from protrepair.workflow.engine.parser_witness_repair import (
     execute_bounded_parser_witness_repair_loop,
 )
+from protrepair.workflow.engine.peptide_capping_reporting import PeptideCappingHistory
 from protrepair.workflow.engine.reporting import (
     evaluate_requested_goal_report,
     evaluate_workflow_branch_outcome,
@@ -391,6 +394,7 @@ class WorkflowRuntimeResult:
     stop_reason: SpeculativeStopReason = SpeculativeStopReason.NO_PROPOSALS_AVAILABLE
     span_reconstruction_evidence: SpanReconstructionEvidence | None = None
     site_protonation_history: SiteProtonationHistory | None = None
+    peptide_capping_history: PeptideCappingHistory | None = None
 
 
 def execute_iterative_workflow(
@@ -422,6 +426,8 @@ def execute_iterative_workflow(
     branches: list[WorkflowBranch] = []
     span_requests = transform_requests.external_span_reconstructions
     binding = active_site_protonations()
+    ports = active_peptide_ports()
+    cap_history = PeptideCappingHistory(ports) if ports is not None else None
     site_history = (
         SiteProtonationHistory(binding, component_library)
         if binding is not None
@@ -496,6 +502,13 @@ def execute_iterative_workflow(
             for retained_node in trace.frontier.active_nodes:
                 retained_state = retained_node.state
                 retained_plan = planning_session.plan(retained_state)
+                if (
+                    cap_history is not None
+                    and retained_plan.peptide_cap_schedule is not None
+                ):
+                    cap_history.record_budget(
+                        retained_node.node_id, retained_plan.peptide_cap_schedule
+                    )
                 retained_result = retained_state.result.with_appended_issues(
                     retained_plan.blocker_issues(
                         retained_state.result.structure,
@@ -553,6 +566,17 @@ def execute_iterative_workflow(
                 transformer=transformer,
                 execution_context=execution_context,
             )
+            if cap_history is not None and isinstance(
+                transformer, PeptideCappingTransformer
+            ):
+                cap_history.record(
+                    active_node.node_id,
+                    transformer,
+                    execution_outcome.repairs[len(runtime_state.result.repairs) :],
+                    execution_outcome.issues[
+                        len(_retained_execution_issues(runtime_state.result.issues)) :
+                    ],
+                )
             if site_history is not None and isinstance(
                 transformer, SiteProtonationTransformer
             ):
@@ -733,6 +757,10 @@ def execute_iterative_workflow(
             "iterative workflow execution requires at least one assessed branch"
         )
 
+    if cap_history is not None:
+        cap_history.parents.update(
+            (node.node_id, node.parent_node_id) for node in trace.nodes
+        )
     if site_history is not None:
         for node in trace.nodes:
             decision = node.adopted_decision
@@ -752,6 +780,7 @@ def execute_iterative_workflow(
     return WorkflowRuntimeResult(
         branches=tuple(branches),
         site_protonation_history=site_history,
+        peptide_capping_history=cap_history,
         stop_reason=trace.stop_reason or SpeculativeStopReason.NO_PROPOSALS_AVAILABLE,
         span_reconstruction_evidence=(
             None if span_recorder is None else span_recorder.finish(trace)

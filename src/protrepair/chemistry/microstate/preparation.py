@@ -46,6 +46,10 @@ from protrepair.chemistry.retained_non_polymer.template_binding import (
     RetainedTemplateBinding,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.bound_peptide_ports import (
+    BoundPeptidePorts,
+    active_peptide_ports,
+)
 from protrepair.structure.constitution import AtomSite, ResidueSite
 from protrepair.structure.disulfide import (
     disulfide_atom_ref_pair,
@@ -440,6 +444,7 @@ class AminoAcidPreparation:
     _disulfides: frozenset[ResidueId]
     _coordinate_dependent: bool
     _site_binding: BoundSiteProtonations | None
+    _peptide_ports: BoundPeptidePorts | None
     _cysteine_adducts: Mapping[ResidueId, CysteineMichaelAdductBinding]
     _requests: Mapping[
         tuple[ResidueId, PolymerChemicalSite], MicrostateConstraints | None
@@ -462,6 +467,7 @@ class AminoAcidPreparation:
         requested = {} if requests is None else dict(requests)
         binding = active_site_protonations()
         object.__setattr__(self, "_site_binding", binding)
+        object.__setattr__(self, "_peptide_ports", active_peptide_ports())
         pending = dict(requested)
         adducts = {}
         coordinate_dependent_adducts = False
@@ -679,6 +685,7 @@ class AminoAcidPreparation:
             and self.component_library is component_library
             and self._requests == requested
             and self._site_binding is active_site_protonations()
+            and self._peptide_ports is active_peptide_ports()
         ):
             return self
         return AminoAcidPreparation(
@@ -700,6 +707,7 @@ class AminoAcidPreparation:
         source = self.context.source
         return (
             self._site_binding is active_site_protonations()
+            and self._peptide_ports is active_peptide_ports()
             and (
                 self._site_binding is None
                 or source.polymer_blueprint == structure.polymer_blueprint
