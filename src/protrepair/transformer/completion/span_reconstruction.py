@@ -34,8 +34,8 @@ from protrepair.structure.geometry import (
 )
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import (
+    ConsecutiveZeroOccupancyResidueOmission,
     ZeroOccupancyResidueOmission,
-    ZeroOccupancyRunOmission,
 )
 from protrepair.structure.topology import (
     BondProvenance,
@@ -1097,8 +1097,8 @@ def reconstruct_donor_span(
                     SpanReconstructionFailureKind.UNSUPPORTED_COMPONENT_CHEMISTRY,
                     f"recorded gap at {rid.display_token()} requires {component}, not donor {donor_residue.component_id}",
                 )
-        if isinstance(known_gap, ZeroOccupancyRunOmission):
-            failure = _recorded_run_anchor_failure(
+        if isinstance(known_gap, ConsecutiveZeroOccupancyResidueOmission):
+            failure = _omitted_span_anchor_failure(
                 source_structure, known_gap, active_library
             )
             if failure is not None:
@@ -1120,7 +1120,7 @@ def reconstruct_donor_span(
         if residue_id is not None
     )
     preceding_offset = 0 if donor_preceding_residue_id is not None else None
-    if isinstance(known_gap, ZeroOccupancyRunOmission):
+    if isinstance(known_gap, ConsecutiveZeroOccupancyResidueOmission):
         dc = donor_structure.constitution
         first = donor_window_ids[0]
         if dc.has_chain(first.chain_id):
@@ -1134,7 +1134,7 @@ def reconstruct_donor_span(
         ):
             return SpanReconstructionFailure(
                 SpanReconstructionFailureKind.INVALID_PEPTIDE_JUNCTION,
-                "recorded run requires a contiguous donor polymer window",
+                "the omitted residues require a contiguous donor span",
             )
     first_inserted_offset = 1 if preceding_offset is not None else 0
     following_offset = (
@@ -1151,7 +1151,7 @@ def reconstruct_donor_span(
     if isinstance(donor_window, SpanReconstructionFailure):
         return donor_window
 
-    if isinstance(known_gap, ZeroOccupancyRunOmission):
+    if isinstance(known_gap, ConsecutiveZeroOccupancyResidueOmission):
         assert following_offset is not None
         source_following = source_structure.constitution.residue_index(
             known_gap.following_residue_id
@@ -1287,7 +1287,7 @@ def _recorded_gap_for_span(
     structure: ProteinStructure, scope: AbsentResidueSpanScope
 ) -> (
     ZeroOccupancyResidueOmission
-    | ZeroOccupancyRunOmission
+    | ConsecutiveZeroOccupancyResidueOmission
     | SpanReconstructionFailure
     | None
 ):
@@ -1312,23 +1312,26 @@ def _recorded_gap_for_span(
     return None
 
 
-def _recorded_run_anchor_failure(
-    source: ProteinStructure, run: ZeroOccupancyRunOmission, library: ComponentLibrary
+def _omitted_span_anchor_failure(
+    source: ProteinStructure,
+    gap: ConsecutiveZeroOccupancyResidueOmission,
+    library: ComponentLibrary,
 ) -> SpanReconstructionFailure | None:
     c = source.constitution
     invalid = SpanReconstructionFailureKind.INVALID_TARGET_STATE
     obs = source.provenance.ingress.observation
     if obs is None:
         return SpanReconstructionFailure(
-            invalid, "recorded run requires the original attachment observation"
+            invalid,
+            "restoring the omitted residues requires the original attachment observation",
         )
-    if any(c.residue_or_ligand(r) is not None for r in run.residue_ids):
+    if any(c.residue_or_ligand(r) is not None for r in gap.residue_ids):
         return SpanReconstructionFailure(
-            invalid, "recorded run contains an occupied target"
+            invalid, "a target in the omitted interval is already occupied"
         )
     for rid, component, port, names in (
-        (run.preceding_residue_id, run.preceding_component_id, "C", {"CA", "C", "O"}),
-        (run.following_residue_id, run.following_component_id, "N", {"N", "CA", "C"}),
+        (gap.preceding_residue_id, gap.preceding_component_id, "C", {"CA", "C", "O"}),
+        (gap.following_residue_id, gap.following_component_id, "N", {"N", "CA", "C"}),
     ):
         site = c.residue_or_ligand(rid)
         if (
@@ -1337,7 +1340,7 @@ def _recorded_run_anchor_failure(
             or c.role_at(c.residue_index(rid)) is not ResidueRole.POLYMER
         ):
             return SpanReconstructionFailure(
-                invalid, f"recorded run flank {rid.display_token()} changed identity"
+                invalid, f"flanking residue {rid.display_token()} changed identity"
             )
         template = library.get(component)
         if template is None:
@@ -1351,7 +1354,7 @@ def _recorded_run_anchor_failure(
             require_preserved_amide_hydrogens(source, obs, ref, original_h, current_h)
         except ValueError as error:
             return SpanReconstructionFailure(
-                invalid, f"recorded run flank {rid.display_token()}.{port}: {error}"
+                invalid, f"flanking residue {rid.display_token()}.{port}: {error}"
             )
         if port == "N":
             names.update(

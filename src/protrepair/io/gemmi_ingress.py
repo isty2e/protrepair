@@ -162,9 +162,9 @@ def _normalize_structure_text(
     """Parse and normalize one coordinate payload through one boundary path."""
 
     _assert_structure_text_size(contents, source_name=source_name)
-    prove_runs = policy.omit_zero_occupancy_polymer_runs
+    omit_consecutive_residues = policy.omit_consecutive_zero_occupancy_polymer_residues
     prove_whole_residue_omissions = (
-        policy.omit_zero_occupancy_polymer_residues or prove_runs
+        policy.omit_zero_occupancy_polymer_residues or omit_consecutive_residues
     )
     prove_zero_occupancy = (
         policy.omit_zero_occupancy_sidechain_heavy_atoms
@@ -178,7 +178,9 @@ def _normalize_structure_text(
         raw_structure = gemmi.read_pdb_string(contents)
         sequences = pdb_seqres_sequences(contents)
         uncertain_links = (
-            pdb_uncertain_peptide_ports(contents, include_sidechains=prove_runs)
+            pdb_uncertain_peptide_ports(
+                contents, include_sidechains=omit_consecutive_residues
+            )
             if "LINK" in contents
             else frozenset()
         )
@@ -200,12 +202,16 @@ def _normalize_structure_text(
             contents,
             atom_identity_by_serial=atom_identity_by_serial,
             observe_cap_paths=observe_cap_paths,
-            observe_sequence_ports=bool(sequences) or observe_cap_paths or prove_runs,
-            include_sidechains=prove_runs,
+            observe_sequence_ports=bool(sequences)
+            or observe_cap_paths
+            or omit_consecutive_residues,
+            include_sidechains=omit_consecutive_residues,
             duplicate_ports=duplicate_ports,
         )
-        uncertain_run_atoms = (
-            (uncertain_links | unresolved_conect_ports) if prove_runs else frozenset()
+        uncertain_attachment_atoms = (
+            (uncertain_links | unresolved_conect_ports)
+            if omit_consecutive_residues
+            else frozenset()
         )
         unresolved_conect_ports = frozenset(
             ref
@@ -267,12 +273,14 @@ def _normalize_structure_text(
             cif_uncertain_peptide_ports(
                 source_document.sole_block(),
                 source_labels_by_residue,
-                include_sidechains=prove_runs,
+                include_sidechains=omit_consecutive_residues,
             )
             if len(source_document)
             else frozenset()
         )
-        uncertain_run_atoms = uncertain_links if prove_runs else frozenset()
+        uncertain_attachment_atoms = (
+            uncertain_links if omit_consecutive_residues else frozenset()
+        )
         peptide_break_after = frozenset()
 
     # Typed Gemmi declarations precede untyped PDB CONECT fallback so the
@@ -283,7 +291,7 @@ def _normalize_structure_text(
             raw_structure,
             file_format=file_format,
             orders_by_id=source_orders_by_id,
-            local_pdb_links=intra_residue_links if prove_runs else None,
+            local_pdb_links=intra_residue_links if omit_consecutive_residues else None,
         ),
         *pdb_conect_source_connections,
     )
@@ -303,8 +311,8 @@ def _normalize_structure_text(
         uncertain_peptide_link_ports=frozenset(
             ref for ref in uncertain_links if ref.atom_name in ("N", "C")
         ),
-        uncertain_run_atoms=uncertain_run_atoms,
-        run_local_links=tuple(intra_residue_links),
+        uncertain_attachment_atoms=uncertain_attachment_atoms,
+        intra_residue_pdb_links=tuple(intra_residue_links),
         pdb_cap_source=pdb_cap_source,
     )
 

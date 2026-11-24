@@ -182,11 +182,12 @@ class StructureNormalizationPolicy:
     omit_zero_occupancy_sidechain_heavy_atoms : bool, default=False
         Treat eligible standard side-chain coordinates explicitly declared zero
         in the source text as missing, including zero-occupancy dependent H/D/T.
-    omit_zero_occupancy_polymer_runs : bool, default=False
-        Withhold verified internal stretches of two or more all-zero standard residues.
     omit_zero_occupancy_polymer_residues : bool, default=False
-        Withhold isolated interior standard residues with exclusively declared
-        zero source coordinates and observed backbone flanks.
+        Withhold eligible isolated internal standard residues if every
+        deposited atom explicitly has zero occupancy.
+    omit_consecutive_zero_occupancy_polymer_residues : bool, default=False
+        Withhold two or more consecutive internal standard residues together
+        if the polymer path is verified and every deposited atom has zero occupancy.
 
     Raises
     ------
@@ -205,7 +206,9 @@ class StructureNormalizationPolicy:
     )
     omit_zero_occupancy_sidechain_heavy_atoms: bool = field(default=False, kw_only=True)
     omit_zero_occupancy_polymer_residues: bool = field(default=False, kw_only=True)
-    omit_zero_occupancy_polymer_runs: bool = field(default=False, kw_only=True)
+    omit_consecutive_zero_occupancy_polymer_residues: bool = field(
+        default=False, kw_only=True
+    )
 
     def __post_init__(self) -> None:
         if self.non_polymer_retention is not None:
@@ -235,8 +238,10 @@ class StructureNormalizationPolicy:
             raise TypeError("omit_zero_occupancy_sidechain_heavy_atoms must be a bool")
         if not isinstance(self.omit_zero_occupancy_polymer_residues, bool):
             raise TypeError("omit_zero_occupancy_polymer_residues must be a bool")
-        if not isinstance(self.omit_zero_occupancy_polymer_runs, bool):
-            raise TypeError("omit_zero_occupancy_polymer_runs must be a bool")
+        if not isinstance(self.omit_consecutive_zero_occupancy_polymer_residues, bool):
+            raise TypeError(
+                "omit_consecutive_zero_occupancy_polymer_residues must be a bool"
+            )
 
         selected_chain_ids = self.selected_chain_ids
         if selected_chain_ids is None:

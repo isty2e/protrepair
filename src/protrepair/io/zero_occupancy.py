@@ -16,9 +16,9 @@ from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
 from protrepair.structure.provenance import (
+    ConsecutiveZeroOccupancyResidueOmission,
     ZeroOccupancyOmission,
     ZeroOccupancyResidueOmission,
-    ZeroOccupancyRunOmission,
 )
 from protrepair.structure.source_connection import SourceAtomIdentity, SourceConnection
 from protrepair.structure.topology import (
@@ -175,8 +175,8 @@ def zero_occupancy_residue_omissions(
     selected: ProteinStructure,
     *,
     singletons: bool,
-    runs: bool,
-    run_local_links: tuple[SourceConnection, ...],
+    consecutive_residues: bool,
+    intra_residue_pdb_links: tuple[SourceConnection, ...],
     all_zero_residue_ids: frozenset[ResidueId],
     positive_backbone_residue_ids: frozenset[ResidueId],
     verified_neighbors: frozenset[tuple[ResidueId, ResidueId]],
@@ -185,7 +185,8 @@ def zero_occupancy_residue_omissions(
     uncertain_atoms: frozenset[AtomRef],
     raw_terminal_ids: frozenset[ResidueId],
 ) -> tuple[
-    tuple[ZeroOccupancyResidueOmission, ...], tuple[ZeroOccupancyRunOmission, ...]
+    tuple[ZeroOccupancyResidueOmission, ...],
+    tuple[ConsecutiveZeroOccupancyResidueOmission, ...],
 ]:
     """Preflight each entire interval between successive usable flanks."""
     if not all_zero_residue_ids:
@@ -199,7 +200,7 @@ def zero_occupancy_residue_omissions(
             if end.atom_ref.residue_id in all_zero_residue_ids:
                 incident.setdefault(end.atom_ref.residue_id, connection)
             if (
-                runs
+                consecutive_residues
                 and end.atom_ref.atom_name in {"N", "C"}
                 and end.atom_ref.residue_id != other.atom_ref.residue_id
                 and connection.source_metadata.reported_relationship_type
@@ -209,11 +210,11 @@ def zero_occupancy_residue_omissions(
 
     uncertain_slots = {ref.residue_id for ref in uncertain_atoms}
     local_declared = {
-        link.endpoint_1.atom_ref.residue_id: link for link in run_local_links
+        link.endpoint_1.atom_ref.residue_id: link for link in intra_residue_pdb_links
     }
     templates = build_standard_component_library()
     isolated: list[ZeroOccupancyResidueOmission] = []
-    windows: list[ZeroOccupancyRunOmission] = []
+    windows: list[ConsecutiveZeroOccupancyResidueOmission] = []
     for chain in selected.constitution.chains:
         residues = chain.residues
         flanks = (
@@ -223,7 +224,7 @@ def zero_occupancy_residue_omissions(
         )
         for left, right in pairwise(flanks):
             size = right - left - 1
-            if not size or not (singletons if size == 1 else runs):
+            if not size or not (singletons if size == 1 else consecutive_residues):
                 continue
             stretch = residues[left : right + 1]
             preceding, following = stretch[0], stretch[-1]
@@ -297,7 +298,7 @@ def zero_occupancy_residue_omissions(
                 isolated.append(ZeroOccupancyResidueOmission(before, after, archive[0]))
             else:
                 windows.append(
-                    ZeroOccupancyRunOmission(
+                    ConsecutiveZeroOccupancyResidueOmission(
                         before,
                         after,
                         preceding.component_id,
@@ -333,15 +334,16 @@ def project_zero_occupancy_omissions(
     *,
     atom_omissions: tuple[ZeroOccupancyOmission, ...] | None,
     residue_omissions: tuple[ZeroOccupancyResidueOmission, ...] | None,
-    run_omissions: tuple[ZeroOccupancyRunOmission, ...] | None = None,
+    consecutive_omissions: tuple[ConsecutiveZeroOccupancyResidueOmission, ...]
+    | None = None,
 ) -> ProteinStructure:
-    """Publish both preflighted omissions and their filtered source observation.
+    """Record the omissions and their filtered source observation.
 
     Parameters
     ----------
     selected : ProteinStructure
-        Original selected snapshot used by both preflights.
-    atom_omissions, residue_omissions, run_omissions : tuple or None
+        Original selected snapshot on which the omissions were determined.
+    atom_omissions, residue_omissions, consecutive_omissions : tuple or None
         Independent history for each applied policy; None means not applied.
 
     Returns
@@ -354,10 +356,10 @@ def project_zero_occupancy_omissions(
     constitution = selected.constitution
     geometry = selected.geometry
     topology = selected.topology
-    if atom_omissions or residue_omissions or run_omissions:
+    if atom_omissions or residue_omissions or consecutive_omissions:
         omitted_residues = {record.residue_id for record in residue_omissions or ()}
         omitted_residues.update(
-            r for run in run_omissions or () for r in run.residue_ids
+            r for omission in consecutive_omissions or () for r in omission.residue_ids
         )
         names_by_residue: dict[ResidueId, set[str]] = {}
         for omission in atom_omissions or ():
@@ -418,7 +420,7 @@ def project_zero_occupancy_omissions(
                 observation=observation,
                 zero_occupancy_omissions=atom_omissions,
                 zero_occupancy_residue_omissions=residue_omissions,
-                zero_occupancy_run_omissions=run_omissions,
+                consecutive_zero_occupancy_residue_omissions=consecutive_omissions,
                 pdb_adjacent_cap_links=(
                     ()
                     if observation is None

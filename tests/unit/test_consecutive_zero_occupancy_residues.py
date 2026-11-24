@@ -1,4 +1,4 @@
-"""Source evidence, donor authority and file boundaries for all-zero polymer runs."""
+"""Omission, donor reconstruction and export of consecutive zero-occupancy residues."""
 
 from dataclasses import replace
 from itertools import pairwise, product
@@ -43,7 +43,9 @@ from protrepair.workflow.contracts import (
 
 DATA = Path(__file__).parents[1] / "fixtures/pdb/span-reconstruction/1ubq.pdb"
 SEQUENCE = "SEQRES   1 A   12  ILE PHE VAL LYS THR LEU THR GLY LYS THR ILE ALA"
-RUNS = StructureNormalizationPolicy(omit_zero_occupancy_polymer_runs=True)
+OMIT_CONSECUTIVE = StructureNormalizationPolicy(
+    omit_consecutive_zero_occupancy_polymer_residues=True
+)
 ORDINARY = StructureNormalizationPolicy()
 
 
@@ -64,7 +66,7 @@ def rows(
 def read(
     lines: list[str],
     fmt: FileFormat = FileFormat.PDB,
-    policy: StructureNormalizationPolicy = RUNS,
+    policy: StructureNormalizationPolicy = OMIT_CONSECUTIVE,
 ) -> ProteinStructure:
     text = "\n".join((*lines, "END", ""))
     if fmt is FileFormat.MMCIF:
@@ -130,7 +132,7 @@ def test_same_chain_generated_cap_blocks_export_only_until_restoration(fmt, tmp_
 
 
 @pytest.mark.parametrize("fmt", tuple(FileFormat))
-def test_open_run_does_not_block_a_generated_cap_on_another_chain(fmt):
+def test_omitted_residues_do_not_block_a_generated_cap_on_another_chain(fmt):
     chain_b = [
         row[:6]
         + f"{int(row[6:11]) + 1000:5d}"
@@ -164,7 +166,9 @@ def test_open_run_does_not_block_a_generated_cap_on_another_chain(fmt):
 
 
 @pytest.mark.parametrize("fmt", tuple(FileFormat))
-def test_deposited_cap_on_the_open_run_chain_uses_coordinate_only_fallback(fmt):
+def test_deposited_cap_on_chain_with_omitted_residues_uses_coordinate_only_fallback(
+    fmt,
+):
     complete = read([SEQUENCE, *rows((), range(3, 14))], FileFormat.MMCIF)
     capped = cap(complete, (PeptidePort(rid(13), PeptideEnd.C),)).structure
     doc = gemmi.cif.read_string(write_structure_string(capped, FileFormat.MMCIF))
@@ -177,8 +181,10 @@ def test_deposited_cap_on_the_open_run_chain_uses_coordinate_only_fallback(fmt):
     for row in block.find("_atom_site.", ["auth_seq_id", "occupancy"]):
         if row[0] in ("4", "5", "6"):
             row[1] = "0.00"
-    source = read_structure_string(doc.as_string(), FileFormat.MMCIF, policy=RUNS)
-    assert source.provenance.ingress.zero_occupancy_run_omissions
+    source = read_structure_string(
+        doc.as_string(), FileFormat.MMCIF, policy=OMIT_CONSECUTIVE
+    )
+    assert source.provenance.ingress.consecutive_zero_occupancy_residue_omissions
     ingress = source.provenance.ingress
     attachments = PeptideCapAttachment.bonded_ports(
         source.constitution,
@@ -203,32 +209,33 @@ def test_deposited_cap_on_the_open_run_chain_uses_coordinate_only_fallback(fmt):
 def test_each_switch_has_its_own_receipt(fmt, single, multi, side):
     policy = StructureNormalizationPolicy(
         omit_zero_occupancy_polymer_residues=single,
-        omit_zero_occupancy_polymer_runs=multi,
+        omit_consecutive_zero_occupancy_polymer_residues=multi,
         omit_zero_occupancy_sidechain_heavy_atoms=side,
     )
     selected = read(rows((4, 5, 6, 7, 9, 11, 12), range(3, 14)), fmt, policy)
     ingress = selected.provenance.ingress
     assert (ingress.zero_occupancy_omissions is not None) == side
-    assert (ingress.zero_occupancy_run_omissions is not None) == multi
+    assert (ingress.consecutive_zero_occupancy_residue_omissions is not None) == multi
     assert (ingress.zero_occupancy_residue_omissions is not None) == single
     assert [o.residue_id for o in ingress.zero_occupancy_residue_omissions or ()] == (
         [rid(9)] if single else []
     )
     expected = [(4, 5, 6, 7), (11, 12)] if multi else []
-    assert [r.residue_ids for r in ingress.zero_occupancy_run_omissions or ()] == [
-        tuple(map(rid, seq)) for seq in expected
-    ]
+    assert [
+        r.residue_ids
+        for r in ingress.consecutive_zero_occupancy_residue_omissions or ()
+    ] == [tuple(map(rid, seq)) for seq in expected]
     withheld = {r for gap in ingress.recorded_residue_gaps() for r in gap.residue_ids}
     assert selected.constitution.chain("A").residue_ids() == tuple(
         rid(i) for i in range(3, 14) if rid(i) not in withheld
     )
-    for run in ingress.zero_occupancy_run_omissions or ():
+    for omission in ingress.consecutive_zero_occupancy_residue_omissions or ():
         assert all(
-            atom.geometry.occupancy == 0 for group in run.members for atom in group
+            atom.geometry.occupancy == 0 for group in omission.members for atom in group
         )
     if not multi:
         with pytest.raises(StructureNormalizationError, match="re-reading"):
-            apply_structure_normalization_policy(selected, policy=RUNS)
+            apply_structure_normalization_policy(selected, policy=OMIT_CONSECUTIVE)
 
 
 @pytest.mark.parametrize(
@@ -281,8 +288,10 @@ def test_insufficient_evidence_keeps_every_member(witness):
         lines.insert(next(i for i, r in enumerate(lines) if int(r[22:26]) == 5), "TER")
     else:
         lines = rows((3, 4, 5, 6))
-    source = read(lines, policy=replace(RUNS, occupancy_policy=OccupancyPolicy.LOWEST))
-    assert source.provenance.ingress.zero_occupancy_run_omissions == ()
+    source = read(
+        lines, policy=replace(OMIT_CONSECUTIVE, occupancy_policy=OccupancyPolicy.LOWEST)
+    )
+    assert source.provenance.ingress.consecutive_zero_occupancy_residue_omissions == ()
     assert source.constitution.chain("A").residue(rid(5)).component_id == "VAL"
     if witness == "positive_altloc":
         selected = source.geometry.atom_geometry(
@@ -294,15 +303,15 @@ def test_insufficient_evidence_keeps_every_member(witness):
 def test_shared_positive_flank_and_archive_identity():
     source = read(rows((4, 5, 7, 8), range(3, 10)))
     history = source.provenance.ingress
-    assert history.zero_occupancy_run_omissions is not None
-    first, second = history.zero_occupancy_run_omissions
+    assert history.consecutive_zero_occupancy_residue_omissions is not None
+    first, second = history.consecutive_zero_occupancy_residue_omissions
     assert first.following_residue_id == second.preceding_residue_id == rid(6)
     with pytest.raises(ValueError, match="distinct"):
-        replace(history, zero_occupancy_run_omissions=(first, first))
+        replace(history, consecutive_zero_occupancy_residue_omissions=(first, first))
     with pytest.raises(ValueError, match="flank components"):
         replace(
             history,
-            zero_occupancy_run_omissions=(
+            consecutive_zero_occupancy_residue_omissions=(
                 replace(first, preceding_component_id="ASP"),
                 second,
             ),
@@ -318,7 +327,7 @@ def test_omission_preserves_but_donor_cannot_replace_charged_attachment(flank, p
         for r in rows()
     ]
     source = read(lines)
-    assert source.provenance.ingress.zero_occupancy_run_omissions
+    assert source.provenance.ingress.consecutive_zero_occupancy_residue_omissions
     proposal = fit(source, read(rows(()), policy=ORDINARY))
     assert isinstance(proposal, SpanReconstructionFailure)
     assert "charge" in proposal.message
@@ -364,7 +373,7 @@ def fit(source, donor, ids=(4, 5, 6), left=3, right=7, library=None):
 @pytest.mark.parametrize(
     "witness", ["custom_flank", "extra_sidechain", "carbonyl_oxygen_contact"]
 )
-def test_only_attachment_chemistry_qualifies_run_flanks(witness):
+def test_only_attachment_chemistry_qualifies_gap_flanks(witness):
     lines = rows()
     lib = build_default_component_library()
     if witness == "custom_flank":
@@ -433,10 +442,13 @@ def test_only_exact_donor_reinstates_all_junctions_and_preserves_flanks(fmt):
     # The middle slot contains one deposited placeholder; its identity is sufficient.
     lines = [r for r in rows() if int(r[22:26]) != 5 or r[12:16].strip() == "CA"]
     source = read(lines, fmt)
-    records = source.provenance.ingress.zero_occupancy_run_omissions
+    records = source.provenance.ingress.consecutive_zero_occupancy_residue_omissions
     assert records is not None
-    (run,) = records
-    assert (run.component_ids, len(run.members[1])) == (("PHE", "VAL", "LYS"), 1)
+    (omission,) = records
+    assert (omission.component_ids, len(omission.members[1])) == (
+        ("PHE", "VAL", "LYS"),
+        1,
+    )
     donor = read(
         [r for r in rows(()) if not (int(r[22:26]) == 5 and r[12:16].strip() == "CG2")],
         fmt,
@@ -447,7 +459,9 @@ def test_only_exact_donor_reinstates_all_junctions_and_preserves_flanks(fmt):
     latest = candidate.materialize(source, build_default_component_library())
     assert not latest.constitution.chain("A").residue(rid(5)).has_atom_site("CG2")
     assert latest.provenance.ingress is source.provenance.ingress
-    assert apply_structure_normalization_policy(latest, policy=RUNS) is latest
+    assert (
+        apply_structure_normalization_policy(latest, policy=OMIT_CONSECUTIVE) is latest
+    )
     for before, after in pairwise(range(3, 8)):
         bond = latest.topology.bond_between(
             latest.constitution.atom_index(AtomRef(rid(before), "C")),
@@ -498,7 +512,9 @@ def test_public_workflow_reports_the_selected_donor_outcome(wrong):
     scope = AbsentResidueSpanScope(rid(3), rid(7), tuple(map(rid, (4, 5, 6))))
     result = process_structure(
         source,
-        ingress=StructureIngressOptions(omit_zero_occupancy_polymer_runs=True),
+        ingress=StructureIngressOptions(
+            omit_consecutive_zero_occupancy_polymer_residues=True
+        ),
         transform_requests=WorkflowTransformRequests(
             external_span_reconstructions=(
                 ExternalSpanReconstructionSpec(scope, donor, scope.absent_residue_ids),

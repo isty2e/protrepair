@@ -32,13 +32,13 @@ from protrepair.structure.polymer_blueprint import (
     PolymerResidueSlot,
 )
 from protrepair.structure.provenance import (
+    ConsecutiveZeroOccupancyResidueOmission,
     FileFormat,
     StructureIngress,
     StructureProvenance,
     StructureProvenanceOrigin,
     ZeroOccupancyOmission,
     ZeroOccupancyResidueOmission,
-    ZeroOccupancyRunOmission,
 )
 from protrepair.structure.topology import (
     AtomTopology,
@@ -58,6 +58,7 @@ __all__ = [
     "BondProvenance",
     "BondRelationshipType",
     "ChainSite",
+    "ConsecutiveZeroOccupancyResidueOmission",
     "ElementIdentity",
     "FileFormat",
     "PolymerBlueprint",
@@ -85,7 +86,6 @@ __all__ = [
     "TopologyBond",
     "ZeroOccupancyOmission",
     "ZeroOccupancyResidueOmission",
-    "ZeroOccupancyRunOmission",
     "address_space_key_without_atoms",
     "atom_count_in_address_space",
 ]
