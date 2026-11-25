@@ -3,6 +3,7 @@
 from collections import defaultdict
 from math import floor
 
+from protrepair.structure.backbone_availability import unresolved_atom_names
 from protrepair.structure.constitution import ResidueRole
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.slots import AtomIndex, ResidueIndex
@@ -62,7 +63,12 @@ def radius_context_residue_indices(
         ):
             continue
 
+        unusable = unresolved_atom_names(
+            snapshot.structure, constitution.residue_site_at(residue_index).residue_id
+        )
         for atom_index in constitution.atom_indices_for_residue_index(residue_index):
+            if unusable and constitution.atom_site_at(atom_index).name in unusable:
+                continue
             if atom_index in movable_atom_index_set:
                 continue
 
@@ -101,7 +107,12 @@ def _radius_context_residue_indices_by_scan(
         ):
             continue
 
+        unusable = unresolved_atom_names(
+            snapshot.structure, constitution.residue_site_at(residue_index).residue_id
+        )
         for atom_index in constitution.atom_indices_for_residue_index(residue_index):
+            if unusable and constitution.atom_site_at(atom_index).name in unusable:
+                continue
             if atom_index in movable_atom_index_set:
                 continue
 

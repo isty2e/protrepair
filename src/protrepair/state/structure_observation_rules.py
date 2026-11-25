@@ -18,6 +18,7 @@ from protrepair.state.structure_axes import (
     StereochemistryState,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_backbone
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import ResidueId
 
@@ -209,6 +210,8 @@ def stereochemistry_state(
 
     has_supported_tetrahedral_center = False
     for residue in residues:
+        if unresolved_backbone(structure, residue.residue_id):
+            continue
         template = component_library.get(residue.component_id)
         if template is None or not template.has_tetrahedral_stereochemistry():
             continue

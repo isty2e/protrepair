@@ -30,6 +30,7 @@ from protrepair.diagnostics.clash_pair_generation import (
 from protrepair.diagnostics.events import EventScope, ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_atom_names
 from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.constitution import ResidueSite, StructureConstitution
 from protrepair.structure.disulfide import (
@@ -193,6 +194,7 @@ class ResidueContext:
     polar_chemistry: PolarContactChemistry = field(repr=False, compare=False)
     peptide_neighbor_residue_ids: frozenset[ResidueId] = frozenset()
     cap_junction: tuple[AtomRef, AtomRef] | None = None
+    unusable_atoms: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "domain", ContactDomain.normalize(self.domain))
@@ -650,6 +652,10 @@ class ClashDetectionBasis:
                 grid_cell_size_angstrom=candidate_cell_size_angstrom,
             )
             for atom_site_basis in self._atom_site_bases
+            if atom_site_basis.atom_name
+            not in residue_contexts[
+                atom_site_basis.residue_context_index
+            ].unusable_atoms
         )
 
     def bind_context(
@@ -1515,6 +1521,9 @@ def bind_residue_contexts(
                 residue_index=basis.residue_index,
                 polar_chemistry=basis.polar_chemistry,
                 cap_junction=junction,
+                unusable_atoms=unresolved_atom_names(
+                    structure, basis.residue_site.residue_id
+                ),
                 peptide_neighbor_residue_ids=peptide_neighbor_ids_by_basis_index[
                     basis_index
                 ],
@@ -1634,6 +1643,8 @@ def build_atom_sites(
         residue_site = context.residue_site
         residue_geometry = context.residue_geometry
         for atom_site in residue_site.atom_sites:
+            if atom_site.name in context.unusable_atoms:
+                continue
             if not policy.include_hydrogens and atom_site.is_hydrogen():
                 continue
 

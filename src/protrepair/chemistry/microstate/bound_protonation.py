@@ -21,6 +21,7 @@ from protrepair.relation.sequence_alignment import (
     sequence_requires_observed_end,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_backbone
 from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.constitution import ResidueRole
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -132,6 +133,12 @@ class BoundSiteProtonations:
         selection: SiteProtonation,
         site: "PolymerMicrostateSite",
     ) -> MicrostateResolution | None:
+        if unresolved_backbone(current, selection.residue_id):
+            return MicrostateResolution(
+                MicrostateResolutionStatus.INSUFFICIENT,
+                details=("unresolved zero-occupancy backbone",),
+                reason=SiteProtonationReason.PHYSICAL_CONSTRAINT,
+            )
         if site.kind in (
             PolymerChemicalSite.BACKBONE_N,
             PolymerChemicalSite.BACKBONE_C,

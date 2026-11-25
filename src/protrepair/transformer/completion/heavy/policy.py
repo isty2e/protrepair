@@ -8,6 +8,7 @@ from protrepair.chemistry import (
     ResidueTemplate,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_backbone
 from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -45,7 +46,9 @@ def should_add_terminal_oxt(
         Whether the end is unreserved and has the template and anchors for OXT.
     """
 
-    if residue.has_atom_site("OXT"):
+    if residue.has_atom_site("OXT") or unresolved_backbone(
+        structure, residue.residue_id
+    ):
         return False
     ports = active_peptide_ports()
     if ports is not None and ports.reserves(

@@ -32,6 +32,7 @@ from protrepair.chemistry.retained_non_polymer.template_binding import (
     is_resolved_acyl_amide_link,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_backbone
 from protrepair.structure.bound_peptide_ports import active_peptide_ports
 from protrepair.structure.constitution import AtomSite, ResidueRole
 from protrepair.structure.labels import AtomRef, ResidueId
@@ -539,6 +540,8 @@ class AminoAcidMicrostateContext:
             raise ValueError("backbone binding requires a backbone site kind")
         if type(assume_free_chain_ends) is not bool:
             raise TypeError("chain-end assumption must be a boolean")
+        if unresolved_backbone(self.source, residue_id):
+            return PolymerMicrostateSite(template, kind, PeptideLinkage.UNKNOWN)
         constitution = self.source.constitution
         residue_index = constitution.residue_index(residue_id)
         if constitution.role_at(residue_index) is not ResidueRole.POLYMER:
@@ -566,6 +569,7 @@ class AminoAcidMicrostateContext:
                     and bond.order == 1
                     and not bond.aromatic
                     and partner.atom_name == partner_name
+                    and not unresolved_backbone(self.source, partner.residue_id)
                     and constitution.atom_site_at(other).element == partner_name
                     and constitution.atom_site_at(index).element == name
                     and self._is_supported_peptide_partner(index, other, kind)

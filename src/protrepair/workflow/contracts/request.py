@@ -423,7 +423,15 @@ class StructureIngressOptions:
 
 @dataclass(frozen=True, slots=True, init=False)
 class WorkflowTransformRequests:
-    """Explicit workflow transform requests not expressible as desired states."""
+    """Explicit workflow transform requests not expressible as desired states.
+
+    Parameters
+    ----------
+    rebuild_zero_occupancy_backbone : bool, default=False
+        Before packing, fit a selected zero-occupancy carbonyl C or a CA/C
+        pair to positive-occupancy anchors. Retain unsupported sites and report
+        them even if no completion goal was requested.
+    """
 
     orphan_fragment_policy: OrphanFragmentPolicy = OrphanFragmentPolicy.REBUILD
     external_span_reconstructions: tuple[
@@ -439,6 +447,7 @@ class WorkflowTransformRequests:
     histidine_protonation: HistidineProtonationRequest | None = None
     site_protonations: tuple[SiteProtonation, ...] = ()
     peptide_capping: PeptideCappingRequest | None = None
+    rebuild_zero_occupancy_backbone: bool = False
 
     def __init__(
         self,
@@ -454,7 +463,13 @@ class WorkflowTransformRequests:
         *,
         site_protonations: Iterable[SiteProtonation] = (),
         peptide_capping: PeptideCappingRequest | None = None,
+        rebuild_zero_occupancy_backbone: bool = False,
     ) -> None:
+        if type(rebuild_zero_occupancy_backbone) is not bool:
+            raise TypeError("rebuild_zero_occupancy_backbone requires a bool")
+        object.__setattr__(
+            self, "rebuild_zero_occupancy_backbone", rebuild_zero_occupancy_backbone
+        )
         if peptide_capping is not None and not isinstance(
             peptide_capping, PeptideCappingRequest
         ):

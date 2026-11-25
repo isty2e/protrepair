@@ -9,6 +9,7 @@ from protrepair.diagnostics.parser_topology import (
 )
 from protrepair.scope import AtomSetScope
 from protrepair.state import HydrogenCoverageState
+from protrepair.structure.backbone_availability import active_backbone_availability
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.packing.domain import PackingPlan
 from protrepair.transformer.packing.faspr.backend import FASPR_ALPHABET
@@ -80,9 +81,19 @@ def _automatic_committed_packing_specs(
     if domain.explicit_repair.is_requested():
         return ()
 
-    # FASPR serializes the whole polymer, even for a local mutable scope.
-    # Automatic fallback cannot offer an input its backend alphabet rejects.
-    if any(
+    binding = active_backbone_availability()
+    unavailable = (
+        frozenset(
+            rid
+            for rid in binding.placements
+            if binding.unresolved(domain.structure, rid)
+        )
+        if binding is not None
+        else frozenset()
+    )
+    # The ordinary backend sees every polymer residue. A region proposal
+    # validates its own fixed context and keeps unsupported targets out.
+    if not unavailable and any(
         not FASPR_ALPHABET.supports_component(residue.component_id)
         for chain in domain.structure.constitution.chains
         for residue in chain.residues
@@ -95,9 +106,14 @@ def _automatic_committed_packing_specs(
         or not parser_compatibility_facts.has_parser_visible_proximity_burden()
     ):
         return ()
-    if (
-        domain.chemistry_readiness_facts.hydrogen_coverage_state
-        is not HydrogenCoverageState.COMPLETE
+    facts = domain.chemistry_readiness_facts
+    if facts.hydrogen_coverage_state is not HydrogenCoverageState.COMPLETE and (
+        not unavailable
+        or any(
+            fact.hydrogen_coverage_state is not HydrogenCoverageState.COMPLETE
+            for fact in facts.residue_facts
+            if fact.residue_id not in unavailable
+        )
     ):
         return ()
     if not domain.relaxation_executions:
@@ -114,7 +130,7 @@ def _automatic_committed_packing_specs(
     packing_specs: list[PackingSpec] = []
     movable_ids: frozenset[ResidueId] | None = None
     for cluster in clusters:
-        if not cluster.bonds:
+        if not cluster.bonds or unavailable.intersection(cluster.residue_ids):
             continue
 
         endpoints = AtomSetScope(
@@ -131,6 +147,14 @@ def _automatic_committed_packing_specs(
             ambiguous_partners=ambiguous_partners,
         )
         if residue_ids:
+            if unavailable and any(
+                rid in unavailable
+                or (site := domain.structure.constitution.residue_or_ligand(rid))
+                is None
+                or not FASPR_ALPHABET.supports_component(site.component_id)
+                for rid in residue_ids
+            ):
+                continue
             if movable_ids is None:
                 selection = FasprPackingSelection.from_plan(
                     PackingPlan.from_inputs(

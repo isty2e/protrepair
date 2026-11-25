@@ -9,7 +9,7 @@ from protrepair.chemistry.microstate.preparation import AminoAcidPreparation
 from protrepair.chemistry.retained_non_polymer.evidence import (
     SelectedRetainedChemistry,
 )
-from protrepair.diagnostics.events import ValidationIssue
+from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.diagnostics.kinds import ValidationIssueKind
 from protrepair.diagnostics.water_contacts import (
     stationary_water_refusal,
@@ -409,6 +409,7 @@ def execute_iterative_workflow(
     histidine_protonation: HistidineProtonationRequest,
     retained_non_polymer_chemistry_evidence: tuple[SelectedRetainedChemistry, ...] = (),
     initial_issues: tuple[ValidationIssue, ...] = (),
+    initial_repairs: tuple[RepairEvent, ...] = (),
     terminal_repair_requested: bool = False,
 ) -> WorkflowRuntimeResult:
     """Execute workflow planning through a frontier-based iterative driver."""
@@ -417,7 +418,7 @@ def execute_iterative_workflow(
         initial_state=WorkflowRuntimeState(
             result=TransformationResult(
                 structure=structure,
-                repairs=(),
+                repairs=initial_repairs,
                 issues=initial_issues,
             ),
             planner_memory=WorkflowPlannerMemory(),

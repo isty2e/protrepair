@@ -12,6 +12,7 @@ from protrepair.errors import RefinementError
 from protrepair.geometry import Vec3
 from protrepair.geometry.internal_coordinates import InternalCoordinateFrame
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_atom_names
 from protrepair.structure.constitution import (
     AtomSite,
     ResidueSite,
@@ -344,6 +345,10 @@ def _cap_atoms(
     constitution = source.constitution
 
     def point(residue_id: ResidueId, name: str) -> npt.NDArray[np.float64]:
+        if name in unresolved_atom_names(source, residue_id):
+            raise RefinementError(
+                f"unresolved peptide cap anchor {residue_id.display_token()}.{name}"
+            )
         index = constitution.resolve_atom_index(AtomRef(residue_id, name))
         if index is None:
             raise RefinementError(
@@ -364,7 +369,8 @@ def _cap_atoms(
                 hydrogens.add(other)
         if len(hydrogens) != 1:
             raise RefinementError("peptide cap needs one unambiguous N-H anchor")
-        return source.geometry.atom_geometry(next(iter(hydrogens))).position.to_array()
+        hydrogen = constitution.atom_ref_at(next(iter(hydrogens)))
+        return point(hydrogen.residue_id, hydrogen.atom_name)
 
     residue_id = boundary.endpoint.residue_id
     endpoint = point(residue_id, boundary.endpoint.atom_name)

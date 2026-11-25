@@ -23,6 +23,8 @@ from protrepair.chemistry.retained_non_polymer.evidence import (
 from protrepair.chemistry.retained_non_polymer.orthophosphate import (
     DepositedOrthophosphate,
 )
+from protrepair.diagnostics.events import ValidationIssue
+from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.diagnostics.source_microstate import (
     diagnose_source_microstate_contradictions,
 )
@@ -30,9 +32,14 @@ from protrepair.diagnostics.water_contacts import stationary_water_run
 from protrepair.errors import RdkitUnavailableError
 from protrepair.io import read_structure
 from protrepair.io.structure_ingress import apply_structure_normalization_policy
+from protrepair.io.zero_occupancy import revisit_sidechain_omissions
 from protrepair.sources.chemistry import RetainedChemistryOverride, SmilesAssignment
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import backbone_repair_run
 from protrepair.structure.bound_peptide_ports import BoundPeptidePorts, peptide_port_run
+from protrepair.transformer.completion.backbone_rebuild import (
+    rebuild_selected_backbones,
+)
 from protrepair.transformer.completion.terminal.cap_sequence import (
     qualified_peptide_neighbors,
 )
@@ -126,6 +133,31 @@ def run_normalized_workflow(
         else transform_requests
     )
     normalized_analyses = normalize_analysis_kinds(analyses)
+    component_library = build_default_component_library()
+    availability = None
+    initial_repairs = ()
+    rebuild_issues = ()
+    if active_transform_requests.rebuild_zero_occupancy_backbone:
+        rebuilt, availability = rebuild_selected_backbones(
+            normalized_structure, component_library
+        )
+        normalized_structure = rebuilt.structure
+        initial_repairs = rebuilt.repairs
+        rebuild_issues = rebuilt.issues
+        if (
+            availability is not None
+            and ingress.omit_zero_occupancy_sidechain_heavy_atoms
+        ):
+            usable = frozenset(
+                rid
+                for rid, placement in availability.placements.items()
+                if placement.reason is None
+            )
+            normalized_structure, deferred_issues = revisit_sidechain_omissions(
+                normalized_structure, usable
+            )
+            rebuild_issues += deferred_issues
+            availability = replace(availability, source=normalized_structure)
     peptide_capping = active_transform_requests.peptide_capping
     peptide_ports = (
         None
@@ -144,7 +176,6 @@ def run_normalized_workflow(
         )
     )
 
-    component_library = build_default_component_library()
     active_planning_context = (
         _default_workflow_planning_context(
             ingress=ingress,
@@ -154,12 +185,6 @@ def run_normalized_workflow(
         if planning_context is None
         else planning_context
     )
-    hydrogen_length_plan = WorkflowHydrogenLengthPlan.for_input(
-        normalized_structure, hydrogen_lengths
-    )
-    initial_microstate_issues = diagnose_source_microstate_contradictions(
-        normalized_structure, component_library=component_library
-    )
     validated_retained_non_polymer_chemistry_evidence = (
         _validated_retained_non_polymer_chemistry_evidence(
             normalized_structure,
@@ -168,6 +193,7 @@ def run_normalized_workflow(
         )
     )
     with (
+        backbone_repair_run(availability),
         peptide_port_run(peptide_ports),
         stationary_water_run(normalized_structure),
         site_protonation_run(
@@ -176,6 +202,12 @@ def run_normalized_workflow(
             )
         ),
     ):
+        hydrogen_length_plan = WorkflowHydrogenLengthPlan.for_input(
+            normalized_structure, hydrogen_lengths
+        )
+        initial_microstate_issues = diagnose_source_microstate_contradictions(
+            normalized_structure, component_library=component_library
+        )
         packing_reference = (
             None
             if active_transform_requests.reference_sidechain_packing is None
@@ -202,7 +234,8 @@ def run_normalized_workflow(
             retained_non_polymer_chemistry_evidence=(
                 validated_retained_non_polymer_chemistry_evidence
             ),
-            initial_issues=initial_microstate_issues,
+            initial_repairs=initial_repairs,
+            initial_issues=(*rebuild_issues, *initial_microstate_issues),
             terminal_repair_requested=(
                 hydrogen_lengths is not None and hydrogen_lengths.repair
             ),
@@ -210,7 +243,7 @@ def run_normalized_workflow(
         packing_reference_issues = (
             () if packing_reference is None else packing_reference.packing_result.issues
         )
-        return finalize_workflow_result(
+        result = finalize_workflow_result(
             branches=runtime_result.branches,
             stop_reason=runtime_result.stop_reason,
             span_reconstruction_evidence=runtime_result.span_reconstruction_evidence,
@@ -223,6 +256,26 @@ def run_normalized_workflow(
             repair_refinement=active_transform_requests.repair_refinement,
             hydrogen_length_plan=hydrogen_length_plan,
             retained_non_polymer_chemistry_evidence=validated_retained_non_polymer_chemistry_evidence,
+        )
+        if availability is None:
+            return result
+        return result.with_appended_issues(
+            tuple(
+                ValidationIssue.for_residue(
+                    kind=ValidationIssueKind.BACKBONE_REBUILD_REFUSED,
+                    severity=IssueSeverity.WARNING,
+                    residue_id=rid,
+                    component_id=placement.component,
+                    atom_names=tuple(sorted(placement.targets)),
+                    message="backbone placement no longer matches its anchors or residue identity on the selected structure",
+                )
+                for rid, placement in availability.placements.items()
+                if placement.reason is None
+                and (
+                    availability.placement_for(result.structure, rid) is None
+                    or availability.unresolved(result.structure, rid)
+                )
+            )
         )
 
 

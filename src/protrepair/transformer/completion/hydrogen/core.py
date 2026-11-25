@@ -39,6 +39,10 @@ from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.geometry.placement_vector import normalized_vector_or_none
 from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import (
+    eligible_geometry_targets,
+    unresolved_atom_names,
+)
 from protrepair.structure.disulfide import disulfide_bonded_cysteine_residue_ids
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import ResidueIndex
@@ -132,8 +136,11 @@ def materialize_hydrogens_core(
         Required native H placement is unavailable.
     """
     require_non_water_hydrogen_targets(structure.constitution, target_residue_ids)
+    target_residue_ids = eligible_geometry_targets(structure, target_residue_ids)
     if type(rebuild_existing) is not bool:
         raise TypeError("hydrogen rebuilding must be a bool")
+    if target_residue_ids == frozenset():
+        return TransformationResult(structure=structure, repairs=(), issues=())
     library = component_library or build_default_component_library()
     request = normalize_histidine_protonation_request(histidine_protonation)
     targets = frozenset(
@@ -142,6 +149,10 @@ def materialize_hydrogens_core(
         for residue in chain.residues
         if target_residue_ids is None or residue.residue_id in target_residue_ids
     )
+    if structure.provenance.withheld_backbone_hydrogens:
+        targets -= structure.provenance.withheld_hydrogen_residues(
+            structure.constitution
+        )
     water_baseline = structure
     rebuilding = frozenset(
         residue_id
@@ -342,6 +353,7 @@ def _fixed_hydrogens(
         heavy = tuple(
             payload.without_atom_sites(
                 {atom.name for atom in payload.atom_sites if atom.is_hydrogen()}
+                | unresolved_atom_names(structure, payload.residue_id)
             )
             for payload in payloads
         )

@@ -25,6 +25,7 @@ from protrepair.chemistry.restraint.template import (
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_atom_names
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import ResidueId
@@ -266,6 +267,10 @@ def detect_heavy_geometry(
         residue_geometry = structure.residue_geometry(
             structure.constitution.residue_index(residue.residue_id)
         )
+        unknown = unresolved_atom_names(structure, residue.residue_id)
+        if unknown:
+            residue = residue.without_atom_sites(unknown)
+            residue_geometry = residue_geometry.without_atoms(unknown)
 
         bond_length_outliers.extend(
             detect_residue_bond_length_outliers(

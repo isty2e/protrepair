@@ -13,6 +13,7 @@ from protrepair.diagnostics import (
     detect_clashes_involving_residues,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_backbone
 from protrepair.structure.constitution import ResidueSite
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.transformer.completion.hydrogen.rotatable import (
@@ -55,6 +56,8 @@ def cleanup_targets_from_report(
             (clash.right_residue_id, clash.right_atom_name),
         ):
             residue_site = structure_residue_site_or_ligand(structure, residue_id)
+            if unresolved_backbone(structure, residue_id):
+                continue
             if residue_site is None or not residue_site.has_atom_site(atom_name):
                 continue
 

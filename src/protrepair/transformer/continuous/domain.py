@@ -11,6 +11,7 @@ from protrepair.errors import RefinementError
 from protrepair.state.retained_non_polymer_chemistry import (
     RetainedNonPolymerChemistryResolution,
 )
+from protrepair.structure.backbone_availability import unresolved_backbone
 from protrepair.structure.constitution import AtomSite as ConstitutionAtomSite
 from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.geometry import AtomGeometry, ResidueGeometry
@@ -74,6 +75,15 @@ class ContinuousRelaxationRegion:
             constitution.residue_index_for_atom_index(atom_index)
             for atom_index in movable_atom_indices
         }
+        if any(
+            unresolved_backbone(
+                snapshot.structure, constitution.residue_site_at(i).residue_id
+            )
+            for i in selected_residue_index_set
+        ):
+            raise RefinementError(
+                "continuous relaxation targets an unresolved zero-occupancy backbone"
+            )
         included_residue_index_set = (
             set(selected_residue_index_set)
             | radius_context_residue_indices(
@@ -137,6 +147,15 @@ class ContinuousRelaxationRegion:
             if not additions:
                 break
             included_residue_index_set.update(additions)
+        if any(
+            unresolved_backbone(
+                snapshot.structure, constitution.residue_site_at(i).residue_id
+            )
+            for i in included_residue_index_set
+        ):
+            raise RefinementError(
+                "continuous relaxation needs an unresolved zero-occupancy backbone as context"
+            )
         if constitution.waters:
             if any(
                 constitution.role_at(index) is ResidueRole.WATER

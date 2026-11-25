@@ -18,6 +18,35 @@ Use `LigandPolicy.REJECT` when any retained non-polymer should make ingress
 fail. See the [retained-ligand policy](retained-ligand-policy.md) for chemistry
 resolution and scope boundaries.
 
+## Rebuild Zero-Occupancy Backbone Atoms
+
+To rebuild an existing zero-occupancy carbonyl carbon, or a zero-occupancy
+alpha carbon and carbonyl carbon together, request a backbone repair:
+
+```python
+from pathlib import Path
+from protrepair import process_structure
+from protrepair.workflow.contracts import WorkflowTransformRequests
+
+result = process_structure(
+    Path("model.cif"),
+    transform_requests=WorkflowTransformRequests(rebuild_zero_occupancy_backbone=True),
+)
+```
+
+The fit uses positive-occupancy atoms of the selected conformer and a verified
+peptide neighbor. A successful fit changes the coordinates but keeps their
+zero occupancies and B factors. Look for `backbone_atoms_rebuilt` in
+`result.repairs`. If the anchors are insufficient, the geometry conflicts
+with the surrounding structure, or the pattern of zero atoms is unsupported,
+the original coordinates stay in place and `result.issues` gives the reason.
+In particular, an isolated zero-occupancy O or N is not rebuilt. An absent
+atom still belongs to ordinary completion.
+
+If you also request side-chain packing, FASPR can pack regions that do not
+depend on an unresolved backbone. Check `result.issues` for
+`packing_region_refused` before treating the request as fully applied.
+
 ## Request Only The State Changes You Need
 
 Each goal combines a semantic scope with one target state. This example asks

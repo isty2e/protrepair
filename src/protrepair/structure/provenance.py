@@ -17,6 +17,7 @@ from protrepair.structure.source_connection import (
     PdbAdjacentCapLink,
     SourceAtomIdentity,
 )
+from protrepair.structure.topology import BondProvenance
 
 
 class FileFormat(str, Enum):
@@ -28,7 +29,7 @@ class FileFormat(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class ZeroOccupancyOmission:
-    """Historical position withheld during source normalization.
+    """Original position and scalars of a zero-occupancy coordinate.
 
     Parameters
     ----------
@@ -62,6 +63,25 @@ class ZeroOccupancyOmission:
             raise ValueError("an occupancy omission requires zero occupancy")
         if self.geometry.altloc != self.source_identity.altloc:
             raise ValueError("an occupancy omission must match the source altloc")
+
+
+@dataclass(frozen=True, slots=True)
+class WithheldBackboneHydrogen:
+    """Original isotope and parent of a zero hydrogen with no determined position."""
+
+    original: ZeroOccupancyOmission
+    parent: AtomRef
+    former_bond: BondProvenance | None
+
+
+@dataclass(frozen=True, slots=True)
+class DeferredSidechainOmission:
+    """Side-chain decision conditional on restoration of this residue's backbone."""
+
+    residue_id: ResidueId
+    component_id: str
+    atoms: tuple[ZeroOccupancyOmission, ...]
+    refusal: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +291,12 @@ class StructureIngress:
         None denotes an input whose raw records were not inspected.
     deposited_peptide_sequences : tuple[DepositedPeptideSequence, ...]
         Verified constructs with their original coordinate position intervals.
+    backbone_neighbors : frozenset of residue ID pairs
+        Directed peptide neighbors verified without using the C--N distance.
+    backbone_link_vetoes : frozenset of AtomRef
+        Ambiguous source declarations that prevent using a port as a fit anchor.
+    deferred_sidechains : tuple of DeferredSidechainOmission
+        Side-chain omission decisions to revisit if the backbone is rebuilt.
 
     Raises
     ------
@@ -303,10 +329,44 @@ class StructureIngress:
     deposited_peptide_sequences: tuple[DepositedPeptideSequence, ...] = field(
         default=(), kw_only=True, repr=False
     )
+    backbone_neighbors: frozenset[tuple[ResidueId, ResidueId]] = field(
+        default_factory=frozenset, kw_only=True, repr=False
+    )
+    backbone_link_vetoes: frozenset[AtomRef] = field(
+        default_factory=frozenset, kw_only=True, repr=False
+    )
+    deferred_sidechains: tuple[DeferredSidechainOmission, ...] = field(
+        default=(), kw_only=True, repr=False
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_format, FileFormat):
             raise TypeError("structure ingress requires a FileFormat source_format")
+
+        if not isinstance(self.backbone_neighbors, frozenset) or not all(
+            isinstance(edge, tuple)
+            and len(edge) == 2
+            and all(isinstance(rid, ResidueId) for rid in edge)
+            and edge[0] != edge[1]
+            and edge[0].chain_id == edge[1].chain_id
+            for edge in self.backbone_neighbors
+        ):
+            raise ValueError(
+                "backbone neighbors must be distinct residue pairs in one chain"
+            )
+        if not isinstance(self.backbone_link_vetoes, frozenset) or not all(
+            isinstance(ref, AtomRef) for ref in self.backbone_link_vetoes
+        ):
+            raise TypeError(
+                "backbone link exclusions require a frozen set of atom references"
+            )
+        if not isinstance(self.deferred_sidechains, tuple) or not all(
+            isinstance(decision, DeferredSidechainOmission)
+            for decision in self.deferred_sidechains
+        ):
+            raise TypeError(
+                "deferred side-chain decisions require a tuple of omission assessments"
+            )
 
         if self.observation is not None and not isinstance(
             self.observation, StructureObservation
@@ -539,6 +599,11 @@ class StructureProvenance:
     omitted_peptide_caps : frozenset[PeptideCapAttachment]
         Qualified occupied ports whose cap was removed by retention. Their
         history survives re-entry even if the source observation predates the cap.
+    original_backbone_coordinates : tuple of ZeroOccupancyOmission
+        Selected zero coordinates before an accepted backbone repair, including
+        dependent hydrogens that moved or were withheld.
+    withheld_backbone_hydrogens : tuple of WithheldBackboneHydrogen
+        Undetermined dependent hydrogen identities and their original parents.
 
     Raises
     ------
@@ -554,10 +619,38 @@ class StructureProvenance:
     omitted_peptide_caps: frozenset[PeptideCapAttachment] = field(
         default_factory=frozenset, kw_only=True, repr=False
     )
+    original_backbone_coordinates: tuple[ZeroOccupancyOmission, ...] = field(
+        default=(), kw_only=True, repr=False
+    )
+    withheld_backbone_hydrogens: tuple[WithheldBackboneHydrogen, ...] = field(
+        default=(), kw_only=True, repr=False
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.ingress, StructureIngress):
             raise TypeError("structure provenance requires a StructureIngress value")
+        if not isinstance(self.original_backbone_coordinates, tuple) or not all(
+            isinstance(r, ZeroOccupancyOmission)
+            for r in self.original_backbone_coordinates
+        ):
+            raise TypeError(
+                "original backbone coordinates require zero-occupancy atom records"
+            )
+        if len({r.source_identity for r in self.original_backbone_coordinates}) != len(
+            self.original_backbone_coordinates
+        ):
+            raise ValueError("duplicate original backbone coordinate")
+        if not isinstance(self.withheld_backbone_hydrogens, tuple) or not all(
+            isinstance(r, WithheldBackboneHydrogen)
+            for r in self.withheld_backbone_hydrogens
+        ):
+            raise TypeError(
+                "withheld hydrogens require typed parent and isotope records"
+            )
+        if self.withheld_backbone_hydrogens and not {
+            r.original for r in self.withheld_backbone_hydrogens
+        } <= set(self.original_backbone_coordinates):
+            raise ValueError("withheld hydrogen is missing its original coordinate")
 
         if not isinstance(self.omitted_peptide_caps, frozenset) or not all(
             isinstance(link, PeptideCapAttachment) for link in self.omitted_peptide_caps
@@ -600,6 +693,19 @@ class StructureProvenance:
                     ),
                 )
             ),
+        )
+
+    def withheld_hydrogen_residues(
+        self, constitution: StructureConstitution
+    ) -> frozenset[ResidueId]:
+        """Return residues where an absent original isotope still has its original parent."""
+        return frozenset(
+            r.parent.residue_id
+            for r in self.withheld_backbone_hydrogens
+            if (site := constitution.residue_or_ligand(r.parent.residue_id)) is not None
+            and site.component_id == r.original.source_identity.component_id
+            and site.has_atom_site(r.parent.atom_name)
+            and not site.has_atom_site(r.original.source_identity.atom_ref.atom_name)
         )
 
 

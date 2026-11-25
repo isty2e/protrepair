@@ -41,6 +41,7 @@ from protrepair.geometry import Vec3
 from protrepair.scope import AtomSetScope
 from protrepair.scope.observed_atom_scope_lowering import OBSERVED_ATOM_SCOPE_LOWERING
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_backbone
 from protrepair.structure.geometry import AtomGeometry
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.snapshot import ProteinStructureSnapshot
@@ -141,6 +142,7 @@ class WorkflowHydrogenLengthPlan:
             for atom in self._hydrogens
             if (site := structure.constitution.resolve_atom_site(atom)) is not None
             and site.is_hydrogen()
+            and not unresolved_backbone(structure, atom.residue_id)
         )
         rows = (
             analyze_hydrogen_lengths(
@@ -159,7 +161,11 @@ class WorkflowHydrogenLengthPlan:
             else HydrogenLengthObservation(
                 atom,
                 HydrogenLengthStatus.UNASSESSED,
-                detail="selected input hydrogen is no longer present",
+                detail=(
+                    "unresolved backbone: hydrogen length not assessed"
+                    if unresolved_backbone(structure, atom.residue_id)
+                    else "selected input hydrogen is no longer present"
+                ),
             )
             for atom in self._hydrogens
         )
