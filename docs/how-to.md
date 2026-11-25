@@ -43,6 +43,12 @@ the original coordinates stay in place and `result.issues` gives the reason.
 In particular, an isolated zero-occupancy O or N is not rebuilt. An absent
 atom still belongs to ordinary completion.
 
+A nearby hydrogen does not need an explicit bond record if its name and the
+residue chemistry identify its parent. For example, a carbonyl C can be close
+to the next residue's amide H. The repair checks the N-H length and C-N-H
+angle before accepting that contact, even when the file lists the N-H bond.
+It uses the same check for D and T and does not add inferred bonds to the output.
+
 If you also request side-chain packing, FASPR can pack regions that do not
 depend on an unresolved backbone. Check `result.issues` for
 `packing_region_refused` before treating the request as fully applied.

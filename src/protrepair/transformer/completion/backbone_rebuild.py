@@ -8,11 +8,7 @@ from math import isfinite
 import numpy as np
 
 from protrepair.chemistry.component.library import ComponentLibrary
-from protrepair.chemistry.component.template import ResidueTemplate
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
-from protrepair.chemistry.retained_non_polymer.hydrogen_correspondence import (
-    source_hydrogen_bond_length_is_compatible,
-)
 from protrepair.chemistry.standard.components import STANDARD_COMPONENT_ATOMS
 from protrepair.diagnostics.events import RepairEvent, ValidationIssue
 from protrepair.diagnostics.kinds import (
@@ -54,7 +50,6 @@ def _propose(
     site: ResidueSite,
     names: frozenset[str],
     env: BackboneEnvironment,
-    template: ResidueTemplate,
 ) -> _Candidate:
     s = env.structure
     c = s.constitution
@@ -109,26 +104,25 @@ def _propose(
     ).place(names)
     changes = {AtomRef(rid, k): point for k, point in out.items()}
     candidate = _Candidate(site, names, changes, source_points, {})
-    _attached_hydrogens(candidate, env, template, {**anchors, **out})
+    _attached_hydrogens(candidate, env, {**anchors, **out})
     for ref, position in changes.items():
-        env.check_contacts(ref, position)
+        env.check_contacts(ref, position, changes)
     return candidate
 
 
 def _attached_hydrogens(
     candidate: _Candidate,
     env: BackboneEnvironment,
-    template: ResidueTemplate,
     points: dict[str, Vec3],
 ) -> None:
     site = candidate.site
     s = env.structure
-    aliases = template.polymer_hydrogen_parent_aliases()
+    ca_ref = AtomRef(site.residue_id, "CA")
     alpha_slots = [
         PolymerMicrostateSite.hydrogen_slot_name(a)
         for a in site.atom_sites
         if a.is_hydrogen()
-        and aliases.get(PolymerMicrostateSite.hydrogen_slot_name(a)) == "CA"
+        and env.hydrogen_parent(AtomRef(site.residue_id, a.name)) == ca_ref
     ]
     if "CA" in candidate.names and (
         len(alpha_slots) != len(set(alpha_slots))
@@ -153,16 +147,10 @@ def _attached_hydrogens(
             continue
         ref = AtomRef(site.residue_id, atom.name)
         slot = PolymerMicrostateSite.hydrogen_slot_name(atom)
-        parents = env.neighbors.get(ref, set())
-        alias = aliases.get(slot)
-        if len(parents) > 1 or (
-            parents and alias and AtomRef(site.residue_id, alias) not in parents
-        ):
-            raise GeometryPlacementError("ambiguous hydrogen attachment")
-        parent = next(iter(parents)).atom_name if parents else alias
-        if parent is None:
-            raise GeometryPlacementError("unassigned hydrogen attachment")
-        env.connect(ref, AtomRef(site.residue_id, parent))
+        attached = env.hydrogen_parent(ref)
+        if attached is None:
+            raise GeometryPlacementError("unassigned or ambiguous hydrogen attachment")
+        parent = attached.atom_name
         if parent not in candidate.names:
             continue
         idx = s.constitution.atom_index(ref)
@@ -170,8 +158,8 @@ def _attached_hydrogens(
         if parent == "C":
             raise GeometryPlacementError("hydrogen attached to the carbonyl carbon")
         if g.occupancy > 0:
-            if not source_hydrogen_bond_length_is_compatible(
-                g.position.distance_to(points[parent]), 1.09
+            if not env.fits_hydrogen_parent(
+                ref, g.position, attached, points[parent], candidate.changes
             ):
                 raise GeometryPlacementError("incompatible retained " + atom.name)
             # A retained H on the CB side of CA can have the right bond length
@@ -237,7 +225,7 @@ def rebuild_selected_backbones(
     if not selections:
         return TransformationResult(structure=structure, repairs=(), issues=()), None
 
-    env = BackboneEnvironment(structure)
+    env = BackboneEnvironment(structure, library)
     failures: dict[ResidueId, str] = {}
     candidates: dict[ResidueId, _Candidate] = {}
     for left, right in env.right.items():
@@ -249,7 +237,6 @@ def rebuild_selected_backbones(
             )
     for rid, names in selections.items():
         site = c.residue_site_at(c.residue_index(rid))
-        template = library.get(site.component_id)
         if rid in failures:
             continue
         if names == {"O"}:
@@ -257,11 +244,11 @@ def rebuild_selected_backbones(
                 "isolated carbonyl oxygen placement has not met the positional error bound"
             )
             continue
-        if template is None:
+        if library.get(site.component_id) is None:
             failures[rid] = "no component template"
             continue
         try:
-            candidates[rid] = _propose(site, names, env, template)
+            candidates[rid] = _propose(site, names, env)
         except (GeometryPlacementError, np.linalg.LinAlgError) as error:
             failures[rid] = str(error)
 
@@ -270,15 +257,14 @@ def rebuild_selected_backbones(
     )
     for candidate in candidates.values():
         for ref, point in candidate.changes.items():
-            local, cell = env.local_atoms(ref), env.cell(point)
+            cell = env.cell(point)
             for offset in product((-1, 0, 1), repeat=3):
                 key = tuple(a + b for a, b in zip(cell, offset, strict=True))
                 for other, q in proposed_cells.get(key, ()):
-                    if (
-                        other.residue_id != ref.residue_id
-                        and other not in local
-                        and env.clash(ref, point, other, q)
-                    ):
+                    poses = candidate.changes
+                    if other.residue_id != ref.residue_id:
+                        poses = poses | candidates[other.residue_id].changes
+                    if env.clash(ref, point, other, q, poses):
                         failures[ref.residue_id] = failures[other.residue_id] = (
                             "colliding backbone placements"
                         )
