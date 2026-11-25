@@ -69,6 +69,7 @@ from protrepair.state.topology import (
     residue_bond_topology_availability_state,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_backbone
 from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
@@ -474,7 +475,9 @@ class StructureChemistryObservation:
         return ResidueCoverageFacts(
             residue_id=residue.residue_id,
             backbone_heavy_atom_completeness_state=(
-                backbone_heavy_atom_completeness_state(
+                BackboneHeavyAtomCompletenessState.INCOMPLETE
+                if unresolved_backbone(self.context_structure, residue.residue_id)
+                else backbone_heavy_atom_completeness_state(
                     (residue,),
                     component_library=self.component_library,
                 )

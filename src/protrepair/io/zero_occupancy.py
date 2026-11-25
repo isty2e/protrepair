@@ -9,6 +9,8 @@ from protrepair.chemistry.microstate.catalog import PolymerChemicalSite
 from protrepair.chemistry.microstate.context import AminoAcidMicrostateContext
 from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
 from protrepair.chemistry.standard.components import build_standard_component_library
+from protrepair.diagnostics.events import ValidationIssue
+from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.errors import StructureNormalizationError
 from protrepair.structure.aggregate import ProteinStructure
 from protrepair.structure.constitution import ResidueSite
@@ -17,6 +19,7 @@ from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.observation import StructureObservation
 from protrepair.structure.provenance import (
     ConsecutiveZeroOccupancyResidueOmission,
+    DeferredSidechainOmission,
     ZeroOccupancyOmission,
     ZeroOccupancyResidueOmission,
 )
@@ -44,6 +47,7 @@ def zero_occupancy_sidechain_omissions(
     *,
     explicitly_zero_refs: frozenset[AtomRef],
     source_connections: tuple[SourceConnection, ...],
+    only_residue: ResidueSite | None = None,
 ) -> tuple[ZeroOccupancyOmission, ...]:
     """Check which selected side-chain coordinates can be withheld.
 
@@ -77,7 +81,12 @@ def zero_occupancy_sidechain_omissions(
     omissions: list[ZeroOccupancyOmission] = []
     protected_sidechain_refs: set[AtomRef] = set()
     attachment_context = None
-    for residue in selected.constitution.iter_residues():
+    residues = (
+        selected.constitution.iter_residues()
+        if only_residue is None
+        else (only_residue,)
+    )
+    for residue in residues:
         residue_id = residue.residue_id
         zero_names = zero_names_by_residue.get(residue_id)
         if not zero_names or zero_names & _REQUIRED_BACKBONE:
@@ -169,6 +178,172 @@ def zero_occupancy_sidechain_omissions(
         )
 
     return tuple(omissions)
+
+
+def deferred_sidechain_decisions(
+    selected: ProteinStructure,
+    explicitly_zero: frozenset[AtomRef],
+    connections: tuple[SourceConnection, ...],
+) -> tuple[DeferredSidechainOmission, ...]:
+    """Preserve the original omission checks for side chains on unusable frames."""
+    names: dict[ResidueId, set[str]] = {}
+    for ref in explicitly_zero:
+        names.setdefault(ref.residue_id, set()).add(ref.atom_name)
+    decisions: list[DeferredSidechainOmission] = []
+    for site in selected.constitution.iter_residues():
+        zeros = names.get(site.residue_id)
+        if (
+            not zeros
+            or not zeros & _REQUIRED_BACKBONE
+            or not any(
+                not atom.is_hydrogen()
+                and atom.name not in _BACKBONE_AND_TERMINAL
+                and atom.name in zeros
+                for atom in site.atom_sites
+            )
+            or not any(
+                not atom.is_hydrogen() and atom.name not in zeros
+                for atom in site.atom_sites
+            )
+        ):
+            continue
+        refs = frozenset(
+            AtomRef(site.residue_id, name) for name in zeros - _BACKBONE_AND_TERMINAL
+        )
+        refusal = None
+        try:
+            atoms = zero_occupancy_sidechain_omissions(
+                selected,
+                explicitly_zero_refs=refs,
+                source_connections=connections,
+                only_residue=site,
+            )
+        except StructureNormalizationError as error:
+            atoms, refusal = (), str(error)
+        if atoms or refusal:
+            decisions.append(
+                DeferredSidechainOmission(
+                    site.residue_id, site.component_id, atoms, refusal
+                )
+            )
+    return tuple(decisions)
+
+
+def revisit_sidechain_omissions(
+    structure: ProteinStructure, usable: frozenset[ResidueId]
+) -> tuple[ProteinStructure, tuple[ValidationIssue, ...]]:
+    """Withhold eligible original side chains without substituting modeled coordinates into the observation."""
+    ingress = structure.provenance.ingress
+    obs = ingress.observation
+    if obs is None or not ingress.deferred_sidechains:
+        return structure, ()
+    records: list[ZeroOccupancyOmission] = []
+    issues: list[ValidationIssue] = []
+    facets = []
+    previous = {
+        record.source_identity for record in ingress.zero_occupancy_omissions or ()
+    }
+    for decision in ingress.deferred_sidechains:
+        rid = decision.residue_id
+        site = structure.constitution.residue_or_ligand(rid)
+        if (
+            rid not in usable
+            or site is None
+            or site.component_id != decision.component_id
+        ):
+            continue
+        reason = decision.refusal
+        index = structure.constitution.residue_index(rid)
+        geometry = structure.residue_geometry(index)
+        atoms = {r.source_identity.atom_ref.atom_name: r for r in decision.atoms}
+        if atoms and all(
+            record.source_identity in previous for record in atoms.values()
+        ):
+            continue
+        if atoms and not any(geometry.has_atom(k) for k in atoms):
+            continue
+        if any(
+            not geometry.has_atom(k)
+            or site.atom_site(k).element_identity != record.element
+            or geometry.atom_geometry(k) != record.geometry
+            for k, record in atoms.items()
+        ):
+            reason = "side-chain geometry changed after the original occupancy decision"
+        if reason is None:
+            refs = frozenset(
+                record.source_identity.atom_ref for record in decision.atoms
+            )
+            try:
+                current_atoms = zero_occupancy_sidechain_omissions(
+                    structure,
+                    explicitly_zero_refs=refs,
+                    source_connections=(),
+                    only_residue=site,
+                )
+                if current_atoms != decision.atoms:
+                    reason = "selected side-chain inventory changed after the occupancy decision"
+                for bond in structure.topology.bonds:
+                    first, second = (
+                        structure.constitution.atom_ref_at(i)
+                        for i in bond.endpoint_pair()
+                    )
+                    if (
+                        (first in refs or second in refs)
+                        and first.residue_id != second.residue_id
+                        and bond.relationship_type in _PROTECTED_EXTERNAL_RELATIONSHIPS
+                    ):
+                        reason = (
+                            "new attachment on the side chain selected for omission"
+                        )
+                        break
+            except StructureNormalizationError as error:
+                reason = str(error)
+        if reason is not None:
+            issues.append(
+                ValidationIssue.for_residue(
+                    kind=ValidationIssueKind.ZERO_OCCUPANCY_SIDECHAIN_RETAINED,
+                    severity=IssueSeverity.WARNING,
+                    residue_id=rid,
+                    component_id=site.component_id,
+                    message=reason,
+                )
+            )
+            continue
+        records.extend(decision.atoms)
+        facets.append(
+            (
+                site.without_atom_sites(atoms),
+                geometry.without_atoms(frozenset(atoms)),
+                tuple(
+                    (k, v)
+                    for k, v in structure.residue_formal_charge_by_atom_name(index)
+                    if k not in atoms
+                ),
+            )
+        )
+    if not records:
+        return structure, tuple(issues)
+    original = ProteinStructure.from_payload(
+        constitution=obs.constitution,
+        geometry=obs.geometry,
+        topology=obs.topology,
+        provenance=structure.provenance,
+    )
+    projected = project_zero_occupancy_omissions(
+        original,
+        atom_omissions=tuple(records),
+        residue_omissions=None,
+        consecutive_omissions=None,
+    )
+    updated_ingress = replace(
+        ingress,
+        observation=projected.provenance.ingress.observation,
+        zero_occupancy_omissions=(*(ingress.zero_occupancy_omissions or ()), *records),
+    )
+    result = structure.with_updated_residue_facets_batch(facets)
+    return result.with_provenance(
+        replace(result.provenance, ingress=updated_ingress)
+    ), tuple(issues)
 
 
 def zero_occupancy_residue_omissions(

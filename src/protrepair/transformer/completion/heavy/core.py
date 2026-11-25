@@ -23,6 +23,7 @@ from protrepair.diagnostics.kinds import (
     ValidationIssueKind,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import eligible_geometry_targets
 from protrepair.structure.constitution import ChainSite, StructureConstitution
 from protrepair.structure.geometry import StructureGeometry
 from protrepair.structure.labels import ResidueId
@@ -113,6 +114,9 @@ def repair_heavy_atoms_core(
         if component_library is None
         else component_library
     )
+    target_residue_ids = eligible_geometry_targets(structure, target_residue_ids)
+    if target_residue_ids == frozenset():
+        return TransformationResult(structure=structure, repairs=(), issues=())
     stripped_structure = (
         structure.without_hydrogens()
         if target_residue_ids is None

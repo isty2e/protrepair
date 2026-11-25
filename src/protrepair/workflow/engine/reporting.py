@@ -42,6 +42,11 @@ from protrepair.state import (
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.state.structure_topology import StructureDisulfideHydrogenFacts
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import (
+    BackboneAvailability,
+    active_backbone_availability,
+    backbone_repair_run,
+)
 from protrepair.structure.bound_peptide_ports import (
     BoundPeptidePorts,
     active_peptide_ports,
@@ -88,6 +93,7 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
     """Engine-owned lazy phase report that keeps contracts free of evaluators."""
 
     __slots__ = (
+        "_backbone_availability",
         "_blockers",
         "_cached_outcomes",
         "_component_library",
@@ -101,6 +107,7 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
     _cached_outcomes: tuple[WorkflowPhaseOutcome, ...] | None
     _component_library: ComponentLibrary | None
     _peptide_ports: BoundPeptidePorts | None
+    _backbone_availability: BackboneAvailability | None
     _planning_context: WorkflowPlanningContext
     _site_binding: BoundSiteProtonations | None
     _structure: ProteinStructure
@@ -118,6 +125,9 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
         object.__setattr__(self, "_planning_context", planning_context)
         object.__setattr__(self, "_site_binding", active_site_protonations())
         object.__setattr__(self, "_peptide_ports", active_peptide_ports())
+        object.__setattr__(
+            self, "_backbone_availability", active_backbone_availability()
+        )
         object.__setattr__(self, "_component_library", component_library)
         object.__setattr__(self, "_blockers", tuple(blockers))
         object.__setattr__(self, "_cached_outcomes", None)
@@ -133,6 +143,7 @@ class _DeferredWorkflowPhaseReport(WorkflowPhaseReport):  # pyrefly: ignore[bad-
         with (
             site_protonation_run(self._site_binding),
             peptide_port_run(self._peptide_ports),
+            backbone_repair_run(self._backbone_availability),
         ):
             resolved_outcomes = evaluate_workflow_phase_outcomes(
                 self._structure,

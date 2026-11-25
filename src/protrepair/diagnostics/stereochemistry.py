@@ -15,6 +15,7 @@ from protrepair.chemistry.standard.components import (
 from protrepair.diagnostics.events import ValidationIssue
 from protrepair.diagnostics.kinds import IssueSeverity, ValidationIssueKind
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_atom_names
 from protrepair.structure.constitution import ResidueRole, ResidueSite
 from protrepair.structure.geometry import ResidueGeometry
 from protrepair.structure.labels import ResidueId
@@ -113,6 +114,9 @@ def detect_sidechain_stereochemistry(
         }
 
     for residue in residues:
+        unknown = unresolved_atom_names(structure, residue.residue_id)
+        if unknown:
+            residue = residue.without_atom_sites(unknown)
         template = component_library.get(residue.component_id)
         if template is None or not template.has_tetrahedral_stereochemistry():
             continue
@@ -169,6 +173,9 @@ def detect_standard_alpha_carbon_chirality_violations(
         component_id = standard_component_library.normalize_component_id(
             residue.component_id
         )
+        unknown = unresolved_atom_names(structure, residue.residue_id)
+        if unknown:
+            residue = residue.without_atom_sites(unknown)
         if (
             component_id == "GLY"
             or not standard_component_library.has(component_id)

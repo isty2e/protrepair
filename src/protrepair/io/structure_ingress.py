@@ -40,6 +40,7 @@ from protrepair.io.source_peptide import (
 )
 from protrepair.io.source_peptide_caps import PdbCapSourceContext
 from protrepair.io.zero_occupancy import (
+    deferred_sidechain_decisions,
     project_zero_occupancy_omissions,
     zero_occupancy_residue_omissions,
     zero_occupancy_sidechain_omissions,
@@ -323,6 +324,7 @@ def normalize_raw_structure(
     deposited_peptide_boundaries: tuple[DepositedPeptideBoundary, ...] = (),
     deposited_peptide_sequences: tuple[DepositedPeptideSequence, ...] = (),
     unresolved_conect_ports: frozenset[AtomRef] = frozenset(),
+    backbone_link_vetoes: frozenset[AtomRef] = frozenset(),
     uncertain_peptide_link_ports: frozenset[AtomRef] | None = None,
     uncertain_attachment_atoms: frozenset[AtomRef] = frozenset(),
     intra_residue_pdb_links: tuple[SourceConnection, ...] = (),
@@ -566,7 +568,7 @@ def normalize_raw_structure(
         file_format=file_format,
         constitution=constitution,
         peptide_break_after=source_peptide_break_after,
-        verify_source_paths=omit_residues or omit_consecutive_residues,
+        verify_source_paths=True,
         source_labels_by_residue=source_labels_by_residue,
     )
     peptide_candidates = source_sequence_inferred_polymer_topology_bonds(
@@ -639,6 +641,35 @@ def normalize_raw_structure(
             include_dropped_metals=policy.non_polymer_retention is not None,
         ),
     )
+    positions = {
+        rid: lo
+        for path in deposited_peptide_sequences
+        for rid, lo, hi in path.positions
+        if lo == hi
+    }
+    vetoes = (
+        backbone_link_vetoes
+        | (uncertain_peptide_link_ports or frozenset())
+        | observation.unresolved_polymer_endpoints
+        | frozenset(
+            ep.atom_ref
+            for link in observation.excluded_coordination_connections
+            for ep in link.endpoint_pair()
+        )
+    )
+    verified = frozenset(
+        (a, b)
+        for pair in successions
+        for a, b in [(pair.preceding_residue_id, pair.following_residue_id)]
+        if pair.consecutive_source_slots
+        and a.chain_id not in reordered_polymer_chains
+        and (
+            (file_format is FileFormat.PDB and pair.verified_source_path)
+            or (a in positions and b in positions and positions[b] == positions[a] + 1)
+        )
+        and AtomRef(a, "C") not in vetoes
+        and AtomRef(b, "N") not in vetoes
+    )
     selected = ProteinStructure.from_payload(
         constitution=constitution,
         geometry=geometry,
@@ -648,6 +679,8 @@ def normalize_raw_structure(
                 source_format=file_format,
                 source_name=source_name,
                 observation=observation,
+                backbone_neighbors=verified,
+                backbone_link_vetoes=frozenset(vetoes),
                 uncertain_peptide_link_ports=uncertain_peptide_link_ports,
                 deposited_peptide_sequences=tuple(
                     path
@@ -679,15 +712,28 @@ def normalize_raw_structure(
 
     atom_omissions = None
     if omit_sidechains:
+        explicitly_zero_refs = frozenset(
+            AtomRef(payload.residue_id, atom_name)
+            for payload in normalized_residue_payloads
+            for atom_name in payload.explicitly_zero_atom_names
+        )
         atom_omissions = zero_occupancy_sidechain_omissions(
             selected,
-            explicitly_zero_refs=frozenset(
-                AtomRef(payload.residue_id, atom_name)
-                for payload in normalized_residue_payloads
-                for atom_name in payload.explicitly_zero_atom_names
-            ),
+            explicitly_zero_refs=explicitly_zero_refs,
             source_connections=projected_source_connections,
         )
+        decisions = deferred_sidechain_decisions(
+            selected, explicitly_zero_refs, projected_source_connections
+        )
+        if decisions:
+            selected = selected.with_provenance(
+                replace(
+                    selected.provenance,
+                    ingress=replace(
+                        selected.provenance.ingress, deferred_sidechains=decisions
+                    ),
+                )
+            )
     residue_omissions = None
     consecutive_omissions = None
     if omit_residues or omit_consecutive_residues:

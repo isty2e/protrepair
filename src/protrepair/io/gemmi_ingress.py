@@ -202,12 +202,11 @@ def _normalize_structure_text(
             contents,
             atom_identity_by_serial=atom_identity_by_serial,
             observe_cap_paths=observe_cap_paths,
-            observe_sequence_ports=bool(sequences)
-            or observe_cap_paths
-            or omit_consecutive_residues,
+            observe_sequence_ports=True,
             include_sidechains=omit_consecutive_residues,
             duplicate_ports=duplicate_ports,
         )
+        backbone_link_vetoes = unresolved_conect_ports | uncertain_links
         uncertain_attachment_atoms = (
             (uncertain_links | unresolved_conect_ports)
             if omit_consecutive_residues
@@ -282,6 +281,7 @@ def _normalize_structure_text(
             uncertain_links if omit_consecutive_residues else frozenset()
         )
         peptide_break_after = frozenset()
+        backbone_link_vetoes = uncertain_links
 
     # Typed Gemmi declarations precede untyped PDB CONECT fallback so the
     # canonical endpoint keeps the strongest surviving source fact.
@@ -308,6 +308,7 @@ def _normalize_structure_text(
         deposited_peptide_boundaries=sequence_boundaries,
         deposited_peptide_sequences=deposited_sequences,
         unresolved_conect_ports=unresolved_conect_ports,
+        backbone_link_vetoes=backbone_link_vetoes,
         uncertain_peptide_link_ports=frozenset(
             ref for ref in uncertain_links if ref.atom_name in ("N", "C")
         ),

@@ -164,6 +164,12 @@ the current atom inventory. A canonical structure without that history
 requires re-reading the original input to apply the option. Reusing a
 structure with a receipt never removes a rebuilt atom a second time.
 
+If you also [request backbone reconstruction](how-to.md#rebuild-zero-occupancy-backbone-atoms),
+a successful backbone fit lets the workflow reconsider that residue's zero
+side-chain atoms. A formal charge, retained bond or dependent atom that rules
+out removal leaves the side chain in place. The issue names the residue; the
+successful backbone repair is retained.
+
 ### Whole Zero-Occupancy Residues
 
 Set `omit_zero_occupancy_polymer_residues=True` on `StructureIngressOptions`

@@ -27,6 +27,7 @@ from protrepair.errors import ProtrepairError
 from protrepair.geometry import Vec3
 from protrepair.scope import AbsentResidueSpanScope
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import active_backbone_availability
 from protrepair.structure.constitution import ResidueRole
 from protrepair.structure.geometry import (
     AtomGeometry,
@@ -1400,6 +1401,15 @@ def _source_span_boundary_failure(
         )
     for anchor_id in scope.anchor_residue_ids():
         anchor = structure.constitution.residue_or_ligand(anchor_id)
+        availability = active_backbone_availability()
+        if (
+            availability is not None
+            and availability.placement_for(structure, anchor_id) is not None
+        ):
+            return SpanReconstructionFailure(
+                SpanReconstructionFailureKind.MISSING_BACKBONE_CONTEXT,
+                f"zero-occupancy backbone on source anchor {anchor_id.display_token()}",
+            )
         if anchor is None or anchor.is_hetero:
             return SpanReconstructionFailure(
                 SpanReconstructionFailureKind.MISSING_BACKBONE_CONTEXT,

@@ -8,6 +8,7 @@ class RepairEventKind(str, Enum):
 
     ABSENT_RESIDUE_SPAN_RECONSTRUCTED = "absent_residue_span_reconstructed"
     HEAVY_ATOMS_ADDED = "heavy_atoms_added"
+    BACKBONE_ATOMS_REBUILT = "backbone_atoms_rebuilt"
     HYDROGENS_ADDED = "hydrogens_added"
     HYDROGEN_TOPOLOGY_RESOLVED = "hydrogen_topology_resolved"
     RETAINED_NON_POLYMER_TOPOLOGY_RESOLVED = "retained_non_polymer_topology_resolved"
@@ -35,6 +36,9 @@ class ValidationIssueKind(str, Enum):
     MISSING_COMPONENT_DEFINITION = "missing_component_definition"
     UNEXPECTED_ATOMS = "unexpected_atoms"
     INVALID_BACKBONE = "invalid_backbone"
+    BACKBONE_REBUILD_REFUSED = "backbone_rebuild_refused"
+    ZERO_OCCUPANCY_SIDECHAIN_RETAINED = "zero_occupancy_sidechain_retained"
+    PACKING_REGION_REFUSED = "packing_region_refused"
     SPAN_RECONSTRUCTION_FAILED = "span_reconstruction_failed"
     INVALID_GEOMETRY = "invalid_geometry"
     GEOMETRY_PLACEMENT_SKIPPED = "geometry_placement_skipped"

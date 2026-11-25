@@ -21,6 +21,7 @@ from protrepair.geometry import GeometryPlacementError, Vec3
 from protrepair.io import read_structure_string, write_structure_string
 from protrepair.state.chemistry_observation import StructureChemistryObservation
 from protrepair.structure import ProteinStructure
+from protrepair.structure.backbone_availability import backbone_repair_run
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.provenance import FileFormat
 from protrepair.structure.slots import AtomIndex
@@ -28,6 +29,9 @@ from protrepair.structure.topology import (
     BondRelationshipType,
     StructureTopology,
     TopologyBond,
+)
+from protrepair.transformer.completion.backbone_rebuild import (
+    rebuild_selected_backbones,
 )
 from protrepair.transformer.completion.hydrogen import core
 from protrepair.transformer.completion.hydrogen.protonation import (
@@ -386,6 +390,27 @@ def test_nonacceptor_contact_does_not_fabricate_hydrogen_bond(motif):
         0,
         1,
     )
+
+
+def test_unresolved_carbonyl_coordinates_do_not_choose_a_neighboring_histidine():
+    rid = ResidueId("B", 1)
+    source = _source(contacts=(("ND1", 2.8, 0, "carbonyl"),))
+    geo = source.residue_geometry(source.constitution.residue_index(rid))
+    oxygen = geo.atom_geometry("O")
+    for offset, legacy in ((0.0, (1, 0)), (60.0, (0, 1))):
+        unobserved = replace(
+            oxygen, occupancy=0.0, position=oxygen.position.with_offset(offset, 0, 0)
+        )
+        structure = source.with_updated_residue_geometries(
+            ((rid, geo.with_atom_geometry("O", unobserved)),)
+        )
+        assert _selected(_preparation(structure)) == legacy
+        rebuilt, binding = rebuild_selected_backbones(
+            structure, build_standard_component_library()
+        )
+        assert binding is not None and binding.unresolved(rebuilt.structure, rid)
+        with backbone_repair_run(binding):
+            assert _selected(_preparation(rebuilt.structure)) == (0, 1)
 
 
 @pytest.mark.parametrize("motif,expected", (("imine", (1, 0)), ("iminium", (0, 1))))

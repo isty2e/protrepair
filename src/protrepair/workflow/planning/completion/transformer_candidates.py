@@ -13,6 +13,7 @@ from protrepair.state import (
     derive_structure_coverage_and_chemistry_readiness_facts,
 )
 from protrepair.structure.aggregate import ProteinStructure
+from protrepair.structure.backbone_availability import unresolved_backbone
 from protrepair.structure.labels import ResidueId
 from protrepair.transformer.completion.hydrogen.protonation import (
     HistidineProtonationRequest,
@@ -263,6 +264,9 @@ def plan_hydrogen_completion_transformers(
     )
     selected = set(hydrogen_target_residue_ids)
     for fact in active_chemistry_readiness_facts.residue_facts:
+        if unresolved_backbone(structure, fact.residue_id):
+            selected.discard(fact.residue_id)
+            continue
         if (cap := fact.linked_cap) is not None:
             selected.discard(fact.residue_id)
             if (
@@ -314,6 +318,10 @@ def plan_hydrogen_completion_transformers(
                 or (fixed is not None and fixed.unresolved_parent_names)
             ) and not preparation.has_pending_hydrogen_updates(fact.residue_id):
                 selected.discard(fact.residue_id)
+    if structure.provenance.withheld_backbone_hydrogens:
+        selected.difference_update(
+            structure.provenance.withheld_hydrogen_residues(structure.constitution)
+        )
     # Defer the partner only if the cap write is allowed by this request.
     selected.difference_update(
         cap.partner.residue_id

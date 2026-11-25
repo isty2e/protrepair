@@ -19,6 +19,7 @@ from protrepair.chemistry.radii import (
 )
 from protrepair.geometry import Vec3
 from protrepair.geometry.placement_vector import normalized_vector_or_none
+from protrepair.structure.backbone_availability import unresolved_atom_refs
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.topology import BondRelationshipType
 
@@ -139,14 +140,18 @@ class HistidineEnvironment:
             for element, radius in radii.radius_by_element_symbol.items()
         }
 
+        unresolved = unresolved_atom_refs(source)
         for index, position in source.geometry.iter_positions():
             ref = constitution.atom_ref_at(index)
+            if ref in unresolved:
+                continue
             atom = constitution.atom_site_at(index)
             neighbors = context.covalent_neighbors(ref)
             donor_hydrogens = tuple(
                 source.geometry.position(constitution.atom_index(other))
                 for other in neighbors
                 if atom.element in {"N", "O"}
+                and other not in unresolved
                 and ref not in unavailable
                 and (ref not in site_acceptors or ref in site_donors)
                 and constitution.atom_site_at(
