@@ -9,7 +9,8 @@ from protrepair.chemistry.component.library import ComponentLibrary
 from protrepair.chemistry.component.topology import (
     polymer_context_hydrogen_anchor_definitions,
 )
-from protrepair.structure.constitution import StructureConstitution
+from protrepair.chemistry.microstate.polymer import PolymerMicrostateSite
+from protrepair.structure.constitution import ResidueRole, StructureConstitution
 from protrepair.structure.labels import AtomRef, ResidueId
 from protrepair.structure.slots import AtomIndex
 from protrepair.structure.topology import BondRelationshipType, StructureTopology
@@ -162,22 +163,38 @@ class PolarContactChemistry:
                     ):
                         for number in ("2", "3"):
                             aliases.setdefault(stem + number, set()).add(parent)
-                for site in residue.atom_sites:
-                    if not site.is_hydrogen() or site.name in anchors:
+                slots = {
+                    site.name: PolymerMicrostateSite.hydrogen_slot_name(site)
+                    for site in residue.atom_sites
+                    if site.is_hydrogen()
+                }
+                context_parents = {
+                    a.bond_definition.atom_name_2: a.bond_definition.atom_name_1
+                    for a in polymer_context_hydrogen_anchor_definitions(
+                        component_id=residue.component_id,
+                        hydrogen_atom_names=slots.values(),
+                    )
+                }
+                polymer_aliases = template.polymer_hydrogen_parent_aliases()
+                for actual, name in slots.items():
+                    if name in context_parents:
+                        anchors[actual] = context_parents[name]
                         continue
-                    name = site.name
-                    if site.element in {"D", "T"}:
-                        name = name.replace(site.element, "H", 1)
+                    if actual in anchors:
+                        continue
+                    # Exact terminal and protonation names take precedence over
+                    # a numbering-family guess (e.g. ASP HD1 versus HD2).
+                    named = polymer_aliases.get(name)
+                    if named in named_refs and self._atoms[
+                        named_refs[named]
+                    ].element in {"N", "O", "S"}:
+                        anchors[actual] = named
+                        continue
                     parents = aliases.get(name)
                     if parents is None:
                         parents = families.get(name.strip("0123456789"), set())
                     if len(parents) == 1:
-                        anchors[site.name] = next(iter(parents))
-                for anchor in polymer_context_hydrogen_anchor_definitions(
-                    component_id=residue.component_id, hydrogen_atom_names=names
-                ):
-                    bond = anchor.bond_definition
-                    anchors[bond.atom_name_2] = bond.atom_name_1
+                        anchors[actual] = next(iter(parents))
             for name, parent in anchors.items():
                 hydrogen = named_refs.get(name)
                 heavy = named_refs.get(parent)
@@ -263,6 +280,67 @@ class PolarContactChemistry:
             H name to heavy parent; ambiguous and cross-residue H are omitted.
         """
         return self._anchors[residue_id]
+
+    def bond_order_sum(self, ref: AtomRef) -> int | None:
+        """Count interpreted covalent bond orders at an atom.
+
+        Parameters
+        ----------
+        ref : AtomRef
+            Atom in this observation.
+
+        Returns
+        -------
+        int or None
+            Observed or template-supported valence; unresolved relationships
+            leave the sum unknown.
+        """
+        if ref in self._unavailable:
+            return None
+        return sum(b.order for b in self._neighbors[ref].values())
+
+    def hydrogen_angle_reference(self, center: AtomRef) -> float | None:
+        """Estimate a local valence angle for a bonded hydrogen.
+
+        Parameters
+        ----------
+        center : AtomRef
+            Heavy parent of the hydrogen.
+
+        Returns
+        -------
+        float or None
+            Nominal angle in degrees for a supported saturated or trigonal
+            center. A linear or unresolved center supplies no reference.
+            Inter-residue peptide qualification is left to the caller.
+        """
+        element = self._atoms[center].element
+        if element not in {"C", "N", "O", "S"} or center in self._unavailable:
+            return None
+        idx = self._constitution.residue_index(center.residue_id)
+        if self._constitution.role_at(idx) is ResidueRole.WATER:
+            return 104.5 if element == "O" else None
+        site = self._constitution.residue_site_at(idx)
+        template = self._component_library.get(site.component_id)
+        if template is None:
+            return None
+        neighbors = self._neighbors[center]
+        # A partial residue can lack the other end of a template pi bond.
+        orders = [max(b.order, 2 if b.aromatic else 1) for b in neighbors.values()]
+        orders.extend(
+            max(b.order, 2 if b.aromatic else 1)
+            for b in template.definition.bonds
+            if center.atom_name in (b.atom_name_1, b.atom_name_2)
+        )
+        if max(orders, default=0) > 2:
+            return None
+        if (
+            2 in orders
+            or element == "N"
+            and any(self._resonance_center(peer, center) for peer in neighbors)
+        ):
+            return 120.0
+        return {"C": 109.47, "N": 109.47, "O": 108.5, "S": 96.0}[element]
 
     def acceptor_names(self, residue_id: ResidueId) -> frozenset[str]:
         """Return atoms supported as acceptors by the current chemistry.
